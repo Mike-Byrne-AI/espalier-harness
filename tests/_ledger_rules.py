@@ -419,12 +419,10 @@ BASIS_NAMES_RE = re.compile("|".join(BASIS_NAMES), re.IGNORECASE)
 #: The owning test reds on an id here that is struck, gone, no longer a guard
 #: row, or now carrying the sentence, until it is dropped, and on an id the
 #: calibration commit did not hold live: a row filed since carries the
-#: sentence, so the set only shrinks.
-GUARD_ROWS_RULED_WITHOUT_A_BASIS: dict[str, str] = {
-    "DEF-682": ("ruling 90a8cc: the gap is declined and the row stays live in the ledger's declared-limit "
-                "form, since neither verb takes a decline; the sync advisory is not one of the three kept "
-                "jobs, and the transcripts it counts hold none of its own case"),
-}
+#: sentence, so the set only shrinks. Empty since 2026-11-14: its one entry,
+#: DEF-682 (ruling 90a8cc kept the declined row live), was struck as a declared
+#: limit by ruling 844518 on lane/five-guard-base-rows-close-as-limits.
+GUARD_ROWS_RULED_WITHOUT_A_BASIS: dict[str, str] = {}
 _TABLE_ROW_RE = re.compile(r"^\|\s*(~~)?`")
 _ROW_ID_RE = re.compile(r"`([A-Z]{2,5}-\d+[a-z]*)`")
 _INDEX_SECTION_RE = re.compile(r"§C\d+")

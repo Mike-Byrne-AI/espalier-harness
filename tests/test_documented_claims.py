@@ -3754,16 +3754,19 @@ class TestGuardRowsNameTheirContractBasis:
                 f"| `CLO-9` | `{_GUARD_SITE}` runs three statements under no lock. | Declined |\n")
         assert guard_rows(text) == {}
 
-    def test_the_verb_refuses_a_guard_row_without_one_and_lets_a_ruled_row_through(self):
+    def test_the_verb_refuses_a_guard_row_without_one_and_lets_a_ruled_row_through(self, monkeypatch):
         """The rule as the ledger verb runs it, before it writes. Dies to: the
-        rule left out of ``breaks``, or a ruled exception refused on a repin."""
+        rule left out of ``breaks``, or a ruled exception refused on a repin.
+        The exception set is empty since its last row was struck (2026-11-14),
+        so a stand-in id is ruled in for the test: the path stays exercised."""
         from tests._ledger_rules import GUARD_BASIS_RULE, breaks
 
         rel = "task-packs/ledger.d/DEF-9.md"
         assert GUARD_BASIS_RULE in [r for r, _ in breaks(rel, _guard_row_file("no basis"), notes=[])]
         assert GUARD_BASIS_RULE not in [r for r, _ in breaks(
             rel, _guard_row_file("Contract basis: the secret read."), notes=[])]
-        ruled = sorted(GUARD_ROWS_RULED_WITHOUT_A_BASIS)[0]
+        ruled = "DEF-8"
+        monkeypatch.setitem(GUARD_ROWS_RULED_WITHOUT_A_BASIS, ruled, "a stand-in ruling for this test")
         assert GUARD_BASIS_RULE not in [r for r, _ in breaks(
             f"task-packs/ledger.d/{ruled}.md", _guard_row_file("no basis", rid=ruled), notes=[])]
 

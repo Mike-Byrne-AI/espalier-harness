@@ -1835,8 +1835,8 @@ carriage returns Windows PowerShell hands a native pipe are taken out; the
 CR that ends each element is what keeps a trailing backslash from joining
 the next element to it in the shell, so the each-alone readings are what
 keep that element's verdict. A program piped to a PowerShell shell
-(`| pwsh -Command -`) is re-read in the same readings by the zone and
-remove readers. The opener's redirect, comment and call operator serve
+(`| pwsh -Command -`) is re-read in the same readings by every tier, one
+level down, as its direct `powershell -Command "..."` form is. The opener's redirect, comment and call operator serve
 every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
 head that only begins with a shell's name (`shasum`) and a shell given a
 script operand with no switch before it (`| bash script.sh`) leave the pipe
@@ -1866,10 +1866,9 @@ over. Each consumer reads a CR and a NUL its own way: a POSIX shell drops
 both, as Git Bash does; PowerShell ends a line at a CR and a word at a NUL.
 Where pwsh 7 reads a literal apart from Windows PowerShell 5.1 (`` `e ``,
 `` `u{...} ``) both readings are judged, a `Start-Process` argument
-apart (listed with the limits above). Open gaps, not limits:
+apart (listed with the limits above). Open gap, not a limit:
 a comment that ends in a
-backslash hides the next line from the wall, on both tools; and a program
-piped to `pwsh -Command -` meets no wall.
+backslash hides the next line from the wall, on both tools.
 
 On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
@@ -2009,7 +2008,11 @@ before the payload, which then stays inert -- a declared limit, pinned by
 bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
 `-cx`), as one string or the array spelling
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
-every tier its direct form meets. powershell.exe's implicit
+every tier its direct form meets. So is a program piped to powershell or
+pwsh reading its program from the pipe (`'...' | pwsh -Command -`, a
+here-string or a double-quoted string piped the same way), placed where its
+statement runs, since the piped shell starts in the current location as a
+started one does. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before
 the program stay unread, declared and pinned beside it.
 
@@ -2089,7 +2092,8 @@ string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
 a value, and a nest of `@(` spends none of the levels a nest of `$(` does), including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
-carries after the started shell's `-Command` or `-c`. A carrier
+carries after the started shell's `-Command` or `-c`, or a program piped
+to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
 argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
@@ -2307,10 +2311,40 @@ spellings of them are work:
   sentence above: such a flood before a re-parsed string is refused, by the
   wall or the time budget, pinned by
   `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
+- **The Bash masker, by ruling (2026-11-13).** A `#` starts a comment where
+  bash starts one: glued after a substitution's `)` (a paren inside a
+  parameter expansion is text), a closing backtick, an escaped character or
+  a carriage return it is the word's text, and a comment inside a backtick
+  body ends at the closing backtick or at the first escaped one, a nested
+  body's closer, which ends an outer body's comment there too (friction
+  alone), with any backslash run before the `#` gluing it inside a body,
+  where bash halves a pair, so the statement after either is read (driven
+  on bash 3.2, dash and zsh; Git Bash undriven). After an array's `)` the shells part:
+  bash reads the `#` as the word's text, zsh as a comment, and dash has no
+  arrays; the masker takes bash's reading, which reads the statement after
+  it. Three readings beside it
+  are declared limits, the first pinned at allow by
+  `tests/test_bash_inert_syntax_mask.py::TestTheMaskerReadsACommentAsBashDoes::test_a_delimiter_line_bash_does_not_take_is_a_declared_limit`.
+  A heredoc body ends where the masker reads its
+  delimiter line past blanks and its word to `[alnum_-.]`, where bash takes
+  the line only as the whole delimiter word alone, quote-removed: a second
+  heredoc opened on a line bash takes as body text (after an indented or
+  trailing-blank line, one ending in a carriage return its operator's word
+  did not carry, or a delimiter word quoted in part or holding another
+  character, `<<E"O"F`, `<<EOF/`) hides the statement after the real
+  delimiter, a crafted spelling. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
+  operator, and the masker hands back the raw command: friction alone. The
+  older arithmetic spelling `$[1<<x]` is read as one too, its body masked to
+  a later line that is the shift's operand alone, so a statement between
+  them goes unread where bash and zsh run it (dash reads the heredoc too), a
+  crafted spelling. And a launch wrapper inside a substitution in a data
+  head's double-quoted argument (`echo "$(eval '...')"`) is read, but one
+  spelling whose program's quotes collide with the argument's goes unread (1
+  of 38 reaching rows on the differential's wrappers).
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
-  (`tests/test_write_guard.py::TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
+  (`TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
   A link made inside a watched zone is judged by what it adds there: a file
   link with a live target and a hard link read as added files, and a Windows
   junction is walked, so its target's files do; a directory link and a link
@@ -2327,7 +2361,14 @@ spellings of them are work:
 - A new report on these jobs is a defect when its form is in the contract, or
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
-  as its reason, and no reader changes.
+  as its reason, and no reader changes. One speed-bump report is a ruled limit
+  (2026-11-14) although a real session recorded it: a rewrite of commits the
+  branch has already pushed (an amend or a rebase of them) draws no bump,
+  because the ship driver's `open` refuses the push that follows, whose remote
+  copy then holds commits the rewritten branch lacks, and names a merge as the
+  way past, never a rebase or a force push (its `preflight` forecasts the same
+  refusal); a push you type yourself with `--force-with-lease`, the form the
+  force-push bump leaves silent as the safe one, is outside both.
 - **A fourth basis: the anti-self-disable floor (ruled 2026-11-13).** The
   guard's first job (section 4) keeps the session from switching its own
   hooks off: a kill-switch setting, and an assignment of a variable the hooks
@@ -2338,7 +2379,17 @@ spellings of them are work:
   it already reads is judged as the bullets above judge a spelling of the
   three jobs. A protected-zone write, which section 4's headline also places
   under the floor, is not on this basis: a report about one, or a spelling of
-  one, is judged as it was before this ruling.
+  one, is judged as it was before this ruling. A nested session started with
+  one of Claude Code's launch options that load no hooks or choose which
+  settings load (`--bare` or `CLAUDE_CODE_SIMPLE=1`, `--safe-mode`,
+  `--setting-sources`, `--settings` carrying `disableAllHooks` or an `env`
+  map) is outside the floor by ruling (2026-11-14), and a report of one is
+  recorded with this bullet as its reason, no reader changed: the guard reads
+  none of these options, and such a launch is a deliberate act more than a
+  slip. So, by the same ruling, is an edit to one of the three `espalier.toml`
+  keys that change what a gate does (`plan_exempt_prefixes`,
+  `protected_paths`, `[extra_actions] test`): the file is your own
+  configuration, and the edit shows in the diff.
 
 **Configuration:**
 
@@ -2658,6 +2709,14 @@ new state as the next one to compare with.
   and says so once (`posttooluse_failed_open_zone_off`): narrow
   `protected_paths`, or name the large directories in `dependency_dirs`.
 - **Limits.**
+  - It reports and never stops the session, by ruling (2026-11-14): an
+    unattended run (a `/loop`, a scheduled or headless agent) whose reports
+    nobody reads keeps working after one. A latch that refused every call
+    until you cleared it would bring back the lock-out a refuse-everything
+    state has caused before, cleared only from a terminal, and a report
+    follows the change it names, so no refusal could undo that change. If
+    the question reopens, the shape is a `continue: false` from this check,
+    which stops Claude after the call it reports, never a latch.
   - A bad edit committed in the same shell call (`python fix.py && git commit
     -am wip`) is silent: the file then holds its content at `HEAD`. The
     commit still reaches `main` only through the pull request and CI. Inside a

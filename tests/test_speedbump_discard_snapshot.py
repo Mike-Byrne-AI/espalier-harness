@@ -397,6 +397,12 @@ class TestRemovalSnapshot:
         # lane's review)
         ("PowerShell", "Remove-Item -Recurse lib/*,src/*", ["src"]),
         ("PowerShell", "bash -c 'rm -rf src/*'", ["src"]),
+        # a program the PowerShell tool pipes into another PowerShell, read
+        # as that shell receives it, from where its statement runs (DEF-2079)
+        ("PowerShell", "powershell -Command \"Remove-Item -Recurse src/*\"", ["src"]),
+        ("PowerShell", "'Remove-Item -Recurse src/*' | pwsh -Command -", ["src"]),
+        ("PowerShell", "Set-Location src; '' | Out-Null; Set-Location ..; "
+                       "'Remove-Item -Recurse src/*' | pwsh -c -", ["src"]),
         # a brace list is expanded up to `_SNAPSHOT_EXPANSION_CAP` results;
         # past it the operand is cut at the brace -- here onto the checkout
         # root, which earns no promise

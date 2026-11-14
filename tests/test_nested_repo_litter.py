@@ -243,6 +243,24 @@ class TestWorktreeInUseIsNotLitter:
         assert ".claude/worktrees/dead-holder" in found
         assert ".claude/worktrees/live-holder" not in found
 
+    def test_a_claude_lock_naming_a_live_pids_other_start_still_hides_the_worktree(self, tmp_path, monkeypatch):
+        """Claude Code's lock can name its holder's start, `(pid N start
+        <date>)`. This warning's remedy is a forced removal, so it reads the
+        pid alone and reads no start: a live N keeps the tree hidden whatever
+        start the lock names (the reaper, which removes only a clean, merged
+        tree, is the reader that compares it)."""
+        import os
+
+        _seed_commit(tmp_path)
+        _exclude_worktrees(tmp_path)
+        held = _add_worktree(tmp_path, "start-held")
+        _git(["worktree", "lock", "--reason",
+              f"claude agent agent-s (pid {os.getpid()} start Thu Jan  1 00:00:00 2026)", str(held)], tmp_path)
+        ss = _load()
+        sync = ss._hook_utils.load_checkout_sync()
+        monkeypatch.setattr(sync, "proc_starts", lambda *a, **k: pytest.fail("the warning read a start"))
+        assert ".claude/worktrees/start-held" not in ss._find_nested_repo_litter(tmp_path, cwd=tmp_path)
+
     def test_locked_worktree_is_not_reported_via_untracked_scan(self, tmp_path):
         _seed_commit(tmp_path)
         _add_worktree(tmp_path, "held", lock=True)

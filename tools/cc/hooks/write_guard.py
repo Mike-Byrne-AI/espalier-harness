@@ -2046,7 +2046,8 @@ def _substitution_bodies(
     Quotes are read as bash reads them: nothing opens inside single quotes
     or an ANSI-C string; inside double quotes `$( )` and a backtick open and
     a process substitution is text; a backslash escapes the next character,
-    and a `#` opening a word is a comment to the line's end. With
+    and a `#` opening a word is a comment to the line's end, or inside a
+    backtick body to its closer (the masker's rule). With
     ``heredoc`` the outer text is an unquoted heredoc's body, where a quote
     and a `#` are text and only `$`, a backtick and a backslash are syntax;
     inside a substitution the ordinary rules hold again. A body that never
@@ -2090,6 +2091,12 @@ def _substitution_bodies(
     # whether it is an arithmetic `$(( ))`.
     spans: list[list] = [["", 0, 0, [], False, 0, False]]
     closed = -1   # just past the last span closed: a `#` there is inside a word
+    ticks = 0     # backtick spans open: a comment in one ends at a backtick
+    # An array's `=(` open in each span, by (span depth, paren count): its
+    # `)` glues a `#` after it as a closer does, where a subshell's does not
+    # (``a=(1)#; echo $(cat .env)`` runs the read on bash; the masker's
+    # cursor reads the same glue).
+    arrays: list[tuple[int, int]] = []
     # Heredoc operators whose bodies start at the next newline, each with the
     # depth of the span it was met in: a newline inside a deeper span (a
     # `$( )` that runs across the operator's line) starts none of them.
@@ -2143,8 +2150,10 @@ def _substitution_bodies(
         if ch == "`":
             if top[0] == "`":
                 close(i)
+                ticks -= 1
             else:
                 spans.append(["`", i, i + 1, [], False, 0, False])
+                ticks += 1
             i += 1
             continue
         if ch == "$":
@@ -2173,8 +2182,17 @@ def _substitution_bodies(
             continue
         if ch == '"':
             top[4] = True
-        elif ch == "#" and i != closed and _bash_patterns._opens_comment(text, i):
-            j = src.find("\n", i)
+        elif (ch == "#" and i != closed and _bash_patterns._opens_comment(text, i)
+                and not _bash_patterns._glued_after_escape(src, i, ticks > 0)):
+            # The masker's comment rule (DEF-5039): a `#` after an escaped
+            # character is that word's text (read on ``src``, where the
+            # masker has not blanked the escaped character), and a comment
+            # in a backtick body ends at its closer, or a nested body's
+            # escaped one, which the walk then reads. Each hid the statement
+            # after it: ``echo a\\;#; echo $(cat .env)`` and ``echo `#x`;
+            # echo $(cat .env)`` run the read on bash 3.2, dash and zsh.
+            j = (_bash_patterns._backtick_comment_end(src, i) if ticks
+                 else src.find("\n", i))
             i = n if j < 0 else j
             continue
         elif ch == "<" and text.startswith("<", i + 1):
@@ -2189,8 +2207,13 @@ def _substitution_bodies(
             continue
         elif ch == "(":
             top[5] += 1
+            if text[i - 1:i] == "=":
+                arrays.append((len(spans), top[5]))
         elif ch == ")":
             if top[5]:
+                if arrays and arrays[-1] == (len(spans), top[5]):
+                    arrays.pop()
+                    closed = i + 1
                 top[5] -= 1
             elif top[0] == ")":
                 close(i)
@@ -2687,6 +2710,11 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         # -Command`, `cmd /c` and `[scriptblock]::Create` run a string, and
         # a string is read where a carrier runs it, not where it is written.
         for program in _bash_patterns._ps_carrier_program_bodies(raw, pair):
+            out.extend(_ps_secret_read_targets(program, _depth + 1))
+        # A program piped to pwsh or powershell (DEF-2079): a here-string's
+        # `Get-Content .env` piped that way met no read here, and the old
+        # split above reads only the single-quoted spelling's first word.
+        for program in _bash_patterns.ps_piped_ps_programs(raw, pair):
             out.extend(_ps_secret_read_targets(program, _depth + 1))
     # The PowerShell twin of the Bash leg's effect read (§C52, DEF-796).
     if _depth == 0:
@@ -3872,12 +3900,14 @@ def _ps_dangerous_reason_here(
             reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
             if reason:
                 return reason
-        # A PowerShell program a Start-Process of powershell or pwsh carries
-        # in its argument list (DEF-3011) meets these same tiers, one level
-        # down, from each directory its statement may run in (the cmdlet
-        # starts it in the current location); its bash twin is among the
-        # programs above.
-        for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+        # A PowerShell program another PowerShell runs -- carried by a
+        # Start-Process of powershell or pwsh (DEF-3011) or piped to one
+        # (DEF-2079: the drive root's delete piped to `pwsh -Command -` was a
+        # plain allow beside its walled direct form) -- meets these same
+        # tiers, one level down, from each directory its statement may run
+        # in (each starts in the current location); its bash twin is among
+        # the programs above.
+        for program, bases in _bash_patterns.placed_ps_child_ps_programs(
                 raw, str(root) if root else None, cwd or root):
             places: list[Path | None] = [Path(b) for b in bases if b is not None]
             for base in places or [cwd]:
