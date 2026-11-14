@@ -2251,7 +2251,7 @@ spellings of them are work:
   draw it; a glob that reaches a protected zone meets that zone's wall first,
   since the zone checks answer ahead of the nudge), a secret read is judged on the literal part of its operand, and a
   force push to an unresolvable remote draws its nudge
-  (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
+  (`TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
   The PowerShell tool is stricter by one declared exception (2026-11-10): a
   forced recursive `Remove-Item` of a variable with no literal binding, and a
   piped sweep of one (`gci $f -Recurse | ri -r`), forced or not, stay the wall
@@ -2341,6 +2341,16 @@ spellings of them are work:
   head's double-quoted argument (`echo "$(eval '...')"`) is read, but one
   spelling whose program's quotes collide with the argument's goes unread (1
   of 38 reaching rows on the differential's wrappers).
+- **The other comment readers, by ruling (2026-11-14).** Beside the masker,
+  the readers that find where a comment begins keep rules of their own, the
+  secret-read leg's word reader aside (it blanks a comment by the masker's
+  rule before it splits words), and that is a declared limit of the class,
+  driven where it reaches a kept job or a zone: the zone wall's span cutter
+  ends a word at a carriage return or an escaped blank before a `#`, which
+  bash reads as the word's text, so a protected target after one
+  (`cp a\ #x .claude/settings.json`) is let through to the after-check,
+  pinned by
+  `tests/test_write_guard.py::TestTwoOperandReadersCutCommentsAsTheMaskerDoes::test_the_zone_cutter_lets_a_target_after_a_glued_hash_through`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
