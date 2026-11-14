@@ -142,6 +142,10 @@ def _worst_serial_mark() -> float:
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
+    # This entry's bound and clean-checkout's are the census's needed figure plus
+    # 15 minutes, by the ruling on operator call a6ee94 (option B, 2026-11-14), so
+    # neither equals the figure the census derives from its entry; whether later
+    # raises add the 15 has not been ruled.
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs

@@ -94,10 +94,9 @@ REPORT_S = 30.0
 #: green runs, 2026-11-14, scripts/ci_job_bounds_census.py; 88.1 on 2026-11-12,
 #: 86.6 on 2026-11-11, 70.7 on 2026-11-08, and 48.2 over ten to 2026-10-16, when
 #: this read 60), which tests/test_ci_job_bounds.py holds against that worst's
-#: dated figure. Keyed on
-#: the holder's own age, never on this waiter's wait: the lock is not fair, and a
-#: waiter that lost several races must not be told to end a healthy holder two
-#: minutes into its line.
+#: dated figure. Keyed on the holder's own age, never on this waiter's wait: the
+#: lock is not fair, and a waiter that lost several races must not be told to end
+#: a healthy holder two minutes into its line.
 WAIT_CEILING_MIN = 95
 #: Options under which configure runs but no test does: the never-ran count's
 #: collect-only set, plus ``--help`` and ``--markers``.
