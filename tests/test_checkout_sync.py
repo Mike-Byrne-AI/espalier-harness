@@ -29,6 +29,7 @@ import pytest
 from tests._git_oracle import _git_env
 from tests._hook_spawn import not_a_budget_miss
 from tests._interpreter_hosts import HOOK_PYTHON
+from tests._platform_standin import as_os
 from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -2139,19 +2140,16 @@ class TestAnUnmeasuredHostComparesNoStart:
             assert cs._pid_reused(me, {"procStart": _JANUARY}, cs.proc_starts([me]) or {}) is False
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="the start is compared on macOS alone, where it is measured")
-class TestAReusedPidReadsGoneOffWindows:
-    """A record names its process by pid and by start: the registry's
-    ``procStart``, a worktree lock's ``start`` tail. On macOS the start is
-    ``ps -o lstart=`` text, which Claude Code reads under LC_ALL=C TZ=UTC
-    (2.1.321), so a pid another process now holds reads as that process, not
-    as the session that crashed. A start that cannot be read keeps the record."""
+class TestTheStartIsReadWhereTheHarnessReadsDarwin:
+    """The one harness read that splits macOS from Linux, and the node that
+    proves the ``target_os/macos`` cell of ``tests/_axis_registry.py``:
+    ``proc_starts`` asks ``ps`` for starts only where the harness reads
+    ``darwin``. The reader is stubbed, so the node runs and passes on every
+    host, and the writer's form is pinned on the Linux and Windows cells too."""
 
-    @pytest.fixture(autouse=True)
-    def _a_loaded_runner_still_reads(self, cs, monkeypatch):
-        monkeypatch.setattr(cs, "PROC_START_S", scaled(30), raising=False)  # raising=False: the guards run at the base
-
-    def test_the_start_reader_asks_once_in_the_writers_form(self, cs, monkeypatch):
+    @pytest.mark.parametrize("target_os", ["linux", "macos", "windows"])
+    def test_the_start_reader_asks_once_in_the_writers_form(self, cs, monkeypatch, target_os):
+        as_os(monkeypatch, target_os, os_name=False)
         seen = []
 
         def ps(argv, *, cwd, timeout, env=None):
@@ -2162,6 +2160,9 @@ class TestAReusedPidReadsGoneOffWindows:
                 argv, 0, " 7103 Sat Nov  7 02:09:01 2026    \n 8671 Sat Nov  7 02:17:28 2026    \nnoise\n", "")
 
         monkeypatch.setattr(cs, "run", ps)
+        if target_os != "macos":
+            assert cs.proc_starts([8671, 7103]) is None and seen == [], f"a start was read as {target_os}"
+            return
         assert cs.proc_starts([8671, 7103, 60000, 8671]) == {
             7103: "Sat Nov  7 02:09:01 2026", 8671: "Sat Nov  7 02:17:28 2026"}
         [(argv, cwd, timeout, env)] = seen
@@ -2178,6 +2179,19 @@ class TestAReusedPidReadsGoneOffWindows:
         assert cs.proc_starts([999999]) == {}, "ps listed none: no start to compare"
         monkeypatch.setattr(cs, "run", _no_ps)
         assert cs.proc_starts([7103]) is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the start is compared on macOS alone, where it is measured")
+class TestAReusedPidReadsGoneOffWindows:
+    """A record names its process by pid and by start: the registry's
+    ``procStart``, a worktree lock's ``start`` tail. On macOS the start is
+    ``ps -o lstart=`` text, which Claude Code reads under LC_ALL=C TZ=UTC
+    (2.1.321), so a pid another process now holds reads as that process, not
+    as the session that crashed. A start that cannot be read keeps the record."""
+
+    @pytest.fixture(autouse=True)
+    def _a_loaded_runner_still_reads(self, cs, monkeypatch):
+        monkeypatch.setattr(cs, "PROC_START_S", scaled(30), raising=False)  # raising=False: the guards run at the base
 
     def test_a_record_naming_another_start_is_reused_and_its_own_is_not(self, cs):
         me = os.getpid()
