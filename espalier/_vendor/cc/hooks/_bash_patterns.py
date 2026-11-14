@@ -6721,9 +6721,15 @@ def _redirect_words(tok: str, *, powershell: bool = False) -> int:
     operand, and the redirect `>x`. `_operands` reads the pair inline, on
     every Bash call's path, and stays Bash's reading; its one PowerShell
     caller that met a `*>` (find's roots, `_find_delete_roots`) reads
-    through `_ps_redirect_free` under its own flag."""
-    if powershell and tok.startswith("*>"):
-        tok = tok[1:]
+    through `_ps_redirect_free` under its own flag. PowerShell's streams
+    are 1 to 6 and `*`: there `0>`, `7>x` and `10>x` are words, not
+    redirects (the 5.1 parser; DEF-5108's second failure-mode review drove
+    `Remove-Item 7>x,cc/x.json` out of its zone deny)."""
+    if powershell:
+        if tok.startswith("*>"):
+            tok = tok[1:]
+        elif tok[:1].isdigit() and (tok[:1] not in "123456" or tok[1:2].isdigit()):
+            return 0
     if not _REDIRECT_TOKEN_RE.match(tok):
         return 0
     # a word count, written as `_redirect_at`'s is in write_guard
@@ -6768,6 +6774,23 @@ def _ps_success_stream_to_file(tok: str) -> bool:
     tests, no pattern: the enumerator reader asks it per token."""
     head = tok[1:] if tok[:1] in ("1", "*") else tok
     return head.startswith(">") and not head.lstrip(">").startswith("&")
+
+
+def _ps_hands_the_pipe_nothing(span: str, tokens: list[str]) -> bool:
+    """True when a listing's argument span (``tokens``, its quote-aware
+    split) sends the listing's success stream to a file, so the pipe it
+    feeds gets nothing (`_ps_success_stream_to_file`). Never where the
+    span holds a group, a block or a backtick, each of which can hold a
+    `>` that is not the listing's redirect (``-Exclude a` >x`` is one
+    word to PowerShell: DEF-5108's second failure-mode review drove a
+    zone parent's listing out of its deny that way); nor for a bare
+    operator before the word `1`, a merge the scan half spaced out
+    (`*>&1` read as `*> 1`, `powershell_scan_pair`), which passes every
+    object. Both are the direction that keeps the roots."""
+    if "(" in span or "{" in span or "`" in span:
+        return False
+    return any(_ps_success_stream_to_file(t) and not (t.endswith(">") and tokens[i + 1:i + 2] == ["1"])
+               for i, t in enumerate(tokens))
 
 #: The `&` of a redirect operator: any `&` glued to the RIGHT of `<`/`>` (the
 #: descriptor forms `2>&1`, `>&2`, `<&0`, `>&-`, and bash's csh-style
@@ -14327,6 +14350,11 @@ _PS_ENUM_VALUED = (
     "stream", "credential", "erroraction", "errorvariable", "informationaction",
     "informationvariable", "outvariable", "outbuffer", "pipelinevariable",
     "progressaction", "warningaction", "warningvariable",
+    # the common parameters' aliases, as `_PS_REMOVE_VALUED` carries them:
+    # read as unknown switches, `-ea SilentlyContinue` left its value as the
+    # positional filter and a recursive listing of the checkout piped into a
+    # forced remove read as narrowed (DEF-5108's second code review, driven)
+    "ea", "ev", "ia", "iv", "ov", "ob", "pv", "wa", "wv",
 )
 _PS_ENUM_NARROWING = ("filter", "include")
 _PS_ENUM_ROOT_FLAGS = ("path", "literalpath")
@@ -14389,15 +14417,15 @@ def _ps_pipeline_roots(args: str) -> tuple[list[str], bool, bool]:
     narrowed and was allowed, and `gci 2>$null tools -Recurse | ...` read
     the redirect as its root (DEF-5108's reviews, driven through the hook;
     a stderr redirect hands the pipe every object). One that sends the
-    success stream to a file (`_ps_success_stream_to_file`) hands the pipe
-    nothing, so the span reads as ``([], True, False)``: no root, and
-    every caller removes nothing. That reading is taken only where the span
-    holds no group or block, whose own redirect would not be the listing's;
-    there the redirect is read out like any other, the direction that
-    keeps the root."""
+    success stream to a file hands the pipe nothing
+    (`_ps_hands_the_pipe_nothing`, which says where that reading is not
+    taken), so the span reads as ``([], True, False)``: no root, and every
+    caller removes nothing. A caller that hands this reader the scan half
+    meets a merge there spaced out, which that helper reads as passing
+    every object (DEF-5108's second code review: the removal-targets rung
+    read `*>&1` as nothing reaching the pipe)."""
     tokens = _ps_operand_tokens(args)
-    if "(" not in args and "{" not in args and any(
-            _ps_success_stream_to_file(t) for t in tokens):
+    if _ps_hands_the_pipe_nothing(args, tokens):
         return [], True, False
     tokens = _ps_redirect_free(tokens)
     flagged: list[str] = []
@@ -18858,8 +18886,18 @@ def _ps_pipeline_reading(raw: str, m: "re.Match[str] | _CutPipe") -> tuple[list[
         # after a root's trailing native separator reads as escaped and stays
         # on the root (DEF-1170's sibling, a grouped tracked listing of a
         # protected directory drew no zone deny)
+        span = _strip_span_tail(args, powershell=True)
+        # and this tool's redirects are read first, as `_ps_pipeline_roots`
+        # reads them: the Bash readers know no `*` stream, so `git ls-files
+        # *>&1 | Remove-Item -Force` read the merge as a narrowing pathspec
+        # while every tracked file reached the remove (DEF-5108's second
+        # failure-mode review, driven); a success-stream redirect hands the
+        # pipe nothing
+        tokens = _OPERAND_TOKEN_RE.findall(span)
+        if _ps_hands_the_pipe_nothing(span, tokens):
+            return [], True, False, False
         roots, narrowed, files_only, walks = _bash_pipeline_roots(
-            head, _strip_span_tail(args, powershell=True))
+            head, " ".join(_ps_redirect_free(tokens)))
         # this tool's normalisation, as `_ps_find_sweeps` applies it
         return [_ps_unquote(r).replace("\\", "/") for r in roots], narrowed, files_only, walks
     roots, narrowed, files_only = _ps_pipeline_roots(args)

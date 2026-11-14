@@ -13522,12 +13522,30 @@ def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subproce
     )
 
 
+_GIT_REPO_SELECTORS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _git_free_env() -> dict[str, str]:
+    """The environment of a real shell a redirect row starts: the startup
+    cache its own, and every repo-selecting git variable stripped, so a git
+    command the row runs reaches its scratch repository and nothing else
+    (exported by a git hook or a wrapper, `GIT_DIR` and `GIT_WORK_TREE` would
+    point the row's clean at the real checkout: DEF-5108's second
+    failure-mode review)."""
+    env = private_cache_env({k: v for k, v in os.environ.items() if k not in _GIT_REPO_SELECTORS})
+    assert env is not None and not any(k in env for k in _GIT_REPO_SELECTORS)
+    return env
+
+
 def _git_seed_repo(work: Path, *tracked: str) -> None:
-    """A git repository at ``work`` with ``tracked`` committed, every
-    repo-selecting variable stripped so git cannot reach an enclosing one;
-    the toplevel is read back before a row runs a git command there."""
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    """A git repository at ``work`` with ``tracked`` committed, in the
+    environment the row's shell gets (`_git_free_env`), so git cannot reach
+    an enclosing one; the toplevel is read back before a row runs a git
+    command there."""
+    env = _git_free_env()
     for args in (["init", "-q"], ["add", *tracked],
                  ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "seed"]):
         subprocess.run(["git", "-C", str(work), *args], check=True, capture_output=True, env=env)
@@ -13566,9 +13584,14 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
     A merge written before the operand (`2>&1`) ended the span at its `&`
     on every reader of the PowerShell pair, now spaced out as on Bash; and
     Remove-Item's switch aliases (`-vb`, `-db`, `-wi`, `-cf`, `-usetx`) took
-    the next token as a value. Every relief row below was refused, walled
-    or bumped at main 0097b9f, and every tightened row allowed or bumped;
-    the controls kept their verdicts. The named users: an operator whose
+    the next token as a value. A second review round found the rest of the
+    class: the listing heads the Bash readers take on this tool, the
+    enumerator's common-parameter aliases, a digit no stream has, a
+    backtick-escaped blank, and the scan half's spaced merge. Every relief
+    row below was refused, walled or bumped at main 0097b9f, and every
+    tightened row allowed or bumped; a row commented with no main verdict
+    holds the verdict it had there (a control, or a reading the fix must
+    keep). The named users: an operator whose
     agent renames or archives a file on the PowerShell tool with stderr sent
     to such a log, and one whose agent cleans a build directory with its
     errors silenced and meets the wall."""
@@ -13733,6 +13756,50 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
     def test_a_listing_of_a_zone_parent_keeps_its_zone_deny(self, cmd, tmp_path):
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="zone blocked")
 
+    # What only looks like a redirect: PowerShell's streams are 1 to 6 and
+    # `*`, and a backtick escapes the blank before a `>`, so each of these
+    # is a word, and its zone deny stands (each held at main; the first
+    # round of this fix read them as redirects and allowed them).
+    @pytest.mark.parametrize("cmd", [
+        "Remove-Item 7>x,cc/x.json",
+        "Remove-Item 0>,cc/x.json",
+        "Remove-Item -Path 9>,tools/cc/hooks/write_guard.py",
+        "Get-ChildItem tools/cc -Recurse -Exclude a` >x | Remove-Item -Recurse -Force",
+    ], ids=["stream7", "stream0", "stream9-path", "backtick-blank"])
+    def test_a_word_that_only_looks_like_a_redirect_keeps_its_zone_deny(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    # The listing heads the Bash readers take on this tool (find, the
+    # tracked listing): their spans are read with this tool's redirects
+    # first, so the `*` stream's merge is no narrowing pathspec (allowed at
+    # main) and a success-stream redirect hands the pipe nothing (find's
+    # walled at main). And the enumerator's common-parameter aliases take
+    # their value (allowed at main: the value read as the filter).
+    @pytest.mark.parametrize("cmd, expect", [
+        pytest.param("git ls-files *>&1 | Remove-Item -Force", "wall", id="tracked-star-merge"),
+        pytest.param("git ls-files -o *>&1 | Remove-Item -Force", "wall", id="untracked-star-merge"),
+        pytest.param("git ls-files *>$null | Remove-Item -Force", "allow", id="tracked-star-null"),
+        pytest.param("git ls-files | Remove-Item -Force", "wall", id="control-tracked"),
+        pytest.param("find build *>$null | Remove-Item -Recurse -Force", "allow", id="find-star-null"),
+        pytest.param("Get-ChildItem . -Recurse -ea SilentlyContinue | ri -r -fo", "wall", id="ea-alias"),
+        pytest.param("Get-ChildItem . -Recurse -ea 0 | ri -r -fo", "wall", id="ea-alias-digit"),
+        pytest.param("Get-ChildItem . -Recurse -ErrorAction SilentlyContinue | ri -r -fo", "wall",
+                     id="control-erroraction"),
+    ])
+    def test_every_listing_head_reads_the_redirect_as_its_tool_does(self, tmp_path, cmd, expect):
+        (tmp_path / "build").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    def test_a_spaced_merge_on_the_scan_half_passes_every_object(self):
+        """The scan half spells `*>&1` as `*> 1`; a reader handed it reads the
+        merge, not a file redirect, and the removal rungs cannot vouch for the
+        piped listing (the first round read it as nothing reaching the pipe,
+        and the recognized-safe rung said yes)."""
+        bp = _bash_patterns_module()
+        assert bp._ps_pipeline_roots(". -Recurse *> 1") == (["."], False, False)
+        assert not bp.powershell_removal_is_recognized_safe(
+            "Get-ChildItem src -Recurse *>&1 | Remove-Item -Recurse -Force")
+
     # find's roots on this tool: the all-streams redirect is no root (it
     # walled the build clean at main), and a zone's parent keeps its deny.
     @pytest.mark.parametrize("cmd, expect", [
@@ -13787,8 +13854,9 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
     # stream went to a file.
     @pytest.mark.parametrize("redirect", [
         "2>$null", "2>&1", "*>&1", "3>&1", "> $null", "1>$null", "*>$null", ">> o.log", "*>> o.log",
+        "2>&1 > $null",
     ], ids=["stderr", "merge", "star-merge", "stream3-merge", "stdout", "stream1", "star", "append",
-            "star-append"])
+            "star-append", "merge-then-null"])
     def test_powershell_passes_the_pipe_what_the_reader_says(self, redirect, tmp_path):
         import shutil
         shell = shutil.which("pwsh") or shutil.which("powershell")
@@ -13802,9 +13870,12 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
             [shell, "-NoProfile", "-NonInteractive", "-Command",
              f"(Get-ChildItem -Filter *.txt {redirect} | Measure-Object).Count"],
             cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=scaled(30), env=private_cache_env())
-        token = redirect.split()[0]
-        expected = "0" if _bash_patterns_module()._ps_success_stream_to_file(token) else "3"
+            errors="replace", timeout=scaled(30), env=_git_free_env())
+        # the listing reader's own reading of the same span: no root is
+        # nothing reaching the pipe
+        roots, _narrowed, _files_only = _bash_patterns_module()._ps_pipeline_roots(
+            f"-Filter *.txt {redirect}")
+        expected = "3" if roots else "0"
         assert proc.stdout.strip().splitlines()[-1:] == [expected], (proc.stdout, proc.stderr)
 
     # The effect reader itself, for each of the row's three arms and the
@@ -13832,8 +13903,10 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
         ("2>", 2, 2), ("2>x", 1, 1), ("2>&1", 1, 1), (">", 2, 2), (">>x", 1, 1),
         ("*>", 0, 2), ("*>>", 0, 2), ("*>x", 0, 1), ("*>&1", 0, 1),
         ("*", 0, 0), ("*.log", 0, 0), ("x", 0, 0), ("'2>x'", 0, 0),
+        ("6>x", 1, 1), ("7>x", 1, 0), ("0>", 2, 0), ("10>x", 1, 0),
     ], ids=["stderr-bare", "stderr", "merge", "stdout-bare", "append", "star-bare", "star-append-bare",
-            "star", "star-merge", "glob", "glob-suffix", "word", "quoted"])
+            "star", "star-merge", "glob", "glob-suffix", "word", "quoted",
+            "stream6", "stream7-a-word", "stream0-a-word", "stream10-a-word"])
     def test_the_redirect_reading_takes_the_star_stream_on_powershell_alone(
             self, token, bash, powershell):
         read = _bash_patterns_module()._redirect_words
@@ -13868,7 +13941,7 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
         (work / ".env.err").write_bytes(b"LOG_DEF_5108\n")
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
                               cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30), env=private_cache_env())
+                              errors="replace", timeout=scaled(30), env=_git_free_env())
         assert {p.name for p in work.iterdir()} == left, (proc.stdout, proc.stderr)
         assert b"LOG_DEF_5108" not in (work / ".env.err").read_bytes()
         if "b.txt" in left:
@@ -13894,7 +13967,7 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
         (work / "sub" / "deep.txt").write_bytes(b"x\n")
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", "git clean -fdx *>$null"],
                               cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30), env=private_cache_env())
+                              errors="replace", timeout=scaled(30), env=_git_free_env())
         assert {p.name for p in work.iterdir()} == {".git", "notes.txt"}, (proc.stdout, proc.stderr)
 
 
