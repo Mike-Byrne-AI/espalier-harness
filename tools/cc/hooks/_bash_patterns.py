@@ -14767,9 +14767,13 @@ def _place_ps_launches(
     offset into ``text`` (`powershell_scan_pair`'s scan of ``command``): the
     directories its statement may run in, read by a cursor over the
     directory chain's statements. The Start-Process placer above and the
-    piped one (DEF-2079) share it."""
+    piped one (DEF-2079) share it. The cursor only moves forward, so the
+    launches are taken in offset order whatever order they arrive in (a
+    merged list of both kinds would otherwise lose a climb, the
+    failure-mode review)."""
     if not launches:
         return
+    launches = sorted(launches, key=lambda launch: launch[0])
     start = cwd or root
     at = Path(start) if start is not None else None
     statements: list[tuple[int, int, tuple[str | None, ...]]] = []
@@ -14841,6 +14845,8 @@ def ps_piped_ps_launches(raw: str, scan: str) -> list[tuple[int, str]]:
     recursive force delete of the drive root piped to `pwsh -Command -` was
     a plain allow while its direct form walled."""
     launches: list[tuple[int, str]] = []
+    if "|" not in raw:
+        return launches    # no pipe, no piped program: every PowerShell call pays this read
     for head, start, pipe, at in _ps_stdin_program_spans(raw, scan):
         if head in _PS_STDIN_SHELL_HEADS:
             launches.extend((at, program) for program

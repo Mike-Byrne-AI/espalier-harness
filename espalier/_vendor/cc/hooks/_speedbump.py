@@ -513,9 +513,9 @@ def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str
     literal stays data. A program the PowerShell tool hands to `bash -c` is
     not read here: the tool-keyed carve-out in the module docstring, kept for
     these three (air, 2026-10-16), whose one exception is CP-DISCARD. A
-    PowerShell program a ``Start-Process`` of powershell or pwsh carries is
-    read beside it, by the same PowerShell twins (DEF-3011). Empty for any
-    other tool."""
+    PowerShell program a ``Start-Process`` of powershell or pwsh carries
+    (DEF-3011), or one piped to either (DEF-2079), is read beside it, by the
+    same PowerShell twins. Empty for any other tool."""
     if tool_name == "Bash":
         return [(text, True) for text in _scan_texts(tool_input)]
     if tool_name == "PowerShell":
@@ -1754,8 +1754,8 @@ def _pred_fetchexec(tool_name: str, tool_input: dict, root: Path, cwd: Path | No
         # The joined scan text, like `_pred_rmrf`'s PowerShell arm: masked, and
         # backtick continuations folded, so `irm ...` + backtick-newline +
         # `| iex` is one statement here too; then the bare pipe continuation.
-        # A program a Start-Process of powershell or pwsh carries is read
-        # beside it (DEF-3011).
+        # A program a Start-Process of powershell or pwsh carries (DEF-3011),
+        # or one piped to either (DEF-2079), is read beside it.
         command = str(tool_input.get("command", ""))
         for text in (_bash_patterns.powershell_scan_text(command), *_ps_started_program_scans(command)):
             cmd = _PIPE_CONTINUATION_RE.sub("| ", text)
@@ -2775,8 +2775,8 @@ def _ps_remove_item_snapshot_candidates(command: str, at: Path) -> list[Path]:
     """The candidate paths `_removal_snapshot_targets` reads from one
     PowerShell command's `Remove-Item` invocations (and aliases), each placed
     in its own statement's directory from ``at``: the command's own, and
-    each program a ``Start-Process`` of powershell or pwsh carries, read from
-    where it starts (DEF-3011)."""
+    each program a ``Start-Process`` of powershell or pwsh carries (DEF-3011)
+    or one is piped (DEF-2079), read from where it starts."""
     candidates: list[Path] = []
     try:
         text, statements = _bash_patterns.powershell_directory_chain(

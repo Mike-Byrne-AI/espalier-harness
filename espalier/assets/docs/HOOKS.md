@@ -1830,8 +1830,8 @@ carriage returns Windows PowerShell hands a native pipe are taken out; the
 CR that ends each element is what keeps a trailing backslash from joining
 the next element to it in the shell, so the each-alone readings are what
 keep that element's verdict. A program piped to a PowerShell shell
-(`| pwsh -Command -`) is re-read in the same readings by the zone and
-remove readers. The opener's redirect, comment and call operator serve
+(`| pwsh -Command -`) is re-read in the same readings by every tier, one
+level down, as its direct `powershell -Command "..."` form is. The opener's redirect, comment and call operator serve
 every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
 head that only begins with a shell's name (`shasum`) and a shell given a
 script operand with no switch before it (`| bash script.sh`) leave the pipe
@@ -1861,10 +1861,9 @@ over. Each consumer reads a CR and a NUL its own way: a POSIX shell drops
 both, as Git Bash does; PowerShell ends a line at a CR and a word at a NUL.
 Where pwsh 7 reads a literal apart from Windows PowerShell 5.1 (`` `e ``,
 `` `u{...} ``) both readings are judged, a `Start-Process` argument
-apart (listed with the limits above). Open gaps, not limits:
+apart (listed with the limits above). Open gap, not a limit:
 a comment that ends in a
-backslash hides the next line from the wall, on both tools; and a program
-piped to `pwsh -Command -` meets no wall.
+backslash hides the next line from the wall, on both tools.
 
 On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
