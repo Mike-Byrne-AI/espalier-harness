@@ -941,6 +941,44 @@ class TestKillSwitchScan:
     def test_absent_settings_no_findings(self, tmp_path):
         assert _integrity.scan_for_kill_switches(tmp_path) == []
 
+    def test_hook_list_arms_are_read_in_the_project_file_alone(self, tmp_path):
+        """DEF-4121: hook lists merge across the user, project and local files
+        (the hooks reference; the local file's merge driven on Claude Code
+        2.1.321), so in the local file an emptied or no-op list removes no
+        project hook. The three hook-list arms are read in the project file
+        alone; disableAllHooks is read in both."""
+        arms = {"hooks": {
+            "PreToolUse": [],
+            "Stop": [{"hooks": []}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "exit 0"}]}],
+        }}
+        claude = self._claude_dir(tmp_path)
+        (claude / "settings.local.json").write_text(json.dumps(arms), encoding="utf-8")
+        assert _integrity.scan_for_kill_switches(tmp_path) == []
+        (claude / "settings.json").write_text(json.dumps(arms), encoding="utf-8")
+        assert _integrity.scan_for_kill_switches(tmp_path) == [
+            ".claude/settings.json: hooks.PreToolUse is an empty list",
+            ".claude/settings.json: hooks.Stop entries all have empty inner hooks list",
+            ".claude/settings.json: hooks.UserPromptSubmit commands are all no-ops",
+        ]
+        (claude / "settings.local.json").write_text(
+            json.dumps({**arms, "disableAllHooks": True}), encoding="utf-8")
+        assert _integrity.scan_for_kill_switches(tmp_path)[-1] == (
+            ".claude/settings.local.json: disableAllHooks: true")
+
+    def test_no_arm_reads_an_event_espalier_does_not_wire(self, tmp_path):
+        """An emptied or no-op list for an event Espalier does not wire neuters
+        no deployed hook, so none of the three arms reads it (the empty list
+        since TP-275 6-A, the other two since DEF-4121's review: a placeholder
+        entry with an empty inner list denied every call)."""
+        claude = self._claude_dir(tmp_path)
+        (claude / "settings.json").write_text(json.dumps({"hooks": {
+            "PreCompact": [],
+            "Notification": [{"matcher": "", "hooks": []}],
+            "SessionEnd": [{"hooks": [{"type": "command", "command": "true"}]}],
+        }}), encoding="utf-8")
+        assert _integrity.scan_for_kill_switches(tmp_path) == []
+
     # ─── TP-3-A: inner-empty hooks ───────────────────────────────────────────
 
     def test_empty_inner_hooks_detected(self, tmp_path):

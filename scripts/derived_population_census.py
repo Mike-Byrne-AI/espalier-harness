@@ -508,13 +508,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "per-row verdicts differ within this file; see the ledger row for DEF-600",
     ),
     "tests/test_ci_guard.py": (
-        2, "1a792343675ac5f5c12ff4ec80c40e83b6ca3522919651141785df9f321e65fe",
+        3, "93d5baf2be98d38bba0d8ffacef9530f8dfa1c6231f6855750d411f73df04f7f",
         "MIXED_WITH_PRIOR_PASS",
         "for-assert row: the prior pass, per-row reason not preserved. comprehension "
         "row (added by DEF-605): derives the EXPECTATION from GOVERNANCE_BLOCKING_HOOKS "
         "while the SUBJECT is ci_guard's mirror -- different sources, so it is not the "
         "population-is-the-subject shape, and set-equality both directions reds on a "
-        "shrink at either end",
+        "shrink at either end. comprehension row (DEF-4121): the settings files read "
+        "from _integrity._SETTINGS_CANDIDATES, with ci_guard's tuple asserted equal to "
+        "them before the verdict loop, so a shrink of either side reds at that list "
+        "equality, and the arms' presence on the project file and absence on the local "
+        "one are asserted apart from the loop",
     ),
     "tests/test_cleanup.py": (
         14, "af4119b58593643b9678e062ba0ab72b00e0b664af5ac10d506d99cf9ee87d8e",

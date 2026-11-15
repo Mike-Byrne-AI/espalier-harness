@@ -280,6 +280,115 @@ class TestConfigGuardBlocking:
         assert not result.stdout.strip()
 
 
+# ── The local file's hook lists merge: no kill-switch there ─────────────
+
+# The scan's three hook-list arms, each as a settings payload carrying it on one
+# governed event.
+_HOOK_LIST_ARMS = {
+    "empty-list": {"hooks": {"PreToolUse": []}},
+    "inner-empty": {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": []}]}},
+    "no-op-commands": {"hooks": {"PreToolUse": [
+        {"matcher": "*", "hooks": [{"type": "command", "command": "true"}]}]}},
+}
+
+_SOURCE_OF = {"settings.json": "project", "settings.local.json": "local"}
+
+
+class TestALocalHookListIsNoKillSwitch:
+    """DEF-4121: Claude Code merges hook lists across the user, project and
+    local files (the hooks reference), so an emptied or no-op list in
+    ``.claude/settings.local.json`` removes no project hook (driven on Claude
+    Code 2.1.321, macOS: each of the three arms in the local file, on
+    UserPromptSubmit and Stop, and the empty list on PreToolUse, left the
+    project file's marker hooks firing; a local marker hook fired beside them,
+    and a local ``disableAllHooks`` silenced both). The scan read the
+    arms in both files, so write_guard refused every call, a Read included,
+    over a local file that unwires nothing, and config_guard refused the local
+    change. In the project file, where ``init`` writes the wiring, each arm
+    still unwires a gate and stays a kill-switch; ``disableAllHooks`` turns
+    every hook off from either file and stays one in both."""
+
+    @staticmethod
+    def _read(root: Path) -> subprocess.CompletedProcess:
+        return _run_hook(
+            "write_guard.py",
+            {"tool_name": "Read", "tool_input": {"file_path": "anything.txt"}},
+            root,
+        )
+
+    @staticmethod
+    def _change(root: Path, name: str) -> subprocess.CompletedProcess:
+        return _run_hook(
+            "config_guard.py",
+            {"hook_event_name": "ConfigChange", "source": _SOURCE_OF[name],
+             "file_path": f".claude/{name}"},
+            root,
+        )
+
+    @pytest.mark.parametrize("arm", sorted(_HOOK_LIST_ARMS))
+    def test_write_guard_lets_a_read_through_over_the_local_list(self, tmp_path, arm):
+        _write_settings(tmp_path, _HOOK_LIST_ARMS[arm], name="settings.local.json")
+        result = self._read(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert not result.stdout.strip(), (
+            f"the {arm} arm in settings.local.json removes no project hook (hook "
+            f"lists merge), yet write_guard refused a Read: {result.stdout}"
+        )
+
+    @pytest.mark.parametrize("arm", sorted(_HOOK_LIST_ARMS))
+    def test_write_guard_refuses_the_same_list_in_the_project_file(self, tmp_path, arm):
+        _write_settings(tmp_path, _HOOK_LIST_ARMS[arm])
+        data = json.loads(self._read(tmp_path).stdout)
+        hso = data["hookSpecificOutput"]
+        assert hso["permissionDecision"] == "deny"
+        assert ".claude/settings.json: hooks.PreToolUse" in hso["permissionDecisionReason"]
+
+    @pytest.mark.parametrize("arm", sorted(_HOOK_LIST_ARMS))
+    def test_config_guard_lets_the_local_change_through(self, tmp_path, arm):
+        _write_settings(tmp_path, _HOOK_LIST_ARMS[arm], name="settings.local.json")
+        result = self._change(tmp_path, "settings.local.json")
+        assert result.returncode == 0, result.stderr
+        assert not result.stdout.strip(), (
+            f"config_guard refused a local change carrying the {arm} arm, which "
+            f"unwires nothing: {result.stdout}"
+        )
+
+    @pytest.mark.parametrize("arm", sorted(_HOOK_LIST_ARMS))
+    def test_config_guard_refuses_the_same_change_to_the_project_file(self, tmp_path, arm):
+        _write_settings(tmp_path, _HOOK_LIST_ARMS[arm])
+        data = json.loads(self._change(tmp_path, "settings.json").stdout)
+        assert data.get("decision") == "block"
+
+    def test_the_project_file_reached_through_a_symlink_keeps_its_arms(self, tmp_path, monkeypatch):
+        """config_guard resolves the payload's path before it labels the file,
+        so a project file that is a symlink is read under its target's path. It
+        still takes the project label and its arms are read, with the
+        inventory fallback stubbed to find nothing."""
+        import importlib.util
+        root = tmp_path.resolve()
+        real = _write_settings(root, _HOOK_LIST_ARMS["empty-list"], name="real-settings.json")
+        try:
+            (root / ".claude" / "settings.json").symlink_to(real)
+        except (OSError, NotImplementedError):
+            pytest.skip("this host cannot make a symlink")
+        spec = importlib.util.spec_from_file_location(
+            "_config_guard_def4121", HOOKS_DIR / "config_guard.py")
+        cg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cg)
+        monkeypatch.setattr(cg._integrity, "scan_for_kill_switches", lambda _root, **_kw: [])
+        assert cg._scan_payload(".claude/settings.json", root) == [
+            ".claude/settings.json: hooks.PreToolUse is an empty list"]
+
+    def test_disable_all_hooks_in_the_local_file_is_still_refused(self, tmp_path):
+        _write_settings(tmp_path, {"disableAllHooks": True}, name="settings.local.json")
+        hso = json.loads(self._read(tmp_path).stdout)["hookSpecificOutput"]
+        assert hso["permissionDecision"] == "deny"
+        assert ".claude/settings.local.json: disableAllHooks: true" in hso["permissionDecisionReason"]
+        data = json.loads(self._change(tmp_path, "settings.local.json").stdout)
+        assert data.get("decision") == "block"
+        assert "disableAllHooks" in data.get("reason", "")
+
+
 # ── ConfigChange: policy_settings is audit-only ─────────────────────────
 
 

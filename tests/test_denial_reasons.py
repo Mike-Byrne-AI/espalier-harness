@@ -666,7 +666,7 @@ class TestKillSwitchRemediation:
 
     def test_do_line_names_the_fired_setting(self) -> None:
         rendered = _denial_reasons.KILL_SWITCH_DETECTED.format(
-            context=" in local change", findings=".claude/settings.local.json: hooks.PreToolUse is an empty list",
+            context=" in project change", findings=".claude/settings.json: hooks.PreToolUse is an empty list",
             ci_clause=_denial_reasons.KILL_SWITCH_CI_GATE_ABSENT,
         )
         do_line = next(

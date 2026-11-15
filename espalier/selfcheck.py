@@ -413,8 +413,10 @@ def check_upstream_parity(repo_root: Path) -> CheckResult:
 # tools/cc/hooks/_integrity.py (espalier cannot import the hook module —
 # restated here). C-3 reads the LIVE file (possibly gitignored), which
 # ci_guard.scan_committed_kill_switches cannot see. C-3 deliberately covers the
-# VALUE-marker kill-switch (disableAllHooks); the structural empty/no-op-hooks
-# markers _integrity._find_kill_switches also detects are committed-config
+# VALUE-marker kill-switch (disableAllHooks), in either file; the structural
+# empty/no-op-hooks markers _integrity._find_kill_switches also detects, in the
+# project file alone (hook lists merge across the settings files, so a local
+# file's emptied list unwires nothing, DEF-4121), are committed-config
 # tampering owned by ci_guard + integrity, not the live-absence check. A
 # bypassPermissions default is not a kill-switch (DEF-1108: hooks still run and
 # deny in bypass mode), so C-3 does not fail on it. The parity test
