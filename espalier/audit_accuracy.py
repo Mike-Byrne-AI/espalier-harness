@@ -559,8 +559,18 @@ def audit_accuracy(
     doc_globs: list[str] | None = None,
     dispatch: LLMDispatch | None = None,
     estimated_cost_per_llm_call_usd: float = 0.02,
+    include_freshness: bool = True,
 ) -> AuditReport:
-    """Run claim extraction + verification across the doc surface."""
+    """Run claim extraction + verification across the doc surface.
+
+    ``include_freshness`` (default True) folds in the freshness verdicts,
+    which come from the gitignored per-install state cache and so read
+    differently on two checkouts of one commit: one rebuilt its cache, one
+    did not, and a fresh clone has none. False audits the claims alone. It
+    is not a product switch: it is meant for a gate that must read alike on
+    every checkout of one commit (the source repo's drift-gate test is one),
+    which leaves freshness to ``espalier freshness check``, the gate that
+    recomputes drift from the commit."""
     repo_root = repo_root.resolve()
     started_at = datetime.now(timezone.utc)
     t0 = time.monotonic()
@@ -593,7 +603,8 @@ def audit_accuracy(
         ):
             llm_calls += 1
 
-    verdicts.extend(_emit_freshness_verdicts(repo_root, doc_globs))
+    if include_freshness:
+        verdicts.extend(_emit_freshness_verdicts(repo_root, doc_globs))
 
     passed = sum(1 for v in verdicts if v.verdict == VERDICT_PASS)
     failed = sum(1 for v in verdicts if v.verdict == VERDICT_FAIL)
