@@ -13570,8 +13570,11 @@ if not set(_PS_STDIN_DISPATCH.values()) <= set(_STDIN_PROGRAM_WRITE_RES):
 #: which then reads as the pipe's program: the over-capture direction.
 #: PowerShell 5.1 has no input redirect (`<` is reserved), so none is taken.
 #: A SOURCE string, compiled by `_ps_interp_stdin_re` on the first scan that
-#: holds a pipe (DEF-3080, air f65c82), so no Bash call and no pipe-less
-#: PowerShell call compiles it.
+#: holds a pipe (DEF-3080, air f65c82), so a call with no pipe in its
+#: PowerShell text never compiles it (a Bash call that hands PowerShell a
+#: piped program does; `tests/test_guard_compile_ratchet.py` pins the gate).
+#: Its case rule is the compile's `re.IGNORECASE`, not the source's: a
+#: pattern that composes this string carries that flag too.
 _PS_INTERP_STDIN = (
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(" + _PS_STDIN_HEAD_ALTERNATION + r")"
     + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
