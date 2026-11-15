@@ -27,6 +27,7 @@
 .claude/commands/status.md
 .claude/commands/strengthen.md
 .claude/commands/test-this.md
+.claude/commands/worker-tick.md
 .claude/skills/adversarial/SKILL.md
 .claude/skills/analyze/SKILL.md
 .claude/skills/arch-check/SKILL.md

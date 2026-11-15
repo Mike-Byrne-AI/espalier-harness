@@ -28,10 +28,15 @@ compiles nothing), each compiling its bulk at import as the real tree does, so
 a reading the live row drops on its way to the check reds there.
 
 The count's boundary: what the two pattern modules and ``write_guard`` compile
-as they import, and what the loader compiles. A pattern compiled later is
-outside it: on first use behind a cache (pinned by name below, so a new one
-owes the per-call figure of the kind that reaches it), or inside a check at
-call time (the reader never judges a call). The fragment ceiling reads
+as they import, and what the loader compiles; and, for the ceiling alone, each
+pattern compiled on first use behind a cache, which the census calls and sums
+(``summed_chars``): a pattern moved behind an accessor is still compiled by
+every call that opens its check, so it counts against the same ceiling
+(DEF-4122, under the dispatcher's 0b0d58; ruled in-lane by 176a91). The floor
+reads the import figure alone, PINNED being an import reading. The accessors
+are still pinned by name below, so a new one owes the per-call figure of the
+kind that reaches it. A pattern compiled inside a check at call time stays
+outside (the reader never judges a call). The fragment ceiling reads
 ``_CMD_POS_NO_VERB`` alone, so a growth in ``_CMD_POS_VERB_PREFIX`` meets only
 the character ceiling.
 
@@ -99,7 +104,8 @@ CAAE022 = {"loader_ran": False, "fragment_found": True, "hooks_patterns": 288, "
            "loader_patterns": 0, "fragment_len": 4_301, "embedding_patterns": 60}
 
 #: The pattern modules' functions that compile a pattern on first use behind a
-#: cache, by file: outside the count, each one's per-call cost is its kind's.
+#: cache, by file: inside the ceiling's sum, and each one's per-call cost is its
+#: kind's.
 FIRST_USE_COMPILES = {"_bash_patterns.py": {"_carrier_fed_remove_re", "_powershell_head_re"}}
 _PATTERN_MODULES = ("_bash_patterns.py", "_speedbump.py", "write_guard.py")
 
@@ -147,8 +153,10 @@ def breaches(figures: dict) -> list[str]:
                      "compiles outside this count, so its lane owes the per-call figure of each kind "
                      "that reaches it")
     chars = figures.get("hooks_chars") or 0
-    if chars > CEILING_COMPILED_CHARS:
-        found.append(f"the pattern path compiles {chars:,} characters, past the ceiling of "
+    summed = max(chars, figures.get("summed_chars") or 0)
+    if summed > CEILING_COMPILED_CHARS:
+        with_first_use = f" at import and load and {summed:,} with its first-use patterns" if summed > chars else ""
+        found.append(f"the pattern path compiles {chars:,} characters{with_first_use}, past the ceiling of "
                      f"{CEILING_COMPILED_CHARS:,}")
     elif chars < FLOOR_COMPILED_CHARS:
         found.append(f"the pattern path compiles {chars:,} characters, under the floor of "
@@ -291,6 +299,17 @@ class TestWhatTheLineCatches:
         two = _grown(chars=200 * PINNED["fragment_copies"], fragment=200)
         assert breaches(two) == ["_CMD_POS_NO_VERB is 1,780 characters, past the ceiling of 1,750"]
 
+    def test_first_use_weight_counts_against_the_same_ceiling(self):
+        """The import figure in the band, the first-use patterns on top of it:
+        the sum reds one past the ceiling and holds at it."""
+        assert breaches({**BASE, "summed_chars": CEILING_COMPILED_CHARS}) == []
+        assert breaches({**BASE, "summed_chars": CEILING_COMPILED_CHARS + 1}) == [
+            "the pattern path compiles 206,695 characters at import and load and 228,001 with its first-use "
+            "patterns, past the ceiling of 228,000"]
+        # the floor stays on the import figure: first-use weight cannot lift a low one
+        low = {**BASE, "hooks_chars": FLOOR_COMPILED_CHARS - 1, "summed_chars": BASE["hooks_chars"]}
+        assert len(breaches(low)) == 1 and "under the floor of 186,000" in breaches(low)[0]
+
     def test_thirteen_more_copies_of_the_fragment_pass_and_the_fourteenth_reds(self):
         frag = BASE["fragment_len"]
         assert breaches(_grown(chars=13 * frag)) == []
@@ -367,6 +386,21 @@ class TestTheLiveFigure:
         assert got.problems == ["write_guard._load_the_pattern_path compiled no pattern of its own, so its compiles "
                                 "moved to import or were dropped; read the per-call figure either way"], got.problems
 
+    def test_a_grown_first_use_pattern_reds_though_the_imports_sit_in_the_band(self, tmp_path):
+        # The pinned fragment, 130 copies at import and one by the loader
+        # (206,980 characters, in the band), and an accessor compiling 25,000
+        # more on first use: 231,980 summed, past the ceiling.
+        accessor = ("import functools\n_GROWN = 'g' * 25_000\n\n\n"
+                    "@functools.lru_cache(maxsize=1)\ndef _grown_re():\n    return re.compile(_GROWN)\n")
+        scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_580) + "_BULK = re.compile(_CMD_POS_NO_VERB * 130)\n"
+                              + accessor, loader_body="re.compile(_bash_patterns._CMD_POS_NO_VERB)")
+        with pytest.raises(RatchetBreach) as caught:
+            _assert_holds(tmp_path, scratch)
+        got = caught.value
+        assert (got.figures["hooks_chars"], got.figures["summed_chars"]) == (206_980, 231_980), got.figures
+        assert got.problems == ["the pattern path compiles 206,980 characters at import and load and 231,980 with "
+                                "its first-use patterns, past the ceiling of 228,000"], got.problems
+
     def test_a_tree_that_compiles_nothing_is_read_as_no_pattern_and_reds(self, tmp_path):
         scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_580), loader_body="pass")
         with pytest.raises(RatchetBreach) as caught:
@@ -382,8 +416,9 @@ class TestTheFirstUseBoundary:
     def test_the_first_use_compiles_are_the_named_ones(self):
         got = first_use_compiles(HOOKS)
         assert got == FIRST_USE_COMPILES, (
-            f"read {got!r}: a pattern compiled on first use behind a cache is outside the census's count, so "
-            "its lane owes the per-call figure of each kind that reaches it (scripts/guard_cost_census.py "
+            f"read {got!r}: a pattern compiled on first use behind a cache counts against the ceiling alone "
+            "(the census's summed_chars) and is compiled by every call that opens its check, so its lane owes "
+            "the per-call figure of each kind that reaches it (scripts/guard_cost_census.py "
             "--calls 30, at the lane's head and with --at origin/main) and names it in FIRST_USE_COMPILES")
 
     def test_a_cached_compile_is_read_and_an_uncached_or_compile_free_one_is_not(self, tmp_path):

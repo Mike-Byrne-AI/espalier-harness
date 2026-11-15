@@ -31,6 +31,7 @@ needed at session start.
 /read-summary        Dump the live working-summary doc (cc/_working_summary.md) -- always-current session-resume picture; --session/--list read the per-session archive
 /recall <topic>      Recall the most relevant accumulated project judgment for a topic (up to four candidates, two rankers alternating, caller picks; suppresses only out-of-vocabulary queries)
 /inbox               The mail the other machines left on origin (bodies; the banner's Mail: line shows headlines), the live claims, the dispatcher's assignments, the board (one live read before stating state), or one message sent -- on where `git config espalier.machine` names this clone
+/worker-tick         One tick of a worker seat's loop (/loop 10m /worker-tick): the seat driver prints the seat's tick, composed from its checkout at every tick, and the session carries it out
 /status              Harness state in 10 lines
 /handoff             End-of-session: write the Session Log row, save blueprint, push the lane once
 ```

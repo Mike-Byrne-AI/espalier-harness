@@ -1163,6 +1163,22 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # struck TP-474 section-3 row carries it, and the three live citing rows (DEF-1157,
         # DEF-3002, DEF-1104) were re-keyed through the verb to the lanes and landing date.
         "TP-474",
+        # Ten joined 2026-11-15 when twelve LANDED root packs retired to Done/ on the
+        # operator's ruling B of the pack-lifecycle call (95db13, ack d94677; DEF-4048
+        # struck): the struck rows keep each id in their closing text and PRIOR TEXT
+        # (DEF-648 and DEF-841 for TP-450; the struck TP-475 section-3 row; DEF-4029 and
+        # DEF-4034 to DEF-4056 and DEF-5024 for the multi-seat children; DEF-4052, DEF-674
+        # and the struck TP-706 section-3 row for TP-704; DEF-4048's own PRIOR TEXT). The
+        # four live citing rows (DEF-4039, DEF-4102, DEF-5103, DEF-5104) were re-keyed
+        # through the verb to the packs' titles, and the TP-703 section-3 row by hand.
+        # TP-703e and TP-703g left the live file with that row, so neither is here.
+        "TP-450", "TP-475", "TP-703a", "TP-703b", "TP-703c", "TP-703d", "TP-703f",
+        "TP-703i", "TP-703j", "TP-704",
+        # Joined 2026-11-15, the same ruling's last pack: TP-707 stayed at the root until
+        # its one live citing row, DEF-4122, was struck (#653). The struck rows keep the id
+        # (DEF-4122 and DEF-4048 in their closing text, and the struck TP-707 section-3
+        # row); no live row cites it, so nothing was re-keyed.
+        "TP-707",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,

@@ -341,7 +341,13 @@ seven days again.
    `CronList` and note the id of every job that is the seat's loop: recurring,
    listed as running every `<N>` minutes, and its listed prompt, less the
    trailing ellipsis, a prefix of `<prompt>`. `CronList` shortens a long
-   prompt, so the prompt comes from the brief, never from the listing.
+   prompt, so the prompt comes from the brief, never from the listing. On a
+   worker seat a job whose listed prompt, read the same way, is a prefix of
+   what `python tools/cc/seat.py tick <seat>` prints is its loop too: one
+   started before the worker's loop line named its command carries the tick
+   itself, and step 3 re-creates it from the line. Where that verb refuses,
+   the line's prompt alone matches, and a loop only the tick would have found
+   reads as no match, reported as below.
 3. Where at least one job matches, `CronCreate` with `cron` `*/<N> * * * *`,
    `prompt` the loop line's text after `/loop <N>m ` exactly, and `recurring`
    true, the spelling `/loop` itself uses; call `CronList` and see the new id;
@@ -362,18 +368,23 @@ a reader outside the window learns it.
 
 The new id is not the old one: step 7 writes it where the goal snapshot names
 the loop, and a seat in a linked worktree has no goal step (the preamble), so
-it writes none. The brief is composed from this checkout, so a tick changed
-here since the loop started takes effect at this re-create, unless the change
-moved the interval or the opening step 2 matches on: that reads as no match
-and is reported as above. This runs before step 8, whose verb arms the clear:
-the loop the next window keeps is the one this step left.
+it writes none. Each loop line names a command (`/worker-tick`,
+`/inbox board`) whose text is read at every tick, so a tick changed here
+reaches the loop at its next tick, with no re-create; a change to the line
+itself (its interval or its command) reads as no match and is reported as
+above. This runs before step 8, whose verb arms the clear: the loop the next
+window keeps is the one this step left.
 
 <!-- espalier:self-host-only -->
 On this repository the step is `DEF-4119`'s fix, as the operator ruled it
 (call 6d8d93, option A, ack 6b40aa) and the dispatcher amended its order and
 match (ack 7023cb): the handoff alone re-creates the loop, so a seat that goes
 seven days without a handoff loses it. air-work's loop a7691fb6, created
-2026-11-07, expired that way on 2026-11-14.
+2026-11-07, expired that way on 2026-11-14. Since `DEF-5111`'s fix (the
+operator's ruling of 2026-11-15) a worker's loop line is
+`/loop 10m /worker-tick`, so each worker seat's first handoff after that
+merge finds its loop by the tick clause in step 2 and re-creates it from the
+new line.
 <!-- /espalier:self-host-only -->
 
 ## 6. Refresh the working-summary doc

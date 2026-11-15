@@ -123,7 +123,7 @@ re-derived mechanically by the Reach oracle below) found:
   protection on GitHub) and 35 prose, comments and strings that would read false.
 
 The tax is still accruing: the newest line scan was written in `TP-704`'s lane "since the
-3.10 floor has no tomllib" (`task-packs/TP-704-the-threshold-handoff.md`), and
+3.10 floor has no tomllib" (`task-packs/Done/TP-704-the-threshold-handoff.md`), and
 `espalier.toml`'s `[id_blocks]` comment pins that table to one inline row per seat because
 its reader is a line scan for the same reason. `docs/CONVENTIONS.md`'s section "`tomllib`
 import goes through `espalier._compat`" says dropping 3.10 "is a one-line edit in
@@ -252,7 +252,7 @@ the required status checks on `main` (measured 2026-11-04:
   executing seat's call against the gate's own tests, not a requirement here.
 - **The record surfaces.** `CHANGELOG.md`'s history, `docs/session-archive.md`,
   `memory/CONVERGENCE_LEDGER.md`, the ledger rows' prior text (`DEF-4032` names the
-  `clean-checkout (3.10)` leg; `TP-704`'s sentence), the session-log rows: records, not
+  `clean-checkout (3.10)` leg; the threshold-handoff pack's sentence), the session-log rows: records, not
   edited (Core Rule 13; classify against
   `tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS` before counting a stale
   "3.10" as a defect). The convergence ledger's never-executed 3.10 path closes at its next

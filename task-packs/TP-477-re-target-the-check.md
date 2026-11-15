@@ -111,7 +111,7 @@ Each candidate states: the job without the mechanism, today's target, the propos
 ## Scope (out)
 
 - **The guard's location jobs.** That is `TP-476`.
-- **`§C75`** (every adopter-side stand-down says so). Its fix extends the fail-open voice gate, which is consolidation. That gate has already drawn defects of its own (`TP-475` Motivation), so question 5 comes first: what would observe a silent stand-down as an effect? That is not yet answered, and it gets no candidate until it is.
+- **`§C75`** (every adopter-side stand-down says so). Its fix extends the fail-open voice gate, which is consolidation. That gate has already drawn defects of its own (the know-when-work-is-worth-doing pack Motivation), so question 5 comes first: what would observe a silent stand-down as an effect? That is not yet answered, and it gets no candidate until it is.
 - **`§C37`** (four hand-kept gate populations become derivations). It is already a consolidation move with its own pack-sized unit, and not a re-targeting candidate.
 - **Any change to a class's members by this document.** Children re-route rows; this ROADMAP does not.
 - **A census or generator of command spellings,** for any candidate (`docs/CLASSIFIER_FALSE_POSITIVES.md`).

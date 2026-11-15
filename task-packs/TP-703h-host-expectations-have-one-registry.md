@@ -149,7 +149,7 @@ forgotten. A tier run whose receipt names a `FAILED` line no row expects is a re
   what happens then is the seat's re-measure, by hand.
 - **Deploying the registry to adopters.** `tests/` is not deployed. An adopter's suite is the
   adopter's.
-- **The portability legs' own summary.** `TP-703a`'s reader prints the verdicts; `TP-703b`
+- **The portability legs' own summary.** the red-after-the-merge pack's reader prints the verdicts; the platform-legs pack
   shapes the legs. This pack gives both the sentence "0 unexpected" to read.
 
 ## Task 0 — Verify (try to kill this pack)

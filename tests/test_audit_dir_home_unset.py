@@ -266,23 +266,36 @@ class TestThePruneIsBoundedInsideTheWall:
 
     def test_the_scan_stops_at_its_deadline_and_counts_the_old_logs_left(self, monkeypatch, tmp_path):
         """Dies to: no deadline, a deadline the loop never reads, or a stop
-        that says nothing of the old logs it left. The bound is a count, not a
-        clock: each read sleeps at least 10 ms, so a scan that stops at a
-        0.3 s deadline has read at most 31 logs on any host, however slow
-        (a wall-clock ceiling would false-fail a loaded parallel run). The
-        names carry no date, so each is read (a dated one is demoted by its
-        name, unread: DEF-2029)."""
+        that says nothing of the old logs it left. The clock is the test's:
+        ``time.monotonic`` reads a counter that only a log read moves, one
+        second a read, so a deadline at 29.5 stops the scan after exactly 30
+        reads on any host, however loaded, whether the loop compares with
+        ``>=`` or ``>``. A wall-clock deadline taken before the call is spent
+        by the glob and sort ahead of the first read too, and a loaded runner
+        read no log (DEF-3085: post-merge runs 43695757972 and 43705322916).
+        The names carry no date, so each is read (a dated one is demoted by
+        its name, unread: DEF-2029)."""
         import inspect
         import time
         integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}.log" for n in range(300)])
         assert "deadline" in inspect.signature(integ._prune_old_audit_logs).parameters
-        self._slow_reads(monkeypatch, integ, 0.01)
+        clock = [0.0]
+        real = integ._parse_first_log_timestamp
+
+        def read(f):
+            clock[0] += 1.0
+            return real(f)
+        monkeypatch.setattr(integ, "_parse_first_log_timestamp", read)
         left: list[tuple[int, int]] = []
-        demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
-                                              on_stop=lambda n, days: left.append((n, days)))
-        assert 0 < demoted <= 31, f"the scan ran past its deadline: {demoted} logs read"
-        assert left == [(300 - demoted, 30)], (demoted, left)
-        assert len(list((audit_dir / "_cold").glob("*.log"))) == demoted
+        with monkeypatch.context() as during:
+            # For the call alone: every reader of time.monotonic in this
+            # process reads the counter while it is patched.
+            during.setattr(time, "monotonic", lambda: clock[0])
+            demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=29.5,
+                                                  on_stop=lambda n, days: left.append((n, days)))
+        assert demoted == 30, f"the scan did not stop at its deadline: {demoted} logs read"
+        assert left == [(270, 30)], (demoted, left)
+        assert len(list((audit_dir / "_cold").glob("*.log"))) == 30
 
     def test_the_oldest_name_date_is_demoted_though_a_young_slug_sorts_first(self, monkeypatch, tmp_path):
         """A sort by name orders by repository slug, so a time bound on it

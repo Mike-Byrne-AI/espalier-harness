@@ -431,6 +431,17 @@ class TestTheHandoffRestartsTheSeatLoop:
             assert word in step, word
         assert step.index("`CronCreate` with") < step.index("then `CronDelete` every id"), "delete before create"
 
+    def test_the_step_knows_a_loop_started_before_its_line_named_a_command(self):
+        """A worker's loop line names a command whose body prints the tick, so
+        a loop started from the line that carried the tick itself lists a head
+        that is no prefix of the line's prompt. Dies to: a step that matches
+        the line's prompt alone, which creates nothing for such a loop and
+        leaves it to expire at Claude Code's seven-day limit."""
+        text = self._body()
+        start = text.index("\n## 5b. ")
+        step = " ".join(text[start:text.index("\n## 6. ", start)].split())
+        assert "python tools/cc/seat.py tick <seat>" in step
+
     def test_a_worktree_seat_runs_the_loop_step(self):
         """Dies to: the preamble's worktree list stopping at step 5, which
         tells a seat in a linked worktree to skip the re-create."""
