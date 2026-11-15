@@ -652,6 +652,25 @@ def kill_switch_ci_clause(root: Path) -> str:
         present = False
     return KILL_SWITCH_CI_GATE_PRESENT if present else KILL_SWITCH_CI_GATE_ABSENT
 
+# A Write or Edit of the user settings file whose result turns the hooks off
+# or loosens a gate (write_guard's check_user_settings_write, DEF-5112).
+# config_guard refuses the same change at ConfigChange, but that refusal leaves
+# the file as written and every session on the machine launches from it next,
+# so this refuses the write itself. ``{label}`` names the file by its label,
+# never its absolute path; ``{findings}`` names each switch with its value.
+USER_SETTINGS_SWITCH = (
+    "Espalier-Harness blocked this {tool} of the user settings file ({label}): "
+    "its result would turn the hooks off or loosen a gate: {findings}. That file "
+    "reaches every repository on this machine, so the next session in each one "
+    "would start that way."
+    "\n  Don't: write disableAllHooks, or a gate variable in its env map, into "
+    "the user settings file to get past a hook that is firing here."
+    "\n  Do: make the edit without that setting -- any other change to the file "
+    "goes through -- and fix what the hook flagged, or file a tracked issue if "
+    "the hook is wrong. A setting the operator wants there is theirs to write "
+    "by hand, outside the session."
+)
+
 # A project settings change that unwires a governance gate the
 # session runs. Claude Code shows this reason to no one (the protocol pin); the
 # same route reaches Claude through the next PostToolUse
@@ -1070,6 +1089,7 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "HARNESS_GROUND_ENCLOSED",
     "ADOPTER_ZONE_ENCLOSING_HARNESS",
     "KILL_SWITCH_DETECTED",
+    "USER_SETTINGS_SWITCH",
     "GOVERNANCE_GATES_UNWIRED",
     "SECRET_PATH_ACCESS",
     "HARNESS_ENV_PREFIX_INLINE",

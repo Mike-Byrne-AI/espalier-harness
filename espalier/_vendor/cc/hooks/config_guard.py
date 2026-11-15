@@ -80,7 +80,6 @@ try:
     import _hook_utils  # noqa: E402
     import _denial_reasons  # noqa: E402
     import _integrity  # noqa: E402
-    import _maintenance_mode  # noqa: E402
     from _hook_utils import os_error_text  # noqa: E402
     from _json_safe import decode_bom  # noqa: E402
     # Every helper name this hook's import graph takes (write_guard.py says why).
@@ -211,27 +210,10 @@ def _changed_settings_label(file_path: str | None, source: str, root: Path) -> s
     return None
 
 
-def _loosens(name: str, before: str | None, after: str | None, mode: str) -> bool:
-    """``after`` loosens the gate ``name`` switches against ``before``, each
-    read by its gate's own grammar (None is unset): the maintenance switch
-    turned on; the stop gate moved off ``full`` (``light`` is the default
-    floor, so turning it on tightens); the suite command changed where Gate 1
-    runs one -- the stop gate full before the change and after it (``mode``).
-    With no command in the env, Gate 1 runs the declared or detected suite
-    (``stop_gate._resolve_core_tests``), so a command written then replaces
-    it. Under light the gate runs nothing, so a command set there, or with
-    the gate turned full in the same change, tightens. A roster name with no
-    grammar here loosens on any change: a switch added to the roster is
-    refused until it is taught (fail closed)."""
-    if name == _maintenance_mode.ENV_VAR:
-        active = _maintenance_mode._maintenance_mode_active
-        return active(after) and not active(before)
-    if name == "ESPALIER_STOP_GATE":
-        full = "full"
-        return _hook_utils.stop_gate_mode(before) == full and _hook_utils.stop_gate_mode(after) != full
-    if name == _hook_utils.STOP_GATE_TEST_CMD_ENV:
-        return mode == "full" and (after or "").strip() != (before or "").strip()
-    return (after or "") != (before or "")
+#: Whether a gate variable's new value loosens its gate: the one rule, in
+#: ``_integrity`` since write_guard judges a write of the user settings file
+#: by it too (DEF-5112).
+_loosens = _integrity.gate_value_loosens
 
 
 def _judge_gate_switch(file_path: str | None, source: str,

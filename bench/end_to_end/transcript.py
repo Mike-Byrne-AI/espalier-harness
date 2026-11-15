@@ -46,6 +46,9 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     "kill-switch",
     # config_guard's refusal of a project-settings change that unwires a gate.
     "leaves governance gates unwired",
+    # write_guard's refusal of a Write or Edit of the user settings file that
+    # turns the hooks off or loosens a gate (DEF-5112), keyed on its head.
+    "of the user settings file",
     # The stop-gate handoff gate (Gate 5, 2026-10-24), keyed on the HEAD of its
     # message like the two hygiene blocks below.
     "Handoff owed before Claude Code stops",
