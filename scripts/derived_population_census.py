@@ -1780,15 +1780,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        52, "669bcae76fe3b50b8ba322f10758aecfe38e283406445bde3f949743d56b3363",
+        55, "dab536e96d1cdb080c6a41f5647ae7857c5084e644961d3b201ab93de85aafc3",
         "CORRECT_BY_REMEDY",
-        "52 FROM 55 on 2026-11-14 (DEF-3078's lane), not a narrowed population: three roster "
+        "RE-PINNED at 55 on 2026-11-14 (DEF-3078's lane), the same rows: three roster "
         "comprehensions (TestQuotedVerbTailIsUniform's and "
         "TestPowerShellQuotedVerbBehindTheCallOperator's test_the_roster_is_the_modules_anchored_arms, "
         "TestQuotedTargetSurvivesTheRoot._roster) now iterate "
-        "`[*vars(bp).items(), *first_use_patterns(bp).items()]`, the namespace plus the first-use "
-        "compiles a namespace walk never saw, a WIDER population this census's shape reader does not "
-        "count as a row; each still asserts equality against its roster, so a narrowing reds there. "
+        "`itertools.chain(vars(bp).items(), first_use_patterns(bp).items())`, rooted at `bp` as "
+        "before and wider by the first-use compiles a namespace walk never saw; each still asserts "
+        "equality against its roster. "
         "GREW 53 -> 55 on 2026-11-12 (DEF-3072): one new line, counted as an all-any and "
         "a comprehension: TestAShellsOptionHidesNoPipedProgram::"
         "test_a_switched_shell_fetch_meets_the_nudge asserts `any(...)` over "

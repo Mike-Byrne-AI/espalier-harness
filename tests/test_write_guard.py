@@ -681,7 +681,7 @@ class TestQuotedVerbTailIsUniform:
         # a pattern compiled on first use behind a cache is read through its
         # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
-            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_BASH_PATTERNS", bp._CMD_POS)
@@ -1615,7 +1615,7 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         # a pattern compiled on first use behind a cache is read through its
         # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
-            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._PS_CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_PS_PATTERNS", bp._PS_CMD_POS)
@@ -16786,7 +16786,7 @@ class TestQuotedTargetSurvivesTheRoot:
         # the first-use compiles too, named as their accessors' calls: a
         # namespace walk alone never saw `_carrier_fed_remove_re()` (DEF-3063)
         anchored = {
-            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern)
             and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS in value.pattern)
         }
