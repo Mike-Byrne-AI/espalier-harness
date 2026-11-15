@@ -1023,6 +1023,26 @@ class TestReapWorktrees:
                                                     "cwd": ".../.claude/worktrees/entered/src"}])
         assert report.kept == [("entered", "a live Claude session is in it")] and wt.is_dir()
 
+    def test_a_clean_tree_stopped_mid_rebase_is_kept_which_git_would_remove(self, cs, repos):
+        """DEF-3086, lead 4 of note e72e1b: the litter line sends a tree under
+        .claude/worktrees/ to this dry run, so its verdict is the remedy. A
+        rebase stopped by a failing --exec leaves the tree clean, and git's
+        plain removal takes it, rebase and all. Dies to: the reaper reading
+        the clean tree as finished. Control: git removes the twin."""
+        work = repos["work"]
+        trees = {}
+        for name in ("stopped", "twin"):
+            wt = _worktree(repos, name, f"lane/{name}")
+            _commit(wt, f"{name}.txt")
+            halted = _git(wt, "rebase", "--no-ff", "--exec", "false", "HEAD~1", check=False)
+            assert halted.returncode != 0 and _out(wt, "status", "--porcelain") == "", halted
+            trees[name] = wt
+        dry = cs.reap_worktrees(work, sessions=[], dry_run=True)
+        assert ("stopped", "an operation is in progress in it") in dry.kept, dry
+        assert not any(name.startswith("stopped") for name in dry.would_remove), dry
+        taken = _git(work, "worktree", "remove", str(trees["twin"]), check=False)
+        assert taken.returncode == 0 and not trees["twin"].exists(), taken
+
     def test_a_dry_run_never_prunes(self, cs, repos):
         work = repos["work"]
         wt = _worktree(repos, "gone-dry")
