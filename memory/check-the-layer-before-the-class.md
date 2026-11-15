@@ -51,7 +51,7 @@ advisory prints when the new row is a sibling of a sibling or a parent's third c
 recorded only, one line a filing, until its threshold review: on 2026-11-15 the operator
 ruled the print on (`CHAIN_ADVISORY_PRINTS`, ruling 1addb4), since it would have fired on 6
 of the first 20 filings carrying `--sibling-of`, 5 of them guard rows, where the
-tail-chasing was. Whether a printed chain changes a filing is unmeasured. No tool counts
+tail-chasing was. No one has measured what a printed chain does to a filing. No tool counts
 the third tell: question 5 is how it is noticed. The two reviewer bodies ask
 the layer question of every fix, as advice. None of it refuses: a gate on a count teaches
 the filer to suppress ([[gating-on-count-manufactures-findings]]).
