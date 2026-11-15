@@ -335,7 +335,10 @@ def main(argv: list[str] | None = None) -> int:
         for job_id, meta in jobs.items():
             m = measured[job_id]
             greens = m["greens"]
-            worst = max(greens) if greens else None
+            # The worst as printed, one decimal: floor and needed derive from the
+            # figure a seat copies into tests/test_ci_job_bounds.py, so a bound set
+            # from the census's needed is the one the test derives from that entry.
+            worst = round(max(greens), 1) if greens else None
             serial = job_runs_the_serial_files(meta["lines"], files)
             if serial and mark is None:
                 mark = max((s for _f, _l, s in serial_marks(files)), default=0.0)
@@ -345,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
             row = {
                 "workflow": path.name, "job": job_id, "bound": meta["bound"],
                 "green_runs": m["green_runs"], "greens": len(greens),
-                "worst": round(worst, 1) if worst is not None else None,
+                "worst": worst,
                 "median": round(statistics.median(greens), 1) if greens else None,
                 "serial": serial, "floor": floor,
                 "needed": max(needed, floor or 0) if needed is not None else None,

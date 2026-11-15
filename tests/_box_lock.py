@@ -91,11 +91,12 @@ POLL_S = 0.25
 REPORT_S = 30.0
 #: A holder past this age is named with the inspect and stop commands: above
 #: every post-merge proof worst scripts/ci_job_bounds_census.py reads as ok at
-#: that job's bound (its bound over the census's factor, 155 / 1.5 = 103.3, past
-#: which the census asks a raise), since only a raise moves the measured worst
-#: the dict records (92.2 minutes over its last 20 green runs, 2026-11-14; 88.1
-#: on 2026-11-12, 86.6 on 2026-11-11, 70.7 on 2026-11-08, and 48.2 over ten to
-#: 2026-10-16, when this read 60), and a worst read between the two sat over a
+#: that job's bound (its bound over the census's factor, past which the census
+#: asks a raise: 155 / 1.5 = 103.3 when this was set, 2026-11-14), since only a
+#: raise moves the measured worst the dict records (92.2 minutes over its last
+#: 20 green runs, 2026-11-14; 88.1 on 2026-11-12, 86.6 on 2026-11-11, 70.7 on
+#: 2026-11-08, and 48.2 over ten to 2026-10-16, when this read 60), and a worst
+#: the census read above the dict's figure and under that bound sat over a
 #: ceiling of 95 with every test green (95.5, 2026-11-14 21:50Z).
 #: tests/test_ci_job_bounds.py holds it over both. Keyed on the holder's own age,
 #: never on this waiter's wait: the lock is not fair, and a waiter that lost
