@@ -1027,15 +1027,19 @@ class TestReapWorktrees:
         """DEF-3086, lead 4 of note e72e1b: the litter line sends a tree under
         .claude/worktrees/ to this dry run, so its verdict is the remedy. A
         rebase stopped by a failing --exec leaves the tree clean, and git's
-        plain removal takes it, rebase and all. Dies to: the reaper reading
-        the clean tree as finished. Control: git removes the twin."""
+        plain removal takes it, rebase and all. The tree's commit is in
+        origin/main first, so it is clean and merged and the mid-operation
+        keep alone holds it. Dies to: the reaper reading the clean, merged
+        tree as finished. Control: git removes the twin."""
         work = repos["work"]
         trees = {}
         for name in ("stopped", "twin"):
             wt = _worktree(repos, name, f"lane/{name}")
-            _commit(wt, f"{name}.txt")
-            halted = _git(wt, "rebase", "--no-ff", "--exec", "false", "HEAD~1", check=False)
+            head = _commit(wt, f"{name}.txt")
+            _git(wt, "push", "--quiet", "origin", "HEAD:main")
+            halted = _git(wt, "rebase", "--exec", "false", "HEAD~1", check=False)
             assert halted.returncode != 0 and _out(wt, "status", "--porcelain") == "", halted
+            assert _out(wt, "rev-parse", "HEAD") == head and _out(work, "rev-parse", "origin/main") == head
             trees[name] = wt
         dry = cs.reap_worktrees(work, sessions=[], dry_run=True)
         assert ("stopped", "an operation is in progress in it") in dry.kept, dry

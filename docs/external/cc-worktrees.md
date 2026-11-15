@@ -330,7 +330,7 @@ cover them; only the `cwd` rule does, for the session inside one.
   (`::_is_registered_worktree`, no spawn): a registered worktree under
   `.claude/worktrees/` that no reaper judged at this start gets the reaper's
   dry run (`tools/cc/checkout_sync.py`, no flag, run from the session's own
-  shell, since from another terminal it judges no tree; `espalier upgrade`
+  shell, since from another terminal it judges no tree; `espalier upgrade --execute`
   first where it is not deployed), never a removal (DEF-3086); any other registered
   worktree gets the plain `git worktree remove <path>` the observation above
   shows git refusing on a tree that holds uncommitted work, and never the

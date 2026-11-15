@@ -4238,7 +4238,7 @@ def _sync_checkout(
     if sync is None:
         if asked:
             _hook_utils.advise(f"[WARN] {CATCH_UP_KEY} is on but tools/cc/checkout_sync.py is not deployed "
-                               "beside the hooks -- `espalier upgrade` deploys it.")
+                               "beside the hooks -- `espalier upgrade --execute` deploys it.")
         return "", "", []
     sessions = sync.live_sessions()
     unreadable = ""
@@ -4455,7 +4455,15 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         litter = [rel for rel in litter
                   if str((root / rel).resolve()).replace("\\", "/").casefold() not in named]
     # Loaded only with litter to sort: the reaper's marker reads and its home.
-    sync = _hook_utils.load_checkout_sync() if litter else None
+    # A copy that raises at import (a half-upgrade) costs its rules here, said
+    # once, never the lines below; the line then names the upgrade.
+    sync: Any = None
+    if litter:
+        try:
+            sync = _hook_utils.load_checkout_sync()
+        except Exception as e:  # noqa: BLE001 -- a broken reaper costs its rules, never the litter lines
+            _hook_utils.advise_exc("session_start: tools/cc/checkout_sync.py did not import", e)
+            sync = None
     if litter:
         # A tree a live session's marker places a session in is in use, as a
         # locked one is: the reaper keeps it, and a removal or a move would
@@ -4503,9 +4511,9 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     # files (DEF-3086; leads 1, 2 and 4 of note e72e1b). Placed by the reaper's
     # own rule where it is deployed.
     home = root.joinpath(*getattr(sync, "WORKTREES_REL", _REAPER_HOME))
-    inside = getattr(sync, "within", None)
+    place_in_home = getattr(sync, "within", None)
     unjudged = [rel for rel in trees
-                if (inside(root / rel, home) if callable(inside)
+                if (place_in_home(root / rel, home) if callable(place_in_home)
                     else (rel.casefold() + "/").startswith("/".join(_REAPER_HOME) + "/"))]
     trees = [rel for rel in trees if rel not in unjudged]
     if unjudged:
@@ -4513,7 +4521,8 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         script = f"{py} tools/cc/checkout_sync.py" if py else "tools/cc/checkout_sync.py"
         # DEF-2062: a quoted word's PowerShell note, by getattr (a kept older helper lacks it).
         note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
-        run = f"`{script}`{note}" if sync is not None else f"`espalier upgrade`, then `{script}`{note}"
+        run = (f"`{script}`{note}" if sync is not None
+               else f"`espalier upgrade --execute`, then `{script}`{note}")
         # The dry run judges from the shell of the session it is run in: from
         # another terminal it reads that session as one more in the checkout
         # and holds every tree unjudged. The caveat and the remedy lead, so the

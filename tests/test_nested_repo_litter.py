@@ -481,13 +481,38 @@ class TestATreeNoReaperJudgedGetsItsDryRun:
         mod._hook_utils.take_advisories()
         mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
         (line,) = _warn_lines(capsys.readouterr().err)
-        assert "`espalier upgrade`" in line and "tools/cc/checkout_sync.py" in line, line
+        assert "`espalier upgrade --execute`" in line and "tools/cc/checkout_sync.py" in line, line
         assert "git worktree remove" not in line, line
         # Through the banner's per-line cut, the remedy and the caveat survive.
         block = mod._warnings_section()
-        for clause in ("`espalier upgrade`, then", "tools/cc/checkout_sync.py`", "from this session's shell",
+        for clause in ("`espalier upgrade --execute`, then", "tools/cc/checkout_sync.py`", "from this session's shell",
                        "a removal by hand would take a live session's clean tree"):
             assert clause in block, (clause, block)
+
+    def test_a_reaper_that_does_not_import_costs_its_rules_never_the_lines(self, tmp_path, monkeypatch, capsys):
+        """A half-upgraded `checkout_sync.py` that raises at import is said
+        once, and the litter lines still print, the home tree with the
+        upgrade. Dies to: the load left unguarded, which takes every litter
+        line of the start with it."""
+        _seed_commit(tmp_path)
+        _exclude_worktrees(tmp_path)
+        _add_worktree(tmp_path, "2")
+        clone = tmp_path / "adopt2"
+        clone.mkdir()
+        _git(["init"], clone)
+        mod = _load()
+
+        def broken():
+            raise ImportError("cannot import name 'within'")
+
+        monkeypatch.setattr(mod._hook_utils, "load_checkout_sync", broken)
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
+        err = capsys.readouterr().err
+        assert "checkout_sync.py did not import: ImportError" in err, err
+        lines = [line for line in _warn_lines(err) if "did not import" not in line]
+        assert len(lines) == 2, lines
+        assert any(".claude/worktrees/2" in line and "`espalier upgrade --execute`" in line for line in lines), lines
+        assert any("adopt2" in line and "move it out" in line for line in lines), lines
 
 
 class TestWorktreeInUseIsNotLitter:
