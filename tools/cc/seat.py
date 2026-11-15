@@ -45,6 +45,9 @@ session) and every channel fact from ``mail.py``'s local refs:
   a worker's (its dispatcher, the reads to start with, its jobs, the worker
   loop) or the dispatcher's (its duties, the board loop), as the ``dispatcher``
   line of ``espalier.toml`` decides, so no operator pastes it.
+* ``tick [<seat>]`` -- print a worker seat's tick, which the worker loop's
+  command has this verb print at each tick: the seat this checkout answers
+  when none is named, composed from the checkout as ``brief`` composes it.
 * ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
   removal first (``checkout_sync``'s rules for that one worktree: clean,
   merged, no plan in progress, nothing ignored it would lose), so a seat that
@@ -762,7 +765,7 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: loop with no second message, and the loop survives ``/clear``. No double
 #: quote (Windows PowerShell 5.1 splits a native argument there), no ``%``
 #: (cmd.exe expands it) and 7-bit ASCII; ``tests/test_seat.py`` pins all three.
-#: On this repository the worker loop renders to the operator's tick byte for
+#: On this repository the worker tick renders to the operator's tick byte for
 #: byte (``tests/test_seat.py::_OPERATOR_TICK``): the tick the operator ran by
 #: hand on 2026-10-15, its review step read from the diff since 2026-10-16 on
 #: the operator's yes, and since 2026-10-24 (the operator's yes on the mail
@@ -773,10 +776,17 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: adopter's seat keeps the stop-and-ask form (``ADOPTER_PROCEED``), as its
 #: dispatcher proposes every assign. Every figure in a template is rendered
 #: from ``DISPATCHER_TICK``, never typed. A change to the tick changes what
-#: every worker seat does, which is the operator's decision; a seat already
-#: looping keeps its old tick until its next handoff re-creates the loop from a
-#: brief composed in its own checkout (``/handoff`` step 5b), or until its loop
-#: is started again from a brief composed from a checkout that holds the change.
+#: every worker seat does, which is the operator's decision.
+#:
+#: The worker's loop line names a command (``WORKER_TICK``, as the
+#: dispatcher's names ``/inbox board``), and the command's body has this
+#: driver print the tick (the ``tick`` verb), composed from the seat's own
+#: checkout at each tick: since the operator's ruling of 2026-11-15 no loop
+#: line, first message or re-created loop carries the tick's text, so no window
+#: copies it by hand, and a change to the tick reaches a looping seat at its
+#: next tick from a checkout that holds the change. A loop started before then
+#: carries the tick itself; ``/handoff`` step 5b knows it by a prefix of what
+#: the verb prints and re-creates it from the new line.
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
@@ -786,8 +796,14 @@ WORKER_BRIEF = (
     "a threshold handoff take no new job until the window is cleared. Then start the worker loop on the next "
     "line with no further message from the operator."
 )
-WORKER_TICK = (
-    "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
+#: The command a worker's loop runs; its body is ``.claude/commands/`` under
+#: the same name, and ``tests/test_seat.py`` holds the two to one spelling.
+WORKER_COMMAND = "/worker-tick"
+WORKER_TICK = f"/loop 10m {WORKER_COMMAND}"
+#: What the command has the ``tick`` verb print: the tick, rendered for the
+#: seat's tree by :func:`compose_brief` (:attr:`Brief.tick`).
+WORKER_TICK_PROMPT = (
+    "Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
     "assign or note from {dispatcher}; continue your current lane through its full procedure (plan, {review}, "
     "one fix batch, {tier}, one open PR per seat, every step listed with "
@@ -1023,10 +1039,12 @@ def mod_args(mod_dir: Path = MOD_DIR) -> list[str]:
 
 @dataclass
 class Brief:
-    """A seat's first message: its role, the whole text, and the loop line."""
+    """A seat's first message: its role, the whole text, and the loop line;
+    for a worker, also the tick its loop's command prints (``tick`` verb)."""
     role: str
     text: str
     loop: str
+    tick: str = ""
 
 
 def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
@@ -1068,12 +1086,12 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     # ignores the keyword).
     proceed = (SELF_HOST_PROCEED if self_host else ADOPTER_PROCEED).format(
         dispatcher=dispatcher or "the operator", wait=TICK_MINUTES, kinds=dispatch_kinds_phrase())
-    loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier, proceed=proceed,
-                              review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
-                                      else ADOPTER_REVIEW))
+    tick = WORKER_TICK_PROMPT.format(dispatcher=dispatcher or "the operator", tier=tier, proceed=proceed,
+                                     review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
+                                             else ADOPTER_REVIEW))
     first = WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol,
                                 handoff_ship=SELF_HOST_HANDOFF_SHIP if self_host else "")
-    return Brief("worker", first + "\n" + loop, loop)
+    return Brief("worker", first + "\n" + WORKER_TICK, WORKER_TICK, tick)
 
 
 #: What a window the own-clear re-primes is told in place of its loop line: a
@@ -1140,6 +1158,34 @@ def brief_line(role: str, seat: str, python: str = "", source: str = "") -> str:
 def cmd_brief(root: Path, seat: str) -> int:
     target = resolve(root, seat)
     print(compose_brief(root, seat, target.path if target.exists else None).text)
+    return 0
+
+
+def cmd_tick(root: Path, seat: str | None) -> int:
+    """Print a worker seat's tick, the text its loop's command
+    (:data:`WORKER_COMMAND`) acts on: ``seat``'s, composed from its own
+    checkout as ``brief`` composes it, or, with no seat named, the seat this
+    checkout answers, composed from this checkout. Refused for the dispatcher
+    (its loop is :data:`DISPATCHER_TICK`, which has no worker tick) and for a
+    checkout whose seat name is not set or could not be read."""
+    if seat is None:
+        top = _git(Path.cwd(), "rev-parse", "--show-toplevel")
+        if not top:
+            raise Refused(f"{Path.cwd()} is not inside a git checkout")
+        checkout = Path(top)
+        name, how = mail.machine_setting(checkout)
+        if name is None:
+            if how.startswith(mail.MACHINE_UNREAD):
+                raise Refused(f"the tick is composed for this checkout's seat, and {how}; {mail.RETRY_HINT}")
+            raise Refused(f"the tick is a seat's, and this checkout answers no seat name: {how}")
+        brief = compose_brief(root, name, checkout)
+        seat = name
+    else:
+        target = resolve(root, seat)
+        brief = compose_brief(root, seat, target.path if target.exists else None)
+    if brief.role != "worker":
+        raise Refused(f"{seat} is the dispatcher seat: its loop is {DISPATCHER_TICK}, which has no worker tick")
+    print(brief.tick)
     return 0
 
 
@@ -1444,6 +1490,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start the session with no own-clear log (the mod then records on its marker alone)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
+    p = sub.add_parser("tick", help=f"print a worker seat's tick, what its loop's {WORKER_COMMAND} acts on")
+    p.add_argument("seat", nargs="?", help="the seat (default: the one this checkout answers)")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
     p.add_argument("seat")
     p.add_argument("--dry-run", action="store_true")
@@ -1480,6 +1528,8 @@ def main(argv: list[str] | None = None) -> int:
                               own_clear_log=args.own_clear_log, log_off=args.log_off)
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
+        if args.verb == "tick":
+            return cmd_tick(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,
                           return_jobs=args.return_jobs, unchecked=args.unchecked)
     except (Refused, mail.Unresolvable) as exc:

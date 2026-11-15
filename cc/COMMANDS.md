@@ -23,6 +23,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 | `/status` | Quick progress check — harness state in 10 lines. Never starts a new blueprint session. |
 | `/strengthen` | Surface where a repo's test rails are missing: enumerate the public Python surface mechanically, cross-reference it against the test tree, and risk-rank the untested gaps. |
 | `/test-this` | Generate tests for a specific file matching project patterns. Delegates to the test-writer agent for orthogonal-context generation. |
+| `/worker-tick` | One tick of a worker seat's loop: have the seat driver print this seat's tick, then carry it out as this message's instructions. |
 
 ## Core flow
 

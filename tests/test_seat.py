@@ -583,9 +583,12 @@ class TestLaunch:
 #: stopped seat); and since 2026-11-09 the STOP names the parked job's assign
 #: id and says the dispatcher's release, ack and re-send (DEF-3038, the shape
 #: the dispatcher approved on 20261107T060117Z-air-5e86f5 (C)). The self-host render must reproduce it byte for byte; its 15
-#: minutes is DISPATCHER_TICK's interval, rendered, never copied.
+#: minutes is DISPATCHER_TICK's interval, rendered, never copied. Since
+#: 2026-11-15 (the operator's ruling, assign 20261115T064945Z-air-6c9da9) the
+#: loop line is /loop 10m /worker-tick and the tick is what the command has
+#: seat.py tick print, so this is the text after the loop line's old head.
 _OPERATOR_TICK = (
-    "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
+    "Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
     "assign or note from air; continue your current lane through its full procedure (plan, red-team the "
     "reviewers scripts/proof_tier.py --base origin/main names, on a snapshot clone, one fix batch, the tier the "
@@ -655,7 +658,8 @@ class TestBrief:
         _holds(feat, "memory/parallel-work-protocol.md", "docs/WORKFLOW.md", "scripts/proof_tier.py")
         brief = seat.compose_brief(clone, "box-feat", feat)
         first, loop = brief.text.split("\n")
-        assert brief.role == "worker" and loop == brief.loop == _OPERATOR_TICK
+        assert brief.role == "worker" and loop == brief.loop == seat.WORKER_TICK == "/loop 10m /worker-tick"
+        assert brief.tick == _OPERATOR_TICK and brief.tick not in brief.text
         assert first.startswith("You are seat box-feat, a worker under the dispatcher air (Core Rule 15, "
                                 "memory/parallel-work-protocol.md). Orient from the banner, then run /inbox")
         assert first.endswith("Then start the worker loop on the next line with no further message from the operator.")
@@ -666,11 +670,11 @@ class TestBrief:
         _holds(feat, "docs/WORKFLOW.md")
         seeded = seat.compose_brief(clone, "box-feat", feat)
         assert "a worker under the dispatcher hub (docs/WORKFLOW.md, Parallel seats)." in seeded.text
-        assert "the proof the change earns per /implement-task step 7" in seeded.loop and "--base" not in seeded.text
+        assert "the proof the change earns per /implement-task step 7" in seeded.tick and "--base" not in seeded.text
         assert ("the reviewers the diff earns, dispatched at once with your edits frozen, per "
-                "/implement-task step 6") in seeded.loop
+                "/implement-task step 6") in seeded.tick
         assert "snapshot clone" not in seeded.text   # defined on this repository only
-        assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
+        assert "note from hub;" in seeded.tick and "send hub one request" in seeded.tick
         assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
         # The dispatch-model sentence is this repository's (its dispatcher assigns on its own);
         # an adopter's dispatcher proposes every assign. Read on the RENDERED adopter loop, so a
@@ -683,7 +687,7 @@ class TestBrief:
         brief = seat.compose_brief(clone, "box", clone)
         assert brief.role == "worker"
         assert "a worker under the operator (espalier.toml names no dispatcher)" in brief.text
-        assert "note from the operator;" in brief.loop and "send the operator one request" in brief.loop
+        assert "note from the operator;" in brief.tick and "send the operator one request" in brief.tick
 
     def test_the_red_duty_names_the_fix_forward_ruling_beside_the_revert(self, seat, clone):
         """After the dispatcher ruled a red base a fix-forward, its own brief's
@@ -943,7 +947,7 @@ class TestBrief:
         without the lane-in-hand exception reopens the push the ask was built
         to avoid (the failure-mode review, 2026-10-26)."""
         import re
-        for name in ("WORKER_BRIEF", "DISPATCHER_BRIEF", "WORKER_TICK", "SELF_HOST_PROCEED"):
+        for name in ("WORKER_BRIEF", "DISPATCHER_BRIEF", "WORKER_TICK_PROMPT", "SELF_HOST_PROCEED"):
             text = getattr(seat, name)
             for sentence in re.split(r"(?<=[.;])\s", text):
                 # The ask sentences; "after a threshold handoff ..." is the post-handoff rule.
@@ -978,6 +982,9 @@ class TestBrief:
         for brief in (worker, self_host, dispatcher):
             assert brief.text.isascii() and '"' not in brief.text and "%" not in brief.text, brief.text
             assert not set(brief.text) & set(seat._PS_DOUBLE)
+            # The tick the loop's command prints keeps the same alphabet: it once rode this argument whole.
+            assert brief.tick.isascii() and '"' not in brief.tick and "%" not in brief.tick, brief.tick
+            assert (brief.role == "worker") == bool(brief.tick), brief.role
             # Both --print forms quote it whole, so it reaches claude as one argument.
             assert seat.command_line(target, [brief.text], maintenance=False, shell="powershell")
             line = seat.command_line(target, [brief.text], maintenance=False, shell="posix")
@@ -1113,7 +1120,7 @@ class TestBrief:
         _dispatcher(clone, '"air"')
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
-        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        loop = seat.compose_brief(clone, "box-feat", feat).tick
         assert f"(the kinds are {phrase})" in loop and "named on an allowance: line" in loop and "{" not in loop
         _holds(clone, "memory/parallel-work-protocol.md")   # the dispatcher's own checkout picks its form
         dispatcher = seat.compose_brief(clone, "air", clone).text
@@ -1132,12 +1139,12 @@ class TestBrief:
         assert seat.TICK_MINUTES == minutes
         assert "proceed on it after {wait} minutes (the dispatcher's tick" in seat.SELF_HOST_PROCEED
         assert "read the board every {every} minutes" in seat.DISPATCHER_BRIEF
-        for template in (seat.WORKER_TICK, seat.SELF_HOST_PROCEED, seat.ADOPTER_PROCEED, seat.DISPATCHER_BRIEF):
+        for template in (seat.WORKER_TICK_PROMPT, seat.SELF_HOST_PROCEED, seat.ADOPTER_PROCEED, seat.DISPATCHER_BRIEF):
             assert re.search(r"\d+ minutes", template) is None, template
         _dispatcher(clone, '"air"')
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
-        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        loop = seat.compose_brief(clone, "box-feat", feat).tick
         assert f"proceed on it after {minutes} minutes (the dispatcher's tick" in loop
         assert "run mail.py refresh once" in loop and "{" not in loop
         dispatcher = seat.compose_brief(clone, "air", clone).text
@@ -1168,7 +1175,7 @@ class TestBrief:
         _dispatcher(clone, '"ops"')
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
-        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        loop = seat.compose_brief(clone, "box-feat", feat).tick
         assert ("STOP and send ops one request opening with stopped:, then only re-read mail until it is answered, on "
                 "anything not green") in loop
         assert "proceed on it" not in loop and "Task 0" not in loop and "shelve" not in loop
@@ -1183,12 +1190,12 @@ class TestBrief:
         _dispatcher(clone, '"air"')
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
-        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
+        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).tick
         _holds(feat, "memory/parallel-work-protocol.md")
         # the protocol alone: no script to print the line, so step 6's rule
-        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
+        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).tick
         _holds(feat, "scripts/proof_tier.py")
-        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        loop = seat.compose_brief(clone, "box-feat", feat).tick
         assert "red-team the reviewers scripts/proof_tier.py --base origin/main names" in loop
         assert "both reviewers" not in loop
 
@@ -1276,6 +1283,52 @@ class TestBrief:
                                 f"where CronList lists it, start no second one; py -3 tools/cc/seat.py brief "
                                 f"{seat_name} prints the first message"), line
                 assert "then start" not in line and line.isascii() and '"' not in line
+
+
+# -- the worker tick command ---------------------------------------------------------
+
+class TestTheWorkerTickCommand:
+    """A worker seat's loop line names a command, and the command's body has
+    the driver print the seat's tick, composed from the checkout at each
+    tick, so no window carries or copies the tick's text (the operator's
+    ruling of 2026-11-15). Dies to: a loop line that carries the tick itself,
+    a line naming a command no body holds, a tick verb that prints another
+    checkout's tick, or one that prints a worker's tick for the dispatcher."""
+
+    @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
+    def test_the_worker_loop_line_names_a_command_the_tree_holds(self, seat):
+        loop = seat.WORKER_TICK
+        assert loop.startswith("/loop 10m "), loop[:40]
+        command = loop.split(" ", 2)[2]
+        assert command.startswith("/") and " " not in command, (
+            f"the worker loop line carries its prompt ({len(command)} characters) instead of naming a command")
+        body = REPO_ROOT / ".claude" / "commands" / f"{command[1:]}.md"
+        assert body.is_file(), body
+        assert "python tools/cc/seat.py tick" in body.read_text(encoding="utf-8")
+
+    def test_the_tick_verb_prints_this_checkouts_seat_tick(self, seat, clone, monkeypatch, capsys):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "docs/WORKFLOW.md", "scripts/proof_tier.py")
+        monkeypatch.chdir(feat)
+        assert seat.main(["tick"]) == 0
+        out = capsys.readouterr().out
+        assert out == seat.compose_brief(clone, "box-feat", feat).tick + "\n" == _OPERATOR_TICK + "\n"
+        monkeypatch.chdir(clone)   # a seat named: its own checkout composes it, as brief does
+        assert seat.main(["tick", "box-feat"]) == 0
+        assert capsys.readouterr().out == out
+
+    def test_the_tick_verb_refuses_the_dispatcher_and_a_checkout_with_no_seat_name(self, seat, clone, monkeypatch,
+                                                                                capsys):
+        _dispatcher(clone, '"box"')
+        monkeypatch.chdir(clone)
+        assert seat.main(["tick"]) == 1
+        err = capsys.readouterr().err
+        assert "box is the dispatcher seat" in err and seat.DISPATCHER_TICK in err, err
+        _git(clone, "config", "--unset", "espalier.machine")
+        assert seat.main(["tick"]) == 1
+        err = capsys.readouterr().err
+        assert "answers no seat name" in err and "git config espalier.machine is not set" in err, err
 
 
 # -- retire --------------------------------------------------------------------------
