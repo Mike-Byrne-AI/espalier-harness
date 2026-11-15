@@ -21920,6 +21920,10 @@ class TestCrossShellRouting:
             for opener in ("bash -c", "bash -lc")
         )
         assert pair == ("bump", "wall")
+        # the program su or BSD script runs is another shell's too (DEF-4120)
+        for carried in ("su -c 'rm -rf .'", "script /dev/null rm -rf ."):
+            verdict = _delete_verdict(run_guard_from("Bash", "cd sub && " + carried, tmp_path, tmp_path))
+            assert verdict == "wall", carried
         # a switch value holding `~` or `:` before the `-c` (air 413ebb): the
         # shared run's value class takes neither, so the run ends there and
         # the program is not read. Only `--rcfile` and `--init-file` take
@@ -25386,3 +25390,109 @@ class TestThePatternPath:
             f"bound at import, then rebound by a step: {placeholders}; drop the module-level binding "
             "(a bare annotation, or the TYPE_CHECKING block, gives the type checker its view)")
         assert bare == [], f"annotated at module level but never bound by the load: {sorted(bare)}"
+
+
+class TestTheHardTierReadsWhatSuAndScriptRun:
+    """DEF-4120 (sibling of DEF-4061): the hard tier read no program from
+    `su -c`, nor from BSD `script` after its file word, so a recursive
+    delete of the home directory, the root or the checkout handed to either
+    was a plain allow where the same program under `bash -lc` walled (13
+    home-directory spellings and 4 of the checkout driven on the live guard
+    at 880b2eb, each beside its walled twin).
+    `su` sits in no wrapper roster and hands its program to the target
+    user's login shell as one string, and the head walk takes BSD script's
+    file word for the command, so neither program stood at a command
+    position the tier's in-place scan reads. The tier now reads the
+    programs the DEF-4061 carrier walk returns for those two heads
+    (`_bash_patterns._HARD_TIER_CARRIER_HEADS`) and judges each as another
+    shell's, as it judges `bash -lc`'s: no pattern is added. The oracle is
+    the twin: each row walls where `bash -lc '<program>'` walls and passes
+    where it passes, and a mention of either carrier stays a mention. The
+    speed bumps' reading of the same programs is DEF-5110's."""
+
+    #: Every spelling the row drove, plus the long switch's prefix and
+    #: su's session switch, and each behind sudo: `{}` is the program.
+    _FORMS = [
+        "su -c '{}'", "su app -c '{}'", "su - app -c '{}'", "su - -c '{}'", "su -lc '{}'",
+        "su -c'{}'", "su --command='{}'", "su --comm '{}'", "su --session-command '{}'",
+        "sudo su -c '{}'",
+        "script /dev/null {}", "script -t 0 /dev/null {}", "sudo -u app script /dev/null {}",
+    ]
+    _PROGRAMS = {"home": "rm -rf ~", "home-var": "rm -rf $HOME", "root": "rm -rf /", "checkout": "rm -rf ."}
+
+    @pytest.mark.parametrize("program", list(_PROGRAMS), ids=list(_PROGRAMS))
+    @pytest.mark.parametrize("form", _FORMS)
+    def test_a_program_su_or_script_runs_meets_the_wall_its_twin_meets(self, tmp_path, form, program):
+        text = self._PROGRAMS[program]
+        assert _delete_verdict(run_bash_guard("bash -lc '" + text + "'", tmp_path)) == "wall"
+        assert _delete_verdict(run_bash_guard(form.format(text), tmp_path)) == "wall"
+
+    #: Every record of the tier, read in su's program as in `bash -lc`'s; a
+    #: BSD script program is an argv, so only the simple commands ride it.
+    @pytest.mark.parametrize("member", list(TestCrossShellRouting._TIER_MEMBERS))
+    def test_every_tier_record_reads_su_s_program(self, tmp_path, member):
+        text = TestCrossShellRouting._TIER_MEMBERS[member]
+        twin = run_bash_guard("bash -lc '" + text + "'", tmp_path)
+        result = run_bash_guard("su -c '" + text + "'", tmp_path)
+        if member == "env-prefix":
+            assert_hook_denied(twin)
+            assert_hook_denied(result)
+        else:
+            assert _delete_verdict(twin) == "wall"
+            assert _delete_verdict(result) == "wall"
+
+    @pytest.mark.parametrize("text", ["rm -rf /", "rm -r /", "find / -delete", "find ~ -delete"])
+    def test_every_simple_tier_record_reads_bsd_script_s_command(self, tmp_path, text):
+        assert _delete_verdict(run_bash_guard("bash -lc '" + text + "'", tmp_path)) == "wall"
+        assert _delete_verdict(run_bash_guard("script /dev/null " + text, tmp_path)) == "wall"
+
+    def test_a_carrier_inside_a_shell_s_program_is_read_one_level_down(self, tmp_path):
+        assert _delete_verdict(run_bash_guard("bash -c \"su -c 'rm -rf ~'\"", tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("form", ["su -c '{}'", "script /dev/null {}"], ids=["su", "script"])
+    @pytest.mark.parametrize("text", [
+        "rm -rf build", "rm -rf ~/.cache/pip", "ls -la", "make test", "git status",
+    ], ids=["relative", "home-subdir", "read-only", "make", "git"])
+    def test_a_program_that_is_no_wipe_meets_no_wall(self, tmp_path, form, text):
+        # The hard tier's half alone: neither the twin nor the carrier walls.
+        # Whether the carrier draws the twin's speed bump (the home subdir
+        # bumps under `bash -lc`) is DEF-5110's reading, not this tier's. A
+        # fresh project per call: a bump the first call armed would read as
+        # an allow on the re-issue.
+        twin, carried = tmp_path / "twin", tmp_path / "carried"
+        twin.mkdir()
+        carried.mkdir()
+        assert _delete_verdict(run_bash_guard("bash -lc '" + text + "'", twin)) != "wall", text
+        assert _delete_verdict(run_bash_guard(form.format(text), carried)) != "wall", text
+
+    @pytest.mark.parametrize("cmd", [
+        "su - app", "su --help", "script session.log", "script -a typescript",
+        "script -qc 'pytest -q' /dev/null",
+    ])
+    def test_a_carrier_with_no_program_or_a_plain_one_is_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo \"su -c 'rm -rf ~'\"",
+        "echo \"script /dev/null rm -rf ~\"",
+        "git commit -m 'su -c reads rm -rf ~ now'",
+        "grep -n 'su -c rm -rf ~' notes.md",
+        "cat <<'EOF'\nsu -c 'rm -rf ~'\nscript /dev/null rm -rf ~\nEOF",
+    ], ids=["echo-su", "echo-script", "commit", "grep", "heredoc"])
+    def test_a_mention_of_either_carrier_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    def test_the_hard_tier_reads_su_and_script_alone(self):
+        # Each key must name a reader (a stray key filters to nothing, and
+        # the row's forms go quiet); eval, builtin and watch are read in
+        # place, and eval's program judged as another shell's would wall a
+        # glob cleared from inside a build directory.
+        bp = _bash_patterns_module()
+        assert bp._HARD_TIER_CARRIER_HEADS == frozenset({"su", "script"})
+        assert bp._HARD_TIER_CARRIER_HEADS <= set(bp._CARRIER_READERS)
+        command = "eval 'rm -rf x'; su -c 'rm -rf y'; script /dev/null rm -rf z"
+        scan = bp.mask_inert_syntax(command)
+        assert list(bp._carrier_program_bodies(command, scan, bp._HARD_TIER_CARRIER_HEADS)) == [
+            "rm -rf y", "rm -rf z",
+        ]
+        assert list(bp._carrier_program_bodies(command, scan))[0] == "rm -rf x"

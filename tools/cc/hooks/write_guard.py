@@ -3786,6 +3786,20 @@ def _bash_dangerous_reason_here(
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason
+            # The program su or BSD script runs (DEF-4120): `su -c '<program>'`
+            # and `script <file> <command>` hand it to a process of their own,
+            # at no command position the scan above reads, so a home
+            # directory's delete there was a plain allow where its `bash -c`
+            # twin walled. Read by the carrier walk the secret leg reads them
+            # with (DEF-4061), every candidate its getopt walk returns, and
+            # judged as another shell's program, as `bash -lc`'s is. No
+            # pattern is added: the opener compiles at import already.
+            for program in _bash_patterns._carrier_program_bodies(
+                spliced, pair, _bash_patterns._HARD_TIER_CARRIER_HEADS,
+            ):
+                reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
+                if reason:
+                    return reason
     return None
 
 
