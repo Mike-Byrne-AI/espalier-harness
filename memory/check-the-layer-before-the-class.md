@@ -44,11 +44,15 @@ shape was known, are in `task-packs/Done/TP-475-know-when-work-is-worth-doing.md
 
 A chain of siblings on one job, a cluster of standalone rows on one site family, and a
 defect recurring at a site already consolidated. `tools/cc/ledger_row.py` prints the
-questions today in three places: the cluster advisory at filing, `lineage <id>` at plan
-time (`/implement-task` step 1, `/implement-pack` step 0-A) when the row sits in a chain or
-a cluster, and the `class` verb when it opens a class. The chain advisory is
-recording-only, one line, until its threshold review rules (`CHAIN_ADVISORY_PRINTS`). No
-tool counts the third tell: question 5 is how it is noticed. The two reviewer bodies ask
+questions today in four places: the chain advisory and the cluster advisory at filing,
+`lineage <id>` at plan time (`/implement-task` step 1, `/implement-pack` step 0-A) when the
+row sits in a chain or a cluster, and the `class` verb when it opens a class. The chain
+advisory prints when the new row is a sibling of a sibling or a parent's third child. It
+recorded only, one line a filing, until its threshold review: on 2026-11-15 the operator
+ruled the print on (`CHAIN_ADVISORY_PRINTS`, ruling 1addb4), since it would have fired on 6
+of the first 20 filings carrying `--sibling-of`, 5 of them guard rows, where the
+tail-chasing was. Whether a printed chain changes a filing is unmeasured. No tool counts
+the third tell: question 5 is how it is noticed. The two reviewer bodies ask
 the layer question of every fix, as advice. None of it refuses: a gate on a count teaches
 the filer to suppress ([[gating-on-count-manufactures-findings]]).
 
