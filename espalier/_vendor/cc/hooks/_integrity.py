@@ -1601,7 +1601,7 @@ def gate_value_loosens(name: str, before: str | None, after: str | None, mode: s
     it. Under light the gate runs nothing, so a command set there, or with
     the gate turned full in the same change, tightens. A roster name with no
     grammar here loosens on any change: a switch added to the roster is
-    refused until it is taught (fail closed). config_guard (``_loosens``) and
+    refused until it is taught (fail closed). config_guard (``_gate_value_loosens``) and
     write_guard (``user_settings_switches``) read this one rule, so the two
     helper names it reads are on the start floor of every deny hook that
     imports this module (each hook's helper-name roster lists them); both are

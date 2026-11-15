@@ -413,9 +413,10 @@ class TestEveryRosterNameHasAGrammar:
 
     def test_a_roster_name_with_no_grammar_of_its_own_fails_closed(self):
         """The failure-mode review: a name added to the roster with no arm in
-        ``_loosens`` fell into the test command's rule and was never refused
-        under light. Any change of such a name loosens until it is taught."""
-        loosens = _load("config_guard.py", "_config_guard_def3081")._loosens
+        the loosening rule (``_integrity.gate_value_loosens``, config_guard's
+        ``_gate_value_loosens``) fell into the test command's rule and was never
+        refused under light. Any change of such a name loosens until it is taught."""
+        loosens = _load("config_guard.py", "_config_guard_def3081")._gate_value_loosens
         assert loosens("ESPALIER_A_NEW_SWITCH", None, "1", "light") is True
         assert loosens("ESPALIER_A_NEW_SWITCH", "1", "1", "light") is False
 

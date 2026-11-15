@@ -213,7 +213,7 @@ def _changed_settings_label(file_path: str | None, source: str, root: Path) -> s
 #: Whether a gate variable's new value loosens its gate: the one rule, in
 #: ``_integrity`` since write_guard judges a write of the user settings file
 #: by it too (DEF-5112).
-_loosens = _integrity.gate_value_loosens
+_gate_value_loosens = _integrity.gate_value_loosens
 
 
 def _judge_gate_switch(file_path: str | None, source: str,
@@ -306,9 +306,9 @@ def _judge_gate_switch(file_path: str | None, source: str,
         # The command's files layer adds only the session's own command
         # written into a file, which replaces nothing: its session layer
         # judges every other write.
-        files_layer = name != _hook_utils.STOP_GATE_TEST_CMD_ENV and _loosens(
+        files_layer = name != _hook_utils.STOP_GATE_TEST_CMD_ENV and _gate_value_loosens(
             name, text(before, key), text(after, key), mode)
-        if not (files_layer or _loosens(name, session(before, name), session(after, name), mode)):
+        if not (files_layer or _gate_value_loosens(name, session(before, name), session(after, name), mode)):
             continue
         where = after_values[key][1] if key in after_values else f"{label} (removed)"
         now, was = text(after, key), session(before, name)

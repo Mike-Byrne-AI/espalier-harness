@@ -667,8 +667,10 @@ USER_SETTINGS_SWITCH = (
     "the user settings file to get past a hook that is firing here."
     "\n  Do: make the edit without that setting -- any other change to the file "
     "goes through -- and fix what the hook flagged, or file a tracked issue if "
-    "the hook is wrong. A setting the operator wants there is theirs to write "
-    "by hand, outside the session."
+    "the hook is wrong; for a harness self-edit the protected-zone check is "
+    f"refusing, the operator relaunches with `{_maintenance_mode.ENV_VAR}=1` (this "
+    "check still runs there). A setting the operator wants in the file is theirs "
+    "to write by hand, outside the session."
 )
 
 # A project settings change that unwires a governance gate the
