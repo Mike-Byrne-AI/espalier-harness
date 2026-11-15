@@ -2154,7 +2154,8 @@ class TestMemoryCapPopulation:
             "or typed predicate skips files no record rule named. Keep the one home, or say here "
             "why a second record class exists."
         )
-        bound = sorted(rel for rel in MEMORY_CAP_POPULATION.required if is_dated_fragment(rel))
+        records = MEMORY_CAP_POPULATION.records
+        bound = sorted(rel for rel in MEMORY_CAP_POPULATION.required if records and records(rel))
         assert not bound, f"census sites the record class would skip: {bound}"
 
     def test_declared_population_is_not_a_subset_of_the_occurrence_contract(self):

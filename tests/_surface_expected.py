@@ -515,11 +515,13 @@ CONTRACT_CEILINGS: dict[str, int] = {
     # (tests/test_documented_claims.py::MEMORY_CAP_POPULATION). Unlike the
     # marker-based rules below, this one budgets REGISTRY exclusions: each is
     # a (path, line-regex, reason) row that silences a line the value scan
-    # would otherwise count. Steady state is 1 -- the ESPALIER_MEMORY.md
-    # session-log rows, which quote past state and must not be rewritten.
-    # Raising this is the erosion path for that gate: prefer fixing the
-    # prose, or narrowing a context shape, over adding exclusion #2.
-    "memory-cap-population": 1,
+    # would otherwise count. Steady state is 0: the one exclusion this budget
+    # held, for the Session Log's rows, is retired, since rows are files the
+    # population reads as records (MEMORY_CAP_POPULATION.records, DEF-3082),
+    # and a record is never an exclusion here. Raising this is the erosion
+    # path for that gate: prefer fixing the prose, or narrowing a context
+    # shape, over adding an exclusion.
+    "memory-cap-population": 0,
     # TP-111: # contract: ok path-literal <reason> opt-outs for
     # hand-typed cc/ path strings in tools/cc/**/*.py (excluding
     # _paths.py). Steady-state ceiling is 0; raising requires
