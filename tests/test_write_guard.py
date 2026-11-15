@@ -722,6 +722,12 @@ class TestQuotedVerbTailIsUniform:
         # their tier is (TestQuotedProgramsAreReadAsPrograms's quoted-head row,
         # and its builtin row for the quoted words the opener walks past)
         "_CARRIER_HEAD_RE": None,
+        # powershell's head on the Bash tool (DEF-4061), a first-use compile
+        # named as its accessor's call: the secret leg's reader of the program
+        # it runs, no zone deny; its spellings are walked at the pattern
+        # (TestBinaryVerbSpellingIsUniform's _PATTERN_SAMPLES) and its quoted head
+        # in TestQuotedProgramsAreReadAsPrograms
+        "_powershell_head_re()": None,
         "_TAR_CREATE_RE": None,
         "_ZIP_RE": None,
         "_DD_IF_RE": None,
@@ -1073,6 +1079,9 @@ class TestBinaryVerbSpellingIsUniform:
         # the secret leg's carrier opener (DEF-1131): its binary heads; its
         # builtin head, `eval`, is pinned case-sensitive in the test below
         "_CARRIER_HEAD_RE": ("watch", "watch 'cat notes'"),
+        # powershell's head (DEF-4061), compiled on first use: read through
+        # its accessor below
+        "_powershell_head_re()": ("powershell", "powershell -Command 'cat notes'"),
     }
 
     @staticmethod
@@ -1109,7 +1118,8 @@ class TestBinaryVerbSpellingIsUniform:
     def test_a_read_arm_takes_every_spelling_at_the_pattern(self, arm):
         bp = _bash_patterns_module()
         verb, bare = self._PATTERN_SAMPLES[arm]
-        pattern = getattr(bp, arm)
+        # a first-use compile is named as its accessor's call (DEF-3063)
+        pattern = first_use_patterns(bp)[arm] if arm.endswith("()") else getattr(bp, arm)
         assert pattern.search(bare), (arm, bare)
         for spelled in self._spellings(verb):
             text = spelled + bare[len(verb):]
@@ -16991,6 +17001,8 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
                                     "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
+        "_powershell_head_re()": "powershell's head on the Bash tool (DEF-4061): the secret leg's "
+                                 "reader of the program it runs; no zone deny reads it",
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
         "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
                           "no zone deny reads it",

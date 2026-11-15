@@ -290,7 +290,8 @@ class TestGuardPatternClassify:
         # reader of module-level compiles alone, the cost census's included.
         # Pinned whole, so no new one hides, until a reader of first-use
         # compiles lands for them all
-        first_use_unwatched = ["_bash_patterns._carrier_fed_remove_re()"]
+        first_use_unwatched = ["_bash_patterns._carrier_fed_remove_re()",
+                               "_bash_patterns._powershell_head_re()"]
         assert missed == first_use_unwatched, missed
 
     def test_the_module_roster_is_the_contracts_own(self):
