@@ -3218,10 +3218,12 @@ def check_write_edit(tool_input: dict, root: Path) -> int:
 def _names_user_settings(file_path: str, root: Path, user: Path) -> bool:
     """``file_path`` names the user settings file ``user``: the same spelling,
     the same file where both exist (a symlink to it, a hard link, a case
-    variant on a disk that folds case), or the same folder and its name in any
-    case (a write that creates the file, or names it through a link to its
-    folder). Two stats on a Write or an Edit, none on any other call."""
-    target = Path(file_path).expanduser()
+    variant on a disk that folds case), or the same folder and the same name
+    (a write that creates the file, or names it through a link to its
+    folder). Two stats on a Write or an Edit, none on any other call. The
+    tilde is expanded by ``os.path.expanduser``, which leaves an unknown
+    user's ``~name`` as it is where ``Path.expanduser`` raises."""
+    target = Path(os.path.expanduser(file_path))
     if not target.is_absolute():
         target = root / target
     if os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(user)):
@@ -3231,7 +3233,7 @@ def _names_user_settings(file_path: str, root: Path, user: Path) -> bool:
             return True
     except OSError:  # fail-open: ok deliberate -- one of the two files is absent or unreadable: the folder test below decides
         pass
-    if target.name.lower() != user.name.lower():
+    if target.name != user.name:
         return False
     try:
         return os.path.samefile(target.parent, user.parent)
@@ -3302,27 +3304,21 @@ def check_user_settings_write(tool_name: str, tool_input: dict, root: Path) -> i
         return 0
     if not _names_user_settings(file_path, root, user):
         return 0
+    exists = True
     try:
         raw: bytes | None = user.read_bytes()
     except FileNotFoundError:  # fail-open: ok deliberate -- an absent file sets nothing: a Write creates it and its whole text is judged
-        raw = None
+        raw, exists = None, False
     except OSError:  # fail-open: ok deliberate -- an unreadable file is judged as empty: a Write that turns a switch on is still refused, and an Edit Claude Code cannot read fails and changes nothing
         raw = None
     after = _user_settings_result(
-        tool_name, tool_input, None if raw is None else _integrity.settings_text(raw), raw is not None)
+        tool_name, tool_input, None if raw is None else _integrity.settings_text(raw), exists)
     if after is None:
         return 0
-    try:
-        findings = _integrity.user_settings_switches(
-            root, _integrity.settings_object(raw), _integrity.settings_object(after))
-    except RuntimeError as exc:
-        _hook_utils.say_once(
-            root, "user-settings-unlocated", "write_guard", "pretooluse_failed_open_user_settings",
-            f"the settings files could not be located ({type(exc).__name__}); "
-            "a write of the user settings file is not judged this session",
-            fault=type(exc).__name__,
-        )
-        return 0
+    # user_settings_path() answered above, so the settings files it reads
+    # again here are located the same way (no second RuntimeError to catch).
+    findings = _integrity.user_settings_switches(
+        root, _integrity.settings_object(raw), _integrity.settings_object(after))
     if not findings:
         return 0
     label = _integrity.user_settings_label()

@@ -23,7 +23,7 @@ While pre-1.0, minor version bumps may include breaking changes.
   every session on the machine launched from it next. The check runs under
   maintenance mode, judges the file on its own as well as for the session
   (a value a higher file in one repository outranks still reaches the
-  others), and a Bash or PowerShell write of the file stays a declared limit
+  others), and a Bash, PowerShell or MCP write of the file stays a declared limit
   with no per-call cost. The audit record is `pretooluse_blocked_kill_switch`
   with `kind: user_settings_write`. Two helper names join the start floor of
   `plan_guard` and `stop_gate` (and one of `write_guard`): `stop_gate_mode`,

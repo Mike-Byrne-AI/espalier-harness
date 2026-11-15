@@ -134,9 +134,10 @@ a bare `claude` starts a new conversation and a new blueprint node.
 While it is active, `write_guard` skips its protected-zone path check,
 `plan_guard` skips the plan-required check, `stop_gate` skips the docs-refresh
 and code-review gates, and `subagent_stop` skips the blueprint append. Still
-enforced: the kill-switch denial, dangerous-command patterns, the speed-bump
-checkpoints, `config_guard`, `post_write_check`, and, where it is installed,
-the CI gate. Every bypass logs a
+enforced: the kill-switch denial, the refusal of a Write or Edit of your user
+settings file that turns the hooks off or loosens a gate, dangerous-command
+patterns, the speed-bump checkpoints, `config_guard`, `post_write_check`,
+and, where it is installed, the CI gate. Every bypass logs a
 line to stderr, which Claude Code routes to its debug log rather than the
 transcript (these hooks exit 0, and that stderr never reaches it); what you
 read back is the once-per-session audit row those guard and stop bypasses

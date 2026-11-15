@@ -1118,9 +1118,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    repository on the machine, so a value a higher file here outranks is
    judged all the same. An Edit that Claude Code would fail, and a result
    that is not a strict JSON object (which Claude Code does not load), pass.
-   A Bash or PowerShell write of the file is a declared limit, its content
-   unread and no shell call paying for the check
-   (`tests/test_write_guard_user_settings.py::TestAShellWriteOfTheFileIsADeclaredLimit::test_a_shell_write_of_the_user_file_passes`).
+   A Bash, PowerShell or MCP write of the file is a declared limit, its
+   content unread and no such call paying for the check
+   (`tests/test_write_guard_user_settings.py::TestAShellWriteOfTheFileIsADeclaredLimit::test_a_shell_or_mcp_write_of_the_user_file_passes`).
 
 2. **Protected-zone mutations.** The mutations the guard can read of a
    harness infrastructure path are denied -- a write into it, a delete of
@@ -2599,8 +2599,13 @@ change was not applied, the file keeps it, and it takes effect at the next
 launch, which the operator decides. A later change let through clears the
 note, and so does a fresh session; SessionStart's banner names the maintenance
 switch it started with, not the other values. Because this refusal leaves the
-file as written, `write_guard` refuses a Write or Edit of the user file that
-would make such a change before it lands (section 4).
+file as written, `write_guard` judges a Write or Edit of the user file before
+it lands (section 4), by the same rule but against the files on disk rather
+than this record, so the two can part both ways: the session's own test
+command written into a user file whose stop gate is `full` is refused at the
+write and let through here, and a switch already on disk that the record
+lacks (a shell write earlier) lets an ordinary Edit through at the write
+while this hook refuses the change.
 
 **What you see when blocked:**
 

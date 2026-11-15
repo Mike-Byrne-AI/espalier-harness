@@ -1503,13 +1503,19 @@ def settings_object(raw: bytes | str | None) -> object:
     return None if raw is None else load_json_dict_safe(raw, default=None)
 
 
-def settings_text(raw: bytes) -> str | None:
-    """A settings file's bytes as text, a byte-order mark read; None where they
-    do not decode."""
+def settings_text(raw: bytes) -> str:
+    """A settings file's bytes as the text Claude Code's Edit matches against:
+    a byte-order mark read, a byte that does not decode replaced (as
+    ``load_json_dict_safe`` reads the same bytes, so the two reads of one file
+    agree), and CRLF folded to LF -- the Edit tool matches an ``old_string``
+    written with LF against a CRLF file (driven on Claude Code 2.1.321,
+    2026-11-15), so a model that kept the CR would read that Edit as one the
+    tool fails."""
     try:
-        return decode_bom(raw)
-    except UnicodeDecodeError:  # fail-open: ok deliberate -- bytes that do not decode are text no Edit can match, so the Edit fails in Claude Code and changes nothing
-        return None
+        text = decode_bom(raw)
+    except UnicodeDecodeError:  # fail-open: ok text-fallback -- the replacing decode below is the text the tool reads, so the Edit is still judged
+        text = raw.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n")
 
 
 def _settings_object(path: Path) -> dict:
@@ -1639,6 +1645,14 @@ def user_settings_switches(repo_root: Path, before: object, after: object) -> li
       a source above them (managed settings, ``--settings``) and is not this
       layer's to judge, and a stop gate so owned runs the value this process
       holds.
+
+    The two judges read different starts, so they can part both ways: the
+    session's own test command written into a user file whose stop gate is
+    full is refused here (the file layer judges the command), where
+    config_guard lets it through (its files layer skips the command, which
+    replaces nothing this session); and a switch already on disk that
+    SessionStart's snapshot lacks (a shell write earlier) passes an ordinary
+    Edit here, where config_guard refuses the whole change.
 
     Raises RuntimeError where no home directory is found."""
     findings: list[str] = []

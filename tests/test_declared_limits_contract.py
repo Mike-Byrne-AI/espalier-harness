@@ -365,7 +365,7 @@ class TestTheSentenceSplitter:
 #: cite's hit is paid by the forced PowerShell remove's glob-relief cite, now
 #: by class and test name alone, so the seeded docs stay at the ceiling.
 #: HOOKS 43 -> 44 on 2026-11-15 (air's 565178, operator ruling 54f420): a
-#: Bash or PowerShell write of the user settings file is not read by the
+#: Bash, PowerShell or MCP write of the user settings file is not read by the
 #: check that refuses a Write or Edit of it turning the hooks off, one
 #: sentence pinned in `TestAShellWriteOfTheFileIsADeclaredLimit`; its cite's
 #: hit is paid by the drive-root claims table's cite, which sits in no

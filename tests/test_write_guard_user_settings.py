@@ -36,6 +36,7 @@ scratch home's own audit directory.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -178,6 +179,21 @@ class TestAWriteThatSwitchesAGateOffIsRefused:
         _passes(box, "Edit", edit)
         _walled(box.call("Edit", {**edit, "replace_all": True}), "disableAllHooks: true")
 
+    def test_an_edit_of_a_crlf_file_is_matched_as_claude_code_matches_it(self, box):
+        """The Edit tool matches an old_string written with LF against a CRLF
+        file (driven on 2.1.321), so a Windows-saved file is judged, not read
+        as an Edit the tool would fail."""
+        box.user.write_bytes(b'{\r\n  "model": "x",\r\n  "theme": "dark"\r\n}\r\n')
+        _walled(box.call("Edit", {"file_path": str(box.user), "old_string": '"model": "x",\n  "theme": "dark"',
+                                  "new_string": '"model": "x",\n  "disableAllHooks": true'}))
+
+    def test_an_edit_of_a_file_holding_a_byte_that_does_not_decode_is_judged(self, box):
+        """A stray byte is read with a replacement, as the JSON read of the same
+        bytes is, so the two reads of one file agree."""
+        box.user.write_bytes(b'{"theme": "caf\xe9", "model": "x"}')
+        _walled(box.call("Edit", {"file_path": str(box.user), "old_string": '"model": "x"',
+                                  "new_string": '"model": "x", "disableAllHooks": true'}))
+
     def test_maintenance_mode_does_not_lift_it(self, box):
         """The maintenance bypass is for harness self-edits; none writes a
         hooks-off switch into the user's own file."""
@@ -252,6 +268,35 @@ class TestEveryOtherEditOfTheFilePasses:
         box.write(box.user, {"model": "x"})
         _passes(box, "NotebookEdit", {"notebook_path": str(box.user), "new_source": json.dumps({"disableAllHooks": True})})
 
+    @pytest.mark.parametrize("live", [
+        pytest.param({MM: "1"}, id="launched-in-maintenance"),
+        pytest.param({SG: "full", CMD: "pytest -q"}, id="launched-with-the-stop-gate-full"),
+    ])
+    def test_an_ordinary_edit_passes_in_a_session_launched_with_a_gate_variable(self, box, live):
+        """The session's layer reads the launch environment; an edit that sets
+        no gate variable moves nothing there, however the session started."""
+        box.write(box.user, {"model": "x"})
+        _passes(box, "Edit", {"file_path": str(box.user), "old_string": '"model": "x"',
+                              "new_string": '"model": "x",\n  "permissions": {"allow": ["Bash(ls:*)"]}'}, live)
+
+    @pytest.mark.skipif(sys.platform == "win32" or getattr(os, "geteuid", lambda: 1)() == 0,
+                        reason="a mode-000 file stays readable to root and on Windows")
+    def test_a_create_edit_of_a_file_that_exists_but_cannot_be_read_passes(self, box):
+        """An empty old_string on a file that exists fails in Claude Code
+        (driven on 2.1.321), readable or not: it is never judged as a create."""
+        box.write(box.user, {"model": "x"})
+        box.user.chmod(0)
+        try:
+            _passes(box, "Edit", {"file_path": str(box.user), "old_string": "",
+                                  "new_string": json.dumps({"disableAllHooks": True})})
+        finally:
+            box.user.chmod(0o600)
+
+    def test_a_tilde_path_naming_no_known_user_passes_and_crashes_nothing(self, box):
+        """``Path.expanduser`` raises on an unknown user; the check expands the
+        way ``os.path.expanduser`` does, which leaves the path as it is."""
+        assert box.call("Write", {"file_path": "~no-such-user-5112/notes.txt", "content": "x"}) == (None, "")
+
     def test_another_settings_file_outside_every_zone_passes(self, box, tmp_path):
         other = tmp_path / "elsewhere" / ".claude" / "settings.json"
         other.parent.mkdir(parents=True)
@@ -259,17 +304,21 @@ class TestEveryOtherEditOfTheFilePasses:
 
 
 class TestAShellWriteOfTheFileIsADeclaredLimit:
-    def test_a_shell_write_of_the_user_file_passes(self, box):
+    def test_a_shell_or_mcp_write_of_the_user_file_passes(self, box):
         """The operator's ruling (54f420): a shell write of the user file is a
-        declared limit, its content unread, with no per-call weight. A Bash
-        redirect and a PowerShell Set-Content carrying the switch are each a
-        plain allow; the row reds the day a reader closes either, so the
-        HOOKS.md sentence that declares the limit is rewritten on purpose."""
+        declared limit, its content unread, with no per-call weight; an MCP
+        server's write is the same limit (its payload shape is the server's).
+        A Bash redirect and a PowerShell Set-Content carrying the switch are
+        each a plain allow, and an MCP write is never the wall (the MCP tier's
+        speed bump may ask once); the row reds the day a reader closes any of
+        them, so the HOOKS.md sentence that declares the limit is rewritten on
+        purpose."""
         switch = json.dumps({"disableAllHooks": True})
         for tool, command in (("Bash", f"printf '%s' '{switch}' > '{box.user}'"),
                               ("PowerShell", f"Set-Content -Path '{box.user}' -Value '{switch}'")):
             assert box.call(tool, {"command": command}) == (None, ""), (tool, command)
-        assert not box.user.exists()  # the hook judged each command; nothing ran it
+        _passes(box, "mcp__filesystem__write_file", {"path": str(box.user), "content": switch})
+        assert not box.user.exists()  # the hook judged each call; nothing ran it
 
 
 class TestNoShellCallPaysForIt:
