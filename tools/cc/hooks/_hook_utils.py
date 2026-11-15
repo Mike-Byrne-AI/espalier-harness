@@ -4469,6 +4469,7 @@ _STACK_ROOT_FALLBACK = frozenset({
     "package.json", "go.mod", "Cargo.toml", "pom.xml", "build.gradle", "Gemfile",
     "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock",
     "bun.lock", "bun.lockb", "go.sum", "Cargo.lock", "Gemfile.lock",
+    "uv.lock", "poetry.lock", "Pipfile.lock", "pdm.lock", "requirements.lock", "requirements-dev.lock",
 })
 
 # stack-table: ok purpose-scoped -- the import fallback, held equal to the table by test

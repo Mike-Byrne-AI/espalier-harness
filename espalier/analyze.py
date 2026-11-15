@@ -436,8 +436,36 @@ def _argv(argv: tuple[str, ...] | list[str]) -> str:
     return " ".join(argv)
 
 
-#: The Python row's test runner, the command the heuristics below choose.
-_PYTEST = _argv(_PYTHON.test)
+def detect_python_runner(repo_root: Path) -> tuple[str, str]:
+    """``(name, source)``: the tool that keeps this repository's Python
+    environment, named by the one table runner whose lockfile is at the root
+    (``("uv", "uv.lock")``). Lockfiles of two or more runners are not guessed
+    between: ``("", "ambiguous: <files>")``, and the commands stay bare. No
+    runner's lockfile: ``("", "")``. The lockfile alone decides, as for Node
+    (:func:`detect_package_manager`): whether the tool is installed is not
+    checked. Root only: a nested package's lockfile is that package's."""
+    root_files = _root_file_names(repo_root)
+    present = [
+        (runner, lockfile) for runner in _PYTHON.runners for lockfile in runner.lockfiles
+        if lockfile in root_files
+    ]
+    names = list(dict.fromkeys(runner.name for runner, _ in present))
+    if len(names) == 1:
+        return names[0], present[0][1]
+    if names:
+        return "", "ambiguous: " + ", ".join(lockfile for _, lockfile in present)
+    return "", ""
+
+
+def _python_command(repo_root: Path, argv: tuple[str, ...]) -> str:
+    """A Python command as the fingerprint records it: under the runner's
+    ``run`` where :func:`detect_python_runner` names one, else bare."""
+    name, _source = detect_python_runner(repo_root)
+    for runner in _PYTHON.runners:
+        if runner.name == name:
+            return _argv((*runner.run, *argv))
+    return _argv(argv)
+
 
 #: The manifests of the other stacks that own a test command (the table's rows
 #: with a ``test`` argv or package managers): one at the root owns ``tests/``
@@ -465,23 +493,26 @@ def detect_tests(repo_root: Path) -> list[str]:
     """The repository's test commands. The heuristics deciding WHETHER pytest
     applies stay here; the commands come from the stack table, and a Node
     repository's test script runs under its own package manager
-    (:func:`detect_package_manager`)."""
+    (:func:`detect_package_manager`), and pytest under the Python runner its
+    lockfile names (:func:`detect_python_runner`)."""
     commands: list[str] = []
+    runs_pytest = False
     if (repo_root / "pytest.ini").exists():
-        commands.append(_PYTEST)
+        runs_pytest = True
     elif (repo_root / "tests").exists() and _has_python_signals(repo_root):
-        commands.append(_PYTEST)
+        runs_pytest = True
     elif (repo_root / "pyproject.toml").exists():
         text = _safe_text(repo_root / "pyproject.toml").lower()
-        if "pytest" in text or "[tool.pytest" in text:
-            commands.append(_PYTEST)
+        runs_pytest = "pytest" in text or "[tool.pytest" in text
     elif _tests_dir_has_pytest_modules(repo_root) and not any(
         (repo_root / manifest).exists() for manifest in _FOREIGN_TEST_OWNERS
     ):
         # A foreign manifest owns the test command; a Rust repo with one
         # python-driven smoke test must not be told its suite is `pytest -q`
         # (the failure-mode pass drove exactly that: pytest listed FIRST).
-        commands.append(_PYTEST)
+        runs_pytest = True
+    if runs_pytest:
+        commands.append(_python_command(repo_root, _PYTHON.test))
     package_json = _safe_package_json(repo_root)
     scripts = package_json.get("scripts", {}) if isinstance(package_json.get("scripts"), dict) else {}
     if "test" in scripts:
@@ -566,9 +597,10 @@ def detect_actions(repo_root: Path, test_commands: list[str]) -> dict[str, list[
     # that declares ruff is linted by it, and one that does not is never linted
     # by a ruff that merely happens to be installed. The RUNNER leaves the
     # vendored tools/cc/ out (`harness_config.preflight_command`, DEF-1154);
-    # this string is the fingerprint's and stays `ruff check .` byte for byte.
+    # this string is the fingerprint's and stays `ruff check .` byte for byte,
+    # under the Python runner a lockfile names (`uv run ruff check .`).
     if "lint" not in actions and ruff_is_declared(repo_root):
-        actions["lint"] = ["ruff check ."]
+        actions["lint"] = [_python_command(repo_root, ("ruff", "check", "."))]
     return actions
 
 

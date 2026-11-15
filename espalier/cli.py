@@ -1813,10 +1813,13 @@ def settings_superseded_allows(
         for listed in inferred.values():
             if isinstance(listed, list):
                 commands.extend(listed)
+    # A Python runner leads a command only since init reads its lockfile, and
+    # init never derived a bare rule for one, so a `Bash(uv *)` is the operator's.
+    runner_names = {runner.name for runner in _stack_table.stack("python").runners}
     out: list[tuple[str, str]] = []
     for cmd in commands:
         tokens = cmd.split() if isinstance(cmd, str) else []
-        if not tokens or tokens[0] in ("python", "python3"):
+        if not tokens or tokens[0] in ("python", "python3") or tokens[0] in runner_names:
             continue
         rule = f"Bash({tokens[0]} *)"
         if rule in present and rule not in canonical and rule not in dict(out):

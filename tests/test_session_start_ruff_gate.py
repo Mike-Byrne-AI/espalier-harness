@@ -100,12 +100,19 @@ _DECLARATIONS = {
     "package_lint": {"ruff.toml": "line-length = 100\n", "package.json": "{\"scripts\": {\"lint\": \"eslint .\"}}\n"},
     "declared_uv_ruff": {"ruff.toml": "", "espalier.toml": "[extra_actions]\nlint = [\"uv run ruff check .\"]\n"},
     "lint_suppressed": {"ruff.toml": "", "espalier.toml": "suppress_actions = [\"lint\"]\n"},
+    # A Python runner's lockfile puts the inferred lint under its `run`, which
+    # brings its own ruff; two runners' lockfiles leave the lint bare.
+    "inferred_under_uv": {"ruff.toml": "", "uv.lock": "version = 1\n"},
+    "two_runners_leave_it_bare": {"ruff.toml": "", "uv.lock": "version = 1\n", "poetry.lock": "# lock\n"},
     # Declared in espalier.toml, with no ruff configuration at all.
     "declared_ruff": {"espalier.toml": "[extra_actions]\nlint = [\"ruff check src\"]\n"},
 }
 
 # Whether /preflight runs ruff from PATH on each tree above.
-_RUNS_RUFF = {"tool_table", "dev_requirement", "ruff_toml", "dot_ruff_toml", "declared_ruff"}
+_RUNS_RUFF = {
+    "tool_table", "dev_requirement", "ruff_toml", "dot_ruff_toml", "declared_ruff",
+    "two_runners_leave_it_bare",
+}
 
 
 def _tree(tmp_path: Path, files: dict) -> Path:
