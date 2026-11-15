@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3082",
+ "subject": "tests/test_documented_claims.py",
+ "cmd": "python3 -c \"import sys,tempfile,pathlib;sys.path[:0]=['.','tests'];import tests.test_documented_claims as m;from tests._contracts import population_sites as s;t=tempfile.TemporaryDirectory();d=pathlib.Path(t.name);r='memory/session-log.d/2026-01-01-000000-x.md';f=d/r;f.parent.mkdir(parents=True);f.write_text('| 2026-01-01 | **x** | a bound 100 -> %d |'%m.EXPECTED_MEMORY_MD_CAP,encoding='utf-8');print(len(s(d,m.MEMORY_CAP_POPULATION,r)))\"",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tests/_contracts.py"
+ ],
+ "row_sha": "fb32995bb1df",
+ "text_sha": "9ceb5ab57291",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD f1ec347ae14e)"
+}
