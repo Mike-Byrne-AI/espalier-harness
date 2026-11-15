@@ -245,7 +245,7 @@ class TestFirstUse:
     every call that opens its check, so the census counts it, and the summed
     line is what a cost gate reads."""
 
-    def _compile(self, root: Path) -> dict:
+    def _figures(self, root: Path) -> dict:
         proc = _run("--compile", "--root", str(root), "--json")
         assert proc.returncode == 0, proc.stderr
         got = json.loads(proc.stdout)["compile"]
@@ -253,7 +253,7 @@ class TestFirstUse:
         return got
 
     def test_each_first_use_pattern_is_counted_beside_the_imports(self, tmp_path):
-        got = self._compile(_first_use_hooks(tmp_path, n=40))
+        got = self._figures(_first_use_hooks(tmp_path, n=40))
         assert (got["hooks_patterns"], got["hooks_chars"]) == (2, 14), got
         assert got["first_use_names"] == ["_bash_patterns._grown_re()", "_bash_patterns._other_re()",
                                           "_speedbump._dup_re()", "_speedbump._sb_re()"], got
@@ -263,8 +263,8 @@ class TestFirstUse:
         assert (got["summed_patterns"], got["summed_chars"]) == (5, 14 + 40 + 10), got
 
     def test_a_first_use_pattern_grown_on_a_scratch_copy_raises_the_sum(self, tmp_path):
-        small = self._compile(_first_use_hooks(tmp_path / "small", n=40))
-        grown = self._compile(_first_use_hooks(tmp_path / "grown", n=1_040))
+        small = self._figures(_first_use_hooks(tmp_path / "small", n=40))
+        grown = self._figures(_first_use_hooks(tmp_path / "grown", n=1_040))
         assert grown["hooks_chars"] == small["hooks_chars"], (small, grown)
         assert grown["first_use_chars"] - small["first_use_chars"] == 1_000, (small, grown)
         assert grown["summed_chars"] - small["summed_chars"] == 1_000, (small, grown)
@@ -337,7 +337,7 @@ class TestFirstUse:
 
         from tests._first_use_patterns import first_use_patterns
 
-        got = self._compile(REPO_ROOT)
+        got = self._figures(REPO_ROOT)
         monkeypatch.syspath_prepend(str(REPO_ROOT / "tools" / "cc" / "hooks"))
         modules = [importlib.import_module(name) for name in census.FIRST_USE_MODULES]
         guard = next(m for m in modules if m.__name__ == "write_guard")
