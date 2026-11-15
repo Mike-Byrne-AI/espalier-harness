@@ -710,8 +710,16 @@ def test_live_repo_audit_runs_clean():
 
     This is the gate that catches drift. If it fails, either a doc has
     drifted from reality or the auditor itself has a bug.
+
+    It audits the claims alone (``include_freshness=False``). The freshness
+    verdicts come from the gitignored per-install cache, so this gate used
+    to red in a checkout whose cache had been rebuilt after a pin's day
+    crossing while a fresh clone, CI's included, read clean on the same
+    commit (DEF-4118). Freshness has its own required gate, the CI
+    ``freshness`` job, which recomputes drift and holds the pull requests
+    that touch a critical fragment's bound files.
     """
-    report = audit_accuracy(REPO_ROOT)
+    report = audit_accuracy(REPO_ROOT, include_freshness=False)
     # TP-174b R20: guard against vacuous green — if extract_claims regressed
     # to 0, verdicts would be empty and ``assert not failures`` would pass
     # while the drift gate is silently disarmed. claims_total counts EXTRACTED
@@ -729,6 +737,32 @@ def test_live_repo_audit_runs_clean():
             for v in failures
         )
     )
+
+
+def test_live_repo_audit_verdict_ignores_the_local_freshness_cache(monkeypatch):
+    """The drift gate above gives one verdict per commit, wherever the commit
+    is checked out (DEF-4118). Plant a fresh cache naming a critical fragment:
+    the default audit must see it (the control, so this test cannot pass with
+    the plant unread), and the gate must still pass, as it does with no cache
+    at all."""
+    import espalier.freshness as fr
+
+    planted = {"id": "planted-critical", "source": "docs/SHARP_EDGES.md:1",
+               "reason": "planted by the test"}
+    monkeypatch.setattr(fr, "read_state_cache_safe", lambda root: {
+        "computed_at": "planted", "counts": {}, "critical": [planted],
+        "stale": [],
+    })
+    monkeypatch.setattr(
+        fr, "is_state_cache_stale", lambda cache, *, repo_root=None: False
+    )
+    seen = [v for v in audit_accuracy(REPO_ROOT).verdicts
+            if v.claim_id == "freshness::planted-critical"]
+    assert seen and seen[0].verdict == VERDICT_FAIL, (
+        "the default audit did not read the planted cache: this test would "
+        f"pass with the gate reading it too; saw {seen!r}"
+    )
+    test_live_repo_audit_runs_clean()
 
 
 def test_malformed_pin_degrades_to_unverifiable(tmp_path: Path) -> None:

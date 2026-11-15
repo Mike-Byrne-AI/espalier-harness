@@ -4396,11 +4396,15 @@ because no required CI cell can observe the behaviour.
 ## A mass freshness-pin is a 14-day time-bomb
 
 `espalier freshness pin --all` stamps every fragment with the SAME
-`last_verified_at`. Fourteen days later they ALL cross the re-verify timer at once
-and `test_audit_accuracy::test_live_repo_audit_runs_clean` goes RED — with ZERO
-code change. A work session spanning local midnight surfaces it mid-task, where
-it LOOKS like a regression the current work introduced but is environmental
-(none of the touched files are bound to the tripped fragments).
+`last_verified_at`, so the whole cohort crosses each day threshold at once — with
+ZERO code change. Where it blocks is the CI `freshness` job, on a pull request
+whose changed files include a critical fragment's bound path: it LOOKS like a
+regression that lane introduced, but only the binding is the lane's. It used to
+surface earlier and wider: `test_audit_accuracy::test_live_repo_audit_runs_clean`
+folded in the local freshness cache and went RED mid-session, on any lane, in a
+checkout whose cache had been rebuilt after the crossing (DEF-4118, closed
+2026-11-15: that gate now audits the claims alone, so it no longer reads the
+crossing at all).
 
 **The day axis now has a warning band, so the cohort warns before it blocks.**
 `espalier/scanners/freshness.py::_classify` returns `fresh` while
@@ -4420,17 +4424,20 @@ smaller cluster gets no advisory: six of fourteen re-pinned on 2026-09-15 went
 unannounced, and the handoff carries their dates by hand (stale 2026-09-30,
 critical 2026-10-14).
 
-**Do:** when the audit-accuracy test reds and the only thing that moved is the
-date, confirm the flagged fragments' values are still mechanically correct (the
-rest of the suite is green), then re-pin — `espalier freshness pin --all` is
-honest there. Don't chase it as a code bug. (All pins landing on one day is the
+**Do:** when the `freshness` job (or a local `espalier freshness check`, or the
+session banner) names a critical fragment and the only thing that moved is the
+date, confirm the flagged fragments' values are still mechanically correct, then
+re-pin in that lane — `espalier freshness pin <id>` for the fragments it names,
+`--all` only as a deliberate cohort re-attestation (the entry below). Don't chase
+it as a code bug. (All pins landing on one day is the
 root shape. The warning band landed 2026-08-10 and defuses the *cliff*;
 staggering the pins is what would defuse the *cohort*, and it stays an operator
 action because writing spread `last_verified_at` values would assert
 verifications that never happened.)
 
-**Proof hint:** `git log -1 --format=%cd .espalier/freshness.json` near a 14-day
-boundary + a green full suite ⇒ environmental, not regression.
+**Proof hint:** `git log -1 --format=%cd .espalier/freshness.json` near a 14- or
+28-day boundary + `espalier freshness check` naming the cohort ⇒ environmental,
+not regression.
 
 ## Pinning ONE freshness fragment reds its co-pinned siblings _(closed — behaviour changed)_
 

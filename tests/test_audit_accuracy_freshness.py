@@ -4,8 +4,12 @@ Pins that `audit_accuracy` emits a verdict per critical-or-stale
 fragment derived from the state_cache in
 `.espalier/.freshness_state_cache.json`. Without this contract the audit orchestrator
 can silently stop surfacing freshness verdicts after a refactor, and
-stale fragments ship to production with no signal — defeating the
-freshness gate that the CI workflow relies on.
+`espalier audit-accuracy` stops naming a fragment the local cache calls
+critical. The audit is not the CI freshness gate: that is `espalier
+freshness check`, which recomputes drift from the commit (docs/FRESHNESS.md
+section 7), while these verdicts are only as current as this checkout's
+cache, so a gate that must read alike on every checkout passes
+``include_freshness=False``.
 
 The freshness verdicts are derived from the state_cache in
 ``.espalier/.freshness_state_cache.json``. The audit orchestrator surfaces them
@@ -126,6 +130,28 @@ class TestAuditAccuracyFreshness:
         verdicts = [v for v in report.verdicts
                     if v.verification_mode == MODE_FRESHNESS]
         assert verdicts == []
+
+    def test_include_freshness_false_audits_the_claims_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """DEF-4118: a gate that must read alike on every checkout of one
+        commit passes include_freshness=False, and a fresh cache naming a
+        critical and a stale fragment then adds no verdict; the default
+        still reads both (the control)."""
+        from espalier.audit_accuracy import MODE_FRESHNESS, audit_accuracy
+        repo = _init_git_repo(tmp_path)
+        _write_cache(
+            repo,
+            critical=[{"id": "c", "source": "docs/CONVENTIONS.md:42",
+                       "reason": "drift"}],
+            stale=[{"id": "s", "source": "README.md:3", "reason": "drift"}],
+        )
+        default = [v for v in audit_accuracy(repo).verdicts
+                   if v.verification_mode == MODE_FRESHNESS]
+        assert len(default) == 2
+        alone = [v for v in audit_accuracy(repo, include_freshness=False).verdicts
+                 if v.verification_mode == MODE_FRESHNESS]
+        assert alone == []
 
     def test_state_cache_stale_emits_no_freshness_verdicts(
         self, tmp_path: Path

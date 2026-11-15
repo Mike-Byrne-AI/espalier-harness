@@ -285,7 +285,12 @@ Consumers:
   per in-scope fragment the cache lists as critical (`FAIL`) or stale
   (`UNVERIFIABLE`); a fresh fragment emits nothing, and `--doc <file>`
   scopes the set to that file. `espalier audit .`, the harness integrity
-  audit, emits no freshness verdict at all.
+  audit, emits no freshness verdict at all. The audit-accuracy freshness
+  verdicts are only as current as this checkout's cache, so
+  `espalier.audit_accuracy.audit_accuracy(repo, include_freshness=False)`
+  audits the claims alone. The Espalier source repo's drift-gate test
+  calls it that way, so a rebuilt cache never moves its verdict;
+  freshness stays with the CI gate (§7).
 
 The cache lives in its OWN gitignored file, separate from the
 `.espalier/freshness.json` manifest. On a tree that commits its manifest, that
