@@ -9522,6 +9522,11 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
+            # `_carried_programs_cached` (DEF-5110) is keyed on the text and
+            # the delete reading's view and returns the programs carriers run:
+            # a reading the speed bumps are handed, as the nested programs
+            # are, which never reaches `_statement_bases` or any judge
+            "_carried_programs_cached",
             # `_carrier_fed_remove_re` (DEF-3063) and `_powershell_head_re`
             # (DEF-4061) take no argument and return a compiled pattern,
             # compiled on first use: no key a flag could be missing from, and
