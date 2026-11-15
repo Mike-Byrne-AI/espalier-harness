@@ -25574,7 +25574,13 @@ class TestTheHardTierReadsWhatALauncherRuns:
         "flock /tmp/lk -c '{}'", "flock -w 5 /tmp/lk -c '{}'", "flock -x /tmp/lk --command '{}'",
         "flock /tmp/lk {}",
     ]
-    _PROGRAMS = {"home": "rm -rf ~", "home-var": "rm -rf $HOME", "root": "rm -rf /", "checkout": "rm -rf ."}
+    #: `${HOME}` and `~/*` are the outer shell's, expanded before the
+    #: launcher starts, as `$HOME` and `~` are: an argv launcher's words go
+    #: to the tier bare, never single-quoted as a literal brace or glob.
+    _PROGRAMS = {
+        "home": "rm -rf ~", "home-var": "rm -rf $HOME", "home-braced": "rm -rf ${HOME}",
+        "home-glob": "rm -rf ~/*", "root": "rm -rf /", "checkout": "rm -rf .",
+    }
 
     @pytest.mark.parametrize("program", list(_PROGRAMS), ids=list(_PROGRAMS))
     def test_each_program_walls_under_its_twin(self, tmp_path, program):
@@ -25634,8 +25640,23 @@ class TestTheHardTierReadsWhatALauncherRuns:
         assert _delete_verdict(run_bash_guard(form.format(text), carried)) != "wall", text
 
     @pytest.mark.parametrize("cmd", [
+        "runuser rm -u app -- -rf ~", "runuser rm --user=app -- -rf /", "runuser rm -u app -- -rf .",
+    ], ids=["home", "root", "checkout"])
+    def test_a_program_runuser_s_permuted_switches_run_meets_the_wall(self, tmp_path, cmd):
+        # runuser's getopt permutes up to a `--` (util-linux 2.41.4, driven),
+        # so an operand before `-u` is the first word of the argv it runs:
+        # each runs the program its `bash -lc` twin above walls.
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
         "gosu app", "gosu --help", "su-exec app id", "runuser -l app", "runuser -u app -- pytest -q",
         "sg docker -c 'docker ps'", "flock -n 9", "flock /tmp/lk -c 'make test'",
+        # The argv's own `-c` is grep's: runuser refuses `-c` beside `-u`,
+        # so only the words before the `--` are read for one.
+        "runuser -u app -- grep -c 'rm -rf ~' notes.md",
+        # ast-grep is the other program named sg: shadow's sg refuses a
+        # dash-led group word, so a search pattern is never a program.
+        "sg -p 'rm -rf ~' src/", "sg --pattern 'rm -rf ~' src/",
     ])
     def test_a_launcher_with_no_program_or_a_plain_one_is_allowed(self, tmp_path, cmd):
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
@@ -25652,15 +25673,22 @@ class TestTheHardTierReadsWhatALauncherRuns:
     @pytest.mark.parametrize("cmd", [
         "echo 'rm -rf ~' | su app", "su app <<< 'rm -rf ~'", "builtin eval \"sudo rm -rf ~\"",
         "bash -c \"gosu app rm -rf ~\"", "eval 'gosu app rm -rf ~'",
-    ], ids=["su-stdin-pipe", "su-here-string", "builtin-eval-sudo", "bare-c-launcher", "eval-launcher"])
+        "sudo -u bob gosu app rm -rf ~", "sudo -u bob flock /tmp/lk -c 'rm -rf ~'",
+    ], ids=[
+        "su-stdin-pipe", "su-here-string", "builtin-eval-sudo", "bare-c-launcher", "eval-launcher",
+        "wrapper-value-argv", "wrapper-value-shell",
+    ])
     def test_the_recorded_limits_stay_unread(self, tmp_path, cmd):
         # Recorded as limits, each past one level: a launcher ahead of a
         # piped shell (ea974c (2)); builtin, eval, sudo (ea974c (3)); and a
         # launcher inside a program the outer scan reads in place, a bare
         # `bash -c`'s or eval's, where the walk reads statement heads and
         # `_CMD_POS`, which may not grow, names no launcher (su is read
-        # there, by `_CMD_POS`'s exec-quote position). A fix flips this row
-        # and docs/HOOKS.md's line together.
+        # there, by `_CMD_POS`'s exec-quote position). And a wrapper
+        # switch's word value ahead of the launcher (`sudo -u bob`), which
+        # ends the head walk (`_LAUNCH_STEP_WORDS`): declared for the nudge
+        # first, and the hard tier reads the same walk (`sudo gosu` walls).
+        # A fix flips this row and docs/HOOKS.md's line together.
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) != "wall"
 
     def test_the_hard_tier_reads_the_five_launchers_alone(self):
@@ -25669,26 +25697,35 @@ class TestTheHardTierReadsWhatALauncherRuns:
         bp = _bash_patterns_module()
         heads, skipped = bp._HARD_TIER_LAUNCHER_HEADS, bp._HARD_TIER_LAUNCHER_SKIPPED
         assert heads == frozenset({"runuser", "gosu", "su-exec", "sg", "flock"})
+        assert skipped == frozenset({"find", "fd", "fdfind", "parallel"})
         # a partition: a launcher added to the readers is placed on one side
         assert heads | skipped == set(bp._LAUNCHER_READERS) and not heads & skipped
+        # and a head the tier reads is spelled in this class's forms
+        assert heads <= {word for form in self._FORMS for word in form.split()}
         command = "find . -name x -exec rm -rf x ';'; gosu app rm -rf y; flock /tmp/lk -c 'rm -rf z'"
         scan = bp.mask_inert_syntax(command)
         assert list(bp._launcher_program_bodies(command, scan, True, heads=heads)) == ["rm -rf y", "rm -rf z"]
         assert list(bp._launcher_program_bodies(command, scan, True))[0] == "rm -rf x"
 
-    def test_the_substring_gate_names_every_launcher(self):
-        # A reader whose word the gate misses is never walked to.
-        bp = _bash_patterns_module()
-        assert all(any(word in key for word in bp._LAUNCHER_WORDS) for key in bp._LAUNCHER_READERS)
-
+    #: runuser's rows are shapes util-linux 2.41.4's runuser runs, driven in
+    #: WSL with harmless programs: its getopt permutes up to a `--` (an
+    #: operand before `-u` is the argv's first word), a dash word before any
+    #: `--` is its own switch, `-l` and `-c` beside `-u` are refused, and in
+    #: su mode a `-c` past a `--` goes to the shell. A `--` that is `-u`'s
+    #: value names a user.
     @pytest.mark.parametrize("key,words,programs", [
         ("runuser", ["-l", "app", "-c", "P"], ["P"]),
         ("runuser", ["app", "-c", "P"], ["P"]),
         ("runuser", ["--command=P", "app"], ["P"]),
+        ("runuser", ["app", "--", "-c", "P"], ["P"]),
         ("runuser", ["-u", "app", "--", "rm", "-rf", "~"], ["rm -rf ~"]),
-        ("runuser", ["--user", "app", "rm", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["rm", "-u", "app", "--", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["rm", "--user=app", "--", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["--user", "app", "id"], ["id"]),
         ("runuser", ["-g", "wheel", "-uapp", "--", "rm", "x y"], ["rm 'x y'"]),
-        ("runuser", ["-lu", "app", "--", "id"], ["id"]),
+        ("runuser", ["-pu", "app", "--", "id"], ["id"]),
+        ("runuser", ["-u", "app", "--", "grep", "-c", "P", "f"], ["grep -c P f"]),
+        ("runuser", ["-u", "--", "--", "id"], ["id"]),
         ("runuser", ["-u", "app"], []),
         ("runuser", ["-", "app"], []),
         ("gosu", ["app", "rm", "-rf", "~"], ["rm -rf ~"]),
@@ -25700,6 +25737,10 @@ class TestTheHardTierReadsWhatALauncherRuns:
         ("sg", ["app", "P"], ["P"]),
         ("sg", ["-", "app", "-c", "P"], ["P"]),
         ("sg", ["app"], []),
+        ("sg", ["-", "app", "P"], ["P"]),
+        ("sg", ["-p", "P", "src/"], []),
+        ("sg", ["--pattern", "P", "src/"], []),
+        ("sg", ["-"], []),
         ("flock", ["/tmp/lk", "-c", "P"], ["P"]),
         ("flock", ["/tmp/lk", "--command", "P"], ["P"]),
         ("flock", ["-w", "5", "/tmp/lk", "-c", "P"], ["P"]),

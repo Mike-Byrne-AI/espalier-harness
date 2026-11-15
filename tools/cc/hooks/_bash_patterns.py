@@ -3088,41 +3088,66 @@ _FLOCK_VALUED = frozenset("wE")
 _FLOCK_VALUED_LONG = ("timeout", "wait", "conflict-exit-code")
 
 
-def _switch_walk_end(words: list[str], valued: frozenset[str], valued_long: tuple[str, ...]) -> tuple[int, str]:
-    """Where getopt stops on ``words``: past each switch word (a short letter
-    in ``valued`` taking the rest of its word or, ending it, the next word; a
-    long switch under any prefix of ``valued_long`` taking the next word
-    unless glued with `=`) and a `--`, at the first operand or a lone `-`.
-    Returns that offset and the short valued letters met, each long switch's
-    first letter standing for it."""
+def _switch_step(words: list[str], k: int, valued: frozenset[str], valued_long: tuple[str, ...]) -> tuple[int, str]:
+    """One getopt switch word at ``k``: a short letter in ``valued`` taking
+    the rest of its word or, ending it, the next word; a long switch under
+    any prefix of ``valued_long`` taking the next word unless glued with
+    `=`. Returns the offset past the switch and its value, and the valued
+    letter met (a long switch's first letter standing for it), or ``""``."""
+    word = words[k]
+    if word.startswith("--"):
+        name, eq, _value = word[2:].partition("=")
+        hit = next((long for long in valued_long if long.startswith(name)), "")
+        return k + (2 if hit and not eq else 1), hit[:1]
+    at = next((j for j, ch in enumerate(word[1:], 1) if ch in valued), 0)
+    return k + (2 if at == len(word) - 1 else 1), word[at] if at else ""
+
+
+def _switch_walk_end(words: list[str], valued: frozenset[str], valued_long: tuple[str, ...]) -> int:
+    """Where a getopt that stops at its first operand (flock's `+`) stops on
+    ``words``: past each switch word (`_switch_step`) and a `--`, at the
+    first operand or a lone `-`."""
     k = 0
-    met = ""
     while k < len(words) and words[k].startswith("-") and words[k] != "-":
-        word = words[k]
-        if word == "--":
-            return k + 1, met
-        if word.startswith("--"):
-            name, eq, _value = word[2:].partition("=")
-            hit = next((long for long in valued_long if long.startswith(name)), "")
-            met += hit[:1]
-            k += 2 if hit and not eq else 1
-            continue
-        at = next((j for j, ch in enumerate(word[1:], 1) if ch in valued), 0)
-        met += word[at] if at else ""
-        k += 2 if at == len(word) - 1 else 1
-    return k, met
+        if words[k] == "--":
+            return k + 1
+        k, _letter = _switch_step(words, k, valued, valued_long)
+    return k
 
 
 def _runuser_programs(words: list[str], removal: bool) -> list[str]:
-    """Every program runuser runs: su's `-c` value and its long switches
-    (`_switch_programs`, the reader su takes), and with `-u` / `--user`, the
-    argv after the switches and a `--`. Without `-u` runuser is su, whose
-    words after the user go to the login shell, where `-c` is the one that
-    runs a program."""
-    programs = _switch_programs(words)
-    k, met = _switch_walk_end(words, _RUNUSER_VALUED, _RUNUSER_VALUED_LONG)
-    if "u" in met and k < len(words):
-        programs.append(_argv_text(words[k:]))
+    """Every program runuser runs. Its getopt permutes (util-linux
+    su-common.c gives no leading `+`), so up to a `--` every switch word is
+    runuser's own and every other word an operand, kept in order before the
+    words after the `--`. With `-u` / `--user` the program is that argv:
+    `runuser rm -u app -- -rf ~` runs `rm -rf ~`, a dash word before any
+    `--` is a switch of runuser's, and `-c`, `-l`, `-s` or a lone `-`
+    beside `-u` is refused (util-linux 2.41.4, driven), so su's switch
+    programs are read from the words before the `--` alone, never from the
+    argv's own `-c` (`runuser -u app -- grep -c P f` runs grep). Without
+    `-u` runuser is su: its words after the user go to the login shell,
+    where a `-c` anywhere, past a `--` too, runs a program, so every word is
+    read for one (`_switch_programs`, the reader su takes)."""
+    operands: list[str] = []
+    met = ""
+    k, end = 0, len(words)
+    while k < len(words):
+        word = words[k]
+        if word == "--":
+            end = k
+            operands += words[k + 1:]
+            break
+        if word.startswith("-") and word != "-":
+            k, letter = _switch_step(words, k, _RUNUSER_VALUED, _RUNUSER_VALUED_LONG)
+            met += letter
+        else:
+            operands.append(word)
+            k += 1
+    if "u" not in met:
+        return _switch_programs(words)
+    programs = _switch_programs(words[:end])
+    if operands:
+        programs.append(_argv_text(operands))
     return programs
 
 
@@ -3139,8 +3164,13 @@ def _user_spec_programs(words: list[str], removal: bool) -> list[str]:
 def _sg_programs(words: list[str], removal: bool) -> list[str]:
     """The program sg runs: the one word after its group, past a leading
     `-` and an optional `-c`, which sg hands to `/bin/sh -c` (shadow's
-    newgrp.c; a program of several words is quoted into one)."""
+    newgrp.c; a program of several words is quoted into one). A group word
+    opening with a dash is refused with sg's usage (shadow 4.13, driven), so
+    it runs nothing, and ast-grep's `sg -p PATTERN`, the other program named
+    sg, hands no pattern on as a program."""
     k = 2 if words[:1] == ["-"] else 1
+    if k > len(words) or words[k - 1].startswith("-"):
+        return []
     if words[k:k + 1] == ["-c"]:
         k += 1
     return [word for word in words[k:k + 1] if word]
@@ -3151,7 +3181,7 @@ def _flock_programs(words: list[str], removal: bool) -> list[str]:
     (`_switch_walk_end`) and the lock's file, the one word after `-c` /
     `--command`, which flock hands to a shell, else the argv it execs. A
     descriptor alone (`flock -n 9`) runs nothing."""
-    k, _met = _switch_walk_end(words, _FLOCK_VALUED, _FLOCK_VALUED_LONG)
+    k = _switch_walk_end(words, _FLOCK_VALUED, _FLOCK_VALUED_LONG)
     rest = words[k + 1:]
     if rest[:1] in (["-c"], ["--command"]):
         return [word for word in rest[1:2] if word]
@@ -3174,7 +3204,9 @@ _LAUNCHER_WORDS = tuple(
 )
 #: The launchers whose program the hard tier reads from this walk
 #: (DEF-2090): the five user-switching launchers, judged as su's program is
-#: (`_HARD_TIER_CARRIER_HEADS`). One roster, so a later name is one entry.
+#: (`_HARD_TIER_CARRIER_HEADS`). A later launcher is a reader on
+#: `_LAUNCHER_READERS` and a place on this roster or the skipped one, never
+#: a pattern.
 _HARD_TIER_LAUNCHER_HEADS = frozenset({"runuser", "gosu", "su-exec", "sg", "flock"})
 #: The launchers the hard tier leaves out, which keep their status (air
 #: 91d13d): find, fd and parallel run their program on items they find or
@@ -3249,8 +3281,10 @@ def _launcher_program_bodies(
 def carried_programs(command: str, *, removal: bool = False) -> list[str]:
     """Every program a carrier on the Bash tool runs, one level down: what
     `eval`, `builtin`, `watch`, `script` and `su` hand a shell
-    (`_carrier_program_bodies`) and what find, fd and parallel run
-    (`_launcher_program_bodies`), over every reading the walls judge
+    (`_carrier_program_bodies`) and what every launcher on
+    `_LAUNCHER_READERS` runs (`_launcher_program_bodies`: find, fd and
+    parallel, and runuser, gosu, su-exec, sg and flock, DEF-2090), over
+    every reading the walls judge
     (`_wall_readings`). The speed bumps read each beside the command and
     the programs it hands to a shell (`nested_shell_programs`), so a push, a
     clean, a discard, a kill or a recursive delete a carrier runs bumps as

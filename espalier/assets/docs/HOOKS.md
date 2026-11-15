@@ -1928,7 +1928,13 @@ launcher inside a program the outer scan reads in place (a bare `bash -c
 "gosu app ..."`, `eval 'gosu app ...'`), where a switched `-c`, `su -c` or
 `watch` hands the launcher one level down and it walls; su fed its program
 on stdin (`echo '...' | su app`, `su app <<< '...'`), a launcher ahead of
-the piped shell; and `builtin eval "sudo ..."`. A program piped to `-Command -`
+the piped shell; `builtin eval "sudo ..."`; and a wrapper switch's word
+value ahead of the launcher (`sudo -u bob gosu app ...`), which ends the
+walk to the launcher here as it does for the nudge (`sudo gosu app ...` is
+read). runuser's switches are read where getopt permutes them
+(`runuser rm -u app -- -rf ~`), and with `-u` the argv's own `-c` is the
+argv's; `sg` with a dash-led group word (ast-grep's `sg -p`) runs nothing.
+A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
