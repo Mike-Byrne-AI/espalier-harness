@@ -2065,11 +2065,15 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
                 + (f" ({_plural(others, 'other ignored file')} too)" if others else ""))
     if lost:
         files = f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you need"
-        # A forced removal of a worktree whose seat holds claims or jobs
-        # strands them as the reaper would (DEF-2043): the seat's reason
-        # replaces the --force advice, so the banner never types the harm.
+        # A removal of a worktree whose seat holds claims or jobs strands them
+        # as the reaper would (DEF-2043): the seat's reason replaces the
+        # removal advice, so the banner never types the harm. The advice is
+        # the plain removal (DEF-5109): this tree's status read clean, git
+        # takes a tree holding only ignored files without a flag (measured on
+        # git 2.52 and 2.39.5), and the flag would also drop work written into
+        # it after the banner, which the plain removal refuses.
         held = _seat_claims_kept(here, root)
-        return f"{files}, and {held}" if held else f"{files}, then `git worktree remove --force` it"
+        return f"{files}, and {held}" if held else f"{files}, then `git worktree remove` it"
     return _seat_claims_kept(here, root)
 
 
