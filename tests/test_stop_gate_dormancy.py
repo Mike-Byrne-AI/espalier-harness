@@ -155,6 +155,32 @@ class TestResolveCoreTestsDormancy:
         # A partial gate is never silent: the note names what runs and the override.
         assert "harness default" in rt.note and "ESPALIER_STOP_GATE_TEST_CMD" in rt.note, rt.note
 
+    @pytest.mark.parametrize("command", [
+        "uv run pytest -q", "poetry run pytest -q", "pipenv run pytest -q",
+        "pdm run pytest -q", "rye run pytest -q",
+    ])
+    def test_a_runner_prefixed_pytest_runs_whole_under_its_runner(
+        self, tmp_path, monkeypatch, command
+    ):
+        """A Python runner's lockfile puts the fingerprint's pytest under the
+        runner's ``run``, which is not pytest-shaped: even on a tree holding
+        the harness default test files, Gate 1 runs the repository's whole
+        suite under its runner (``ok_detected``), never those files alone
+        under the hook interpreter's pytest."""
+        monkeypatch.delenv(
+            "ESPALIER_STOP_GATE_TEST_CMD", raising=False
+        )
+        (tmp_path / "reports").mkdir()
+        mod = _load_stop_gate()
+        for p in mod._HARNESS_DEFAULT_TESTS:
+            target = tmp_path / p
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# stub\n", encoding="utf-8")
+        _write_fp(tmp_path, [command])
+        rt = mod._resolve_core_tests(tmp_path)
+        assert rt.status == "ok_detected", rt
+        assert rt.commands == (command,), rt
+
 
 class TestEnvOverride:
     """``ESPALIER_STOP_GATE_TEST_CMD`` opt-in escape hatch."""

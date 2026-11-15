@@ -40,6 +40,16 @@ class PackageManager(NamedTuple):
     start: tuple[str, ...]       # argv that runs the manifest's `start` script
 
 
+class Runner(NamedTuple):
+    """A tool that keeps a project's environment off PATH and runs a command
+    inside it: the binary, the lockfiles that name it, and the argv prefix the
+    row's commands run under (``uv run pytest -q``)."""
+
+    name: str                    # the binary on PATH: "uv"
+    lockfiles: tuple[str, ...]   # the files whose presence at the root names it
+    run: tuple[str, ...]         # argv prefix that runs a command in the environment
+
+
 class Stack(NamedTuple):
     """One stack: its source suffixes and what a repository of it carries."""
 
@@ -50,6 +60,7 @@ class Stack(NamedTuple):
     test_dirs: tuple[str, ...] = ()                     # the stack's test roots, each ending "/"
     lockfiles: tuple[str, ...] = ()                     # with no manager choice: go.sum, Cargo.lock
     package_managers: tuple[PackageManager, ...] = ()   # the first is the default
+    runners: tuple[Runner, ...] = ()                    # environment runners, each named by its lockfile
     test: tuple[str, ...] = ()                          # argv, for a stack with one runner
     dependency_dirs: tuple[str, ...] = ()               # third-party code, by name, at any depth
     output_dirs: tuple[str, ...] = ()                   # build output: rust's target
@@ -78,6 +89,18 @@ BUN = PackageManager(
     ("bun", "run", "test"), ("bun", "run"), ("bun", "run", "start"),
 )
 
+# A Python project's environment is on PATH only where a shell activated it,
+# and a `uv run` workflow never does: a lockfile at the root names the tool
+# that keeps it, and the row's inferred commands run under that tool's `run`.
+# The lockfile alone decides, as a Node lockfile names its manager; whether the
+# tool is installed is not checked. Hatch is not here: its lockfile is the
+# standard pylock.toml, a name other tools write too, so the file names no tool.
+UV = Runner("uv", ("uv.lock",), ("uv", "run"))
+POETRY = Runner("poetry", ("poetry.lock",), ("poetry", "run"))
+PIPENV = Runner("pipenv", ("Pipfile.lock",), ("pipenv", "run"))
+PDM = Runner("pdm", ("pdm.lock",), ("pdm", "run"))
+RYE = Runner("rye", ("requirements.lock", "requirements-dev.lock"), ("rye", "run"))
+
 #: Row order is read: ``suffix_to_language`` keeps it, and the fingerprint's
 #: language map is that projection.
 STACKS: tuple[Stack, ...] = (
@@ -87,6 +110,7 @@ STACKS: tuple[Stack, ...] = (
         manifests=("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"),
         root_manifests=("pyproject.toml", "setup.py"),
         test_dirs=("tests/", "test/"),
+        runners=(UV, POETRY, PIPENV, PDM, RYE),
         test=("pytest", "-q"),
         lint_fallback=("ruff", "check", "--no-cache", "--extend-exclude", "tools/cc", "."),
         static_allows=(
@@ -227,8 +251,9 @@ def test_dirs_by_manifest() -> dict[str, tuple[str, ...]]:
 
 
 def lockfile_owners() -> dict[str, str]:
-    """Lockfile name to what it names: a package manager's binary for a
-    manager's lockfile, the row's name for a stack with no manager choice."""
+    """Lockfile name to what it names: a package manager's or a runner's
+    binary for its lockfile, the row's name for a stack with no manager
+    choice."""
     owners: dict[str, str] = {}
     for row in STACKS:
         for lockfile in row.lockfiles:
@@ -236,6 +261,9 @@ def lockfile_owners() -> dict[str, str]:
         for pm in row.package_managers:
             for lockfile in pm.lockfiles:
                 owners[lockfile] = pm.name
+        for runner in row.runners:
+            for lockfile in runner.lockfiles:
+                owners[lockfile] = runner.name
     return owners
 
 

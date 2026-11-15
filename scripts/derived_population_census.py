@@ -1679,9 +1679,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_stop_gate.py:375 — `assert result.paths == ['tests/test_fingerprint.py', 'tests/te...",
     ),
     "tests/test_stop_gate_dormancy.py": (
-        1, "9711378885df4eb83b4be84955ea2f4125719f8b3724881a2c69a5fae562fbe3",
+        2, "cd4da09794294ba092958b6f87fb2320d8c2e0baa774c4ac250402f946b8ce97",
         "CORRECT_BY_REMEDY",
-        "tests/test_stop_gate.py:375 — `assert result.paths == ['tests/test_fingerprint.py', 'tests/te...",
+        "tests/test_stop_gate.py:375 — `assert result.paths == ['tests/test_fingerprint.py', 'tests/te...; "
+        "2026-11-15: the second row lays the same default files under a runner-prefixed pytest and "
+        "asserts the opposite arm (ok_detected, the command whole), so the one remedy pins both",
     ),
     "tests/test_surface_contract.py": (
         6, "c498531cef13df5606be4386f67c8de6d53dc428aa0193f5d8af885e4e641489",

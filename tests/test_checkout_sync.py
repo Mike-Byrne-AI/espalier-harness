@@ -593,7 +593,31 @@ class TestReapWorktrees:
         assert ", and its seat work-feat holds 1 job from the dispatcher (DEF-2043)" in reason, reason
         monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], []))
         reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
-        assert reason.endswith("then `git worktree remove --force` it"), reason
+        assert reason.endswith("then `git worktree remove` it"), reason
+        assert "--force" not in reason, reason
+
+    def test_the_ignored_file_advice_is_a_removal_git_carries_out(self, cs, repos):
+        """DEF-5109's sibling: the reason typed `git worktree remove --force`
+        for a tree whose status read clean, where the plain removal takes a
+        tree holding only ignored files and the flag would also drop work
+        written into it after the banner. Dies to: the flag back in the
+        advice, or advice git refuses for the tree it was given for."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        (wt / ".gitignore").write_bytes(b"run.log\n.gitignore\n")
+        (wt / "run.log").write_bytes(b"x\n")
+        reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
+        spelled = reason.rsplit("then `", 1)[-1].split("`", 1)[0]
+        assert spelled == "git worktree remove", reason
+        # The tree written into after the banner: the same removal refuses it.
+        later = _worktree(repos, "later", "lane/later")
+        (later / ".gitignore").write_bytes(b"run.log\n.gitignore\n")
+        (later / "run.log").write_bytes(b"x\n")
+        (later / "notes.txt").write_bytes(b"written after the banner\n")
+        refused = _git(work, *spelled.split()[1:], str(later), check=False)
+        assert refused.returncode != 0 and (later / "notes.txt").is_file(), refused
+        taken = _git(work, *spelled.split()[1:], str(wt), check=False)
+        assert taken.returncode == 0 and not wt.exists(), taken
 
     def test_a_dispatcher_setting_that_does_not_read_keeps_the_worktree(self, cs, repos, tmp_path):
         """A broken dispatcher setting counts no assign (mail's fail-closed

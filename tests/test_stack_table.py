@@ -477,6 +477,12 @@ class TestTheTableKeepsItsSeedNames:
             "yarn.lock": "yarn",
             "bun.lock": "bun",
             "bun.lockb": "bun",
+            "uv.lock": "uv",
+            "poetry.lock": "poetry",
+            "Pipfile.lock": "pipenv",
+            "pdm.lock": "pdm",
+            "requirements.lock": "rye",
+            "requirements-dev.lock": "rye",
         }
 
 
@@ -632,6 +638,103 @@ class TestTheCommandsRunUnderTheRepositorysManager:
         assert detect_tests(write_stack(tmp_path / "go", "adopter-go")) == ["go test ./..."]
         assert detect_tests(write_stack(tmp_path / "rust", "adopter-rust")) == ["cargo test"]
 
+
+def _python_tree(tmp_path: Path, *lockfiles: str) -> Path:
+    """The adopter Python tree with ruff declared (a ``ruff.toml``) and each of
+    ``lockfiles`` written at its path under the root."""
+    from _stack_trees import write_stack
+
+    root = write_stack(tmp_path / "repo", "adopter-python")
+    (root / "ruff.toml").write_bytes(b"line-length = 100\n")
+    for name in lockfiles:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"# a lockfile\n")
+    return root
+
+
+class TestAPythonLockfileNamesItsRunner:
+    """A Python project's environment is on PATH only where a shell activated
+    it, so a runner's lockfile at the root puts the inferred test and lint
+    commands under that runner's ``run``. The lockfile alone decides, as a Node
+    lockfile names its manager; the strings with no lockfile are unchanged."""
+
+    @pytest.mark.parametrize(("lockfile", "test", "lint"), [
+        (None, "pytest -q", "ruff check ."),
+        ("uv.lock", "uv run pytest -q", "uv run ruff check ."),
+        ("poetry.lock", "poetry run pytest -q", "poetry run ruff check ."),
+        ("Pipfile.lock", "pipenv run pytest -q", "pipenv run ruff check ."),
+        ("pdm.lock", "pdm run pytest -q", "pdm run ruff check ."),
+        ("requirements.lock", "rye run pytest -q", "rye run ruff check ."),
+        ("requirements-dev.lock", "rye run pytest -q", "rye run ruff check ."),
+        # Hatch locks to the standard name, which other tools write too.
+        ("pylock.toml", "pytest -q", "ruff check ."),
+        # A nested package's lockfile is that package's, not the root's.
+        ("packages/api/uv.lock", "pytest -q", "ruff check ."),
+    ], ids=[
+        "no-lockfile", "uv", "poetry", "pipenv", "pdm", "rye", "rye-dev",
+        "pylock-names-no-tool", "nested-lockfile-is-not-the-roots",
+    ])
+    def test_the_test_and_lint_commands(self, tmp_path, lockfile, test, lint):
+        from espalier.analyze import detect_actions, detect_tests
+
+        root = _python_tree(tmp_path, *([lockfile] if lockfile else []))
+        tests = detect_tests(root)
+        assert tests == [test]
+        actions = detect_actions(root, tests)
+        assert (actions["test"], actions["lint"]) == ([test], [lint])
+
+    def test_two_runners_lockfiles_are_not_guessed_between(self, tmp_path):
+        from espalier.analyze import detect_python_runner, detect_tests
+
+        root = _python_tree(tmp_path, "uv.lock", "poetry.lock")
+        assert detect_tests(root) == ["pytest -q"]
+        assert detect_python_runner(root) == ("", "ambiguous: uv.lock, poetry.lock")
+
+    def test_one_runners_two_lockfiles_name_it_once(self, tmp_path):
+        from espalier.analyze import detect_python_runner
+
+        root = _python_tree(tmp_path, "requirements.lock", "requirements-dev.lock")
+        assert detect_python_runner(root) == ("rye", "requirements.lock")
+
+    def test_no_lockfile_names_no_runner(self, tmp_path):
+        from espalier.analyze import detect_python_runner
+
+        assert detect_python_runner(_python_tree(tmp_path)) == ("", "")
+
+    def test_a_node_script_keeps_its_own_manager(self, tmp_path):
+        """The runner prefixes the Python row's commands alone: a manifest's
+        `test` script still runs under the Node manager."""
+        from espalier.analyze import detect_tests
+
+        root = _python_tree(tmp_path, "uv.lock")
+        (root / "package.json").write_bytes(b'{"scripts": {"test": "vitest"}}\n')
+        assert detect_tests(root) == ["uv run pytest -q", "npm test"]
+
+    def test_preflight_keeps_the_vendored_exclude_under_the_runner(self, tmp_path):
+        """The runner rebuilds the inferred ruff line with the deployed tree
+        left out, the prefix kept in front of it."""
+        from espalier.harness_config import preflight_command
+
+        root = _python_tree(tmp_path, "uv.lock")
+        assert preflight_command("test", root) == "uv run pytest -q"
+        assert preflight_command("lint", root) == "uv run ruff check --extend-exclude tools/cc ."
+
+    def test_the_allow_rules_reach_through_every_runner(self):
+        """Each runner is a wrapper the narrowing reads through, so every
+        runner's prefixed commands derive the wrapped command's own rules; a
+        runner whose `run` the narrowing cannot read gets exact rules only."""
+        from espalier import _stack_table as table
+        from espalier.settings_profiles import narrowed_rules
+
+        for runner in table.stack("python").runners:
+            lead = " ".join(runner.run)
+            assert narrowed_rules(f"{lead} pytest -q") == [
+                f"Bash({lead} pytest -q)", f"Bash({lead} pytest -q *)",
+            ], runner.name
+            assert narrowed_rules(f"{lead} ruff check .") == [
+                f"Bash({lead} ruff check)", f"Bash({lead} ruff check *)",
+            ], runner.name
 
 
 # ── Permission rules from the table ──────────────────────────────────────────
@@ -947,6 +1050,8 @@ class TestTheSourceAndManifestListsAreProjections:
             frozenset(table.manifest_names()) | frozenset(table.lockfile_owners())
         )
         assert {"go.mod", "go.sum", "Gemfile", "bun.lockb", "Pipfile"} <= hook_utils.STACK_ROOT_FILES
+        # A Python runner's lockfile is the project's dependency state too.
+        assert {"uv.lock", "poetry.lock", "Pipfile.lock"} <= hook_utils.STACK_ROOT_FILES
 
     def test_the_scannable_flag_names_the_python_row_alone(self):
         from espalier import _stack_table as table

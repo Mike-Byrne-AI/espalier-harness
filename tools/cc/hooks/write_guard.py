@@ -2699,9 +2699,10 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     nothing in the command can run it (DEF-1045): whether a string is
     harmless depends on whether the command runs it, and the carrier reader
     below (DEF-1131) reads a string only where a carrier takes it as an
-    operand, not one piped into `iex`, joined with `+` or bound by a form
-    the pre-pass declines, all of which the old split refuses (measured
-    2026-10-31). So `$hint = 'gc .env'` alone is a mention, and the same
+    operand, not one joined with `+` or bound by a form the pre-pass
+    declines, both of which the old split refuses (measured 2026-10-31); a
+    string piped into `iex` is read whole by the piped reader below
+    (DEF-3080). So `$hint = 'gc .env'` alone is a mention, and the same
     assignment with a later `iex $hint` is refused as a read. A
     switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` ends
     the operands, and a redirect and its target leave them wherever they
@@ -2785,9 +2786,10 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         # a string is read where a carrier runs it, not where it is written.
         for program in _bash_patterns._ps_carrier_program_bodies(raw, pair):
             out.extend(_ps_secret_read_targets(program, _depth + 1))
-        # A program piped to pwsh or powershell (DEF-2079): a here-string's
-        # `Get-Content .env` piped that way met no read here, and the old
-        # split above reads only the single-quoted spelling's first word.
+        # A program piped to pwsh or powershell (DEF-2079), or into `iex` /
+        # `Invoke-Expression` (DEF-3080): a here-string's `Get-Content .env`
+        # piped either way met no read here, and the old split above reads
+        # only the single-quoted spelling's first word.
         for program in _bash_patterns.ps_piped_ps_programs(raw, pair):
             out.extend(_ps_secret_read_targets(program, _depth + 1))
     # The PowerShell twin of the Bash leg's effect read (§C52, DEF-796).
