@@ -19,6 +19,7 @@ test that crashed a worker instead of dying with no test named).
 """
 from __future__ import annotations
 
+import ast
 import contextlib
 import fnmatch
 import io
@@ -137,20 +138,44 @@ def _worst_serial_mark() -> float:
 #: tests/test_verify_pins.py's controls skip). The margin this replaced was a flat
 #: 600 s on a 7.0-minute leg of 2026-10-16, which had grown to 23.5 by the read of
 #: the date below. The census prints the floor at every re-measure, so growth
-#: inside the files reads RAISE there; these figures are what each bound was last
-#: set from, and a serial file added reds the roster test below until they cover it.
+#: inside the files reads RAISE there; a serial file added reds the roster test
+#: below until these figures cover it. Each figure is what its bound was last set
+#: from, by the census's needed (the larger of its floor and its rule) plus any
+#: margin _BOUND_MARGIN_PAST_THE_CENSUS marks, and
+#: test_each_bound_is_the_census_figure_from_its_entry_unless_marked holds the
+#: bound equal to that, so a bound raised from a newer read reds until its entry
+#: moves with it (DEF-4116); an entry _BOUND_SET_BY_ANOTHER_RULE marks feeds the
+#: floor alone.
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
-    # This entry's bound and clean-checkout's are the census's needed figure plus
-    # 15 minutes, by the ruling on operator call a6ee94 (option B, 2026-11-14), so
-    # neither equals the figure the census derives from its entry; whether later
-    # raises add the 15 has not been ruled.
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
     ("clean-checkout.yml", "clean-checkout"): 124.4,  # median 98.0, 2026-11-14
     ("release.yml", "release-check"): 47.8,  # median 37.6
+}
+#: Minutes a bound sits past the census's needed figure from its entry, by a
+#: ruling of its own: the operator's on call a6ee94 (option B, read as needed
+#: plus 15 by ack b52060, 2026-11-14) for these two. The mark records that raise
+#: alone. Whether later raises add a margin is open on call be0067, so none is
+#: general: an entry absent here has none, and the next raise of either job here
+#: edits or drops its mark by be0067's ruling (a raise to needed plus 15 passes
+#: unedited, which is not a ruling).
+_BOUND_MARGIN_PAST_THE_CENSUS = {
+    ("post-merge.yml", "full-tier"): 15,
+    ("clean-checkout.yml", "clean-checkout"): 15,
+}
+#: The entries whose bound a rule other than the census sets, each with that
+#: rule: the census's figure from such an entry is under its bound, and the
+#: entry feeds the floor test alone (left as ruled, note 344b8f).
+_BOUND_SET_BY_ANOTHER_RULE = {
+    ("portability.yml", "portability"): (
+        "DEF-1178: above windows-latest's measured worst, 172.9 min over 12 jobs to 2026-10-16, "
+        "the cell's single serial invocation of that date (it runs two legs now)"),
+    ("release.yml", "release-check"): (
+        "scripts/release_check.py::NOT_SLOW_LEG_BOUND_S plus the gate's other checks, "
+        "held by tests/test_release_check.py::TestNotSlowLegBound"),
 }
 _SERIAL_FILES_MEASURED = (
     "tests/test_redos.py", "tests/test_speedbump_irreversible.py", "tests/test_hooks.py",
@@ -192,9 +217,10 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
     """DEF-2038: the serial files hold the suite's longest per-test marks, and the
     jobs that run them were bounded by a flat margin that did not grow with the
     leg (test-serial's 40 under a 23.5-minute worst run and a 30-minute mark).
-    Each such job's bound is the worst mark, read live, plus the job's own dated
-    measured worst; the roster is derived both ways and records the serial files
-    it was measured over."""
+    Each such job's bound holds the worst mark, read live, plus the job's own
+    dated measured worst (the floor), and is the census's figure from that worst
+    unless marked (DEF-4116); the roster is derived both ways and records the
+    serial files it was measured over."""
 
     def test_the_measured_roster_is_the_derived_population(self):
         """Dies to: a job that runs the serial files with no measured figure (a
@@ -226,6 +252,61 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
             f"{key}: timeout-minutes {bound} is under the serial files' worst mark plus the job's "
             f"measured worst ({floor_s / 60:.1f} min)")
 
+    @pytest.mark.parametrize("key", sorted(_SERIAL_JOBS_MEASURED_WORST), ids="/".join)
+    def test_each_bound_is_the_census_figure_from_its_entry_unless_marked(self, key):
+        """DEF-4116. The floor test above holds a bound at or over its entry's
+        floor, so a bound raised from a newer census read with its entry left as
+        it was still passed, and a seat reading the dict as the bound's basis
+        took a stale worst. The bound is the census's needed figure from the
+        entry (the larger of its floor and its rule, at the census's own factor)
+        plus the entry's marked margin; an entry another rule sets holds a bound
+        over that figure, or its mark is stale. Dies to: on an entry with no mark
+        or a margin mark, a bound raised, or the entry re-measured past its
+        rounding, with the other left as it was (an other-rule entry feeds the
+        floor alone, so its bound may move with its entry left); a margin added
+        or dropped without its mark; the census's factor or floor changed under
+        the dict; an other-rule mark kept once the census's figure reaches the
+        bound."""
+        census, entry = _census(), _SERIAL_JOBS_MEASURED_WORST[key]
+        bound = _suite_jobs()[key]["timeout-minutes"]
+        needed = max(census.serial_floor(entry, _worst_serial_mark()), census.needed_bound(entry, census.FACTOR))
+        if key in _BOUND_SET_BY_ANOTHER_RULE:
+            assert bound > needed, (
+                f"{key}: timeout-minutes {bound} is not over the census's needed {needed} from its entry "
+                f"{entry}, so its mark ({_BOUND_SET_BY_ANOTHER_RULE[key]}) no longer holds: under the "
+                "figure, the census reads RAISE; at it, drop the mark and the census's figure holds the bound")
+        else:
+            margin = _BOUND_MARGIN_PAST_THE_CENSUS.get(key, 0)
+            assert bound == needed + margin, (
+                f"{key}: timeout-minutes {bound} is not the census's needed {needed} from its entry {entry}"
+                + (f" plus its marked margin, {margin}" if margin else "")
+                + ": a bound raised from a newer census read moves its entry to that read's worst, dated on "
+                "its own comment, and a margin past the census is marked in _BOUND_MARGIN_PAST_THE_CENSUS "
+                "with its ruling")
+
+    def test_each_mark_names_one_measured_entry_and_a_rule_the_tree_holds(self):
+        """Dies to: a mark kept for a job the dict no longer holds (it marks
+        nothing, and a job re-added under that key inherits it), an entry marked
+        both ways, a margin that is not a positive count of minutes, an
+        other-rule mark citing a module name its file no longer defines at its
+        top level, or the marks reworded so that none cites one (the check would
+        then read nothing)."""
+        margins, others = set(_BOUND_MARGIN_PAST_THE_CENSUS), set(_BOUND_SET_BY_ANOTHER_RULE)
+        assert margins | others <= set(_SERIAL_JOBS_MEASURED_WORST), sorted((margins | others)
+                                                                           - set(_SERIAL_JOBS_MEASURED_WORST))
+        assert not margins & others, sorted(margins & others)
+        assert all(type(m) is int and m > 0 for m in _BOUND_MARGIN_PAST_THE_CENSUS.values()), (
+            _BOUND_MARGIN_PAST_THE_CENSUS)
+        cited = [(rel, name) for rule in _BOUND_SET_BY_ANOTHER_RULE.values()
+                 for rel, name in re.findall(r"((?:scripts|tests)/[\w/]+\.py)::(\w+)", rule)]
+        assert cited, "no other-rule mark cites a module name: the check below reads nothing"
+        for rel, name in cited:
+            body = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8")).body
+            defined = {n.name for n in body if isinstance(n, (ast.ClassDef, ast.FunctionDef))} | {
+                t.id for n in body if isinstance(n, (ast.Assign, ast.AnnAssign))
+                for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)}
+            assert name in defined, f"{rel}::{name} is cited by an other-rule mark and is not defined at its top level"
+
     def test_the_box_lock_names_a_holder_only_past_the_post_merge_worst(self):
         """tests/_box_lock.py's WAIT_CEILING_MIN names a holder older than the
         post-merge proof's measured worst run, and its comment cites that worst.
@@ -237,6 +318,25 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
         assert WAIT_CEILING_MIN > worst, (
             f"tests/_box_lock.py::WAIT_CEILING_MIN {WAIT_CEILING_MIN} is not above the post-merge "
             f"proof's measured worst, {worst} min: raise it and its comment with the figure")
+
+    def test_the_box_lock_ceiling_is_over_every_post_merge_worst_the_census_reads_ok(self):
+        """The test above reads the dict's figure, which moves only at a raise,
+        and the census asks none until post-merge's worst passes its bound over
+        the factor (155 / 1.5 = 103.3 on 2026-11-14), so a worst between the
+        ceiling and that sat over the ceiling with every test green: 95.5 against
+        95 at air's census read of 2026-11-14 21:50Z (assign b27fa2), F1 of #635's
+        failure-mode review (air's note 3fb385). Dies to: the ceiling left at or
+        under the bound over the factor, or the bound raised with the ceiling
+        left where it was."""
+        from tests._box_lock import WAIT_CEILING_MIN
+
+        census = _census()
+        bound = _suite_jobs()[("post-merge.yml", "full-tier")]["timeout-minutes"]
+        assert WAIT_CEILING_MIN * census.FACTOR > bound, (
+            f"tests/_box_lock.py::WAIT_CEILING_MIN {WAIT_CEILING_MIN} is not over the post-merge proof's bound "
+            f"{bound} over the census's factor {census.FACTOR} ({bound / census.FACTOR:.1f} min), the worst "
+            "under which the census asks no raise: raise it to the next multiple of five past that, with its "
+            "comment")
 
     def test_the_floor_is_the_mark_plus_the_worst_rounded_up_to_five(self):
         """Dies to: the mark read as minutes, or seconds and minutes added raw, or
@@ -268,6 +368,25 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
         assert rows["serial"]["serial"] and rows["serial"]["floor"] == 60, rows["serial"]
         assert rows["serial"]["needed"] == 60 and rows["serial"]["verdict"] == "RAISE"
         assert not rows["parallel"]["serial"] and rows["parallel"]["verdict"] == "ok", rows["parallel"]
+
+    def test_the_census_derives_its_figures_from_the_worst_it_prints(self, monkeypatch, tmp_path, capsys):
+        """A seat copies the printed worst into the dict, and the tie above
+        derives the bound from that copy, so the census derives from it too.
+        Dies to: needed read from the unrounded worst, where 93.34 prints 93.3
+        but asks 145 (1.5 x 93.34 is 140.01), a bound the tie's 140 from 93.3
+        can never equal (DEF-4116's review)."""
+        census = _census()
+        (tmp_path / "ci.yml").write_text(
+            "jobs:\n  full:\n    timeout-minutes: 140\n    steps:\n      - run: echo build\n", encoding="utf-8")
+        monkeypatch.setattr(census, "WORKFLOWS", tmp_path)
+        monkeypatch.setattr(census, "measure", lambda wf, jobs, runs, scan, repo: {
+            j: {"greens": [93.34], "green_runs": 20, "cancels": [], "cuts": 0, "cut_max": None, "unread": 0}
+            for j in jobs})
+        assert census.main(["--json"]) == 0
+        import json
+        (row,) = json.loads(capsys.readouterr().out)["rows"]
+        assert row["worst"] == 93.3 and row["needed"] == census.needed_bound(93.3, census.FACTOR) == 140, row
+        assert row["verdict"] == "ok", row
 
     @pytest.mark.parametrize("command, opt_in, runs_them", [
         ("python scripts/proof_tier.py --run --tier full", False, True),
