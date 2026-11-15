@@ -280,76 +280,14 @@ def test_live_done_tree_population_is_non_trivial():
 
 
 # --------------------------------------------------------------------------
-# GROWTH RATCHETS over the two ADVISORY sections.
-#
-# The script prints both sections and exits 0, so nothing carried them forward
-# and nobody acted on them. Giving them a "durable home" by writing them to a
-# file would only be a second place to lose them -- a destination with no reader
-# is the same failure one layer down. pytest IS the reader: it runs every suite,
-# it already reads this tree, and it needs no new file, flag, or surface.
-#
-# These are CEILINGS, not equalities. The backlog may drain freely -- that is the
-# point -- but it must not grow silently. Lower the constant in the same commit
-# that drains one; never raise it. The script stays unchanged and keeps exiting 0,
-# because these are genuine advisories and a hard fail on a small backlog just
-# trains the reader to bypass the script.
-# --------------------------------------------------------------------------
-# HEADROOM OF ONE, AND THE ONE IS LOAD-BEARING -- these are not "current count"
-# snapshots. A ceiling pinned to exactly today's number reds on the NEXT ordinary
-# step rather than on the thing it means to catch, and the repo has now paid for
-# that lesson four times on a different ratchet: a routine handoff mints a citation,
-# a ceiling sitting at its own count goes red, and the reader learns to bump the
-# constant. A ratchet that trains people to raise it has inverted its own purpose.
-#
-# So each ceiling is `today + 1`, and the +1 encodes a specific claim:
-#
-#   ROADMAP-in-Done/  : one undrained roadmap may legitimately be in flight. TWO
-#                       means a roadmap was parked and forgotten, which is the
-#                       actual defect -- a ROADMAP in Done/ is finished only when
-#                       its children are drained.
-#
-# Lower either in the same commit that drains one; never raise. If one drains to
-# zero, DELETE its ceiling and its non-vacuity arm rather than leaving a guard that
-# can no longer fail for the right reason. The incomplete-Landing ceiling did, on
-# 2026-11-15: the dispatcher filled the last three stanzas (the pack-lifecycle
-# call's ruling A, 95db13), and its ceiling, its test and its arm went in the commit
-# that retired twelve landed root packs; the checker still prints any new one. The
-# same commit lowered the ROADMAP ceiling from 6 to 3, three roadmaps drained.
-_MAX_ROADMAP_IN_DONE = 3
-
-
-@pytest.mark.skipif(
-    not (REPO_ROOT / "task-packs" / "Done").is_dir(),
-    reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
-)
-@pytest.mark.contract
-def test_roadmap_packs_in_done_do_not_grow():
-    roadmaps = check_pack_landing.roadmap_packs()
-    assert len(roadmaps) <= _MAX_ROADMAP_IN_DONE, (
-        f"{len(roadmaps)} ROADMAP packs sit in Done/, above the ratchet of "
-        f"{_MAX_ROADMAP_IN_DONE}: {sorted(roadmaps)}. A ROADMAP in Done/ is only "
-        "finished when its children are drained. Drain them, or -- if this one is "
-        "genuinely complete -- lower the ratchet in the same commit. Never raise it."
-    )
-
-
-@pytest.mark.skipif(
-    not (REPO_ROOT / "task-packs" / "Done").is_dir(),
-    reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
-)
-@pytest.mark.contract
-def test_the_advisory_ratchets_are_not_vacuous():
-    # A ceiling passes trivially when the thing it counts reaches zero -- and it
-    # reads that collapse as success. The roadmap advisory is non-empty TODAY, so
-    # the ratchet above is measuring a live population rather than a broken walk.
-    # When it genuinely drains to zero, DELETE its ratchet rather than leaving a
-    # guard that can no longer fail for the right reason (the incomplete-Landing
-    # arm went that way on 2026-11-15; see the note above the ceiling).
-    assert check_pack_landing.roadmap_packs(), (
-        "roadmap_packs() returned nothing -- either the backlog drained (then drop "
-        "_MAX_ROADMAP_IN_DONE and this arm) or the walk broke and the ceiling above "
-        "is now vacuous"
-    )
+# The two ADVISORY sections had growth ceilings here, and both drained to zero on
+# 2026-11-15, so each went with its non-vacuity arm, as the ceilings' own rule
+# said (a ceiling over an empty population can no longer fail for the right
+# reason). The incomplete-Landing ceiling went with the retirement of twelve
+# landed root packs (ruling A of call 95db13); the ROADMAP ceiling went when the
+# last two roadmaps were stamped on the operator's rulings on call cc862b. The
+# script still prints either section the moment a pack lands in it, and the
+# forward ledger's row on the standing owed items was struck the same day.
 
 
 def test_pack_name_convention_boundaries():

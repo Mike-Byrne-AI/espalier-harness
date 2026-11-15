@@ -1080,7 +1080,7 @@ def test_off_topic_english_leak_count_does_not_grow():
 
 def test_the_off_topic_ratchet_has_a_falsifiable_companion():
     """Non-vacuity guard for the ratchet above -- the repo requires one of every
-    ratchet (tests/test_check_pack_landing.py::test_the_advisory_ratchets_are_not_vacuous).
+    ratchet (tests/test_check_pack_landing.py::test_live_done_tree_population_is_non_trivial).
 
     ⚠ Stated plainly so nobody over-reads the green above: this block does NOT
     detect removal of the suppression floor. Gibberish suppresses because its tokens
