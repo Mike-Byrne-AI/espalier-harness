@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5112",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import os, sys, json, subprocess, tempfile; t = tempfile.TemporaryDirectory(); d = t.name; e = {k: v for k, v in os.environ.items() if not k.startswith((\"ESPALIER_\", \"CLAUDE_\"))}; e.update(HOME=d, USERPROFILE=d, CLAUDE_PROJECT_DIR=d, CLAUDE_CONFIG_DIR=d); u = os.path.join(d, \"settings.json\"); h = os.path.abspath(\"tools/cc/hooks/write_guard.py\"); q = chr(34); go = lambda c: q + \"deny\" + q in subprocess.run([sys.executable, h], input=json.dumps({\"tool_name\": \"Write\", \"tool_input\": {\"file_path\": u, \"content\": c}}), capture_output=True, text=True, encoding=\"utf-8\", env=e).stdout; a = json.dumps({\"disableAllHooks\": True}); f = go(a); print(go(a), go(json.dumps({\"env\": {\"ESPALIER_MAINTENANCE_MODE\": \"1\"}}))); t.cleanup()'",
+ "open_value": "False False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_integrity.py"
+ ],
+ "row_sha": "da429f293463",
+ "text_sha": "c5fd2be9ec89",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD bfdf30c2b1ec)"
+}
