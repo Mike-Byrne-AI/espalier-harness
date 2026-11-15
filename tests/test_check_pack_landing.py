@@ -307,17 +307,15 @@ def test_live_done_tree_population_is_non_trivial():
 #                       means a roadmap was parked and forgotten, which is the
 #                       actual defect -- a ROADMAP in Done/ is finished only when
 #                       its children are drained.
-#   incomplete Landing: one pack may legitimately be mid-landing. The stanza wants
-#                       `Commits: <sha>`, which cannot be known until AFTER the
-#                       commit, so hand-landing necessarily passes through a window
-#                       where the stanza is incomplete. TWO simultaneous means a
-#                       record was abandoned rather than in progress.
 #
 # Lower either in the same commit that drains one; never raise. If one drains to
 # zero, DELETE its ceiling and its non-vacuity arm rather than leaving a guard that
-# can no longer fail for the right reason.
-_MAX_ROADMAP_IN_DONE = 6
-_MAX_INCOMPLETE_LANDINGS = 3
+# can no longer fail for the right reason. The incomplete-Landing ceiling did, on
+# 2026-11-15: the dispatcher filled the last three stanzas (the pack-lifecycle
+# call's ruling A, 95db13), and its ceiling, its test and its arm went in the commit
+# that retired twelve landed root packs; the checker still prints any new one. The
+# same commit lowered the ROADMAP ceiling from 6 to 3, three roadmaps drained.
+_MAX_ROADMAP_IN_DONE = 3
 
 
 @pytest.mark.skipif(
@@ -340,36 +338,17 @@ def test_roadmap_packs_in_done_do_not_grow():
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
 @pytest.mark.contract
-def test_incomplete_landing_stanzas_do_not_grow():
-    incomplete = check_pack_landing.incomplete_landings()
-    assert len(incomplete) <= _MAX_INCOMPLETE_LANDINGS, (
-        f"{len(incomplete)} LANDED packs carry an incomplete Landing stanza, above "
-        f"the ratchet of {_MAX_INCOMPLETE_LANDINGS}: "
-        f"{sorted((n, sorted(m)) for n, m in incomplete)}. The stanza is the "
-        "portable record of what landed; a LANDED pack missing Commits or Suite "
-        "cannot be audited later. Fill it in, or lower the ratchet. Never raise it."
-    )
-
-
-@pytest.mark.skipif(
-    not (REPO_ROOT / "task-packs" / "Done").is_dir(),
-    reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
-)
-@pytest.mark.contract
 def test_the_advisory_ratchets_are_not_vacuous():
     # A ceiling passes trivially when the thing it counts reaches zero -- and it
-    # reads that collapse as success. Both advisories are non-empty TODAY, so the
-    # ratchets above are measuring a live population rather than a broken walk.
-    # When either genuinely drains to zero, DELETE its ratchet rather than leaving
-    # a guard that can no longer fail for the right reason.
+    # reads that collapse as success. The roadmap advisory is non-empty TODAY, so
+    # the ratchet above is measuring a live population rather than a broken walk.
+    # When it genuinely drains to zero, DELETE its ratchet rather than leaving a
+    # guard that can no longer fail for the right reason (the incomplete-Landing
+    # arm went that way on 2026-11-15; see the note above the ceiling).
     assert check_pack_landing.roadmap_packs(), (
         "roadmap_packs() returned nothing -- either the backlog drained (then drop "
         "_MAX_ROADMAP_IN_DONE and this arm) or the walk broke and the ceiling above "
         "is now vacuous"
-    )
-    assert check_pack_landing.incomplete_landings(), (
-        "incomplete_landings() returned nothing -- either the backlog drained (then "
-        "drop _MAX_INCOMPLETE_LANDINGS and this arm) or the walk broke"
     )
 
 
