@@ -28,7 +28,11 @@ test, with its own exit status. Every gated run appends one JSON line to
 long, behind whom), passed through inside its holder, gave up past the
 waiter's bound, or unguarded (why) --
 so the record the roadmap's re-measure reads is empty only where no gated
-run came, never merely where none waited (DEF-4053). The launcher's old
+run came, never merely where none waited (DEF-4053). A run that held the
+lock appends one more line at its release, ``released`` with how long it
+held, written while it still holds, so a hold's two lines pair in file order
+and the log reads how full the box was, not only how long its waiters queued
+(DEF-3084); a holder that is killed leaves its acquire line alone. The launcher's old
 default (the temp directory's file) is read as its new one, said on stderr,
 so a seat launched before the move locks what its relaunched sibling locks.
 The run's terminal summary says
@@ -404,22 +408,28 @@ def current_path(path: str, *, stream: TextIO | None = None) -> str:
 
 
 def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
-                *, why: str = "", stream: TextIO | None = None) -> None:
+                *, why: str = "", held_s: float | None = None, stream: TextIO | None = None) -> None:
     """One JSON line in ``<lock path>.log`` for every gated run, whatever the
     lock did: ``taken`` at once, ``waited`` behind a holder
     (the wait's start, end and length), ``inside`` its holder (passed
     through), ``gave_up`` past the waiter's own bound (``why`` names it), or
-    ``unguarded`` (not taken, and ``why``). The log held waits
-    alone, so an empty one could not say whether no run waited or no run was
-    gated (DEF-4053); now it is empty only where no gated run came. A log that
-    cannot be written is one stderr line, never the run's cost."""
+    ``unguarded`` (not taken, and ``why``); and one more for every hold,
+    ``released`` (:meth:`BoxLock.release`), whose ``held_s`` is the hold's
+    length and whose start is the take, its wait left on its acquire line.
+    The log held waits alone, so an empty one could not say whether no run
+    waited or no run was gated (DEF-4053); now it is empty only where no gated
+    run came. A log that cannot be written is one stderr line, never the
+    run's cost."""
     end = datetime.now(timezone.utc)
-    start = datetime.fromtimestamp(end.timestamp() - waited_s, tz=timezone.utc)
+    span = held_s if held_s is not None else waited_s
+    start = datetime.fromtimestamp(end.timestamp() - span, tz=timezone.utc)
     line: dict = {"outcome": outcome,
                   "run": {k: (run or {}).get(k) for k in ("seat", "lane", "pid")},
                   "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
                   "start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds"),
                   "waited_s": round(waited_s, 3)}
+    if held_s is not None:
+        line["held_s"] = round(held_s, 3)
     if why:
         line["why"] = why
     try:
@@ -440,6 +450,9 @@ class BoxLock:
         self.held = False
         self.passed_through = False
         self.waited_s = 0.0
+        # time.monotonic() at the take, set once the acquire line is logged:
+        # the release's held_s reads it, and None writes no release line.
+        self.taken_at: float | None = None
         self.holder_seen: dict | None = None
 
     def acquire(self) -> None:
@@ -470,6 +483,7 @@ class BoxLock:
         while True:
             if self.primitive.try_lock_file(self.fh):
                 self.held = True
+                taken_at = time.monotonic()
                 # The hold's age, never the queue's: stamped at configure, a
                 # run that queued forty minutes read forty minutes older than
                 # it was, and past the ceiling sooner (DEF-4077).
@@ -483,6 +497,9 @@ class BoxLock:
                     self.waited_s = time.monotonic() - started
                 log_outcome(self.path, "waited" if last_report is not None else "taken", self.record,
                             self.holder_seen, self.waited_s, stream=self.stream)
+                # Set once the acquire line is down, so a failure between the
+                # take and that line releases without an orphan release line.
+                self.taken_at = taken_at
                 return
             record = read_record(self.path)
             if inside_holder(record):
@@ -533,12 +550,24 @@ class BoxLock:
             terminalreporter.write_line(_ascii(f"box lock: waited {self.waited_s:.0f} s behind {who}"))
 
     def release(self) -> None:
+        """Clear the record, log the hold's ``released`` line and unlock. The
+        line is written while the lock is still held, so in the log it comes
+        before the next run's acquire line and a reader pairs each hold's two
+        lines in file order; written after the unlock, a waiter's ``waited``
+        line could land first (DEF-3084). A run that never held writes none,
+        nor one whose acquire failed before its acquire line, and neither does
+        a holder that is killed: the kernel frees its lock with the process,
+        so its acquire line stands alone and its hold's end is bounded only by
+        the next acquire."""
         if self.fh is None or not self.held:
             return
         try:
             self.fh.seek(0)
             self.fh.truncate()
             self.fh.flush()
+            if self.taken_at is not None:
+                log_outcome(self.path, "released", self.record, held_s=time.monotonic() - self.taken_at,
+                            stream=self.stream)
             self.primitive.unlock_file(self.fh)
         finally:
             self.fh.close()
