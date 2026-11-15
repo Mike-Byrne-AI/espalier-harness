@@ -398,6 +398,52 @@ class TestReadBodyDescription:
         assert result == "First sentence of summary."
 
 
+class TestTheTwoPurposeReadersAgree:
+    """One command body, one summary. ``cc/COMMANDS.md`` reads a command's
+    opening paragraph with ``_read_body_description`` and the generated
+    CLAUDE.md table with ``espalier.cli._opening_paragraph``; each body below
+    opens with, or breaks on, a block that is not prose. The CLAUDE.md reader
+    once skipped a heading alone, so it showed the quote, the managed marker
+    or the fence as the command's Purpose while the index showed the prose."""
+
+    _BODIES = {
+        "heading": "# Title\n\nThe real summary.\n",
+        "blockquote": "> a note for the reader\n\nThe real summary.\n",
+        "managed-marker": f"<!-- {MANAGED_MARKER} -->\n\nThe real summary.\n",
+        "multi-line-comment": "<!--\nnot for the table\n-->\nThe real summary.\n",
+        "fence": "```bash\nrun --this\n```\n\nThe real summary.\n",
+        "frontmatter-then-quote": (
+            "---\nname: x\n---\n> quoted\n\nThe real summary\nwrapped onto two lines.\n"
+        ),
+        "quote-mid-paragraph": "The real summary.\n> a quote ends it\nnot captured.\n",
+    }
+
+    #: Frontmatter edges: whatever the index reader makes of them, the table
+    #: reader must make the same (an unclosed block reads as nothing; four
+    #: dashes open no frontmatter in either reader).
+    _EDGES = {
+        "unclosed-frontmatter": "---\nname: x\n\nThe real summary.\n",
+        "four-dash-frontmatter": "----\nname: x\n----\n\nThe real summary.\n",
+    }
+
+    @pytest.mark.parametrize("shape", sorted(_BODIES) + sorted(_EDGES))
+    def test_both_readers_return_the_same_summary(self, tmp_path, shape):
+        from espalier.cli import _opening_paragraph
+
+        body = self._BODIES.get(shape) or self._EDGES[shape]
+        f = tmp_path / "cmd.md"
+        f.write_text(body, encoding="utf-8")
+        surface = _read_body_description(f)
+        assert shape in self._EDGES or surface.startswith("The real summary"), (
+            f"{shape}: the surface index reader read {surface!r}"
+        )
+        table = _opening_paragraph(body)
+        assert table == surface, (
+            f"{shape}: the CLAUDE.md table would show {table!r} where cc/COMMANDS.md "
+            f"shows {surface!r}; both readers skip what render_surface._skip_non_prose_block skips"
+        )
+
+
 # ── _read_description (frontmatter + body fallback) ──────────────────────────
 
 

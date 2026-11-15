@@ -125,6 +125,7 @@ from espalier.render_surface import (
     _block_scalar_body_continues,
     _is_block_scalar_header,
     _normalize_description_text,
+    _skip_non_prose_block,
     _unquote_frontmatter_value,
 )
 from espalier.self_hosting import gate_failure_reason, run_self_host_check
@@ -2498,25 +2499,36 @@ def _parse_yaml_frontmatter(text: str) -> dict[str, str]:
 
 
 def _opening_paragraph(text: str) -> str:
-    """The first prose paragraph of a command body: frontmatter and a leading
-    markdown heading skipped, wrapped lines joined. This is the text
-    ``_first_sentence`` renders into the CLAUDE.md tables for a command with no
-    ``description:`` -- a test that wants to see what the table will show must
-    call THIS, not re-implement the walk (the two drifted once, silently)."""
-    body = text
-    if body.startswith("---"):
-        end = body.find("\n---", 3)
-        if end != -1:
-            body = body[end + 4:]
+    """The first prose paragraph of a command body: frontmatter skipped, then
+    every leading block that is not prose (a heading, a blockquote, an HTML
+    comment such as the managed marker, a fenced code block), wrapped lines
+    joined, and the first non-prose line after it ends the paragraph. The skip
+    and the stop are ``render_surface._skip_non_prose_block``, the rule the
+    ``cc/COMMANDS.md`` reader (``render_surface._read_body_description``)
+    applies to the same file, and the frontmatter is found as that reader finds
+    it (a first line of exactly ``---`` through the next such line; unclosed,
+    there is nothing to read), so one command never gets two summaries: this
+    reader once skipped a heading alone and showed a quote, the marker or a
+    fence as the Purpose (``tests/test_render_surface.py::TestTheTwoPurposeReadersAgree``).
+    This is the text ``_first_sentence`` renders into the CLAUDE.md tables for
+    a command with no ``description:`` -- a test that wants to see what the
+    table will show must call THIS, not re-implement the walk (the two drifted
+    once, silently)."""
+    lines = text.splitlines()
+    i = 0
+    if lines and lines[0].rstrip("\r") == "---":
+        for j in range(1, len(lines)):
+            if lines[j].rstrip("\r") == "---":
+                i = j + 1
+                break
+        else:
+            return ""
+    while i < len(lines) and (after := _skip_non_prose_block(lines, i)) != i:
+        i = after
     para: list[str] = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            continue  # skip a leading markdown heading
-        if stripped:
-            para.append(stripped)
-        elif para:
-            break  # first blank line ends the opening paragraph
+    while i < len(lines) and _skip_non_prose_block(lines, i) == i:
+        para.append(lines[i].strip())
+        i += 1
     return " ".join(para)
 
 
