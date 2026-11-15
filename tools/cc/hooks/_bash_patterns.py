@@ -2827,11 +2827,6 @@ _PARALLEL_LITERAL_SOURCES = frozenset({":::", ":::+"})
 #: launcher started, and a variable read as one keeps its conservative
 #: reading.
 _ARGV_BARE_CHARS = frozenset("-_./=:,+@%~^$")
-#: The launchers' own words, the substring test before any walk: each key of
-#: `_LAUNCHER_READERS` holds one (pinned), so no reader is gated out. `sg`
-#: is two letters, as `fd` is: a command holding either is walked, and the
-#: walk's head test keeps it to a launcher.
-_LAUNCHER_WORDS = ("find", "fd", "parallel", "runuser", "gosu", "su-exec", "sg", "flock")
 #: The words a statement's head walk steps past to reach a launcher: the
 #: anchor's wrapper roster (its three binary fragments and its builtins,
 #: read from the same literals, so a wrapper added there is stepped here),
@@ -3169,6 +3164,14 @@ _LAUNCHER_READERS: dict[str, Callable[[list[str], bool], list[str]]] = {
     "runuser": _runuser_programs, "gosu": _user_spec_programs, "su-exec": _user_spec_programs,
     "sg": _sg_programs, "flock": _flock_programs,
 }
+#: The launchers' own words, the substring test before any walk: the reader
+#: keys, less any that holds another (`fdfind` holds `fd`), so a launcher
+#: added to the readers is gated in on arrival, one entry. `sg` is two
+#: letters, as `fd` is: a command holding either is walked, and the walk's
+#: head test keeps it to a launcher.
+_LAUNCHER_WORDS = tuple(
+    key for key in _LAUNCHER_READERS if not any(other != key and other in key for other in _LAUNCHER_READERS)
+)
 #: The launchers whose program the hard tier reads from this walk
 #: (DEF-2090): the five user-switching launchers, judged as su's program is
 #: (`_HARD_TIER_CARRIER_HEADS`). One roster, so a later name is one entry.
