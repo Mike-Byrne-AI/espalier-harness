@@ -961,6 +961,14 @@ _BELOW_FLOOR_ANSWER: "tuple[tuple[str, str, str], tuple[str, str] | None] | None
 #: True while :func:`_refuse_below_floor_wiring` asks the resolver, so the
 #: resolver's below-floor warning does not say the refusal's sentence twice.
 _BELOW_FLOOR_REFUSING = False
+#: What the resolver's venv-only fallback found outside the virtualenv on its
+#: latest call that took the fallback -- ``((name, outside, banner), mute)``:
+#: the name it answered, what that name resolves to once the venv is off PATH,
+#: what that answered ``--version`` (None if it never did), and the first
+#: candidate whose banner never answered or None -- else None, as when the
+#: name resolves to nothing there. Read by :func:`_refuse_below_floor_wiring`,
+#: which clears it before it asks (DEF-2076).
+_VENV_FALLBACK_OUTSIDE: "tuple[tuple[str, str, str | None], tuple[str, str] | None] | None" = None
 
 
 def _refuse_below_floor_wiring(verb: str) -> "int | None":
@@ -975,17 +983,25 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     fallback offered. The read-only callers (``doctor``, the remedy spelling)
     still get the resolver's answer and its warning. ``--rewire-interpreter``
     already refuses a below-floor target on its own (``REWIRE_NO_TARGET``).
+
+    The one gate every writer asks, so it also says, and lets through, the
+    venv-only fallback whose name resolves outside the venv to no Python that
+    runs the harness (:func:`_warn_venv_fallback_outside`, DEF-2076). The
+    read-only callers never come here, and doctor names that state itself.
     """
-    global _BELOW_FLOOR_ANSWER, _BELOW_FLOOR_REFUSING
-    # Cleared first: a resolver a test or a caller has replaced never sets it,
-    # and a value left by an earlier call is no answer about this one.
+    global _BELOW_FLOOR_ANSWER, _BELOW_FLOOR_REFUSING, _VENV_FALLBACK_OUTSIDE
+    # Cleared first: a resolver a test or a caller has replaced never sets
+    # them, and a value left by an earlier call is no answer about this one.
     _BELOW_FLOOR_ANSWER = None
+    _VENV_FALLBACK_OUTSIDE = None
     _BELOW_FLOOR_REFUSING = True
     try:
         _detect_python_command()
     finally:
         _BELOW_FLOOR_REFUSING = False
     if _BELOW_FLOOR_ANSWER is None:
+        if _VENV_FALLBACK_OUTSIDE is not None:
+            _warn_venv_fallback_outside(verb, *_VENV_FALLBACK_OUTSIDE)
         return None
     (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
     # No candidate cleared the floor, so a newer Python on PATH under one of
@@ -1001,6 +1017,75 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     return 1
 
 
+def _warn_venv_fallback_outside(
+    verb: str, seen: "tuple[str, str, str | None]", mute: "tuple[str, str] | None" = None,
+) -> None:
+    """Say, once on stderr, that the name ``verb`` writes runs the harness
+    only inside the virtualenv, and what it finds outside (DEF-2076).
+
+    The resolver's venv-only fallback stays (air's ruling 20e1d4): with no
+    Python that clears the floor outside the venv there is no better name to
+    write, and a host with NOTHING outside is told nothing, as before. But
+    where the name resolves outside the venv to something -- the Windows Store
+    alias, a Python 2, an install that cannot start -- every hook a session
+    started from another shell runs hits that, exits outside {0, 2}, and every
+    blocking guard fails open, while the command reported success. So the
+    gate says it and the wiring goes ahead. Once a process, on the resolver
+    warnings' flag: ``fuse`` asks the gate and then runs ``init``, which asks
+    it again. Every clause comes from a reading the resolver already made and
+    kept (the outside's banner, its start-up verdict, the venv's root on
+    PATH): no new spawn. ``mute`` is the first candidate whose banner never
+    answered, said as the below-floor refusal says it, since on a loaded host
+    "install one" may be the wrong remedy.
+    """
+    global _INTERPRETER_WARNING_EMITTED
+    if _INTERPRETER_WARNING_EMITTED:
+        return
+    _INTERPRETER_WARNING_EMITTED = True
+    name, outside, said = seen
+    floor = floor_text()
+    venv = wired_venv_root(name)
+    at = f" at {venv}" if venv is not None else ""
+    if said is None:
+        what = "did not answer `--version`"
+    elif said.startswith(BANNER_PROBE_FAILED):
+        what = f"could not be asked ({said})"
+    elif is_python3_banner(said):
+        # A Python 3 banner reaches the fallback only when it cannot start: a
+        # floor-clearing one that starts is host-wide, a below-floor one that
+        # starts is the below-floor answer. The verdict is the kept one.
+        cannot = interpreter_start_failure([outside])
+        what = f"answers `{_first_line(said)}` to --version" + (f" and {cannot}" if cannot else "")
+    else:
+        what = f"is no Python {floor}+ (it answered `--version` with: {_first_line(said)})"
+    # Said of what this command writes, never of what is wired: a dry run
+    # writes nothing, and init keeps an existing settings file whole.
+    print(
+        f"[{verb}] WARNING: {name!r} runs a Python {floor}+ only inside the "
+        f"virtualenv{at}. Outside it, {name!r} resolves to {outside}, which "
+        f"{what}, and none of {resolver_candidate_names()} answered a Python "
+        f"{floor}+ outside the virtualenv, so {name!r} is the name this command "
+        f"writes into any hook entry it writes (a settings file that already "
+        f"names another interpreter keeps it; doctor names what is wired). "
+        f"Hooks wired with {name!r} exit outside the blocking range from a "
+        f"shell without the virtualenv (another terminal, an IDE, the desktop "
+        f"app), so their guards fail OPEN."
+        + _unheard_beside(mute)
+        + f" Put a Python {floor}+ on PATH outside the virtualenv, then "
+        f"re-wire: `<that interpreter> -m espalier init . "
+        f"--rewire-interpreter`; launching Claude Code from the virtualenv is "
+        f"no fix.",
+        file=sys.stderr,
+    )
+
+
+def _first_line(said: str) -> str:
+    """A banner's first non-empty line, cut at 200 characters, for a sentence
+    that quotes it: a wrapper can print lines before the banner, or many."""
+    lines = [line.strip() for line in said.splitlines() if line.strip()]
+    return lines[0][:200] if lines else "(no output)"
+
+
 def _warn_interpreter_unvalidated(
     probe: "tuple[str, str, str] | None",
 ) -> None:
@@ -1010,7 +1095,11 @@ def _warn_interpreter_unvalidated(
     when `_detect_python_command` falls back to a virtualenv-only candidate:
     that is a documented, deliberate fail-safe, and warning there would fire
     for every developer who runs `init` inside an activated venv -- an
-    advisory that cries wolf gets ignored or deleted.
+    advisory that cries wolf gets ignored or deleted. The one fallback that is
+    said is narrower: a name that resolves OUTSIDE the venv to no Python that
+    runs the harness, said by the writers' gate
+    (:func:`_warn_venv_fallback_outside`); a host-wide Python that clears the
+    floor keeps the name host-wide, so a developer with one never hears it.
     """
     global _INTERPRETER_WARNING_EMITTED
     if _INTERPRETER_WARNING_EMITTED:
@@ -1163,7 +1252,11 @@ def _detect_python_command() -> str:
     (``DEF-2069``). A working Python 3 below the floor found there is this
     host's below-floor answer, and any below-floor answer outranks the
     venv-only fallback, which is kept for a host with no Python 3 outside the
-    venv at all.
+    venv at all. Where the fallback's name does resolve outside the venv, to
+    something that runs no Python that clears the floor (the Store alias, a
+    Python 2, an install that cannot start), the fallback is still the answer,
+    and the gate every writing command asks says what was found there
+    (:func:`_warn_venv_fallback_outside`, ``DEF-2076``).
 
     A candidate whose banner reads as a Python 3 must also START
     (:func:`_python_floor.interpreter_start_failure`): ``--version`` is
@@ -1217,6 +1310,12 @@ def _detect_python_command() -> str:
     # what this host has; a command that would write it refuses instead
     # (`_refuse_below_floor_wiring`, the 2026-11-07 ruling).
     below_floor: tuple[str, str, str] | None = None
+    # What each venv-only candidate resolves to outside the venv, when that
+    # runs no Python that clears the floor (DEF-2076): the fallback's own entry
+    # is published at its return for the writers' gate, which says it. Keyed by
+    # candidate, so the entry published is the returned name's whatever order
+    # the fallback picks in.
+    fallback_outside: dict[str, tuple[str, str, str | None]] = {}
     for candidate in RESOLVER_CANDIDATES:
         path = shutil.which(candidate)
         if not path:
@@ -1282,6 +1381,12 @@ def _detect_python_command() -> str:
                     if (said and is_below_floor_python3(said)
                             and interpreter_start_failure([outside]) is None):
                         below_floor = (candidate, outside, said)
+                    else:
+                        # This name finds that outside, and it runs no Python
+                        # that clears the floor: what the writers' gate names
+                        # if this name is the fallback's answer (DEF-2076).
+                        # The banner is the one just read.
+                        fallback_outside[candidate] = (candidate, outside, said)
                 continue
             # A start the probe never saw (DEF-5014): kept, while a later
             # candidate whose start was seen outranks it (see the docstring).
@@ -1371,6 +1476,15 @@ def _detect_python_command() -> str:
         _warn_interpreter_below_floor(below_floor, mute)
         return below_floor[0]
     if last_resort is not None:
+        # Published, never said here: the read-only callers reach this return
+        # too, and doctor names a wired name that runs only inside a venv; the
+        # gate every writing command asks says it (DEF-2076). None where the
+        # name resolves to nothing outside, the case the fallback is kept for.
+        # A new return of a venv-only name publishes the same, or the gate,
+        # which cleared it, stays silent there.
+        global _VENV_FALLBACK_OUTSIDE
+        seen = fallback_outside.get(last_resort)
+        _VENV_FALLBACK_OUTSIDE = None if seen is None else (seen, mute)
         return last_resort
     if mute is not None:
         _warn_interpreter_unanswered(mute[0], mute[1], first_probe or first_failure)

@@ -3634,7 +3634,8 @@ class TestAVenvShimOverAnOutsidePython:
     def test_a_store_alias_outside_reads_as_venv_only(self, tmp_path, monkeypatch, capsys):
         """The fail-open variant: outside, the name is no Python at all. It
         reads venv-only, so doctor names it; with no other candidate the
-        documented venv-only fallback still answers, silently."""
+        documented venv-only fallback still answers (and the writers' gate
+        says what it saw outside: the DEF-2076 tests below)."""
         from espalier import _venv, cli
 
         self._host(tmp_path, monkeypatch, "store")
@@ -3642,6 +3643,181 @@ class TestAVenvShimOverAnOutsidePython:
         assert _venv.resolves_only_inside("python") is True
         assert cli._refuse_below_floor_wiring("init") is None
         assert cli._detect_python_command() == "python"
+
+    def test_the_writers_gate_names_the_alias_outside_and_keeps_wiring(self, tmp_path, monkeypatch, capsys):
+        """DEF-2076: on the Store host the venv-only fallback still answers,
+        and the gate every writing command asks before its first write (init,
+        upgrade, merge-settings, fuse) lets it through but says what the name
+        finds outside the venv and where the remedy goes. It said nothing,
+        and the next session started from outside the venv hit the alias on
+        every hook (driven on the Windows box 2026-11-12)."""
+        from espalier import cli
+        from tests import _interpreter_hosts as hosts
+
+        venv, outside_bin = self._host(tmp_path, monkeypatch, "store")
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") is None
+        err = capsys.readouterr().err
+        assert "[init] WARNING: 'python' " in err, err
+        assert f"virtualenv at {venv}" in err and str(outside_bin) in err, err
+        assert hosts.STORE_STUB_TEXT.split(";")[0] in err, err
+        assert "fail OPEN" in err, err
+        assert "re-wire: `<that interpreter> -m espalier init . --rewire-interpreter`" in err, err
+        assert "launching Claude Code from the virtualenv is no fix" in err, err
+        assert cli._detect_python_command() == "python"
+
+    def test_a_python_outside_that_cannot_start_is_named_by_its_start(self, tmp_path, monkeypatch, capsys):
+        """The broken-install shape: outside, the name answers a banner that
+        clears the floor and cannot start. The warning says the start failed,
+        under the verb that asked."""
+        from espalier import cli
+        from tests import _interpreter_hosts as hosts
+
+        _venv_root, broken = self._cannot_start_host(tmp_path, monkeypatch)
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("upgrade") is None
+        err = capsys.readouterr().err
+        assert "[upgrade] WARNING: 'python' " in err and str(broken) in err, err
+        assert hosts.CANNOT_START_BANNER in err and "cannot start" in err, err
+
+    def test_nothing_outside_keeps_the_fallback_silent(self, tmp_path, monkeypatch, capsys):
+        """Air's ruling 20e1d4: the fallback is kept for a host with no
+        Python 3 outside the venv at all, and it stays silent there."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "none")
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert cli._detect_python_command() == "python"
+        assert capsys.readouterr().err == ""
+
+    def test_the_resolver_alone_leaves_the_outside_to_doctor(self, tmp_path, monkeypatch, capsys):
+        """The resolver also answers the read-only callers, and doctor already
+        names a wired name that runs only inside a venv, so the warning is the
+        writers' gate's alone: the resolver says nothing on the Store host."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "store")
+        capsys.readouterr()
+        assert cli._detect_python_command() == "python"
+        assert capsys.readouterr().err == ""
+
+    @staticmethod
+    def _cannot_start_host(tmp_path, monkeypatch):
+        from tests import _interpreter_hosts as hosts
+
+        venv, venv_bin, _empty = hosts.build_venv_over(tmp_path / "host", "none")
+        broken = hosts.build_cannot_start(tmp_path / "host", ("python", "python3"))
+        monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(broken)]))
+        monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+        return venv, broken
+
+    def test_the_alias_under_the_other_name_alone_keeps_the_fallback_silent(self, tmp_path, monkeypatch, capsys):
+        """The warning names the fallback's own name: ``python`` resolves to
+        nothing outside the venv, so the host is the ruling's silent one, even
+        though ``python3`` there is the Store alias."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "store", outside_names=("python3",))
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert cli._detect_python_command() == "python"
+        assert capsys.readouterr().err == ""
+
+    def test_a_gate_asked_twice_in_one_process_says_it_once(self, tmp_path, monkeypatch, capsys):
+        """``fuse`` asks the gate, then runs ``init`` in the same process, which
+        asks it again: the sentence is said once."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "store")
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("fuse") is None
+        assert cli._refuse_below_floor_wiring("init") is None
+        err = capsys.readouterr().err
+        assert err.count("WARNING: 'python' ") == 1 and "[fuse] WARNING" in err, err
+
+    def test_a_banner_that_never_answered_is_said_beside_the_remedy(self, tmp_path, monkeypatch, capsys):
+        """On a loaded host ``py -3`` can be a working Python whose banner
+        missed both tries: the warning says so before telling the operator to
+        install one, as the below-floor refusal does (both reviews, driven)."""
+        from espalier import _python_floor, cli
+        from tests import _interpreter_hosts as hosts
+
+        _venv_root, outside_bin = self._host(tmp_path, monkeypatch, "store")
+        (hosts._cmd_stub if os.name == "nt" else hosts._sh_stub)(outside_bin, "py", working=True)
+        real_banner = _python_floor._ask_banner
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, s, t: None if "-3" in argv else real_banner(argv, s, t))
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") is None
+        err = capsys.readouterr().err
+        assert "[init] WARNING: 'python' " in err and "'py -3' (" in err, err
+        assert "did not answer `--version` in time here" in err, err
+
+    @pytest.mark.parametrize("argv", [
+        pytest.param(["init", "{target}", "--dry-run"], id="init-dry-run"),
+        pytest.param(["merge-settings", "{target}"], id="merge-settings"),
+    ])
+    def test_a_writing_command_says_it_once_and_goes_ahead(self, tmp_path, argv):
+        """The failure-mode review's gap: the gate's tests never run a command.
+        Driven as a subprocess on the Store-over-venv host, PATH holding the
+        venv, the outside and git alone."""
+        import shutil
+
+        from tests import _interpreter_hosts as hosts
+
+        venv, venv_bin, outside_bin = hosts.build_venv_over(tmp_path / "host", "store")
+        git = shutil.which("git")
+        assert git, "precondition: git is needed to drive the command"
+        if os.name == "nt":
+            git_dir = Path(git).parent
+        else:
+            git_dir = tmp_path / "gitbin"
+            git_dir.mkdir()
+            (git_dir / "git").symlink_to(git)
+        target = tmp_path / "adopter"
+        target.mkdir()
+        subprocess.check_call([git, "init", "--quiet"], cwd=str(target))
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([str(venv_bin), str(outside_bin), str(git_dir)])
+        env["VIRTUAL_ENV"] = str(venv)
+        words = [w.format(target=target) for w in argv]
+        result = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", *words],
+            capture_output=True, text=True, timeout=scaled(50), env=env, encoding="utf-8",
+        )
+        said = result.stdout + result.stderr
+        assert result.stderr.count(f"[{words[0]}] WARNING: 'python' ") == 1, said
+        assert str(outside_bin) in result.stderr and "Nothing was written." not in said, said
+        if "--dry-run" in words:
+            assert result.returncode == 0, said
+
+    @pytest.mark.parametrize("shape", ["store", "cannot-start"], ids=["store", "cannot-start"])
+    def test_the_warning_asks_no_probe_the_resolver_did_not(self, tmp_path, monkeypatch, capsys, shape):
+        """No new spawn: what the warning says comes from the readings the
+        resolver already made and kept (the outside's banner, its start-up
+        verdict, the venv-only reading), so the gate, run after the resolver,
+        asks nothing more, the cannot-start shape's start verdict included."""
+        from espalier import _python_floor, cli
+
+        if shape == "store":
+            self._host(tmp_path, monkeypatch, "store")
+        else:
+            self._cannot_start_host(tmp_path, monkeypatch)
+        assert cli._detect_python_command() == "python"
+        asked = []
+        real_banner, real_start = _python_floor._ask_banner, _python_floor._ask_start
+        real_venv = cli._ask_resolves_only_inside_a_virtualenv
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, s, t: asked.append(("banner", argv)) or real_banner(argv, s, t))
+        monkeypatch.setattr(_python_floor, "_ask_start",
+                            lambda argv, s, t: asked.append(("start", argv)) or real_start(argv, s, t))
+        monkeypatch.setattr(cli, "_ask_resolves_only_inside_a_virtualenv",
+                            lambda name, path: asked.append(("venv", name)) or real_venv(name, path))
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        assert "[merge-settings] WARNING" in capsys.readouterr().err
+        assert asked == []
 
     def test_a_working_python_outside_is_still_host_wide(self, tmp_path, monkeypatch):
         """The control: a floor-clearing Python outside the venv keeps the name
