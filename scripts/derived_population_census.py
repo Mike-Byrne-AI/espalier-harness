@@ -1780,15 +1780,22 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        55, "dab536e96d1cdb080c6a41f5647ae7857c5084e644961d3b201ab93de85aafc3",
+        56, "aa0878be68769b606ab327d8ba4a1bd743815e9de1a375006ca0b21f38fabfb1",
         "CORRECT_BY_REMEDY",
-        "RE-PINNED at 55 on 2026-11-14 (DEF-3078's lane), the same rows: three roster "
+        "RE-PINNED on 2026-11-14 (DEF-3078's lane), the same rows, 56 with DEF-2083's below: three roster "
         "comprehensions (TestQuotedVerbTailIsUniform's and "
         "TestPowerShellQuotedVerbBehindTheCallOperator's test_the_roster_is_the_modules_anchored_arms, "
         "TestQuotedTargetSurvivesTheRoot._roster) now iterate "
         "`itertools.chain(vars(bp).items(), first_use_patterns(bp).items())`, rooted at `bp` as "
         "before and wider by the first-use compiles a namespace walk never saw; each still asserts "
         "equality against its roster. "
+        "GREW 55 -> 56 on 2026-11-14 (DEF-2083): one for-plain, "
+        "TestAGapAfterAPipeIsRead::test_the_masker_memo_holds_a_long_rows_judgment "
+        "walks `list(vars(bp).values())` to `cache_clear()` every memo before it counts "
+        "the masker's walk: a setup loop, never an asserted population. The one memo "
+        "whose warmth could hide a walk is the masker's, a module attribute the walk "
+        "reaches while it exists; the pin's red at the base was earned by assertion and "
+        "by mutants (the memo at maxsize 1, and no memo). "
         "GREW 53 -> 55 on 2026-11-12 (DEF-3072): one new line, counted as an all-any and "
         "a comprehension: TestAShellsOptionHidesNoPipedProgram::"
         "test_a_switched_shell_fetch_meets_the_nudge asserts `any(...)` over "

@@ -1777,6 +1777,9 @@ def test_bash_walker_linear_on_opener_flood(label, payload, tmp_path):
         pytest.skip("signal.alarm not available on this platform")
     overruns: list[str] = []
     for name, consumer, _cap in _WALKER_CONSUMERS:
+        # each consumer cold: with the masker memoised by its text (76cd5c),
+        # a payload an earlier consumer or row masked would time a lookup
+        _clear_walker_caches()
         signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, _WALKER_CEILING_MS / 1000.0)
         t = time.perf_counter()
