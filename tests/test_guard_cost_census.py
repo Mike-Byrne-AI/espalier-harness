@@ -394,7 +394,30 @@ class TestTheBoxLock:
         finally:
             lock.release()
         assert path.read_text(encoding="utf-8") == ""
-        assert [line["outcome"] for line in _log_lines(path)] == ["taken"]
+        lines = _log_lines(path)
+        assert [line["outcome"] for line in lines] == ["taken", "released"], lines
+        assert lines[1]["run"]["pid"] == os.getpid() and lines[1]["held_s"] >= 0 and "held_s" not in lines[0], lines
+
+    def test_the_census_logs_its_release_before_the_lock_goes(self, tmp_path, monkeypatch):
+        """``tests/_box_lock.py::BoxLock.release``'s order (DEF-3084): the
+        line written while the census still holds, so a tier waiting behind
+        it logs its acquire after the census's release. Mutation: the line
+        logged after ``unlock_file``, or not at all."""
+        path, at_unlock = tmp_path / "box.lock", []
+        real_unlock = census._JSON_SAFE.unlock_file
+
+        def unlock_file(fh):
+            at_unlock.append([line["outcome"] for line in _log_lines(path)])
+            real_unlock(fh)
+
+        monkeypatch.setattr(census._JSON_SAFE, "unlock_file", unlock_file)
+        monkeypatch.setenv(_box_lock.LOCK_KEY, str(path))
+        monkeypatch.delenv(_box_lock.HOLDER_KEY, raising=False)
+        monkeypatch.delenv(_box_lock.WAIT_KEY, raising=False)
+        lock = census.BoxLock(stream=io.StringIO())
+        lock.acquire()
+        lock.release()
+        assert at_unlock == [["taken", "released"]], at_unlock
 
     def test_a_census_run_takes_and_clears_a_free_lock(self, tmp_path):
         path = tmp_path / "box.lock"
@@ -403,8 +426,9 @@ class TestTheBoxLock:
             pytest.skip(_BUDGET_SKIP)
         assert proc.returncode == 0, proc.stderr
         assert json.loads(proc.stdout)["lock"]["outcome"] == "taken"
-        (line,) = _log_lines(path)
-        assert line["outcome"] == "taken" and line["run"]["pid"] not in (None, os.getpid())
+        taken, released = _log_lines(path)
+        assert taken["outcome"] == "taken" and taken["run"]["pid"] not in (None, os.getpid())
+        assert released["outcome"] == "released" and released["run"] == taken["run"] and released["held_s"] > 0
         assert path.read_text(encoding="utf-8") == ""
 
 
@@ -456,6 +480,24 @@ class TestTheHolderIsTheBoxLocksShape:
         assert set(ours) == set(theirs)
         assert {k: ours[k] for k in ("outcome", "run", "holder", "waited_s", "why")} == {
             k: theirs[k] for k in ("outcome", "run", "holder", "waited_s", "why")}
+
+    def test_the_release_line_has_the_plugins_shape(self, tmp_path):
+        """DEF-3084: a hold's ``released`` line, its length in ``held_s`` and
+        its start at the take, the wait left on the acquire line."""
+        from datetime import datetime
+        run = {"seat": "s", "lane": "l", "pid": 1}
+        census.log_outcome(tmp_path / "a", "released", run, held_s=90.5)
+        _box_lock.log_outcome(tmp_path / "b", "released", run, held_s=90.5)
+        (ours,) = _log_lines(tmp_path / "a")
+        (theirs,) = _log_lines(tmp_path / "b")
+        assert set(ours) == set(theirs) and "held_s" in ours
+        keys = ("outcome", "run", "holder", "waited_s", "held_s")
+        assert {k: ours[k] for k in keys} == {k: theirs[k] for k in keys} == {
+            "outcome": "released", "run": run, "holder": {"seat": None, "lane": None, "pid": None},
+            "waited_s": 0.0, "held_s": 90.5}
+        for line in (ours, theirs):
+            start, end = (datetime.fromisoformat(line[k]) for k in ("start", "end"))
+            assert 90 <= (end - start).total_seconds() <= 91, line
 
 
 def test_the_census_is_stdlib_only():

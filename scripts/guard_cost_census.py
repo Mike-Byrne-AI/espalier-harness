@@ -75,7 +75,8 @@ old default path is read as its new one, the holder record carries
 ``build_record``'s keys and is stamped when the lock is taken, a waiter names its
 holder at once and every ``REPORT_S``, ``ESPALIER_BOX_LOCK_WAIT_S`` bounds the
 wait with ``DID_NOT_RUN_EXIT``, every outcome appends one line to
-``<lock path>.log``, and the record is cleared at release. One difference: a
+``<lock path>.log``, and the record is cleared at release, where a hold's
+``released`` line (its ``held_s``) is written before the unlock. One difference: a
 tier waits unbounded where the variable is unset, and the census, always an
 agent's run under a Bash call's ten-minute cap, waits ``DEFAULT_WAIT_S``. Inside
 a holder (the inherited ``ESPALIER_BOX_LOCK_HOLDER`` names the live pid in the
@@ -692,15 +693,19 @@ def build_record() -> dict:
 
 
 def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
-                *, why: str = "", stream: TextIO | None = None) -> None:
-    """One JSON line in ``<lock path>.log``, ``tests/_box_lock.py::log_outcome``'s shape."""
+                *, why: str = "", held_s: float | None = None, stream: TextIO | None = None) -> None:
+    """One JSON line in ``<lock path>.log``, ``tests/_box_lock.py::log_outcome``'s shape
+    (a ``released`` line's ``held_s`` included)."""
     end = datetime.now(timezone.utc)
-    start = datetime.fromtimestamp(end.timestamp() - waited_s, tz=timezone.utc)
+    span = held_s if held_s is not None else waited_s
+    start = datetime.fromtimestamp(end.timestamp() - span, tz=timezone.utc)
     line: dict = {"outcome": outcome,
                   "run": {k: (run or {}).get(k) for k in ("seat", "lane", "pid")},
                   "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
                   "start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds"),
                   "waited_s": round(waited_s, 3)}
+    if held_s is not None:
+        line["held_s"] = round(held_s, 3)
     if why:
         line["why"] = why
     try:
@@ -759,6 +764,7 @@ class BoxLock:
         self.why = f"{LOCK_KEY} is not set"
         self.holder_seen: dict | None = None
         self.waited_s = 0.0
+        self.taken_at: float | None = None  # time.monotonic() at the take, which the release's held_s reads
 
     def acquire(self) -> None:
         raw = os.environ.get(LOCK_KEY)
@@ -791,6 +797,7 @@ class BoxLock:
         while True:
             if _JSON_SAFE.try_lock_file(self.fh):
                 self.held = True
+                self.taken_at = time.monotonic()
                 self.record["started"] = _now_stamp()
                 self.fh.seek(0)
                 self.fh.truncate()
@@ -833,6 +840,10 @@ class BoxLock:
             self.fh = None
 
     def release(self) -> None:
+        """Clear the record, log the hold's ``released`` line while it still
+        holds, then unlock: ``tests/_box_lock.py::BoxLock.release``'s order,
+        so the log's lines pair in file order whichever of the two took the
+        lock."""
         if self.fh is None:
             return
         try:
@@ -840,6 +851,9 @@ class BoxLock:
                 self.fh.seek(0)
                 self.fh.truncate()
                 self.fh.flush()
+                held_s = time.monotonic() - self.taken_at if self.taken_at is not None else 0.0
+                if self.path is not None:
+                    log_outcome(self.path, "released", self.record, held_s=held_s, stream=self.stream)
                 _JSON_SAFE.unlock_file(self.fh)
         finally:
             self._close()
