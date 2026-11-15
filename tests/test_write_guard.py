@@ -723,11 +723,15 @@ class TestQuotedVerbTailIsUniform:
         # and its builtin row for the quoted words the opener walks past)
         "_CARRIER_HEAD_RE": None,
         # powershell's head on the Bash tool (DEF-4061), a first-use compile
-        # named as its accessor's call: the secret leg's reader of the program
-        # it runs, no zone deny; its spellings are walked at the pattern
-        # (TestBinaryVerbSpellingIsUniform's _PATTERN_SAMPLES) and its quoted head
-        # in TestQuotedProgramsAreReadAsPrograms
-        "_powershell_head_re()": None,
+        # named as its accessor's call: the secret leg reads the program it
+        # runs, and so does the zone's remove reader, which hands each program
+        # `_bash_patterns._shell_program_bodies` finds to the PowerShell
+        # removal operands, so a quoted head on a zone delete meets the wall
+        # as the bare one does; its spellings are walked at the pattern
+        # (TestBinaryVerbSpellingIsUniform's _PATTERN_SAMPLES) and its quoted
+        # head on a secret read in TestQuotedProgramsAreReadAsPrograms
+        "_powershell_head_re()": (
+            "powershell", "powershell -c:\"Remove-Item -Recurse -Force 'tools/cc/hooks'\""),
         "_TAR_CREATE_RE": None,
         "_ZIP_RE": None,
         "_DD_IF_RE": None,
@@ -17512,8 +17516,11 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
                                     "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
-        "_powershell_head_re()": "powershell's head on the Bash tool (DEF-4061): the secret leg's "
-                                 "reader of the program it runs; no zone deny reads it",
+        # powershell's head on the Bash tool (DEF-4061): the zone's remove
+        # reader reads the program it runs (`_shell_program_bodies`), so the
+        # quoted absolute target in it walls under every root
+        "_powershell_head_re()": (
+            "Bash", f"powershell -c:\"Remove-Item -Recurse -Force '{_ZONE_DIR}'\""),
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
         "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
                           "no zone deny reads it",
