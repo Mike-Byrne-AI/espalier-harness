@@ -21920,10 +21920,19 @@ class TestCrossShellRouting:
             for opener in ("bash -c", "bash -lc")
         )
         assert pair == ("bump", "wall")
-        # the program su or BSD script runs is another shell's too (DEF-4120)
+        # the program su or BSD script runs is judged from the same two
+        # directories (DEF-4120): a declared over-refusal for both, since
+        # plain su and BSD script (which execs its argv, no shell) start
+        # where the outer `cd` left them; a fix that reads that directory
+        # turns these to the bare `-c` row's bump, not a regression
         for carried in ("su -c 'rm -rf .'", "script /dev/null rm -rf ."):
             verdict = _delete_verdict(run_guard_from("Bash", "cd sub && " + carried, tmp_path, tmp_path))
             assert verdict == "wall", carried
+        # behind `builtin eval`, a second level of launch wrapper, neither
+        # carrier's program is read (the coverage contract's one level)
+        project = tmp_path / "builtin"
+        project.mkdir()
+        assert _delete_verdict(run_bash_guard("builtin eval \"su -c 'rm -rf ~'\"", project)) == "allow"
         # a switch value holding `~` or `:` before the `-c` (air 413ebb): the
         # shared run's value class takes neither, so the run ends there and
         # the program is not read. Only `--rcfile` and `--init-file` take
@@ -25417,6 +25426,9 @@ class TestTheHardTierReadsWhatSuAndScriptRun:
         "su -c'{}'", "su --command='{}'", "su --comm '{}'", "su --session-command '{}'",
         "sudo su -c '{}'",
         "script /dev/null {}", "script -t 0 /dev/null {}", "sudo -u app script /dev/null {}",
+        # read in place, the head after `eval` / `watch` (`_CMD_POS` walks
+        # both): allowed at the base too, so a roster edit reds here
+        "eval \"su -c '{}'\"", "watch su -c '{}'", "watch -n 1 su -c '{}'",
     ]
     _PROGRAMS = {"home": "rm -rf ~", "home-var": "rm -rf $HOME", "root": "rm -rf /", "checkout": "rm -rf ."}
 
@@ -25441,10 +25453,29 @@ class TestTheHardTierReadsWhatSuAndScriptRun:
             assert _delete_verdict(twin) == "wall"
             assert _delete_verdict(result) == "wall"
 
-    @pytest.mark.parametrize("text", ["rm -rf /", "rm -r /", "find / -delete", "find ~ -delete"])
-    def test_every_simple_tier_record_reads_bsd_script_s_command(self, tmp_path, text):
+    #: The tier records that are no simple command, so no argv BSD script
+    #: execs: every other member rides its command (a new member does too).
+    _NOT_AN_ARGV = {"piped-root", "loop-root", "env-prefix"}
+
+    @pytest.mark.parametrize("member", [
+        k for k in TestCrossShellRouting._TIER_MEMBERS
+        if k not in {"piped-root", "loop-root", "env-prefix"}
+    ])
+    def test_every_simple_tier_record_reads_bsd_script_s_command(self, tmp_path, member):
+        text = TestCrossShellRouting._TIER_MEMBERS[member]
         assert _delete_verdict(run_bash_guard("bash -lc '" + text + "'", tmp_path)) == "wall"
         assert _delete_verdict(run_bash_guard("script /dev/null " + text, tmp_path)) == "wall"
+
+    def test_the_records_left_off_bsd_script_are_tier_members(self):
+        assert self._NOT_AN_ARGV <= set(TestCrossShellRouting._TIER_MEMBERS)
+
+    def test_a_dash_c_read_past_script_s_file_word_is_a_declared_over_refusal(self, tmp_path):
+        # Every switch word on script's line is read for a `-c`, the inner
+        # command's included: a refusal no maintenance mode lifts, kept
+        # because the same read walls `script <file> bash -lc '<program>'`.
+        assert _delete_verdict(run_bash_guard("script /dev/null bash -lc 'rm -rf ~'", tmp_path)) == "wall"
+        over = run_bash_guard("script -q /dev/null grep -c 'rm -rf ~' notes.md", tmp_path)
+        assert _delete_verdict(over) == "wall"
 
     def test_a_carrier_inside_a_shell_s_program_is_read_one_level_down(self, tmp_path):
         assert _delete_verdict(run_bash_guard("bash -c \"su -c 'rm -rf ~'\"", tmp_path)) == "wall"
@@ -25488,11 +25519,13 @@ class TestTheHardTierReadsWhatSuAndScriptRun:
         # place, and eval's program judged as another shell's would wall a
         # glob cleared from inside a build directory.
         bp = _bash_patterns_module()
-        assert bp._HARD_TIER_CARRIER_HEADS == frozenset({"su", "script"})
-        assert bp._HARD_TIER_CARRIER_HEADS <= set(bp._CARRIER_READERS)
+        heads, skipped = bp._HARD_TIER_CARRIER_HEADS, bp._HARD_TIER_CARRIER_SKIPPED
+        assert heads == frozenset({"su", "script"})
+        # a partition: a carrier added to the readers is placed on one side
+        assert heads | skipped == set(bp._CARRIER_READERS) and not heads & skipped
         command = "eval 'rm -rf x'; su -c 'rm -rf y'; script /dev/null rm -rf z"
         scan = bp.mask_inert_syntax(command)
-        assert list(bp._carrier_program_bodies(command, scan, bp._HARD_TIER_CARRIER_HEADS)) == [
+        assert list(bp._carrier_program_bodies(command, scan, heads=heads)) == [
             "rm -rf y", "rm -rf z",
         ]
         assert list(bp._carrier_program_bodies(command, scan))[0] == "rm -rf x"

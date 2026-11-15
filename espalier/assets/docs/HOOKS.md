@@ -1890,9 +1890,14 @@ payload's directory and the unknown one, since no command position opens
 for it in the outer command. The Bash dangerous records read the program
 `su` runs (`su -c '...'` and its long switches, every candidate as the
 secret leg reads them) and BSD `script`'s command after its file word
-(`script out.log <program>`) the same way, one level down as another
-shell's program: neither stands at a command position the outer scan
-reads. A program piped to `-Command -`
+(`script out.log <program>`) the same way, one level down from the same
+two directories: the outer scan read su's program in no spelling, nor
+script's command where no switch or a valued `-t` precedes its file word.
+BSD script execs its command where the outer command stands, so reading it
+from the payload's directory is a declared over-refusal, and so is a `-c`
+read from any switch word on script's line (`script -q out.log grep -c
+'...' notes`). Behind `builtin eval`, a second level of launch wrapper,
+neither carrier's program is read. A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
