@@ -10,8 +10,9 @@
   `find . -name __pycache__ -exec rm -rf {} +` stays silent, and parallel's
   literal items read as the line it runs for each: `parallel rm -rf {} :::
   build dist` is as silent as `rm -rf build dist`, and `parallel git push
-  origin {} ::: v1.2.3` asks as the tag push does. The reading is a word walk,
-  so no pattern is added to any call. Still unread: a launcher behind a
-  wrapper switch's word value (`sudo -u app parallel ...`), parallel's items
-  past its first sixteen or from more than one source, and the PowerShell
-  tool.
+  origin {} ::: v1.2.3` asks as the tag push does. The fetch-and-execute
+  checkpoint reads the same programs. The reading is a word walk, so no
+  pattern is added to any call. Still unread: a launcher behind a wrapper
+  switch's word value (`sudo -u app parallel ...`), a parallel switch that
+  takes a value the reader does not list, parallel's items past its first
+  sixteen or from more than one source, and the PowerShell tool.

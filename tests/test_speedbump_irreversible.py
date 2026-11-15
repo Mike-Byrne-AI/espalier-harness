@@ -4765,8 +4765,18 @@ _CARRIER_FORMS = [
     ("find-execdir", "find . -name .git -execdir ", " \\;"),
     ("find-ok", "find . -name x -ok ", " ';'"),
     ("find-exec-batch", "find . -name x -exec ", " {} +"),
+    ("find-second-action", "find . -name x -exec true ';' -exec ", " \\;"),
+    ("find-grouped", "find . \\( -name a -o -name b \\) -exec ", " \\;"),
+    ("find-okdir", "find . -name x -okdir ", " ';'"),
     ("fd-x", "fd -x ", ""),
     ("fd-X", "fd -t d -X ", ""),
+    ("fd-exec-long", "fd --exec ", ""),
+    ("fdfind-exec-batch", "fdfind --exec-batch ", ""),
+    # a launcher behind a wrapper, an assignment or a keyword
+    ("sudo-parallel", "sudo parallel ", " ::: a"),
+    ("assigned-env-find", "LC_ALL=C env find . -name x -exec ", " ';'"),
+    ("timeout-fd", "timeout 5 fd -x ", ""),
+    ("keyword-parallel", "if true; then parallel ", " ::: a; fi"),
     ("parallel", "parallel ", " ::: a b"),
     ("parallel-valued", "parallel -j 4 ", " ::: a"),
     ("eval", "eval '", "'"),
@@ -4805,6 +4815,7 @@ _CARRIED_PREDICATES = {
 #: item; a control per carrier names a literal operand.
 _CARRIER_TWINS = [
     ("find-items", "find . -name __pycache__ -exec rm -rf {} +", "find . -name __pycache__ | xargs rm -rf"),
+    ("find-items-escaped", "find . -name __pycache__ -exec rm -rf {} \\;", "find . -name __pycache__ | xargs rm -rf"),
     ("find-items-each", "find . -name '*.egg-info' -type d -exec rm -rf {} ';'",
      "find . -name '*.egg-info' -type d | xargs rm -rf"),
     ("fd-items", "fd -t d node_modules -x rm -rf {}", "fd -t d node_modules | xargs rm -rf"),
@@ -4815,6 +4826,10 @@ _CARRIER_TWINS = [
     ("parallel-checkout-items", "parallel git -C {} push --force origin main ::: a b",
      "git -C a push --force origin main; git -C b push --force origin main"),
     ("parallel-pid-item", "parallel kill -9 {} ::: 4242", "kill -9 4242"),
+    ("parallel-quoted-stdin", "cat list | parallel 'git clean -fdx {}'", "git clean -fdx x"),
+    ("parallel-positional-stdin", "cat list | parallel rm -rf {1}", "cat list | xargs rm -rf"),
+    ("parallel-replace-string", "cat list | parallel -I @@ rm -rf @@", "cat list | xargs rm -rf"),
+    ("parallel-quoted-control", "cat list | parallel 'rm -rf src {}'", "rm -rf src"),
     ("find-control", "find . -name x -exec rm -rf src ';'", "rm -rf src"),
     ("fd-control", "fd -x rm -rf src", "rm -rf src"),
     ("parallel-control", "parallel rm -rf {}/old ::: src", "rm -rf src/old"),
@@ -4822,8 +4837,16 @@ _CARRIER_TWINS = [
     ("script-control", "script -qc 'rm -rf src' out.log", "rm -rf src"),
     ("script-bsd-control", "script out.log rm -rf src", "rm -rf src"),
 ]
-#: Each control's bump and twin, which the bump must hear.
-_TWIN_CONTROLS = {label: ("rmrf", twin) for label, _carrier, twin in _CARRIER_TWINS if label.endswith("-control")}
+#: Each control's bump and twin, which the bump must hear: the delete nudge
+#: on every carrier's literal-operand control, and each git bump and the
+#: kill reading on its parallel item row.
+_TWIN_CONTROLS = {
+    **{label: ("rmrf", twin) for label, _carrier, twin in _CARRIER_TWINS if label.endswith("-control")},
+    **{label: (bump, dict((row[0], row[2]) for row in _CARRIER_TWINS)[label]) for label, bump in [
+        ("parallel-tag-item", "release"), ("parallel-checkout-items", "forcepush"), ("parallel-pid-item", "kill"),
+        ("parallel-quoted-stdin", "gitclean"),
+    ]},
+}
 
 
 class _CarriedSearch:
@@ -4915,6 +4938,7 @@ class TestTheBumpsReadACarriersProgram:
             "find . -name x -exec " * 2500,
             "parallel echo {} ::: " + "a " * 16000,
             ("find . -name x -exec " + g + " clean -fdx ';' ") * 900,
+            "find . -name x" + " -exec a ';'" * 3000,
         ]
         search = _CarriedSearch(removal)
         problems = []
@@ -4924,6 +4948,31 @@ class TestTheBumpsReadACarriersProgram:
             if verdict:
                 problems.append(f"{probe[:24]!r}...: {verdict}")
         assert not problems, "; ".join(problems)
+
+    def test_the_head_walk_steps_the_anchors_wrappers_and_keywords(self):
+        """The step words are read from the anchor's own literals; a reformat
+        that drops one makes a wrapper-led launcher's program unread, so the
+        set is pinned to the words the anchor names."""
+        assert _bash_patterns._LAUNCH_STEP_WORDS >= {
+            "env", "sudo", "doas", "nohup", "timeout", "xargs", "nice", "ionice", "stdbuf", "setsid",
+            "strace", "ltrace", "watch", "script", "chrt", "taskset", "unbuffer", "torify", "proxychains",
+            "command", "time", "exec", "then", "do", "else", "elif", "if", "while", "until", "busybox", "!",
+        }
+
+    def test_parallels_item_lines_are_bounded(self):
+        """parallel's per-item lines stop at `_PARALLEL_TEXT_MAX` characters
+        together, so a command of many placeholders and long items costs the
+        hook its own length, never their product."""
+        cmd = "parallel echo " + "{} " * 150 + "::: " + " ".join(["x" * 400] * 16)
+        texts = _bash_patterns.carried_programs(cmd)
+        assert sum(len(text) for text in texts) <= _bash_patterns._PARALLEL_TEXT_MAX + len(cmd)
+
+    def test_a_kept_pattern_module_without_the_reader_keeps_the_other_readings(self, tmp_path, monkeypatch):
+        """An upgrade that kept an older `_bash_patterns` without the carrier
+        reader leaves the bare and shell-handed readings running."""
+        monkeypatch.delattr(_bash_patterns, "carried_programs")
+        assert _speedbump._pred_gitclean("Bash", {"command": "git clean -fdx"}, tmp_path)
+        assert not _speedbump._pred_gitclean("Bash", {"command": "parallel git clean -fdx ::: a"}, tmp_path)
 
     def test_an_unnarrowed_find_with_a_remove_is_the_walls(self, tmp_path):
         """A find of the checkout with a remove in its action is a sweep of

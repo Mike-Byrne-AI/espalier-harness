@@ -2777,7 +2777,8 @@ _PARALLEL_VALUED = frozenset({
     "--workdir", "--wd", "--delay", "--halt", "--halt-on-error", "--retries", "--load",
     "--memfree", "--basefile", "--bf", "--transferfile", "--tf", "--return", "--rpl", "--nice",
     "--block", "--block-size", "--recstart", "--recend", "--termseq", "--limit", "--ssh",
-    "--semaphorename", "--id",
+    "--semaphorename", "--id", "--trim", "--jl", "--sshdelay", "--header", "--group-by",
+    "--template", "--total-jobs", "--filter", "--compress-program", "--decompress-program",
 })
 #: The words that end parallel's command and open its argument sources.
 _PARALLEL_SOURCES = frozenset({":::", "::::", ":::+", "::::+"})
@@ -2796,7 +2797,7 @@ _LAUNCHER_WORDS = ("find", "fd", "parallel")
 #: The words a statement's head walk steps past to reach a launcher: the
 #: anchor's wrapper roster (its three binary fragments and its builtins,
 #: read from the same literals, so a wrapper added there is stepped here),
-#: `busybox`, and the keywords that open a command position. A switch or a
+#: `busybox`, the keywords that open a command position and `!`. A switch or a
 #: value starting with a digit after one of them is stepped too
 #: (`timeout 5`, `nice -n 10`); any other word ends the walk, so a wrapper
 #: switch's word value (`sudo -u bob`) hides the launcher (a declared miss).
@@ -2825,10 +2826,11 @@ def _launcher_word(command: str, i: int) -> tuple[str, int]:
     return "".join(parts), i
 
 
-def _launcher_words(command: str, i: int) -> list[str]:
-    """The quote-removed words of the simple command from ``i`` to its end:
-    a separator, grouping or redirect character, or a comment, at a word's
-    start. Bounded as the carrier readers are (`_CARRIER_WORDS_MAX`)."""
+def _launcher_words(command: str, i: int) -> tuple[list[str], int]:
+    """The quote-removed words of the simple command from ``i`` to its end
+    (a separator, grouping or redirect character, or a comment, at a word's
+    start), and the offset the read stopped at. Bounded as the carrier
+    readers are (`_CARRIER_WORDS_MAX`)."""
     words: list[str] = []
     n = len(command)
     while i < n and len(words) < _CARRIER_WORDS_MAX:
@@ -2842,7 +2844,7 @@ def _launcher_words(command: str, i: int) -> list[str]:
             break
         words.append(text)
         i = j
-    return words
+    return words, i
 
 
 def _argv_text(words: list[str]) -> str:
@@ -2911,42 +2913,100 @@ def _fd_programs(words: list[str], removal: bool) -> list[str]:
     return programs
 
 
-def _parallel_line(words: list[str]) -> str:
-    """parallel's command words as the line it hands its shell: joined with
-    blanks, a word holding a placeholder quoted so it stays one word."""
-    return " ".join("'" + w + "'" if ("{" in w or "}" in w) and "'" not in w else w for w in words)
+#: The most characters parallel's per-item lines are read for, together:
+#: past it the command is read with its items unknown, so a command of many
+#: placeholders and long items costs the hook no more than its own length.
+_PARALLEL_TEXT_MAX = 8192
+#: A parallel replacement string is a brace group of at most this many
+#: characters with no blank in it (`{}`, `{.}`, `{1}`, `{#}`, `{2/.}`).
+_PARALLEL_PLACEHOLDER_MAX = 16
+#: The marker an unknown item reads as in the bumps' view: one quoted word.
+_UNKNOWN_ITEM = "'{}'"
 
 
-def _with_item(command: list[str], item: str) -> list[str]:
-    """parallel's command for one literal item: the item, quoted as parallel
-    quotes it for its shell, in place of each placeholder, or after the
-    command where it holds none."""
-    spelled = _argv_text([item])
-    if not any(_holds_item(word) for word in command):
-        return [*command, spelled]
+def _parallel_fill(word: str, custom: str, value: str) -> str:
+    """``word`` with each parallel replacement string in it (a short brace
+    group with no blank, or the ``custom`` string a `-I` named) replaced by
+    ``value``. The path and positional forms read as the whole item, where
+    parallel strips an extension or directory or picks a source: an
+    approximation toward the item's longer spelling."""
     out: list[str] = []
-    for word in command:
-        for placeholder in _ITEM_PLACEHOLDERS:
-            word = word.replace(placeholder, spelled)
-        out.append(word)
-    return out
+    i, n = 0, len(word)
+    while i < n:
+        if custom and word.startswith(custom, i):
+            out.append(value)
+            i += len(custom)
+            continue
+        if word[i] == "{":
+            j = word.find("}", i + 1, i + _PARALLEL_PLACEHOLDER_MAX)
+            if j > 0 and not any(ch.isspace() for ch in word[i:j]):
+                out.append(value)
+                i = j + 1
+                continue
+        out.append(word[i])
+        i += 1
+    return "".join(out)
+
+
+def _parallel_holds_item(word: str, custom: str) -> bool:
+    """True when ``word`` holds a parallel replacement string."""
+    return _parallel_fill(word, custom, "\0") != word
+
+
+def _with_item(command: list[str], custom: str, item: str) -> str:
+    """parallel's line for one literal item: the item, quoted as parallel
+    quotes it for its shell, in place of each replacement string, or after
+    the command where it holds none."""
+    spelled = _argv_text([item])
+    if not any(_parallel_holds_item(word, custom) for word in command):
+        return " ".join([*command, spelled])
+    return " ".join(_parallel_fill(word, custom, spelled) for word in command)
+
+
+def _parallel_unknown_line(command: list[str], custom: str, removal: bool) -> str:
+    """parallel's line where its items are not spelled (a file, stdin,
+    several sources): each replacement string read as one quoted word, or,
+    for the delete reading (``removal``), each blank-separated piece that
+    holds one left out, so the item is no remove operand while a literal
+    target in the same quoted command string is still read."""
+    if not removal:
+        return " ".join(_parallel_fill(word, custom, _UNKNOWN_ITEM) for word in command)
+    return " ".join(
+        piece for word in command for piece in word.split() if not _parallel_holds_item(piece, custom)
+    )
+
+
+def _parallel_custom(switch: str, value: str) -> str:
+    """The replacement string a parallel switch names (`-I @@`,
+    `--replace=@@`, `-i@@`), or the empty string."""
+    if switch == "-I":
+        return value
+    if switch.startswith("--replace="):
+        return switch[len("--replace="):]
+    if switch.startswith("-i") and len(switch) > 2:
+        return switch[2:]
+    return ""
 
 
 def _parallel_programs(words: list[str], removal: bool) -> list[str]:
     """The program GNU parallel runs, as the line it hands its shell: the
     words after its switches (a valued switch, `_PARALLEL_VALUED`, taking
-    the next word) up to its first argument source. Where that source is
-    one `:::` list, the line for each item (`_with_item`, the first
-    `_PARALLEL_ITEMS_MAX`), joined into one text, so `parallel rm -rf {}
-    ::: build dist` reads as its direct twin does; where the items are not
-    spelled (a file, stdin, several sources), the command with its items
-    unknown (`_unknown_items`). With no command words, each literal argument
-    after `:::` is a command of its own."""
+    the next word; a `-I` string joining the replacement strings) up to its
+    first argument source. Where that source is one `:::` list, the line for
+    each item (`_with_item`, the first `_PARALLEL_ITEMS_MAX`, within
+    `_PARALLEL_TEXT_MAX`), joined into one text, so `parallel rm -rf {} :::
+    build dist` reads as its direct twin does; where the items are not
+    spelled, the line with its items unknown (`_parallel_unknown_line`).
+    With no command words, each literal argument after `:::` is a command of
+    its own."""
     k = 0
+    custom = ""
     while k < len(words) and words[k].startswith("-") and words[k] != "-":
         if words[k] == "--":
             k += 1
             break
+        following = words[k + 1] if k + 1 < len(words) else ""
+        custom = _parallel_custom(words[k], following) or custom
         k += 2 if words[k] in _PARALLEL_VALUED else 1
     command: list[str] = []
     while k < len(words) and words[k] not in _PARALLEL_SOURCES:
@@ -2955,17 +3015,24 @@ def _parallel_programs(words: list[str], removal: bool) -> list[str]:
     if command:
         sources = words[k:]
         if sources[:1] == [":::"] and not any(word in _PARALLEL_SOURCES for word in sources[1:]):
-            lines = [_parallel_line(_with_item(command, item)) for item in sources[1:1 + _PARALLEL_ITEMS_MAX]]
+            lines: list[str] = []
+            size = 0
+            for item in sources[1:1 + _PARALLEL_ITEMS_MAX]:
+                line = _with_item(command, custom, item)
+                size += len(line) + 2
+                if size > _PARALLEL_TEXT_MAX:
+                    break
+                lines.append(line)
             if lines:
                 return ["; ".join(lines)]
-        return [_parallel_line(_unknown_items(command, removal))]
+        return [_parallel_unknown_line(command, custom, removal)]
     programs: list[str] = []
     literal = False
     for word in words[k:]:
         if word in _PARALLEL_SOURCES:
             literal = word in _PARALLEL_LITERAL_SOURCES
         elif literal and word:
-            programs.append(_parallel_line([word]))
+            programs.append(word)
     return programs
 
 
@@ -2998,12 +3065,18 @@ def _statement_launcher_programs(words: list[str], removal: bool) -> list[str]:
 def _launcher_program_bodies(command: str, scan: str, removal: bool) -> Iterator[str]:
     """Yield every program a launcher on the Bash tool runs (find's exec
     actions, fd's exec switches, GNU parallel), by a token walk: the
-    statements are cut at the directory chain's boundaries
+    statement starts are the directory chain's boundaries
     (`_CHAIN_BOUNDARY_RE`) on ``scan``, the masked twin, and only a
     statement holding a launcher's own word has its words read, from the
-    raw ``command`` at the same offsets. No pattern of its own: a command
-    naming no launcher pays three substring tests. ``removal`` reads an
-    unknown item as the delete reading does (`_unknown_items`)."""
+    raw ``command`` at the same offset to the end of its simple command as
+    the raw text spells it (`_launcher_words`), never to the next boundary:
+    the masked twin keeps find's quoted or escaped `;` as a boundary, and a
+    read cut there lost every action after the first and read `\\;` as a
+    lone backslash. A start inside a read already made is that read's, so
+    a run of quoted terminators costs one read, not one per terminator. No
+    pattern of its own: a command naming no launcher pays three substring
+    tests. ``removal`` reads an unknown item as the delete reading does
+    (`_unknown_items`)."""
     if len(scan) != len(command):
         scan = command
     low = scan.lower()
@@ -3012,9 +3085,13 @@ def _launcher_program_bodies(command: str, scan: str, removal: bool) -> Iterator
     bounds = [(m.start(), m.end()) for m in _CHAIN_BOUNDARY_RE.finditer(scan)]
     starts = [0, *(end for _start, end in bounds)]
     ends = [*(start for start, _end in bounds), len(scan)]
+    read_to = 0
     for start, end in zip(starts, ends):
-        if any(low.find(word, start, end) >= 0 for word in _LAUNCHER_WORDS):
-            yield from _statement_launcher_programs(_launcher_words(command[start:end], 0), removal)
+        if start < read_to or not any(low.find(word, start, end) >= 0 for word in _LAUNCHER_WORDS):
+            continue
+        words, used = _launcher_words(command[start:], 0)
+        read_to = start + used
+        yield from _statement_launcher_programs(words, removal)
 
 
 def carried_programs(command: str, *, removal: bool = False) -> list[str]:
