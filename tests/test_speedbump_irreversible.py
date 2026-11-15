@@ -3452,14 +3452,14 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_STDIN_POSIX_HINT_RE":
             "GATE -- a POSIX shell's name as a word, searched only to skip the "
             "piped-stdin reader's pass on a command naming none; the anchored "
-            "`_PS_INTERP_STDIN_RE` decides the command (DEF-3075).",
+            "`_ps_interp_stdin_re()` decides the command (DEF-3075).",
         "_bash_patterns._PS_STDIN_FILE_SWITCH_RE":
             "FLAG -- `-File <script>` inside the switch run an anchored "
-            "`_PS_INTERP_STDIN_RE` match captured; the consumer drops the match "
+            "`_ps_interp_stdin_re()` match captured; the consumer drops the match "
             "because the file, not the pipe, is the program (DEF-712).",
         "_bash_patterns._PS_PROGRAM_STRING_RE":
             "TOKENIZER -- one PowerShell string literal, read out of the statement "
-            "segment an anchored `_PS_INTERP_STDIN_RE` match selected (the last "
+            "segment an anchored `_ps_interp_stdin_re()` match selected (the last "
             "literal before the pipe is the piped program); never sees a command "
             "position (DEF-712).",
         "_bash_patterns._PS_HERE_STRING_RE":

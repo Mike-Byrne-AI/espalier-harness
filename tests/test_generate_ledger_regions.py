@@ -1,4 +1,4 @@
-"""Contract for ``scripts/generate_ledger_regions.py`` -- and the gate that makes it matter.
+"""Contract for ``tools/cc/generate_ledger_regions.py`` -- and the gate that makes it matter.
 
 The ledger claimed four times over to be generated and had no generator, so five
 of its summary regions drifted. A generator alone would not have fixed that: it

@@ -1221,7 +1221,7 @@ def test_live_ledger_grows_no_new_dangling_id_references():
 # A Scope (out) naming a future `TP-` id with no file and no row was invisible
 # to every assertion in this module, so the only record of the deferral was a
 # sentence in a pack that later landed. The reader is
-# `check_pack_landing.scope_out` -- the same one `scripts/ledger_row.py strike`
+# `check_pack_landing.scope_out` -- the same one `tools/cc/ledger_row.py strike`
 # reads before it closes a row (DEF-412a) -- so the guard and the gate cannot
 # disagree about where a deferral lives or which packs are in flight.
 # ---------------------------------------------------------------------------
@@ -2218,7 +2218,7 @@ def test_appendix_b_assigns_each_id_exactly_once():
 
 # ── Tier 2: every live row is re-measurable, or says why it is not ──────────
 #
-# ⚠ WHY THIS GATE EXISTS, and it is not hypothetical. `scripts/check_ledger_probes.py`
+# ⚠ WHY THIS GATE EXISTS, and it is not hypothetical. `tools/cc/check_ledger_probes.py`
 # has re-derived ledger rows since the 2026-08-20 rebuild, where it found 41 of
 # 222 rows already dead. It works. What it could not do was notice a row that
 # never got a probe: `LEDGER_PROBES.json` is a SNAPSHOT (`_generated`), so every

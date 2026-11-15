@@ -5008,7 +5008,7 @@ def test_every_dev_tree_test_is_full_tree_or_exempt():
 # shape the walk cannot see, so both pin at zero.
 _EXEMPT_MODULE_DEV_ONLY_CHAINS: dict[str, int] = {
     "test_check_ledger_probes.py": 1,
-    "test_check_pack_landing.py": 5,  # 6 -> 5 on 2026-11-15: the drained incomplete-Landing ratchet left
+    "test_check_pack_landing.py": 3,  # 6 -> 5 -> 3 on 2026-11-15: the drained incomplete-Landing ratchet left, then the drained ROADMAP ceiling and its arm
     "test_generate_ledger_regions.py": 1,
     "test_lifecycle_parity.py": 1,
     "test_pack_manifest.py": 3,

@@ -745,7 +745,7 @@ from _bash_patterns import (  # noqa: E402
     _PS_COPY_MOVE_POSITIONAL_RE,
     _PS_COPY_MOVE_SRC_FLAG_RE,
     _PS_HERE_STRING_RE,
-    _PS_INTERP_STDIN_RE,
+    _ps_interp_stdin_re,  # compiled on first use (DEF-3080): the rows below call it
     _PS_NODE_DASH_E_RE,
     _PS_PATH_FLAG_RE,
     _PS_PERL_DASH_E_RE,
@@ -835,12 +835,13 @@ _PS_VERB_EXTRACTION_REGEXES = [
     ("ps_perl_dash_e", _PS_PERL_DASH_E_RE, "perl -e"),
     ("ps_exe_prefix_quoted", _PS_PYTHON_DASH_C_RE, "& 'C:\\a\\b\\python.exe' -c"),
     ("ps_exe_prefix_bare", _PS_PERMISSION_RE, "C:\\a\\b\\attrib.exe +R"),
-    ("ps_interp_stdin", _PS_INTERP_STDIN_RE, "| python -"),
-    ("ps_interp_stdin_switches", _PS_INTERP_STDIN_RE, "| pwsh -NoProfile -Command -;"),
+    ("ps_interp_stdin", _ps_interp_stdin_re(), "| python -"),
+    ("ps_interp_stdin_switches", _ps_interp_stdin_re(), "| pwsh -NoProfile -Command -;"),
     # DEF-3075: the opener's tail takes a redirect and a comment, and opens
     # on a call operator after the pipe; each on its repeated seed.
-    ("ps_interp_stdin_redirect", _PS_INTERP_STDIN_RE, "| bash 2>&1 "),
-    ("ps_interp_stdin_call_operator", _PS_INTERP_STDIN_RE, "| & bash "),
+    ("ps_interp_stdin_redirect", _ps_interp_stdin_re(), "| bash 2>&1 "),
+    ("ps_interp_stdin_call_operator", _ps_interp_stdin_re(), "| & bash "),
+    ("ps_interp_stdin_iex", _ps_interp_stdin_re(), "| iex "),
     ("ps_python_switch_values", _PS_PYTHON_DASH_C_RE, "python -W ignore"),
     # DEF-637 (§C49), registered the day they landed: the cross-shell openers
     # on their repeated heads and repeated switch runs, and the two coverage
@@ -3046,9 +3047,10 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
     (_PS_NODE_DASH_E_RE, "node -e 'require(\"fs\").writeFileSync(\"x\",\"y\")'"),
     (_PS_RUBY_DASH_E_RE, "ruby -e 'File.write(\"x\",\"y\")'"),
     (_PS_PERL_DASH_E_RE, "perl -e 'open(F, \">x\")'"),
-    (_PS_INTERP_STDIN_RE, "@'\nx\n'@ | python -"),
-    (_PS_INTERP_STDIN_RE, "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
-    (_PS_INTERP_STDIN_RE, "'x' | bash 2>&1"),
+    (_ps_interp_stdin_re(), "@'\nx\n'@ | python -"),
+    (_ps_interp_stdin_re(), "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
+    (_ps_interp_stdin_re(), "'x' | bash 2>&1"),
+    (_ps_interp_stdin_re(), "'x' | Invoke-Expression"),
     (_PS_HERE_STRING_RE, "$x = @'\nline one\nline two\n'@"),
 ])
 def test_ps_interpreter_regex_still_matches(pattern, payload):

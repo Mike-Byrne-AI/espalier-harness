@@ -48,11 +48,12 @@ compiled characters, +3.1%), though a second one reds on the fragment. Nor does
 it catch a second copy of the fragment in one pattern (+1,580, +0.8%): thirteen
 such copies pass and the fourteenth reds.
 """
-# slow-exempt: four census children, each a fresh interpreter compiling the hooks' patterns (under two seconds on the Air)
+# slow-exempt: five census children, each a fresh interpreter compiling the hooks' patterns (under two seconds on the Air), one of them judging six calls
 from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import re
 import sys
 import types
@@ -106,8 +107,57 @@ CAAE022 = {"loader_ran": False, "fragment_found": True, "hooks_patterns": 288, "
 #: The pattern modules' functions that compile a pattern on first use behind a
 #: cache, by file: inside the ceiling's sum, and each one's per-call cost is its
 #: kind's.
-FIRST_USE_COMPILES = {"_bash_patterns.py": {"_carrier_fed_remove_re", "_powershell_head_re"}}
+FIRST_USE_COMPILES = {"_bash_patterns.py": {"_carrier_fed_remove_re", "_powershell_head_re", "_ps_interp_stdin_re"}}
 _PATTERN_MODULES = ("_bash_patterns.py", "_speedbump.py", "write_guard.py")
+
+#: What a first-use compile saves is the calls its gate turns away, and the
+#: sum above cannot see a gate: a tidy-up that drops one, or a second reader
+#: on a path every call takes, compiles the pattern on every call of its kind
+#: while the summed figure reads the same (the failure-mode review of
+#: DEF-3080). So whole calls are judged in one fresh interpreter, each with
+#: every cache cleared first: a call no gate lets through compiles none of
+#: the accessors, and the call each accessor exists for compiles it.
+GATED_CALLS = (
+    ("Bash", "ls -la"),
+    ("Bash", "echo notes | cat"),  # the emit word, and no xargs to carry it
+    ("PowerShell", "Get-ChildItem notes"),
+)
+OPENING_CALLS = {
+    "_carrier_fed_remove_re": ("Bash", "echo notes | xargs cat"),
+    "_powershell_head_re": ("Bash", "powershell Get-ChildItem notes"),
+    "_ps_interp_stdin_re": ("PowerShell", "Get-ChildItem notes | Select-Object -First 1"),
+}
+#: Run by the census's child runner in a fresh ``-I -B`` interpreter, the
+#: hooks folder its argument and ``ROWS`` (``[tool, command]`` pairs) set
+#: above it: each call through ``write_guard._judge`` in a project folder of
+#: its own, its output captured, then the cached functions that missed.
+GATE_CHILD = r'''
+import contextlib, io, json, os, sys
+hooks = sys.argv[1]
+project = os.path.join(os.getcwd(), "project")
+os.makedirs(project, exist_ok=True)
+os.environ["CLAUDE_PROJECT_DIR"] = project
+sys.path.insert(0, hooks)
+import _bash_patterns, _speedbump, write_guard
+cached = {n: o for m in (_bash_patterns, _speedbump, write_guard) for n, o in vars(m).items()
+          if hasattr(o, "cache_clear") and getattr(getattr(o, "__wrapped__", None), "__module__", None) == m.__name__}
+out = []
+for tool, command in ROWS:
+    for fn in cached.values():
+        fn.cache_clear()
+    payload = {"session_id": "first-use-gates", "hook_event_name": "PreToolUse", "cwd": project,
+               "transcript_path": os.path.join(project, "t.jsonl"), "permission_mode": "default",
+               "tool_name": tool, "tool_input": {"command": command}}
+    sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode("utf-8")), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()) as said:
+        try:
+            rc = write_guard._judge()
+        except SystemExit as exc:
+            rc = exc.code
+    out.append({"rc": rc, "said": said.getvalue()[:300],
+                "missed": sorted(n for n, fn in cached.items() if fn.cache_info().misses)})
+print(json.dumps(out))
+'''
 
 WHERE = "scripts/guard_cost_census.py::COMPILE_CHILD reads that name"
 RULE = ("Past a ceiling, a growth owes a measured per-call figure at or under main's "
@@ -438,3 +488,27 @@ class TestTheFirstUseBoundary:
                 f"    return re.compile('{fn}')\n", encoding="utf-8")
         assert first_use_compiles(hooks) == {"_bash_patterns.py": {"a", "b", "c"}, "_speedbump.py": {"s"},
                                              "write_guard.py": {"w"}}
+
+
+class TestEachFirstUseCompileWaitsForItsGate:
+    def test_every_first_use_compile_names_the_call_it_exists_for(self):
+        assert set(OPENING_CALLS) == set().union(*FIRST_USE_COMPILES.values()), (
+            "each name in FIRST_USE_COMPILES owes a row in OPENING_CALLS: the call its gate lets through, "
+            "so the gate itself is pinned beside the sum")
+
+    def test_a_gated_call_compiles_none_and_each_opening_call_compiles_its_own(self, tmp_path):
+        rows = [*GATED_CALLS, *OPENING_CALLS.values()]
+        got = census._child(f"ROWS = {json.dumps(rows)}\n" + GATE_CHILD, HOOKS, tmp_path, "-I", "-B")
+        assert len(got) == len(rows), got
+        first_use = set(OPENING_CALLS)
+        for (tool, command), row in zip(rows, got):
+            # a judgment that crashed or refused compiles nothing either: the
+            # gated rows below would pass on it, so each call must be allowed
+            assert row["rc"] == 0 and "deny" not in row["said"], (tool, command, row)
+        for (tool, command), row in zip(GATED_CALLS, got):
+            assert not first_use & set(row["missed"]), (
+                f"{tool} {command!r} compiled {sorted(first_use & set(row['missed']))} though no gate lets it "
+                "through: a gate before the first-use compile was dropped, or a reader on a path every call "
+                "takes calls the accessor")
+        for (name, (tool, command)), row in zip(OPENING_CALLS.items(), got[len(GATED_CALLS):]):
+            assert name in row["missed"], f"{tool} {command!r} did not compile {name}: the row opens no gate"

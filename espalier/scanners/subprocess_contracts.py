@@ -105,10 +105,13 @@ ESPALIER_SIGNATURES: tuple[str, ...] = (
 PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # Raised 5 -> 6 for espalier/red_team_guard.py's dynamic-repro-runner pragma
 # (verify_repro intentionally executes caller-supplied red-team repro argvs).
-# Raised 6 -> 7 (2026-08-20) for scripts/check_ledger_probes.py, which executes
-# the per-row probe commands stored in task-packs/LEDGER_PROBES.json. Same shape
+# Raised 6 -> 7 (2026-08-20) for check_ledger_probes.py (under scripts/ then,
+# tools/cc/check_ledger_probes.py since 2026-09-30), which executes the per-row
+# probe commands stored in the ledger's probe roster (task-packs/LEDGER_PROBES.json
+# then, one file a probe under task-packs/probes.d/ since 2026-10-14). Same shape
 # as red_team_guard's: a runner whose callee is data by design, so there is no
-# argv to pin. Both are self-host dev tooling, absent from the sdist.
+# argv to pin. Both ship: red_team_guard in the engine, the probe runner in the
+# sdist's tools/ and as the wheel's vendored espalier/_vendor/cc/ copy.
 # Raised 7 -> 8 (2026-09-10) for scripts/host_check.py, which runs the steps
 # its plan_steps() builds (the suite and the two PowerShell benches) on the
 # host it is started on and ships the results as one pushed commit. Same
