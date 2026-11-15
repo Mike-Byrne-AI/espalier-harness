@@ -3063,28 +3063,22 @@ def run_doctor_check(
                 "secrets directory, AWS and JSON credential files); whether it covers this "
                 "rule's path is yours to judge, and nothing here removes the rule"
             )
-        # An allow rule an older init wrote that the profile no longer renders
-        # for this tree (DEF-965, 2026-10-06): a bare-binary rule derived from a
-        # fingerprinted command (`Bash(npm *)`), or a Python-only rule on a tree
-        # without Python. The narrowing reaches a fresh install only; the merge
-        # never removes a rule, so an existing install keeps the broad one, and
-        # until this arm nothing said so. A WARNING with the delete as the step.
-        from espalier.cli import settings_superseded_allows
+        # An allow rule matching one an older init wrote that the profile no
+        # longer renders for this tree (DEF-965, 2026-10-06): a bare-binary rule
+        # derived from a fingerprinted command (`Bash(npm *)`), or a Python-only
+        # rule on a tree without Python. The narrowing reaches a fresh install
+        # only; the merge never removes a rule, so an existing install keeps the
+        # broad one. A WARNING with the delete as the step, in the sentence every
+        # caller of the merge prints (DEF-1155). The verdict rebuilds what 0.8.0b2
+        # derived (test commands and the build action, npm for every Node tree)
+        # and names each rule's PowerShell twin too.
+        from espalier.cli import settings_superseded_allows, superseded_allow_advice
 
         superseded = settings_superseded_allows(settings_path, profile=profile, repo_root=repo_root)
         if superseded:
-            warnings.append(
-                ".claude/settings.json carries allow rules an older init wrote that the "
-                f"{profile!r} profile no longer renders for this repository: "
-                + "; ".join(f"{rule} ({why})" for rule, why in superseded)
-            )
-            _append_step(
-                next_steps,
-                "delete " + ", ".join(rule for rule, _ in superseded) + " from "
-                "permissions.allow in .claude/settings.json (merge-settings never removes "
-                "a rule; the narrowed rules it appends with --add-allows cover your "
-                "repository's own commands)",
-            )
+            warning, step = superseded_allow_advice(superseded, profile=profile)
+            warnings.append(warning)
+            _append_step(next_steps, step)
         # DEF-508: the statusLine fallback is host-keyed at render time and the
         # file can outlive or leave that host; say which direction it disagrees.
         info.extend(_statusline_fallback_notes(settings_path, repo_root))

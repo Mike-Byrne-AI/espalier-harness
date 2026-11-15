@@ -771,8 +771,7 @@ class TestTheLiveProbeFile:
     #: read it and now declare it, these three only name it.)
     _NAMED_NOT_READ = {
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
-        "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
-                     "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
+        "DEF-5113": {".claude/settings.json"},  # a fixture init writes inside its temp tree (the DEF-999 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead. DEF-884 left it
@@ -787,7 +786,10 @@ class TestTheLiveProbeFile:
         # one-repo-root-resolver. DEF-4031 left it on 2026-11-09 the same way:
         # its row struck (a delete that cannot take a directory reads it on
         # disk), its probe re-pinned to lay the directories out and then
-        # retired, by lane a-file-only-delete-reads-the-directory.
+        # retired, by lane a-file-only-delete-reads-the-directory. DEF-1155
+        # left it on 2026-11-15 the same way: its row struck (every caller of
+        # the merge names a broad allow rule an older init wrote), its probe
+        # retired, by lane every-merge-caller-names-a-superseded-allow.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"
