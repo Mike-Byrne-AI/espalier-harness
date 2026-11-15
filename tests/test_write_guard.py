@@ -13528,24 +13528,22 @@ _GIT_REPO_SELECTORS = (
 )
 
 
-def _git_free_env() -> dict[str, str]:
-    """The environment of a real shell a redirect row starts: the startup
-    cache its own, and every repo-selecting git variable stripped, so a git
-    command the row runs reaches its scratch repository and nothing else
-    (exported by a git hook or a wrapper, `GIT_DIR` and `GIT_WORK_TREE` would
-    point the row's clean at the real checkout: DEF-5108's second
-    failure-mode review)."""
-    env = private_cache_env({k: v for k, v in os.environ.items() if k not in _GIT_REPO_SELECTORS})
-    assert env is not None and not any(k in env for k in _GIT_REPO_SELECTORS)
-    return env
+def _git_free_base() -> dict[str, str]:
+    """The environment a real shell a redirect row starts is built on
+    (`private_cache_env(_git_free_base())` at each spawn): every
+    repo-selecting git variable stripped, so a git command the row runs
+    reaches its scratch repository and nothing else (exported by a git hook
+    or a wrapper, `GIT_DIR` and `GIT_WORK_TREE` would point the row's clean
+    at the real checkout: DEF-5108's second failure-mode review)."""
+    return {k: v for k, v in os.environ.items() if k not in _GIT_REPO_SELECTORS}
 
 
 def _git_seed_repo(work: Path, *tracked: str) -> None:
     """A git repository at ``work`` with ``tracked`` committed, in the
-    environment the row's shell gets (`_git_free_env`), so git cannot reach
+    environment the row's shell gets (`_git_free_base`), so git cannot reach
     an enclosing one; the toplevel is read back before a row runs a git
     command there."""
-    env = _git_free_env()
+    env = _git_free_base()
     for args in (["init", "-q"], ["add", *tracked],
                  ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "seed"]):
         subprocess.run(["git", "-C", str(work), *args], check=True, capture_output=True, env=env)
@@ -13870,7 +13868,7 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
             [shell, "-NoProfile", "-NonInteractive", "-Command",
              f"(Get-ChildItem -Filter *.txt {redirect} | Measure-Object).Count"],
             cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=scaled(30), env=_git_free_env())
+            errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
         # the listing reader's own reading of the same span: no root is
         # nothing reaching the pipe
         roots, _narrowed, _files_only = _bash_patterns_module()._ps_pipeline_roots(
@@ -13941,7 +13939,7 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
         (work / ".env.err").write_bytes(b"LOG_DEF_5108\n")
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
                               cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30), env=_git_free_env())
+                              errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
         assert {p.name for p in work.iterdir()} == left, (proc.stdout, proc.stderr)
         assert b"LOG_DEF_5108" not in (work / ".env.err").read_bytes()
         if "b.txt" in left:
@@ -13967,7 +13965,7 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
         (work / "sub" / "deep.txt").write_bytes(b"x\n")
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", "git clean -fdx *>$null"],
                               cwd=str(work), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30), env=_git_free_env())
+                              errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
         assert {p.name for p in work.iterdir()} == {".git", "notes.txt"}, (proc.stdout, proc.stderr)
 
 
