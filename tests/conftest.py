@@ -2481,9 +2481,10 @@ _FULL_TREE_NODEIDS: set[str] = {
     "test_documented_claims.py::TestMemoryCapPopulation::test_every_declared_file_states_the_current_cap[ESPALIER_MEMORY.md]",
     # test_exclusions_are_still_needed PASSED under the 2026-09-23 audit and
     # STAYS: its exclusion list is empty today, so the pass is vacuous on both
-    # trees (an assertion over no rows) -- the entry guards the exclusion the
-    # test's own docstring says is owed again, which reads the pruned
-    # ESPALIER_MEMORY.md (premise 8 of TP-455's Task 0: vacuous, not stale).
+    # trees (an assertion over no rows) -- the entry guards any exclusion added
+    # on ESPALIER_MEMORY.md, the pruned file (premise 8 of TP-455's Task 0:
+    # vacuous, not stale). The Session Log exclusion it was kept for is not
+    # owed again: rows are files the population reads as records (DEF-3082).
     "test_documented_claims.py::TestMemoryCapPopulation::test_exclusions_are_still_needed",
     "test_documented_claims.py::TestNoStaleNumericContracts::test_all_surfaces_agree[ESPALIER_MEMORY.md line cap]",
     # The two pattern-count contracts left 2026-09-26: their registry surface
