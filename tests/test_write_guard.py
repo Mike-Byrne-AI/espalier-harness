@@ -13702,6 +13702,453 @@ def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subproce
     )
 
 
+_GIT_REPO_SELECTORS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_CEILING_DIRECTORIES",
+)
+
+
+def _git_free_base() -> dict[str, str]:
+    """The environment a real shell a redirect row starts is built on
+    (`private_cache_env(_git_free_base())` at each spawn): every
+    repo-selecting git variable stripped, so a git command the row runs
+    reaches its scratch repository and nothing else (exported by a git hook
+    or a wrapper, `GIT_DIR` and `GIT_WORK_TREE` would point the row's clean
+    at the real checkout: DEF-5108's second failure-mode review)."""
+    return {k: v for k, v in os.environ.items() if k not in _GIT_REPO_SELECTORS}
+
+
+def _git_seed_repo(work: Path, *tracked: str) -> None:
+    """A git repository at ``work`` with ``tracked`` committed, in the
+    environment the row's shell gets (`_git_free_base`), so git cannot reach
+    an enclosing one; the toplevel is read back before a row runs a git
+    command there."""
+    env = _git_free_base()
+    for args in (["init", "-q"], ["add", *tracked],
+                 ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "seed"]):
+        subprocess.run(["git", "-C", str(work), *args], check=True, capture_output=True, env=env)
+    top = subprocess.run(["git", "-C", str(work), "rev-parse", "--show-toplevel"], check=True,
+                         capture_output=True, text=True, encoding="utf-8", env=env).stdout.strip()
+    assert Path(top).resolve() == work.resolve(), (top, work)
+
+
+class TestAPowerShellRedirectIsNotARemovalTarget:
+    """DEF-5108 (§C0): the PowerShell removal-token reader
+    (`_bash_patterns._ps_removal_target_tokens`) kept every token that is not
+    a flag, so a stream's redirect and its target read as what the command
+    removes, renames or archives, in every reader of those tokens. The secret
+    leg refused a rename or an archive whose stderr went to a log named like
+    a dotenv (`Rename-Item notes.txt b.txt 2> .env.err`), where its Bash twin
+    (`mv notes.txt b.txt 2> .env.err`) runs; and the forced remove's element
+    tier could not vouch for `$null`, so a build clean with its errors
+    silenced (`Remove-Item -Recurse -Force build 2>$null`) met the wall, where
+    the same clean without the redirect is allowed. Its sibling, the forced
+    remove's own target parser (`_powershell_removal_targets`, behind the
+    roster and plainly-relative rungs), read `2> err.txt` as a target off the
+    roster and bumped the same clean. Both now take each redirect and its
+    target out before they read a target (`_ps_redirect_free`), through the
+    module's one pattern pair (`_redirect_words`), which reads PowerShell's
+    `*` stream as it reads a digit, on that tool alone: Bash reads `*>x` as a
+    glob and then a redirect. `git clean`'s operand reader reads the same `*` stream,
+    so `git clean -fdx *>$null` is the whole-tree clean it runs as (the
+    oracle row below), not a pathspec that narrowed the zone deny to a bump.
+
+    The same class, at the readers beside those two: the enumerator piped
+    into a remove (`_ps_pipeline_roots`) read `2>$null` after its root as
+    its filter, so a recursive listing of the checkout into a forced remove
+    was allowed, and now reads a success-stream redirect as handing the pipe
+    nothing (the shell is the oracle); `git mv`/`git rm` read the log as a
+    renamed file; find's roots read `*>$null` as a sweep of the checkout.
+    A merge written before the operand (`2>&1`) ended the span at its `&`
+    on every reader of the PowerShell pair, now spaced out as on Bash; and
+    Remove-Item's switch aliases (`-vb`, `-db`, `-wi`, `-cf`, `-usetx`) took
+    the next token as a value. A second review round found the rest of the
+    class: the listing heads the Bash readers take on this tool, the
+    enumerator's common-parameter aliases, a digit no stream has, a
+    backtick-escaped blank, and the scan half's spaced merge. Every relief
+    row below was refused, walled or bumped at main 0097b9f, and every
+    tightened row allowed or bumped; a row commented with no main verdict
+    holds the verdict it had there (a control, or a reading the fix must
+    keep). The named users: an operator whose
+    agent renames or archives a file on the PowerShell tool with stderr sent
+    to such a log, and one whose agent cleans a build directory with its
+    errors silenced and meets the wall."""
+
+    _SECRET_RELIEF = (
+        "Rename-Item notes.txt b.txt 2> .env.err",          # the row's two
+        "Compress-Archive notes.txt a.zip 2> .env.err",
+        "Rename-Item notes.txt b.txt 2>> .env.err",
+        "Rename-Item notes.txt b.txt 3> .env.err",
+        "Rename-Item notes.txt b.txt > .env.out",
+        "Rename-Item notes.txt b.txt *> .env.err",          # the `*` stream
+        "Rename-Item notes.txt b.txt *>> .env.err",
+        "Rename-Item 2> .env.err notes.txt b.txt",          # the redirect first
+        "Rename-Item -Path notes.txt -NewName b.txt 2> .env.err",
+        "ren notes.txt b.txt 2> .env.err",
+        "Compress-Archive -Path notes.txt -DestinationPath a.zip 2> .env.err",
+        "Compress-Archive notes.txt a.zip *> .env.err",
+        "Move-Item 2> .env.err notes.txt -Destination b.txt",   # the span before -Destination
+        "git mv notes.txt b.txt 2> .env.err",               # git's rename arm, one over
+        "git mv notes.txt b.txt *> .env.err",
+    )
+    _SECRET_RELIEF_IDS = (
+        "rename-stderr", "archive-stderr", "rename-append", "rename-stream3", "rename-stdout",
+        "rename-star", "rename-star-append", "rename-redirect-first", "rename-flags",
+        "ren-alias", "archive-flags", "archive-star", "move-pre-destination",
+        "git-mv-stderr", "git-mv-star",
+    )
+    # The secret is the operand and the redirect stands beside it: refused at
+    # main and on the lane, whichever side of the operand the redirect is on.
+    _SECRET_CONTROLS = (
+        "Rename-Item .env b.txt 2> err.txt",
+        "Rename-Item 2> err.txt .env b.txt",
+        "Rename-Item *> err.txt .env b.txt",
+        "Compress-Archive .env a.zip 2> err.txt",
+        "Compress-Archive 2>err.txt .env a.zip",
+        "Move-Item 2> err.txt .env -Destination b.txt",
+        "git mv .env b.txt 2> err.txt",
+        "git mv 2> err.txt .env b.txt",
+    )
+    _SECRET_CONTROL_IDS = (
+        "rename", "rename-redirect-first", "rename-star-first", "archive",
+        "archive-glued-first", "move-pre-destination", "git-mv", "git-mv-redirect-first",
+    )
+
+    @pytest.mark.parametrize("command", _SECRET_RELIEF, ids=_SECRET_RELIEF_IDS)
+    def test_a_redirect_target_is_never_a_moved_or_archived_file(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command", _SECRET_CONTROLS, ids=_SECRET_CONTROL_IDS)
+    def test_the_secret_beside_a_redirect_stays_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # As measured: an ordinary directory with its errors silenced goes from
+    # the wall to the bump, a build directory (the ephemeral roster) from the
+    # wall to an allow.
+    @pytest.mark.parametrize("cmd, expect", [
+        pytest.param("Remove-Item -Recurse -Force build 2>$null", "allow", id="build-null"),       # walled at main
+        pytest.param("Remove-Item -Recurse -Force build 2> $null", "allow", id="build-null-spaced"),  # walled at main
+        pytest.param("Remove-Item -Recurse -Force build *>$null", "allow", id="build-star-null"),  # walled at main
+        pytest.param("Remove-Item -Recurse -Force build 2> err.txt", "allow", id="build-log"),     # bumped at main
+        pytest.param("Remove-Item -Recurse -Force build > out.txt", "allow", id="build-stdout"),   # bumped at main
+        pytest.param("Remove-Item -Recurse build 2>$null", "allow", id="build-unforced"),          # bumped at main
+        pytest.param("ri -r -fo build 2>$null", "allow", id="build-aliases"),                      # walled at main
+        pytest.param("Get-ChildItem build | Remove-Item -Recurse -Force 2>$null", "allow",
+                     id="build-piped"),                                                            # walled at main
+        pytest.param("if ($true) { Remove-Item -Recurse -Force build 2>$null }", "allow",
+                     id="build-in-block"),                                                         # walled at main
+        pytest.param("Remove-Item -Recurse -Force src 2>$null", "bump", id="src-null"),            # walled at main
+        pytest.param("Remove-Item -Recurse -Force src *> err.txt", "bump", id="src-star-log"),     # walled at main
+        # a merge written before the operand: the span reads past its `&`
+        pytest.param("Remove-Item -Recurse -Force 2>&1 build", "allow", id="merge-first-build"),   # bumped at main
+        pytest.param("Remove-Item -Recurse -Force build 2>&1", "allow", id="merge-after-build"),   # bumped at main
+        pytest.param("Remove-Item -Recurse -Force 2>&1 src", "bump", id="merge-first-src"),
+        pytest.param("Remove-Item 2>&1 -Recurse -Force .", "wall", id="merge-first-checkout"),     # allowed at main
+        pytest.param("Remove-Item -Recurse -Force 2>&1 .", "wall", id="merge-checkout"),           # bumped at main
+        pytest.param("Remove-Item -Recurse -Force 3>&1 .", "wall", id="stream3-merge-checkout"),   # bumped at main
+        # a switch's alias takes no value, ahead of a redirect or not
+        pytest.param("Remove-Item -Recurse -Force -vb 2>$null .", "wall", id="vb-redirect-checkout"),
+        pytest.param("Remove-Item -Recurse -Force -vb .", "wall", id="vb-checkout"),               # bumped at main
+        pytest.param("Remove-Item -Recurse -Force -db .", "wall", id="db-checkout"),               # bumped at main
+        pytest.param("Remove-Item -Recurse -Force -wi .", "wall", id="wi-checkout"),               # bumped at main
+        pytest.param("Remove-Item -Recurse -Force -cf .", "wall", id="cf-checkout"),               # bumped at main
+        pytest.param("Remove-Item -Recurse -Force -usetx .", "wall", id="usetx-checkout"),         # bumped at main
+        pytest.param("Remove-Item -Recurse -Force -vb 2>$null build", "allow", id="vb-redirect-build"),
+        # a valued flag, then a redirect, then the target
+        pytest.param("Remove-Item -Recurse -Force -Filter x 2>$null .", "wall", id="filter-redirect-checkout"),
+        pytest.param("Remove-Item -Recurse -Force -Include x 2>$null .", "wall", id="include-redirect-checkout"),
+        # controls: what each target earns with no redirect, and a
+        # catastrophic target beside one, before or after it
+        pytest.param("Remove-Item -Recurse -Force build", "allow", id="control-build"),
+        pytest.param("Remove-Item -Recurse -Force src", "bump", id="control-src"),
+        pytest.param("Remove-Item -Recurse -Force . 2>$null", "wall", id="control-checkout"),
+        pytest.param("Remove-Item -Recurse -Force 2> $null .", "wall", id="control-redirect-first"),
+        pytest.param("Remove-Item -Recurse -Force *> $null .", "wall", id="control-star-first"),
+        pytest.param("Remove-Item -Recurse -Force * 2>$null", "wall", id="control-glob"),
+        pytest.param("Remove-Item -Recurse -Force ~ 2>$null", "wall", id="control-home"),
+        pytest.param("Remove-Item -Recurse -Force 2> $null", "wall", id="control-no-target"),   # nothing left to vouch for
+        pytest.param("Remove-Item -Recurse -Force '2>x'", "bump", id="control-quoted"),         # a name, not a redirect
+    ])
+    def test_a_forced_remove_is_judged_by_its_targets_alone(self, tmp_path, cmd, expect):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "build").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    @pytest.mark.parametrize("cmd", [
+        "git clean -fdx *>$null",       # bumped at main: `*>$null` read as a pathspec
+        "git clean -fdx *> $null",      # bumped at main
+        "git clean -fdx 2>$null",       # a control
+        "git clean -fdx 2>&1",          # a control
+    ], ids=["star-glued", "star-spaced", "stderr", "merge"])
+    def test_a_git_clean_with_every_stream_silenced_cleans_the_whole_tree(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path),
+                           contains_reason="Delete of protected harness zone blocked")
+
+    # A merge (`2>&1`, `*>&1`) written before the operand: its `&` ended the
+    # span every reader of the PowerShell pair reads, so the target sat
+    # outside it. Each row was allowed or bumped at main 0097b9f.
+    @pytest.mark.parametrize("cmd, reason", [
+        pytest.param("Remove-Item -Recurse -Force 2>&1 tools/cc", "zone blocked", id="forced-zone-dir"),
+        pytest.param("Remove-Item *>&1 -Recurse -Force tools/cc", "zone blocked", id="star-merge-zone-dir"),
+        pytest.param("Remove-Item 2>&1 cc/x.json", "zone blocked", id="zone-file"),
+        pytest.param("Get-ChildItem 2>&1 tools/cc -Recurse | Remove-Item -Recurse -Force", "zone blocked",
+                     id="listing-zone-dir"),
+        pytest.param("Compress-Archive 2>&1 .env a.zip", "Secret-path access blocked", id="archive-secret"),
+        pytest.param("Rename-Item 2>&1 .env b.txt", "Secret-path access blocked", id="rename-secret"),
+    ])
+    def test_a_merge_before_the_operand_leaves_the_target_in_the_span(self, cmd, reason, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason=reason)
+
+    # The enumerator piped into a remove: a stderr redirect or a merge hands
+    # the pipe every object, so the listing is judged by its root; one that
+    # sends the success stream to a file hands it none. At main the redirect
+    # read as the listing's filter (or its root, written first), so each
+    # stderr row was allowed, and the `2>&1 > $null` row walled.
+    @pytest.mark.parametrize("cmd, expect", [
+        pytest.param("Get-ChildItem . -Recurse 2>$null | Remove-Item -Recurse -Force", "wall", id="checkout-null"),
+        pytest.param("Get-ChildItem -Path . -Recurse 2>$null | Remove-Item -Recurse -Force", "wall",
+                     id="checkout-path-null"),
+        pytest.param("Get-ChildItem . -Recurse 2> err.txt | Remove-Item -Recurse -Force", "wall", id="checkout-log"),
+        pytest.param("Get-ChildItem .. 2>$null | Remove-Item -Recurse -Force", "wall", id="parent-null"),
+        pytest.param("gci . -Force 2>$null | ri -r -fo", "wall", id="aliases-null"),
+        pytest.param("Get-ChildItem src -Recurse 2>$null | Remove-Item -Recurse -Force", "bump", id="src-null"),
+        pytest.param("Get-ChildItem . -Recurse 2>&1 | Remove-Item -Recurse -Force", "wall", id="merge"),
+        pytest.param("Get-ChildItem . -Recurse *>&1 | Remove-Item -Recurse -Force", "wall", id="star-merge"),
+        pytest.param("Get-ChildItem . -Recurse > out.txt | Remove-Item -Recurse -Force", "allow", id="stdout-file"),
+        pytest.param("Get-ChildItem . -Recurse 1>$null | Remove-Item -Recurse -Force", "allow", id="stream1-null"),
+        pytest.param("Get-ChildItem . -Recurse *>$null | Remove-Item -Recurse -Force", "allow", id="star-null"),
+        pytest.param("Get-ChildItem . -Recurse >> o.log | Remove-Item -Recurse -Force", "allow", id="stdout-append"),
+        pytest.param("Get-ChildItem . -Recurse 2>&1 > $null | Remove-Item -Recurse -Force", "allow",
+                     id="merge-then-null"),                                                 # walled at main
+        pytest.param("Get-ChildItem . -Recurse | Remove-Item -Recurse -Force", "wall", id="control"),
+    ])
+    def test_a_listing_hands_the_pipe_what_its_redirect_leaves(self, tmp_path, cmd, expect):
+        (tmp_path / "src").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    @pytest.mark.parametrize("cmd", [
+        "Get-ChildItem tools -Recurse 2>$null | Remove-Item -Recurse -Force",
+        "Get-ChildItem 2>$null tools -Recurse | Remove-Item -Recurse -Force",   # the redirect was its root
+    ], ids=["root-then-redirect", "redirect-then-root"])
+    def test_a_listing_of_a_zone_parent_keeps_its_zone_deny(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    # What only looks like a redirect: PowerShell's streams are 1 to 6 and
+    # `*`, and a backtick escapes the blank before a `>`, so each of these
+    # is a word, and its zone deny stands (each held at main; the first
+    # round of this fix read them as redirects and allowed them).
+    @pytest.mark.parametrize("cmd", [
+        "Remove-Item 7>x,cc/x.json",
+        "Remove-Item 0>,cc/x.json",
+        "Remove-Item -Path 9>,tools/cc/hooks/write_guard.py",
+        "Get-ChildItem tools/cc -Recurse -Exclude a` >x | Remove-Item -Recurse -Force",
+    ], ids=["stream7", "stream0", "stream9-path", "backtick-blank"])
+    def test_a_word_that_only_looks_like_a_redirect_keeps_its_zone_deny(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    # The listing heads the Bash readers take on this tool (find, the
+    # tracked listing): their spans are read with this tool's redirects
+    # first, so the `*` stream's merge is no narrowing pathspec (allowed at
+    # main) and a success-stream redirect hands the pipe nothing (find's
+    # walled at main). And the enumerator's common-parameter aliases take
+    # their value (allowed at main: the value read as the filter).
+    @pytest.mark.parametrize("cmd, expect", [
+        pytest.param("git ls-files *>&1 | Remove-Item -Force", "wall", id="tracked-star-merge"),
+        pytest.param("git ls-files -o *>&1 | Remove-Item -Force", "wall", id="untracked-star-merge"),
+        pytest.param("git ls-files *>$null | Remove-Item -Force", "allow", id="tracked-star-null"),
+        pytest.param("git ls-files | Remove-Item -Force", "wall", id="control-tracked"),
+        pytest.param("find build *>$null | Remove-Item -Recurse -Force", "allow", id="find-star-null"),
+        pytest.param("Get-ChildItem . -Recurse -ea SilentlyContinue | ri -r -fo", "wall", id="ea-alias"),
+        pytest.param("Get-ChildItem . -Recurse -ea 0 | ri -r -fo", "wall", id="ea-alias-digit"),
+        pytest.param("Get-ChildItem . -Recurse -ErrorAction SilentlyContinue | ri -r -fo", "wall",
+                     id="control-erroraction"),
+    ])
+    def test_every_listing_head_reads_the_redirect_as_its_tool_does(self, tmp_path, cmd, expect):
+        (tmp_path / "build").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    def test_a_spaced_merge_on_the_scan_half_passes_every_object(self):
+        """The scan half spells `*>&1` as `*> 1`; a reader handed it reads the
+        merge, not a file redirect, and the removal rungs cannot vouch for the
+        piped listing (the first round read it as nothing reaching the pipe,
+        and the recognized-safe rung said yes)."""
+        bp = _bash_patterns_module()
+        assert bp._ps_pipeline_roots(". -Recurse *> 1") == (["."], False, False)
+        assert not bp.powershell_removal_is_recognized_safe(
+            "Get-ChildItem src -Recurse *>&1 | Remove-Item -Recurse -Force")
+
+    # find's roots on this tool: the all-streams redirect is no root (it
+    # walled the build clean at main), and a zone's parent keeps its deny.
+    @pytest.mark.parametrize("cmd, expect", [
+        pytest.param("find build *>$null -delete", "allow", id="build-star-glued"),
+        pytest.param("find build *> $null -delete", "allow", id="build-star-spaced"),
+        pytest.param("find build -delete", "allow", id="control-build"),
+        pytest.param("find . *>$null -delete", "wall", id="control-checkout"),
+    ])
+    def test_find_reads_no_redirect_as_a_root(self, tmp_path, cmd, expect):
+        (tmp_path / "build").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    # The readers themselves. The enumerator's: a group keeps the redirect
+    # out of the nothing-reaches reading (its redirect may be an inner
+    # command's), and the root stays readable. find's: the Bash reading of
+    # the same span is the one it was.
+    @pytest.mark.parametrize("args, reading", [
+        pytest.param(". -Recurse 2>$null", (["."], False, False), id="stderr"),
+        pytest.param("2>$null tools -Recurse", (["tools"], False, False), id="redirect-first"),
+        pytest.param(". -Recurse > o.txt", ([], True, False), id="stdout-file"),
+        pytest.param(". -Recurse *>&1", (["."], False, False), id="star-merge"),
+        pytest.param(". -Recurse '>x'", (["."], True, False), id="quoted-filter"),
+    ])
+    def test_the_listing_reader_drops_each_redirect(self, args, reading):
+        assert _bash_patterns_module()._ps_pipeline_roots(args) == reading
+
+    def test_a_grouped_listing_keeps_a_root_beside_a_success_redirect(self):
+        roots, _narrowed, _files_only = _bash_patterns_module()._ps_pipeline_roots(
+            "(Resolve-Path .) -Recurse > o.txt")
+        assert roots
+
+    @pytest.mark.parametrize("span, powershell, reading", [
+        pytest.param("build *>$null -delete", True, (["build"], "delete"), id="powershell-star"),
+        pytest.param("build 2>$null -delete", True, (["build"], "delete"), id="powershell-stderr"),
+        pytest.param("build *>/dev/null -delete", False, (["build", "*>/dev/null"], "delete"), id="bash-unchanged"),
+    ])
+    def test_find_roots_read_the_star_stream_on_powershell_alone(self, span, powershell, reading):
+        assert _bash_patterns_module()._find_delete_roots(span, powershell=powershell) == reading
+
+    @pytest.mark.parametrize("token, success", [
+        (">", True), (">x", True), (">>x", True), ("1>x", True), ("*>x", True), ("*>>", True),
+        ("2>&1", False), ("*>&1", False), ("3>&1", False), ("2>x", False), ("2>", False),
+        ("*", False), ("1", False), ("'>x'", False),
+    ], ids=["bare", "glued", "append", "stream1", "star", "star-append", "merge", "star-merge",
+            "stream3-merge", "stderr", "stderr-bare", "glob", "digit", "quoted"])
+    def test_a_success_stream_file_redirect_is_named(self, token, success):
+        assert _bash_patterns_module()._ps_success_stream_to_file(token) is success
+
+    # The shell is the oracle for the reading above: what reaches the next
+    # stage of a listing behind each redirect (Measure-Object counts; it
+    # changes nothing). 0 objects exactly where the reader says the success
+    # stream went to a file.
+    @pytest.mark.parametrize("redirect", [
+        "2>$null", "2>&1", "*>&1", "3>&1", "> $null", "1>$null", "*>$null", ">> o.log", "*>> o.log",
+        "2>&1 > $null",
+    ], ids=["stderr", "merge", "star-merge", "stream3-merge", "stdout", "stream1", "star", "append",
+            "star-append", "merge-then-null"])
+    def test_powershell_passes_the_pipe_what_the_reader_says(self, redirect, tmp_path):
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        work = tmp_path / "work"
+        work.mkdir()
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (work / name).write_bytes(b"x\n")
+        proc = subprocess.run(
+            [shell, "-NoProfile", "-NonInteractive", "-Command",
+             f"(Get-ChildItem -Filter *.txt {redirect} | Measure-Object).Count"],
+            cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
+        # the listing reader's own reading of the same span: no root is
+        # nothing reaching the pipe
+        roots, _narrowed, _files_only = _bash_patterns_module()._ps_pipeline_roots(
+            f"-Filter *.txt {redirect}")
+        expected = "3" if roots else "0"
+        assert proc.stdout.strip().splitlines()[-1:] == [expected], (proc.stdout, proc.stderr)
+
+    # The effect reader itself, for each of the row's three arms and the
+    # remove verb: what it names is the command's operands, never a redirect
+    # or its target (the native destroy's `delete` is no secret effect, so no
+    # verdict above can see its arm).
+    @pytest.mark.parametrize("cmd, effect, operands", [
+        ("Rename-Item notes.txt b.txt 2> .env.err", "move", {"notes.txt", "b.txt"}),
+        ("Rename-Item notes.txt b.txt *>.env.err", "move", {"notes.txt", "b.txt"}),
+        ("Compress-Archive notes.txt a.zip 2> .env.err", "archive", {"notes.txt", "a.zip"}),
+        ("unlink notes.txt 2> .env.err", "delete", {"notes.txt"}),
+        ("shred notes.txt *> .env.err", "delete", {"notes.txt"}),
+        ("Remove-Item notes.txt 2>$null", "delete", {"notes.txt"}),
+        ("git mv notes.txt b.txt 2> .env.err", "move", {"notes.txt", "b.txt"}),
+        ("git rm notes.txt *> .env.err", "delete", {"notes.txt"}),
+    ], ids=["rename", "rename-star", "archive", "unlink", "shred-star", "remove", "git-mv", "git-rm-star"])
+    def test_the_effect_reader_names_no_redirect(self, cmd, effect, operands):
+        got = set(_bash_patterns_module().iter_ps_removed_or_relocated_operands(cmd))
+        assert got == {(effect, o) for o in operands}
+
+    # The one reading, per tool: PowerShell's `*` stream opens a redirect,
+    # and on Bash `*>x` stays the word it was (a glob, then a redirect, which
+    # the operand readers there do not cut apart).
+    @pytest.mark.parametrize("token, bash, powershell", [
+        ("2>", 2, 2), ("2>x", 1, 1), ("2>&1", 1, 1), (">", 2, 2), (">>x", 1, 1),
+        ("*>", 0, 2), ("*>>", 0, 2), ("*>x", 0, 1), ("*>&1", 0, 1),
+        ("*", 0, 0), ("*.log", 0, 0), ("x", 0, 0), ("'2>x'", 0, 0),
+        ("6>x", 1, 1), ("7>x", 1, 0), ("0>", 2, 0), ("10>x", 1, 0),
+    ], ids=["stderr-bare", "stderr", "merge", "stdout-bare", "append", "star-bare", "star-append-bare",
+            "star", "star-merge", "glob", "glob-suffix", "word", "quoted",
+            "stream6", "stream7-a-word", "stream0-a-word", "stream10-a-word"])
+    def test_the_redirect_reading_takes_the_star_stream_on_powershell_alone(
+            self, token, bash, powershell):
+        read = _bash_patterns_module()._redirect_words
+        assert (read(token), read(token, powershell=True)) == (bash, powershell)
+
+    # The shell is the oracle for each arm (pwsh where one is on PATH, Windows
+    # PowerShell 5.1 beside it): the command acts on its operands, and the
+    # redirect truncates its target and writes the stream there, never
+    # renaming, archiving or deleting it. Each row runs in its own scratch
+    # folder; the log's line is gone because the redirect truncated it.
+    @pytest.mark.parametrize("command, left", [
+        ("Rename-Item notes.txt b.txt 2> .env.err", {".env.err", "b.txt"}),
+        ("Rename-Item notes.txt b.txt *> .env.err", {".env.err", "b.txt"}),
+        ("Compress-Archive notes.txt a.zip 2> .env.err", {".env.err", "a.zip", "notes.txt"}),
+        ("unlink notes.txt 2> .env.err", {".env.err"}),
+        ("git mv notes.txt b.txt 2> .env.err", {".env.err", "b.txt", ".git"}),
+    ], ids=["rename", "rename-star", "archive", "unlink", "git-mv"])
+    def test_powershell_acts_on_the_operands_and_writes_the_redirect_target(
+            self, command, left, tmp_path):
+        import shutil
+        import zipfile
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        if command.startswith("unlink") and shutil.which("unlink") is None:
+            pytest.skip("no unlink on PATH for the native destroy")
+        work = tmp_path / "work"      # its own folder: the suite's audit folder sits in tmp_path
+        work.mkdir()
+        (work / "notes.txt").write_bytes(b"NOTES_DEF_5108\n")
+        if command.startswith("git "):
+            _git_seed_repo(work, "notes.txt")
+        (work / ".env.err").write_bytes(b"LOG_DEF_5108\n")
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                              cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
+        assert {p.name for p in work.iterdir()} == left, (proc.stdout, proc.stderr)
+        assert b"LOG_DEF_5108" not in (work / ".env.err").read_bytes()
+        if "b.txt" in left:
+            assert (work / "b.txt").read_bytes() == b"NOTES_DEF_5108\n"
+        if "a.zip" in left:
+            with zipfile.ZipFile(work / "a.zip") as archive:
+                assert archive.namelist() == ["notes.txt"]
+
+    def test_powershell_runs_a_star_silenced_git_clean_as_the_whole_tree_clean(self, tmp_path):
+        """The oracle for `git clean`'s reading of the `*` stream: `*>$null`
+        names no pathspec, so the forced clean with the ignored-files flag
+        takes every untracked file in the scratch repository, at any depth."""
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "notes.txt").write_bytes(b"x\n")
+        _git_seed_repo(work, "notes.txt")
+        (work / "loose.txt").write_bytes(b"x\n")
+        (work / "sub").mkdir()
+        (work / "sub" / "deep.txt").write_bytes(b"x\n")
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", "git clean -fdx *>$null"],
+                              cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
+        assert {p.name for p in work.iterdir()} == {".git", "notes.txt"}, (proc.stdout, proc.stderr)
+
+
 class TestSecretPathAccess:
     """The hook-layer replacement for the five `Read()` deny rules.
 

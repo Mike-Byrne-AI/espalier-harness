@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2088",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import _bash_patterns as b; print(b._git_clean_operands(\"-fdx *>/dev/null\"))'",
+ "open_value": "['*>/dev/null']",
+ "why_not": null,
+ "row_sha": "9ade813da49a",
+ "text_sha": "f910e596e802",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD ed89b948ae49)"
+}
