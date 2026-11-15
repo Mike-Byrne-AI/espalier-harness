@@ -873,12 +873,21 @@ def _tools_cc_module(name: str):
 
 def test_the_worktree_folder_has_one_name_pair_everywhere():
     """DEF-3000's review: the pair lives in the engine, in the tests' own walk
-    rule and in the worktree reaper, and the inline copies' rows are built
-    from the engine's, so a relocation edits all three or this reds."""
+    rule, in the worktree reaper and in the nested-repo warning's fallback
+    copy (DEF-3086), and the inline copies' rows are built from the engine's,
+    so a relocation edits all four or this reds."""
+    import importlib.util
+
     from espalier._safe_walk import WORKTREES_PARENT
     from tests._live_tree import EXCLUDED_DIR_PARTS
 
-    assert WORKTREES_PARENT == EXCLUDED_DIR_PARTS[0] == tuple(_tools_cc_module("checkout_sync").WORKTREES_REL)
+    hooks = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+    spec = importlib.util.spec_from_file_location("_safe_walk_session_start", hooks / "session_start.py")
+    assert spec is not None and spec.loader is not None
+    session_start = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(session_start)
+    assert WORKTREES_PARENT == EXCLUDED_DIR_PARTS[0] == tuple(_tools_cc_module("checkout_sync").WORKTREES_REL) \
+        == session_start._REAPER_HOME
 
 
 def test_a_checkout_rooted_in_a_folder_named_dot_claude_is_the_declared_limit(tmp_path):

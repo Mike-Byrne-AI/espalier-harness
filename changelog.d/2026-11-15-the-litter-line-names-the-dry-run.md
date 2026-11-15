@@ -10,9 +10,11 @@
   line could pull a running session's checkout out from under it; it took a
   worktree stopped in the middle of a rebase the same way. Such a worktree is
   now pointed at the catch-up's own dry run, `tools/cc/checkout_sync.py` with
-  no flag, which says which worktrees may go and why each other one stays (a
-  live session in it, a lock, an operation in progress, commits not in
-  `main`, ignored files). Where that script is not deployed, the line names
+  no flag, run from the session's own shell, which says which worktrees may
+  go and why each other one stays (a live session in it, a lock, an
+  operation in progress, commits not in `main`, ignored files); run from
+  another terminal while that session is open, it judges none and says so.
+  Where that script is not deployed, the line names
   `espalier upgrade` first. A worktree that a recent session marker places a
   session in, its own or one the main checkout's session moved into, is not
   named at all, the same rule the catch-up keeps it by. A worktree elsewhere

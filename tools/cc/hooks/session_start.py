@@ -3589,8 +3589,9 @@ def _find_nested_repo_litter(
       exited (``checkout_sync.lock_holder_dead``: seven such stale locks hid
       seven leftovers on 2026-10-08). Claude Code holds a ``git worktree lock`` on a
       running agent's or backgrounded session's worktree, and git refuses
-      ``worktree remove`` on a locked tree, so the remedy this reporter
-      prescribes cannot apply. Claude Code's lock can outlive its session (a
+      ``worktree remove`` on a locked tree, so the removal this reporter
+      prescribes outside ``.claude/worktrees/`` cannot apply (a tree inside it
+      is sent to the reaper's dry run, DEF-3086). Claude Code's lock can outlive its session (a
       killed background session, a ``-p`` run) until the stale-lock sweep
       releases it, and a lock you set yourself is never swept: for that
       window, or until you unlock it, the worktree goes unreported rather
@@ -3600,7 +3601,8 @@ def _find_nested_repo_litter(
 
     The ``locked`` set comes from the worktree list, so when that command
     fails or times out the lock skip is lost and the untracked descent may
-    report a locked worktree (with the remedy git refuses); the ``cwd`` skip
+    report a locked worktree (outside ``.claude/worktrees/``, with the removal
+    git refuses; inside it, with the reaper's dry run); the ``cwd`` skip
     does not depend on it. That degradation errs toward noise, the right bias
     for a reporter, and is pinned by test.
 
@@ -4384,7 +4386,9 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     and ending with the paths, so the banner's per-line cut costs paths first
     (DEF-5109): a registered worktree under ``.claude/worktrees/``, the
     reaper's home, the reaper's dry run (``tools/cc/checkout_sync.py``, no
-    flag), which judges the session registry, a lock, an operation in
+    flag, run from this session's shell: from another terminal it reads this
+    session as one more in the checkout and judges no tree), which judges the
+    session registry, a lock, an operation in
     progress, commits not in main and ignored files -- reached only when no
     reaper judged that tree at this start (a resume or compact start, catch-up
     off, a tree it deferred for time), and never a removal, which git carries
@@ -4509,13 +4513,17 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         script = f"{py} tools/cc/checkout_sync.py" if py else "tools/cc/checkout_sync.py"
         # DEF-2062: a quoted word's PowerShell note, by getattr (a kept older helper lacks it).
         note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
-        run = (f"`{script}`{note}" if sync is not None
-               else f"`espalier upgrade` (it deploys tools/cc/checkout_sync.py), then `{script}`{note}")
+        run = f"`{script}`{note}" if sync is not None else f"`espalier upgrade`, then `{script}`{note}"
+        # The dry run judges from the shell of the session it is run in: from
+        # another terminal it reads that session as one more in the checkout
+        # and holds every tree unjudged. The caveat and the remedy lead, so the
+        # banner's cut costs the paths, then the reasons, then the PowerShell
+        # note of the longest interpreter spelling, never either of them.
         _hook_utils.advise(
             f"[WARN] {_hook_utils.plural(len(unjudged), 'worktree')} under {'/'.join(_REAPER_HOME)}/ not judged "
-            f"at this start: {run} judges each, naming which may go and why the rest stay (a live session, a "
-            "lock, an operation in progress, work not in main); a removal by hand would take a live session's "
-            f"clean tree: {_shown(unjudged)}",
+            "at this start, and a removal by hand would take a live session's clean tree: from this session's "
+            f"shell, {run} judges each (it reads a live session, a lock, an operation in progress, work not in "
+            f"main): {_shown(unjudged)}",
         )
     if trees:
         # The plain removal: git refuses a worktree that holds uncommitted

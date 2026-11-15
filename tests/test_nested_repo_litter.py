@@ -474,10 +474,20 @@ class TestATreeNoReaperJudgedGetsItsDryRun:
         _add_worktree(tmp_path, "2")
         mod = _load()
         monkeypatch.setattr(mod._hook_utils, "load_checkout_sync", lambda: None)
+        # The longest spelling the hint can give: a spaced path, which takes
+        # the PowerShell note on Windows.
+        monkeypatch.setattr(mod._hook_utils, "python_command_hint",
+                            lambda: '"C:\\Program Files\\Python311\\python.exe"')
+        mod._hook_utils.take_advisories()
         mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
         (line,) = _warn_lines(capsys.readouterr().err)
         assert "`espalier upgrade`" in line and "tools/cc/checkout_sync.py" in line, line
         assert "git worktree remove" not in line, line
+        # Through the banner's per-line cut, the remedy and the caveat survive.
+        block = mod._warnings_section()
+        for clause in ("`espalier upgrade`, then", "tools/cc/checkout_sync.py`", "from this session's shell",
+                       "a removal by hand would take a live session's clean tree"):
+            assert clause in block, (clause, block)
 
 
 class TestWorktreeInUseIsNotLitter:
