@@ -1748,8 +1748,9 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # (the harness-dev deploy tier was retired); 15 -> 16 (TP-214: +/read-summary);
         # 16 -> 17 (TP-233b: +/strengthen); 17 -> 18 (2026-09-28: +/ship);
         # 18 -> 17 (2026-09-28: the /accomplish alias retired);
-        # 17 -> 18 (2026-10-05: +/inbox, the mail channel).
-        expected_value=18,
+        # 17 -> 18 (2026-10-05: +/inbox, the mail channel);
+        # 18 -> 19 (2026-11-15: +/worker-tick, the worker loop's command).
+        expected_value=19,
         sources=(
             (
                 "examples/CLAUDE.template.md",

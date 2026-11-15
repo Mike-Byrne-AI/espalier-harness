@@ -70,6 +70,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `/status` | Quick progress check — harness state in 10 lines. |
 | `/strengthen` | Surface where a repo's test rails are missing: enumerate the public Python surface mechanically, cr… |
 | `/test-this` | Generate tests for a specific file matching project patterns. |
+| `/worker-tick` | One tick of a worker seat's loop: have the seat driver print this seat's tick, then carry it out as… |
 
 ## Skills
 
