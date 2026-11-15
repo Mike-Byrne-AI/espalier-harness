@@ -167,12 +167,16 @@ class TestNestedRepoLitter:
 
 
 def _warn_lines(err: str) -> list[str]:
-    return [line for line in err.splitlines() if line.startswith("[WARN] untracked")]
+    # The litter lines, without the scan's own did-not-finish WARN.
+    return [line for line in err.splitlines()
+            if line.startswith("[WARN]") and not line.startswith("[WARN] the nested-repo scan")]
 
 
 def _prescribed_remove(line: str, path: Path) -> list[str]:
-    # The removal the line prescribes, as an argv for the named worktree.
+    # The removal the line prescribes, as an argv for the named worktree; no
+    # spelling of the overriding flag, and no delete, anywhere in the line.
     import re
+    assert not re.search(r"remove\s+(-f|--force)\b|--force|delete", line), line
     spelled = re.search(r"`(git worktree remove [^`]*)`", line)
     assert spelled, line
     return [str(path) if word == "<path>" else word for word in spelled.group(1).split()]
@@ -224,8 +228,8 @@ class TestEachKindGetsItsOwnRemedy:
         _load()._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
         err = capsys.readouterr().err
         (line,) = _warn_lines(err)
-        assert "adopt2" in line and "not a checkout of this repository" in line, line
-        assert "Move it out of the working tree" in line and ".gitignore" in line, line
+        assert "adopt2" in line and "worktree registry does not list" in line, line
+        assert "move it out of the working tree" in line and ".gitignore" in line, line
         for harm in ("--force", "delete", "git worktree remove", "worktree of this repository"):
             assert harm not in line, (harm, line)
 
@@ -242,7 +246,7 @@ class TestEachKindGetsItsOwnRemedy:
         lines = _warn_lines(capsys.readouterr().err)
         assert len(lines) == 2, lines
         (tree,) = [line for line in lines if "git worktree remove" in line]
-        (other,) = [line for line in lines if "Move it out" in line]
+        (other,) = [line for line in lines if "move it out" in line]
         assert ".claude/worktrees/agent-x" in tree and "adopt2" not in tree, tree
         assert "adopt2" in other and "agent-x" not in other, other
 
@@ -268,6 +272,51 @@ class TestEachKindGetsItsOwnRemedy:
         (line,) = _warn_lines(err)
         assert ".claude/worktrees/agent-x" in line and "git worktree remove" in line, line
         assert "--force" not in err, err
+        # The lock skip is lost with the list, so a locked tree may be a live
+        # one's: the line says to leave it, never to unlock it.
+        assert "a locked one may be in use, so leave it" in line and "git worktree unlock" not in line, line
+
+    def test_the_banner_cut_keeps_each_remedy_and_its_caveats(self, tmp_path, capsys):
+        """The banner cuts each warning at its byte cap; the first cut of this
+        line left the refusal's caveats past it, and seven entries left only
+        paths. Dies to: the paths or a preamble placed ahead of the remedy."""
+        _seed_commit(tmp_path)
+        _exclude_worktrees(tmp_path)
+        for i in range(7):
+            _add_worktree(tmp_path, f"agent-{i:016x}")
+        clone = tmp_path / "adopt2"
+        clone.mkdir()
+        _git(["init"], clone)
+        mod = _load()
+        mod._hook_utils.take_advisories()
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
+        capsys.readouterr()
+        block = mod._warnings_section()
+        for clause in ("`git worktree remove <path>`", "uncommitted changes or untracked files",
+                       "its ignored files go with it", "`git worktree unlock <path>` first if locked",
+                       "move it out of the working tree", "`git worktree move`", ".gitignore"):
+            assert clause in block, (clause, block)
+
+    def test_a_detached_worktree_adds_the_branch_step(self, tmp_path, capsys):
+        """The plain removal takes a clean detached tree and its own commits
+        with it (no branch keeps them); the registry's HEAD says detached with
+        no spawn. Dies to: the clause missing for a detached tree, or printed
+        for a tree on a branch."""
+        mod = _load()
+        # One root per case: the registry read is memoised per root for the
+        # process, as one hook start reads it once.
+        for name, detach in (("on-branch", False), ("detached", True)):
+            root = tmp_path / name
+            root.mkdir()
+            _seed_commit(root)
+            _exclude_worktrees(root)
+            _add_worktree(root, "on-branch")
+            if detach:
+                _git(["worktree", "add", "--detach", ".claude/worktrees/detached"], root)
+            mod._warn_if_nested_repo_litter(root, cwd=root)
+            (line,) = _warn_lines(capsys.readouterr().err)
+            clause = "branch a detached one's commits first: `git -C <path> branch <name>`"
+            assert (clause in line) is detach, line
 
     def test_the_remedy_costs_no_spawn_per_entry(self, tmp_path, monkeypatch):
         """A guard, not a red: the split must not ask git about each entry
@@ -378,7 +427,7 @@ class TestWorktreeInUseIsNotLitter:
 
     def test_a_claude_lock_naming_a_live_pids_other_start_still_hides_the_worktree(self, tmp_path, monkeypatch):
         """Claude Code's lock can name its holder's start, `(pid N start
-        <date>)`. This warning's remedy is a forced removal, so it reads the
+        <date>)`. This warning names a worktree for removal, and git takes a clean one, so it reads the
         pid alone and reads no start: a live N keeps the tree hidden whatever
         start the lock names (the reaper, which removes only a clean, merged
         tree, is the reader that compares it)."""
@@ -459,7 +508,7 @@ class TestWorktreeInUseIsNotLitter:
         mod = _load()
         mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
         err = capsys.readouterr().err
-        assert "[WARN] untracked" in err and "[INFO]" not in err  # control
+        assert "[WARN] 1 leftover worktree" in err and "[INFO]" not in err  # control
         mod._warn_if_nested_repo_litter(tmp_path, cwd=live / "src")
         err = capsys.readouterr().err
         assert "[WARN]" not in err
@@ -584,7 +633,7 @@ class TestWorktreeInUseIsNotLitter:
             env,
         )
         assert control.returncode == 0
-        assert "[WARN] untracked" in control.stderr  # reachable: the warning fires from the root
+        assert "[WARN] 1 leftover worktree" in control.stderr  # reachable: the warning fires from the root
         assert "[INFO] session cwd" not in control.stderr
         result = run_hook(
             "session_start.py",
@@ -592,6 +641,6 @@ class TestWorktreeInUseIsNotLitter:
             env,
         )
         assert result.returncode == 0
-        assert "[WARN] untracked" not in result.stderr
+        assert "leftover worktree" not in result.stderr
         assert "[INFO] session cwd is inside registered worktree .claude/worktrees/live" in result.stderr
         json.loads(result.stdout)  # stdout stays the banner JSON (channel XOR)

@@ -4284,6 +4284,23 @@ def _is_registered_worktree(root: Path, inside: str) -> bool:
     return _hook_utils.is_sibling_checkout(root, root / inside)
 
 
+def _detached_head(worktree: Path) -> bool:
+    """Is the linked worktree at ``worktree`` on a detached HEAD, whose own
+    commits no branch keeps once the tree is removed? Read from the admin
+    directory its ``.git`` file names (git-worktree(1)): two small reads, no
+    spawn. Any read that fails answers False, which drops one clause."""
+    try:
+        link = (worktree / ".git").read_text(encoding="utf-8", errors="replace").strip()
+        if not link.startswith("gitdir:"):
+            return False
+        admin = Path(link[len("gitdir:"):].strip())
+        if not admin.is_absolute():
+            admin = worktree / admin
+        return not (admin / "HEAD").read_text(encoding="utf-8", errors="replace").startswith("ref:")
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unread link or HEAD drops the branch clause, never the line
+        return False
+
+
 def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered: list[str] | None = None) -> None:
     """Surface untracked nested-repo litter at boot (defense-in-depth).
 
@@ -4308,12 +4325,19 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     A scan that did not finish says so: a git read killed at its cap is a
     WARN beside the litter it did find, and the descent's node cap an INFO
     naming the folder to ignore, since it repeats on every start.
-    The litter it names gets one WARN per kind, each with the remedy that
-    loses nothing (DEF-5109): a registered worktree of this repository the
+    The litter it names gets one WARN per kind, each leading with a remedy
+    git guards and ending with the paths, so the banner's per-line cut costs
+    paths first (DEF-5109): a registered worktree of this repository the
     plain ``git worktree remove``, which git refuses while the tree holds
-    uncommitted changes or untracked files; any other nested repo a move out
-    of the working tree or a ``.gitignore`` entry, since a worktree removal
-    cannot take it and deleting it drops what only it holds.
+    uncommitted changes or untracked files (a detached HEAD's own commits it
+    does not guard, so a detached tree adds the branch step); any other
+    nested repo a move out of the working tree or a ``.gitignore`` entry,
+    since a removal from here cannot take it and deleting it drops what only
+    it holds. Declared limits, each named on the line or here: ignored files
+    go with a removed tree; a tree stopped mid-rebase, or one a live session
+    of another seat holds without a lock, reads as a leftover; and a
+    registry the helper cannot read (a moved repository folder, entries past
+    its cap) sorts a worktree as a nested repo, whose remedy names no removal.
     Spoken through ``_hook_utils.advise``, so each line joins the banner's
     Warnings block (stderr keeps the debug copy). Silent when the tree is clean.
     """
@@ -4384,36 +4408,43 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     def _shown(paths: list[str]) -> str:
         return ", ".join(paths[:5]) + ("  ..." if len(paths) > 5 else "")
 
-    # Each kind gets the remedy that loses nothing (DEF-5109). The kind is read
+    # Each kind gets a remedy git itself guards (DEF-5109). The kind is read
     # from git's own worktree registry on disk (``_is_registered_worktree``, no
     # spawn per entry under the wall), so a worktree list that did not answer
-    # still sorts what the descent found.
+    # still sorts what the descent found. Each line leads with its remedy and
+    # ends with the paths: the banner cuts a line at _WARNING_LINE_MAX_BYTES,
+    # and a long list must cost paths, never the remedy or its caveats.
     trees = [rel for rel in litter if _is_registered_worktree(root, rel)]
     clones = [rel for rel in litter if rel not in trees]
     if trees:
         # The plain removal: git refuses a worktree that holds uncommitted
-        # changes or untracked files, and Claude Code leaves an agent's
-        # worktree behind only when it holds changes, so git's refusal is the
-        # oracle for the work. The flag that overrides it is never typed here,
-        # not even behind a caveat. A .gitignore entry is no remedy for these:
-        # the worktree list finds them whatever is ignored.
+        # changes or untracked files, so its refusal guards the uncommitted
+        # work; the flag that overrides it is never typed here, not even
+        # behind a caveat. It does not guard a detached HEAD's own commits,
+        # which no branch keeps, so a detached tree adds the branch step. With
+        # the worktree list unread the lock skip is lost, so a locked tree may
+        # be in use and is left alone rather than unlocked. A .gitignore entry
+        # is no remedy here: the worktree list finds these whatever is ignored.
+        lock = ("a locked one may be in use, so leave it" if any("worktree list" in u for u in killed)
+                else "`git worktree unlock <path>` first if locked")
+        detached = ("; branch a detached one's commits first: `git -C <path> branch <name>`"
+                    if any(_detached_head(root / rel) for rel in trees) else "")
         _hook_utils.advise(
-            f"[WARN] untracked {_hook_utils.plural(len(trees), 'nested git repo')} in the working tree "
-            f"that git lists as {'a worktree' if len(trees) == 1 else 'worktrees'} of this repository: "
-            f"{_shown(trees)} -- a leftover worktree can surface as phantom scanner noise. "
-            "Remove it with `git worktree remove <path>` (after `git worktree unlock <path>` if it is "
-            "locked): git refuses one that holds uncommitted changes or untracked files, so commit or "
-            "move that work first; its ignored files go with it.",
+            f"[WARN] {_hook_utils.plural(len(trees), 'leftover worktree')} of this repository: remove "
+            f"{'each' if len(trees) > 1 else 'it'} with `git worktree remove <path>`, which git refuses "
+            f"while it holds uncommitted changes or untracked files (its ignored files go with it"
+            f"{detached}; {lock}): {_shown(trees)}",
         )
     if clones:
-        # A clone (or another repository's worktree) is no worktree of this
-        # one, so a worktree removal cannot take it, and deleting it drops
-        # whatever only it holds: moving it out loses nothing.
+        # Not in this repository's worktree registry: a clone, or another
+        # repository's worktree, which a removal from here cannot take and
+        # which moving by hand would break, so that one moves from its own
+        # repository. Deleting either drops whatever only it holds.
         _hook_utils.advise(
-            f"[WARN] untracked {_hook_utils.plural(len(clones), 'nested git repo')} in the working tree, "
-            f"not a checkout of this repository: {_shown(clones)} -- a leftover clone can surface as "
-            "phantom scanner noise. Move it out of the working tree, or add it to .gitignore: it is a "
-            "repository of its own and can hold commits and changes no other copy has.",
+            f"[WARN] {_hook_utils.plural(len(clones), 'nested git repo')} this repository's worktree "
+            "registry does not list: move it out of the working tree (another repository's worktree with "
+            "that repository's `git worktree move`), or add it to .gitignore; it can hold commits and "
+            f"changes no other copy has: {_shown(clones)}",
         )
 
 

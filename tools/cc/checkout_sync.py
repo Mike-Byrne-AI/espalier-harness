@@ -1318,7 +1318,8 @@ def lock_holder_dead(reason: str, starts: dict[int, str] | None = None) -> bool:
     another time than the lock says (its holder exited and the pid was handed
     on), read from ``starts``, :func:`lock_starts` over every lock the caller
     judges. None compares no start: SessionStart's nested-repo warning reads
-    the pid alone, since its remedy is a forced removal. A lock with no pid in
+    the pid alone, since it names a worktree for removal and git takes a
+    clean one, so a lock read dead in error costs a live tree. A lock with no pid in
     either form (one you set yourself) is never dead: it is someone's choice;
     a start that cannot be read keeps the lock."""
     held = _LOCK_PID_RE.search(reason or "")
@@ -2009,7 +2010,7 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
         unlock = "git worktree unlock, then " if "locked" in block else ""
         return f"its folder is missing ({unlock}git worktree prune clears the record)"
     if not (path / ".git").exists():
-        return "its .git link is missing (`git worktree repair`, or remove the folder by hand)"
+        return "its .git link is missing (`git worktree repair` it; the next start judges it again)"
     if upstream is None:
         return no_base
     here = git.at(path)

@@ -216,10 +216,7 @@ the worktree until it is older than `cleanupPeriodDays`.
 `git worktree list --porcelain` prints a `locked` line in a locked worktree's
 block — bare `locked` when no reason was given, `locked <reason>` otherwise —
 and `git worktree remove --force` on a locked worktree exits 128 with
-`fatal: cannot remove a locked working tree`. The reporter's remedy line for a
-registered worktree names the plain `git worktree remove <path>`, which git
-refuses on a locked worktree too, so a locked worktree is never a tree that
-remedy applies to.
+`fatal: cannot remove a locked working tree`.
 
 **Observed, not quoted** (git 2.52.0.windows.1, driven 2026-11-15, one fresh
 repository per state): the plain `git worktree remove`, with no flag, exits 128
@@ -229,7 +226,10 @@ when it is locked, clean or not; it removes a clean worktree, and one holding
 only ignored files, ignored files included. The reporter leans on that refusal
 (DEF-5109): the line for a registered worktree prescribes the plain removal and
 never the flag the upstream sentence above adds, so a leftover agent worktree
-holding uncommitted work is refused by git rather than removed with it.
+holding uncommitted work is refused by git rather than removed with it; a
+locked worktree is refused as well, so the line names the unlock first. The
+refusal does not guard a detached HEAD's own commits (a clean detached tree is
+removed, and no branch keeps them), so the line adds a branch step for one.
 
 **Not asserted:** the page also says Claude Code "writes a marker into the git
 metadata of every worktree it creates with git" and that the sweep keeps any
@@ -317,10 +317,15 @@ cover them; only the `cwd` rule does, for the session inside one.
   litter in one WARN per kind, sorted by the same registry read
   (`::_is_registered_worktree`, no spawn): a registered worktree gets the plain
   `git worktree remove <path>` the observation above shows git refusing on a
-  tree that holds uncommitted work, and never the upstream sentence's flag; any
-  other nested repo gets a move out of the working tree or a `.gitignore`
-  entry. `tests/test_nested_repo_litter.py::TestEachKindGetsItsOwnRemedy`
-  runs the prescribed removal against a dirty worktree and a clean one.
+  tree that holds uncommitted work, and never the upstream sentence's flag,
+  with a branch step when a named tree's HEAD is detached; any other nested
+  repo gets a move out of the working tree (another repository's worktree
+  with that repository's `git worktree move`) or a `.gitignore` entry. Each
+  line leads with its remedy and ends with the paths, so the banner's
+  per-line cut costs paths first.
+  `tests/test_nested_repo_litter.py::TestEachKindGetsItsOwnRemedy` runs the
+  prescribed removal against a dirty worktree and a clean one, and renders
+  seven entries through the banner's cut.
 - `tests/test_nested_repo_litter.py::TestWorktreeInUseIsNotLitter` — the
   function-level cases for both candidate sources (the excluded shape only the
   worktree list sees, and the untracked shape the descent sees), the payload
