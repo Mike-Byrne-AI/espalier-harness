@@ -17,7 +17,7 @@ list (§14, §18): it stops siblings spreading, and defects keep arriving at the
 *Re-targeting* changes what is checked: the effect instead of a prediction of it, the
 producer instead of every shape at the consumer, behaviour instead of a name. It is rarer
 here. The instances, and the caveat that their class titles were written once the fix
-shape was known, are in `task-packs/TP-475-know-when-work-is-worth-doing.md`'s Motivation.
+shape was known, are in `task-packs/Done/TP-475-know-when-work-is-worth-doing.md`'s Motivation.
 
 ## The five questions, asked before the class question
 

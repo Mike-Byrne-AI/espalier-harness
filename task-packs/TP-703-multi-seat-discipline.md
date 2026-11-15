@@ -186,11 +186,11 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
   the repository is the operator's call and nothing here depends on it.
 - **Making the Windows leg a required check** (`DEF-977`'s full form). Median open-to-merge
   would about double against the measured 66 to 81 minute leg, and every `DEF-2025`-class flake
-  would block merges. Re-read after `TP-703b` lands the slim leg and `TP-703h` the registry, with
+  would block merges. Re-read after the platform-legs pack lands the slim leg and `TP-703h` the registry, with
   the leg's measured green rate in hand.
 - **One seat per box, a third machine, or a VM per win seat.** The only change that reaches the
   foreign holds (15 on 10-18, at least 5 h). The operator's environment call; the re-measure's
-  line 3 reports the minutes `TP-703c` cannot move so the call is made on a figure.
+  line 3 reports the minutes the one-tier-per-box pack cannot move so the call is made on a figure.
 - **A second dispatcher seat.** Only if the re-measure's line 8 fails on latency; a sixth worker
   before that is the wrong lever.
 - **Stacked lanes within one seat** (protocol item 4, untested there); nothing here changes it.
@@ -199,12 +199,12 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
   `memory/hook-authoring.md`; platform stand-ins into `docs/FAILURE_MODES.md` §13.7). Memory
   promotions are the operator's approval, never a pack's; held in the dispatcher's candidate log.
 - **The `cc/GOAL.md` hard cap value** (4,500 against a proposed 2,500). The question dissolves
-  under `TP-703d`: a goal file that holds priorities alone is under either cap.
+  under the records-say-what-happened pack: a goal file that holds priorities alone is under either cap.
 - **`DEF-4029`** (the PowerShell zone reader's four shapes), shelved after a platform safety
   stop; resumed on `win` under the neutral-wording rule, outside this roadmap, landed as #366
   (`f3f9c916`), and struck 2026-11-01.
 - **`TP-700`'s headless runner.** A fresh session per lane changes the record layer's writer
-  again; `TP-703d` is written so the runner can call the same row verb, and nothing here waits
+  again; the records-say-what-happened pack is written so the runner can call the same row verb, and nothing here waits
   on it.
 
 ## Task 0 — Verify (the roadmap's; each child carries its own)
@@ -429,6 +429,12 @@ over live rows (re-run it; the five below are the ones a child's mechanism reach
 `task-packs/TP-703h-host-expectations-have-one-registry.md`,
 `task-packs/TP-703i-the-suite-has-a-platform-axis.md`,
 `task-packs/TP-703j-a-strike-reads-the-base-and-the-guard.md`.
+
+**Retired 2026-11-15:** the nine LANDED children (every one but `TP-703h`, which is HELD and
+stays at the root) moved to `task-packs/Done/` under the same file names, on the operator's
+ruling B of the pack-lifecycle call (request `20261115T091125Z-air-95db13`, ack
+`20261115T092256Z-air-d94677`): a landed child no longer waits at the root for its roadmap.
+The list above is the record of what this roadmap created.
 
 **Modified:** `task-packs/FORWARD_LEDGER.md` (one §3 pack row naming the eleven ids).
 
