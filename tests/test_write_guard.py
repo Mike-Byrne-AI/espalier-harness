@@ -13638,7 +13638,7 @@ def _git_seed_repo(work: Path, *tracked: str) -> None:
                  ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "seed"]):
         subprocess.run(["git", "-C", str(work), *args], check=True, capture_output=True, env=env)
     top = subprocess.run(["git", "-C", str(work), "rev-parse", "--show-toplevel"], check=True,
-                         capture_output=True, text=True, env=env).stdout.strip()
+                         capture_output=True, text=True, encoding="utf-8", env=env).stdout.strip()
     assert Path(top).resolve() == work.resolve(), (top, work)
 
 
