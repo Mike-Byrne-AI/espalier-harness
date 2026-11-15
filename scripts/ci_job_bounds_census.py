@@ -113,6 +113,11 @@ def job_for(api_name: str, jobs: dict[str, dict]) -> str | None:
     return base if base in jobs else None
 
 
+#: The rule's factor when ``--factor`` is not given, and the one the figures
+#: tests/test_ci_job_bounds.py derives each bound from are read at.
+FACTOR = 1.5
+
+
 def needed_bound(worst_minutes: float, factor: float) -> int:
     """The bound the rule asks for: ``factor`` times the worst, rounded up to five."""
     return int(math.ceil(worst_minutes * factor / 5.0) * 5)
@@ -312,7 +317,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--runs", type=int, default=20, help="green runs read per job (default 20)")
     ap.add_argument("--scan", type=int, default=60, help="runs listed per workflow at most (default 60)")
-    ap.add_argument("--factor", type=float, default=1.5, help="the bound asked for, times the worst (default 1.5)")
+    ap.add_argument("--factor", type=float, default=FACTOR,
+                    help=f"the bound asked for, times the worst (default {FACTOR})")
     ap.add_argument("--repo", default=None)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
