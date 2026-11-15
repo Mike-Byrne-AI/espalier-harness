@@ -72,6 +72,20 @@ process); a relaunch is a new process and gets its loop from the brief, so
 it needs no second paste either. `claude --worktree` locks the worktree, in an
 interactive session as under `-p`; a killed session leaves the lock behind.
 
+**A seat's loop lives seven days (`DEF-4119`).** Claude Code deletes a
+recurring job seven days after its create, and `/handoff` step 5b re-creates
+the seat's loop at every handoff, so a seat that goes seven days without one
+loses it (the operator's ruling A on call 6d8d93). The step knows the old loop
+by what `CronList` shows of it: its interval and about the first 80 characters
+of its prompt. It takes the new prompt from `seat.py brief`, composed in the
+seat's checkout on the lane branch the handoff runs on. Two limits follow. A
+tick changed on `main` reaches a seat one lane late where the brief is read
+from a lane cut before the change; the next lane is cut from `main`. An edit
+to the loop line's interval or opening matches no old loop: step 5b creates
+nothing and says so in a note to the dispatcher, and the old loop runs the old
+tick until it expires or the seat relaunches, which the dispatcher puts to the
+operator.
+
 **The threshold handoff (since 2026-10-26).** A seat does not run to the
 window's end. Where `espalier.toml` sets `handoff_context_tokens` (this tree:
 200000), the prompt router reads the session's context size from the
@@ -374,6 +388,28 @@ launcher did not start the handoff arms nothing and says the window needs a
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
 | Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` opening with `gridlock:` and carrying the facts it read (or as a note opening the same way where no request waits on the ruling), instead of filing an operator call and waiting; the operator can reverse it, and the seat-day census names each ruling by id on the dispatcher's row (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
 
+**Two open pull requests that share a file are built together first
+(2026-11-15).** With the up-to-date rule off, each pull request's CI tested it
+merged with `main` as of its last push, never with another open one, and git
+merging two cleanly says nothing about their tests. Where the board's
+`overlaps:` line names two open pull requests from different seats, the
+dispatcher builds the combination before the second merges: a scratchpad
+worktree of `origin/main` with both heads merged in, its own virtual
+environment (on the Air the box's `python3` imports a seat worktree's
+`espalier`), and the test classes either diff touches, run without `-n`, which
+takes no box lock and so runs beside a seat's tier, with
+`ESPALIER_MAINTENANCE_MODE` and `FORCE_COLOR` unset (about 6 minutes for the
+census classes on the Air). A red disarms the second's auto-merge (`gh pr
+merge --disable-auto <n>`) and goes to its seat to fix on a catch-up; the
+first merges as it stands. The board's `stale:` line is no substitute: it
+comes after the first merge, and an armed second merges the moment its own
+checks go green, whatever that line says. Two instances: #642 and #643 merged
+cleanly in git and failed together, 3 of 1281 tests, every failure naming the
+cached pattern #643 added to a census #642 had widened, so #643 was disarmed
+and fixed before it merged; `main` with #644 and #643 built the tree `main`
+later took, its tests passed (18551 and 2817, two runs), and the post-merge
+proof was green.
+
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
 own when the job is a wave of a pack the operator has approved (its `Status`
@@ -665,7 +701,7 @@ cross-seat gate.
 |---|---|---|
 | L1 | Two lanes rewrite one record (stored totals, appended rows) | Totals derived on read; records as per-change files behind one loader |
 | L2 | One id minted twice | Per-seat id blocks, minted by the tool |
-| L3 | Two pull requests green alone, red together | PR CI tests the merge with `main` at push; jobs assigned apart; one open pull request per seat; a stale-base check before merge; the post-merge proof; revert first |
+| L3 | Two pull requests green alone, red together | PR CI tests the merge with `main` at push; jobs assigned apart; one open pull request per seat; a stale-base check before merge; the dispatcher's build of two open pull requests that share a file; the post-merge proof; revert first |
 | L4 | Two seats working one job, or negotiating | Jobs assigned by the dispatcher |
 | L5 | Seats believing different things | One live board; read before you state |
 | L6 | Two sessions in one checkout | One seat per worktree; names given by code (`TP-467` wave B) |
