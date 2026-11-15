@@ -373,7 +373,9 @@ EXPECTED_MEMORY_CAP_SITES: dict[str, int] = {  # class: literal
 
 # memory/**/*.md restates the cap in some notes' `**Linked from:**` line.
 # Pinned in AGGREGATE, not per file: most notes legitimately never mention the
-# cap, so a per-file rule would manufacture one finding per silent note.
+# cap, so a per-file rule would manufacture one finding per silent note. The
+# Session Log's rows under memory/session-log.d/ are records and count nothing
+# here (MEMORY_CAP_POPULATION.records), so a handoff never moves this constant.
 #
 # ⚠ This is an INCIDENTAL variant, NOT the prescribed boilerplate. Measured:
 # 45 of 49 notes carry the `**Linked from:**` line; only a handful name the

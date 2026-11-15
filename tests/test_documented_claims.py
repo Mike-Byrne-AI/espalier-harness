@@ -1405,44 +1405,21 @@ MEMORY_CAP_POPULATION = NumericPopulation(
     # tests/test_doc_test_citations.py already globs `memory/**/*.md`. Matching
     # it now is a no-op; matching it later would be a silent gap.
     glob_populations=("memory/**/*.md",),
-    exclusions=(
-        # ⚠ DROPPED 2026-08-20 on this gate's own instruction: the session-log
-        # exclusion stopped silencing any cap-stating line once autoprune archived
-        # the last row that quoted the cap, so it had become an unexplained hole.
-        # It will be OWED AGAIN the next time a session-log row quotes the cap --
-        # that is designed churn, not a defect, but the two arms of this module do
-        # pull against each other: `test_exclusions_are_still_needed` demands an
-        # exclusion be load-bearing TODAY, while this one's own retired reason said
-        # the population "is not stable" by construction. Re-add it with that reason
-        # rather than re-deriving it; the history is at this line.
-        #
-        # ⚠ RE-ADDED 2026-08-29 -- the third cycle of this oscillation, exactly as
-        # the paragraph above predicted. A Session Log row again quotes the cap, so
-        # the count read 2 against a census of 1 and `main` went red. Reason reused
-        # verbatim rather than re-derived, per that instruction; the prior drop was
-        # `54d3b92`.
-        #
-        # ⚠⚠ THIS ENTRY IS A KNOWN SCHEDULED RE-BREAK, NOT A FIX. Read this before
-        # you are surprised by it: `test_exclusions_are_still_needed` asserts every
-        # exclusion silences a cap-stating line TODAY, so this entry goes red the
-        # moment autoprune archives that row out of the Session Log -- on
-        # autoprune's schedule, not on any change of yours. The pattern being
-        # structural rather than content-keyed does NOT prevent that; the assertion
-        # is what guarantees the cycle.
-        #
-        # The non-oscillating fix is region-awareness: treat the rotating Session
-        # Log table as outside the population entirely, rather than listing an
-        # exclusion that must be added and dropped as rows come and go. That was
-        # scoped (~11 gates share this defect, 2 red and 9 latent) and deliberately
-        # DEFERRED to unblock the re-home migration. Do not "fix" the next red by
-        # bumping the census 1->2 -- the census is right, the population is wrong.
-        # 2026-09-07: the scheduled re-break arrived -- autoprune archived the
-        # cap-narrating row at the first-hour lane's handoff, and the entry
-        # (`"ESPALIER_MEMORY.md", r"^\|\s*\d{4}-\d{2}-\d{2}"`, "Session Log
-        # rows are a rotating record, not a claim") was dropped as this note
-        # prescribes. Re-add it, verbatim, when a dated Session Log row narrates
-        # the cap again; the region-aware fix above is still the way out.
-    ),
+    # The Session Log's rows (`memory/session-log.d/`, inside the glob) and the
+    # changelog's fragments (`changelog.d/`, which the release fold writes into
+    # CHANGELOG.md, a record in _NOT_CAP_SURFACES above) are dated records: a number a row narrates
+    # in a cap shape is history at its value, so they state no site. This is
+    # the region-awareness the exclusion that used to sit below kept naming as
+    # the way out: while the Session Log was a table in ESPALIER_MEMORY.md, an
+    # exclusion for its rows was dropped (2026-08-20), re-added (2026-08-29) and
+    # dropped again (2026-09-07) as rows quoting the cap came and were pruned.
+    # Since the fold a row is a file of its own, so the class is a directory
+    # the records' one home names, and nothing is added or dropped as rows
+    # rotate (DEF-3082: a handoff row raised a CI bound to the cap's value in
+    # an arrow chain and redded a required cell, and the way past was a reword
+    # of the record).
+    records=is_dated_fragment,
+    exclusions=(),
 )
 
 
@@ -1944,7 +1921,9 @@ class TestMemoryCapPopulation:
 
         It is also symmetric: a NEW doc that starts restating the cap is
         enrolled by nothing. This asserts census + glob + documented
-        exclusions == every tracked `.md` that states it.
+        exclusions == every tracked `.md` that states it. A dated record
+        fragment (`MEMORY_CAP_POPULATION.records`) states nothing, so it is
+        never discovered here.
         """
         try:
             out = subprocess.run(
@@ -2004,9 +1983,10 @@ class TestMemoryCapPopulation:
         entry here earned its keep while `ESPALIER_MEMORY.md`'s session log held a
         row quoting the cap, that file sat at its cap with no headroom, autoprune
         archived the row on its own schedule, and the exclusion was dropped in
-        `54d3b92` once it silenced nothing. Exactly as predicted here, which is
-        why the reasoning is preserved rather than deleted — the same exclusion is
-        owed again the next time a session-log row quotes the cap.
+        `54d3b92` once it silenced nothing. It is not owed again: the Session Log
+        is one file per row now, and the population reads those files as records
+        (`records`), so a row quoting the cap states no site and needs no entry
+        here (DEF-3082).
 
         ⚠ Tense corrected 2026-08-20: this said "currently earns its keep" for as
         long as the list was empty. The ceiling assertion below is `<=`, so an
@@ -2110,7 +2090,8 @@ class TestMemoryCapPopulation:
         No per-file rule here: most notes legitimately never mention the cap,
         so a min-one assertion would manufacture one finding per silent note.
         The aggregate still reds on a raise, because every stale site drops
-        out of the count at the new value.
+        out of the count at the new value. A Session Log row under the glob is
+        a record and counts nothing (`MEMORY_CAP_POPULATION.records`).
         """
         total = 0
         per_file: list[str] = []
@@ -2130,6 +2111,51 @@ class TestMemoryCapPopulation:
             f"moves this count — bump the constant. A DROP to zero means the "
             f"cap was raised without updating the notes."
         )
+
+    def test_a_dated_record_states_no_site(self, tmp_path):
+        """A Session Log row and a changelog fragment are records (Core Rule
+        13): a number either narrates in a cap shape is history at its value,
+        so neither states a site, and the glob count and the coverage sweep,
+        which both read `population_sites`, pass over them. A live note beside
+        them still counts, so the skip is the record class alone. DEF-3082:
+        #635's handoff row raised a CI bound, in minutes, to the cap's value in
+        an arrow chain, and this glob's count redded a required cell on it."""
+        cap = EXPECTED_MEMORY_MD_CAP
+        planted = {
+            "memory/session-log.d/2026-11-14-114731-air-work.md":
+                f"| 2026-11-14 | **air-work: three bounds raised** | perturbed 100 -> {cap} (68.7, 105) |\n",
+            "changelog.d/2026-11-14-a-lane.md": f"- the index stays a {cap}-line file.\n",
+            "memory/a-live-note.md": f"**Linked from:** the {cap}-line index\n",
+        }
+        for rel, text in planted.items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(text, encoding="utf-8")
+        sites = {rel: len(population_sites(tmp_path, MEMORY_CAP_POPULATION, rel)) for rel in planted}
+        assert sites == {
+            "memory/session-log.d/2026-11-14-114731-air-work.md": 0,
+            "changelog.d/2026-11-14-a-lane.md": 0,
+            "memory/a-live-note.md": 1,
+        }, (
+            f"sites per planted file: {sites}. A dated record fragment (a Session Log row, a "
+            "changelog entry) narrates its day: counted, it reds the census whenever a row names "
+            "a number equal to the cap, and again when the fold prunes the row, and the only way "
+            "past is editing the record. The live note must still count."
+        )
+
+    def test_the_record_class_is_the_fragment_home_alone(self):
+        """The record class is the fragments' one home, never a list typed here,
+        and it binds no census site. An exclusion is budgeted line by line
+        (`CONTRACT_CEILINGS`); a record class skips whole files, so it widens
+        only where `tools/cc/_record_fragments.py` says a file is a dated
+        record, and a census site under it would stop stating the cap for a
+        reason the per-file test cannot name."""
+        assert MEMORY_CAP_POPULATION.records is is_dated_fragment, (
+            "the cap census's record class is not tests._record_paths.is_dated_fragment: a widened "
+            "or typed predicate skips files no record rule named. Keep the one home, or say here "
+            "why a second record class exists."
+        )
+        bound = sorted(rel for rel in MEMORY_CAP_POPULATION.required if is_dated_fragment(rel))
+        assert not bound, f"census sites the record class would skip: {bound}"
 
     def test_declared_population_is_not_a_subset_of_the_occurrence_contract(self):
         """Guard the reason this contract exists.

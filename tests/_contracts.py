@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,14 @@ class NumericPopulation:
     # (relpath, line-regex, reason) — a line matching the regex in that file
     # is not a claim about this fact and is not counted.
     exclusions: tuple[tuple[str, str, str], ...] = ()
+    # A repo-relative path this answers True for is a RECORD (Core Rule 13):
+    # what it says narrates the value of its day and stays correct as history
+    # once the value moves, so it states no site, wherever it sits (a glob
+    # member, or a file the coverage sweep discovers). Editing a record to
+    # pass this contract falsifies it. A predicate from the records' own
+    # home, never a list typed here: an exclusion above is budgeted line by
+    # line, and this skips whole files.
+    records: Callable[[str], bool] | None = None
 
     def matcher(self) -> re.Pattern[str]:
         """Case-insensitive alternation of the shapes at the expected value.
@@ -118,6 +126,10 @@ def population_sites(
     Lines matching one of the population's exclusion patterns for this file
     are skipped — an exclusion carries its reason in the registry, so a
     silenced line is legible rather than an unexplained count adjustment.
+    A file the population's ``records`` predicate names is a record and
+    returns ``[]`` unread: every reader of the population (the per-file
+    census, the glob count, the coverage sweep) goes through here, so all
+    of them pass over it alike.
 
     A missing file returns ``[]`` (the caller's ``.exists()`` check gives the
     better message), but an UNDECODABLE one RAISES. Swallowing it here would
@@ -127,6 +139,8 @@ def population_sites(
     both, which is fine for a presence check; for a COUNT contract the
     misdiagnosis is new, so this one differs deliberately.
     """
+    if population.records is not None and population.records(relpath):
+        return []
     path = root / relpath
     try:
         text = path.read_text(encoding="utf-8")
