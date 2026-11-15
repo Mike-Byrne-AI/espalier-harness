@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2089",
+ "subject": "tests/test_ledger_row.py",
+ "cmd": "python3 -c \"import ast,os,shlex,subprocess,sys;C=[c for c in ast.walk(ast.parse(open('tests/test_ledger_row.py',encoding='utf-8').read())) if isinstance(c,ast.ClassDef) and c.name=='TestTheShippedVerbRunsTheRealRules'][0];P=[a.value.value for a in ast.walk(C) if isinstance(a,ast.Assign) and getattr(a.targets[0],'id','')=='probe'][0];r=subprocess.run([sys.executable,'-X','utf8']+shlex.split(P)[1:],capture_output=True,text=True,encoding='utf-8',env=dict(os.environ,PATH=os.devnull),timeout=60);print(r.stdout.strip()=='True')\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "README.md"
+ ],
+ "row_sha": "bb20d17809d1",
+ "text_sha": "e1323f4bd06f",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD cc9d0823699d)"
+}
