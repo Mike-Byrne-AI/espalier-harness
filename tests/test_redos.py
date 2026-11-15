@@ -841,6 +841,7 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # on a call operator after the pipe; each on its repeated seed.
     ("ps_interp_stdin_redirect", _PS_INTERP_STDIN_RE, "| bash 2>&1 "),
     ("ps_interp_stdin_call_operator", _PS_INTERP_STDIN_RE, "| & bash "),
+    ("ps_interp_stdin_iex", _PS_INTERP_STDIN_RE, "| iex "),
     ("ps_python_switch_values", _PS_PYTHON_DASH_C_RE, "python -W ignore"),
     # DEF-637 (§C49), registered the day they landed: the cross-shell openers
     # on their repeated heads and repeated switch runs, and the two coverage
@@ -3049,6 +3050,7 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
     (_PS_INTERP_STDIN_RE, "@'\nx\n'@ | python -"),
     (_PS_INTERP_STDIN_RE, "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
     (_PS_INTERP_STDIN_RE, "'x' | bash 2>&1"),
+    (_PS_INTERP_STDIN_RE, "'x' | Invoke-Expression"),
     (_PS_HERE_STRING_RE, "$x = @'\nline one\nline two\n'@"),
 ])
 def test_ps_interpreter_regex_still_matches(pattern, payload):

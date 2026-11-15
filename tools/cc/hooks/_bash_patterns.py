@@ -13449,10 +13449,24 @@ if not {interp for interp, _ in _PS_INLINE_PROGRAM_RES} <= set(_STDIN_PROGRAM_WR
         "key would raise KeyError inside the guard"
     )
 
+#: The cmdlets that run a string piped to them as a PowerShell program, in
+#: the current session and location (DEF-3080): `'<program>' | iex` runs
+#: what `iex '<program>'` runs, and the direct form was always read (the
+#: carrier reader and the re-parse openers) while the piped one met no
+#: reader on any tier -- driven with the wired hook, a recursive force
+#: delete of the drive root piped into `iex` was a plain allow beside its
+#: walled direct form, and a here-string reading a secret file piped that
+#: way drew no secret tier. A pipeline of several strings runs each as its
+#: own program, which the piped reader's each-literal-alone readings cover.
+#: PowerShell-leg only: neither word is a command on the Bash leg, whose
+#: roster (`_STDIN_SHELL_HEADS`) stays the two shells.
+_PS_STDIN_IEX_HEAD_ALTERNATION = "invoke-expression|iex"
+_PS_STDIN_IEX_HEADS = frozenset(_PS_STDIN_IEX_HEAD_ALTERNATION.split("|"))
 #: The heads that read a program from stdin when piped to, ONE literal: the
 #: opener's alternation and the dispatch below are both derived from it.
 _PS_STDIN_HEAD_ALTERNATION = (
     "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS + "|" + _POSIX_SHELL_HEADS
+    + "|" + _PS_STDIN_IEX_HEAD_ALTERNATION
 )
 #: Head -> `_STDIN_PROGRAM_WRITE_RES` key; the two PowerShell shells are
 #: absent because their program is PowerShell and is re-scanned, not
@@ -13463,6 +13477,11 @@ _PS_STDIN_DISPATCH: dict[str, str] = {
 }
 #: The same roster the Bash leg routes out to (DEF-637): one literal, two legs.
 _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
+#: Every head whose piped program is PowerShell, the one sink roster the
+#: piped readers consult (DEF-3080): the two shells and the two cmdlets,
+#: each program re-read by the PowerShell readers one level down. The
+#: `-File` drop below stays the shells' alone, the switch being theirs.
+_PS_STDIN_PS_HEADS = _PS_STDIN_SHELL_HEADS | _PS_STDIN_IEX_HEADS
 #: The POSIX shells a PowerShell string can be piped into (DEF-3075): Git's
 #: `bash.exe` behind PowerShell 5.1 runs the piped text, so its program is
 #: Bash and reaches the Bash readers through `_ps_shell_program_bodies`, never
@@ -13524,7 +13543,7 @@ _PS_BASH_DASH_C_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 if set(_PS_STDIN_HEAD_ALTERNATION.split("|")) != (
-    set(_PS_STDIN_DISPATCH) | _PS_STDIN_SHELL_HEADS | _PS_STDIN_POSIX_HEADS
+    set(_PS_STDIN_DISPATCH) | _PS_STDIN_PS_HEADS | _PS_STDIN_POSIX_HEADS
 ):
     raise RuntimeError(
         "PowerShell stdin-head roster drift: the alternation and the dispatch disagree"
@@ -13893,9 +13912,10 @@ def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> li
 # before it (`_ps_powershell_program_starts`) and cmd's
 # program glued to its switch or to a run of switches (`cmd /c"<program>"`,
 # `cmd /s/c"<program>"`) are read as the spaced forms (DEF-4061). Also not
-# read here: a string piped into a carrier (`'...' | iex`), one joined with
+# read here: a string piped into a carrier (`'...' | iex`, read instead by
+# the piped reader, `ps_piped_ps_launches`, DEF-3080), one joined with
 # `+`, and the words after a quoted program (`cmd /c "type" .env` reads
-# `type` alone); the secret leg's old split refuses the first two whenever
+# `type` alone); the secret leg's old split refuses the joined one whenever
 # the statement opens with the string.
 _PS_CARRIER_RE = re.compile(
     r"(?:" + _PS_CMD_POS + _PS_EXE_PREFIX + r"(?P<head>" + _PS_REPARSE_OPENER_WORDS + r")"
@@ -14196,7 +14216,9 @@ def _ps_stdin_program_bodies(
     driven); the body is the raw ``command``'s text of the pipeline stage
     before the pipe. ``posix`` picks the roster: the POSIX shells alone (their
     program is Bash, `_ps_shell_program_bodies`), else every other head, so a
-    consumer that indexes `_PS_STDIN_DISPATCH` never meets a POSIX head."""
+    consumer that indexes `_PS_STDIN_DISPATCH` never meets a POSIX head; the
+    PowerShell sinks (`_PS_STDIN_PS_HEADS`, the cmdlets included) it meets, so
+    each such consumer branches on that roster before it indexes."""
     for head, start, pipe, _at in _ps_stdin_program_spans(command, scan, posix=posix):
         yield head, command[start:pipe]
 
@@ -14228,6 +14250,8 @@ def _ps_stdin_program_spans(
             continue  # `-File x.ps1`: the file is the program, the pipe is data
         if posix and m.group("suffix").lower() not in ("", ".exe"):
             continue  # `| shasum`, `| sha256sum`: another program, not the shell
+        if head in _PS_STDIN_IEX_HEADS and m.group("suffix"):
+            continue  # `| iexplore`: another command; a cmdlet has no file suffix
         i = bisect.bisect_left(boundaries, pipe)
         start = boundaries[i - 1] + 1 if i else 0
         yield head, start, pipe, m.start(1)
@@ -16049,7 +16073,9 @@ def ps_start_process_ps_programs(raw: str, scan: str) -> Iterator[str]:
 
 def ps_piped_ps_launches(raw: str, scan: str) -> list[tuple[int, str]]:
     """``(offset, program)`` for each reading of a program piped to
-    powershell or pwsh reading it from the pipe (DEF-2079): the piped twin
+    powershell or pwsh reading it from the pipe (DEF-2079), or into `iex` /
+    `Invoke-Expression`, which run it in this session (DEF-3080; the sink
+    roster `_PS_STDIN_PS_HEADS`, the direct `iex '...'` its oracle): the piped twin
     of `ps_start_process_shell_launches`' PowerShell launches. The program
     is `_ps_piped_program_readings` of the stage before the pipe, the
     readings alone, never the stage as typed, which the outer level judges
@@ -16066,7 +16092,7 @@ def ps_piped_ps_launches(raw: str, scan: str) -> list[tuple[int, str]]:
     if "|" not in raw:
         return launches    # no pipe, no piped program: every PowerShell call pays this read
     for head, start, pipe, at in _ps_stdin_program_spans(raw, scan):
-        if head in _PS_STDIN_SHELL_HEADS:
+        if head in _PS_STDIN_PS_HEADS:
             launches.extend((at, program) for program
                             in _ps_piped_program_readings(raw[start:pipe], powershell=True))
     return launches
@@ -20600,7 +20626,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
             for om in rx.finditer(body):
                 paths.append(om.group(2))
     for head, segment in _ps_stdin_program_bodies(raw, command):
-        if head in _PS_STDIN_SHELL_HEADS:
+        if head in _PS_STDIN_PS_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
                 for program in _ps_program_literals_before_pipe(segment):
                     paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
@@ -20773,7 +20799,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for interp, body in _ps_inline_program_bodies(raw, scan):
         out.extend(_program_effects(interp, body))
     for head, segment in _ps_stdin_program_bodies(raw, scan):
-        if head in _PS_STDIN_SHELL_HEADS:
+        if head in _PS_STDIN_PS_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
                 for program in _ps_program_literals_before_pipe(segment):
                     out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))

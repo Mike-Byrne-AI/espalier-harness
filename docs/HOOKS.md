@@ -1802,7 +1802,8 @@ The same interpreter programs are caught on the PowerShell tool: `python -c`,
 bare or `&`-called quoted executable path, valued switches before `-c` (on
 both shells: `python3 -W ignore -c "..."` denies on Bash too), and a
 program piped to the interpreter (`@'...'@ | python -`, `'...' | node`) or
-to a PowerShell reading stdin (`| pwsh -Command -`), whose program -- the
+to a PowerShell reading stdin (`| pwsh -Command -`) or to `iex` /
+`Invoke-Expression` (`'...' | iex`), whose program -- the
 last here-string or quoted literal before the pipe -- is scanned as
 PowerShell; a `-File <script>` there means the pipe is data. A variable
 holding the program, a program read from a file, `Start-Process python
@@ -1842,13 +1843,16 @@ CR that ends each element is what keeps a trailing backslash from joining
 the next element to it in the shell, so the each-alone readings are what
 keep that element's verdict. A program piped to a PowerShell shell
 (`| pwsh -Command -`) is re-read in the same readings by every tier, one
-level down, as its direct `powershell -Command "..."` form is. The opener's redirect, comment and call operator serve
+level down, as its direct `powershell -Command "..."` form is, and so is
+one piped into `iex` or `Invoke-Expression`, as its direct `iex '...'`
+form is. The opener's redirect, comment and call operator serve
 every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
 head that only begins with a shell's name (`shasum`) and a shell given a
 script operand with no switch before it (`| bash script.sh`) leave the pipe
 as data; a switch before the operand (`| bash -x script.sh`) takes it as
 the switch's value, and the pipe is read: an over-read, the refusing
-direction. Declared limits: only the stage immediately before the pipe,
+direction. Declared limits, the same for every piped head (`| iex`
+included): only the stage immediately before the pipe,
 outside parentheses, is read, so a literal in `(...)` or `@(...)`, one in a
 variable a tier does not inline, one behind a middle stage
 (`| Out-String | bash`), and a string an operator builds (a `+`, `-f`,
@@ -2046,9 +2050,9 @@ bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
 every tier its direct form meets. So is a program piped to powershell or
 pwsh reading its program from the pipe (`'...' | pwsh -Command -`, a
-here-string or a double-quoted string piped the same way), placed where its
-statement runs, since the piped shell starts in the current location as a
-started one does. powershell.exe's implicit
+here-string or a double-quoted string piped the same way), or into `iex` /
+`Invoke-Expression`, placed where its statement runs, since the piped shell
+starts in the current location as a started one does and `iex` runs in it. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before
 the program stay unread, declared and pinned beside it.
 
@@ -2145,12 +2149,16 @@ a value, and a nest of `@(` spends none of the levels a nest of `$(` does), incl
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
 carries after the started shell's `-Command` or `-c`, or a program piped
-to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`). A carrier
+to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`) or
+into `iex` / `Invoke-Expression`, which run it in this session
+(`@'...'@ | iex`: every literal of the stage before the pipe is read as
+the program, here-strings and expandable strings included, so a quoted
+argument of the command before the pipe is read too, a reading that
+refuses nothing a plain word does). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
 argument list and the words after a quoted program (`cmd /c "type" .env`).
 A PowerShell statement that opens with a quoted string is read as the
-command its first word names, which is what refuses a string piped into
-`iex`, unless nothing in the command can run the string: the right-hand
+command its first word names, unless nothing in the command can run the string: the right-hand
 side of a last-statement assignment to a variable the command names
 nowhere else, with no pipe, call operator, group or script block anywhere
 (`$hint = 'gc .env'` alone is a mention, and the same with a later

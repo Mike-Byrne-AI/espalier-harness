@@ -12530,8 +12530,11 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         bp = _bash_patterns_module()
         heads = set(bp._PS_STDIN_HEAD_ALTERNATION.split("|"))
         assert bp._PS_STDIN_POSIX_HEADS <= heads
-        assert heads == set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS | bp._PS_STDIN_POSIX_HEADS
-        assert not bp._PS_STDIN_POSIX_HEADS & (set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS)
+        assert heads == set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_PS_HEADS | bp._PS_STDIN_POSIX_HEADS
+        assert not bp._PS_STDIN_POSIX_HEADS & (set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_PS_HEADS)
+        # the cmdlets that run a piped string (DEF-3080) are PowerShell sinks,
+        # never an interpreter's dispatch key
+        assert not bp._PS_STDIN_IEX_HEADS & set(bp._PS_STDIN_DISPATCH)
 
     _READER = [
         ("bare", "'rm -rf /' | bash", ["rm -rf /"]),
@@ -22455,6 +22458,10 @@ class TestCrossShellRouting:
         assert ps_heads and posix_heads
         assert bp._STDIN_SHELL_HEADS == ps_heads
         assert bp._PS_STDIN_SHELL_HEADS == ps_heads
+        # the PowerShell leg's sink roster is the shells plus the two cmdlets
+        # that run a piped string (DEF-3080), which the Bash leg never routes
+        assert bp._PS_STDIN_PS_HEADS == ps_heads | {"iex", "invoke-expression"}
+        assert not bp._PS_STDIN_IEX_HEADS & set(bp._INTERP_ALTERNATION.split("|"))
         assert ps_heads <= set(bp._INTERP_ALTERNATION.split("|"))
         assert ps_heads <= set(bp._PS_STDIN_HEAD_ALTERNATION.split("|"))
         assert bp._POWERSHELL_HEADS in bp._POWERSHELL_DASH_COMMAND_RE.pattern
