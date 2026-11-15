@@ -1780,8 +1780,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        55, "86b097eeb9646bf4d1e85fae537e2e047429dac5a34facb88fb369fa21d3915c",
+        52, "669bcae76fe3b50b8ba322f10758aecfe38e283406445bde3f949743d56b3363",
         "CORRECT_BY_REMEDY",
+        "52 FROM 55 on 2026-11-14 (DEF-3078's lane), not a narrowed population: three roster "
+        "comprehensions (TestQuotedVerbTailIsUniform's and "
+        "TestPowerShellQuotedVerbBehindTheCallOperator's test_the_roster_is_the_modules_anchored_arms, "
+        "TestQuotedTargetSurvivesTheRoot._roster) now iterate "
+        "`[*vars(bp).items(), *first_use_patterns(bp).items()]`, the namespace plus the first-use "
+        "compiles a namespace walk never saw, a WIDER population this census's shape reader does not "
+        "count as a row; each still asserts equality against its roster, so a narrowing reds there. "
         "GREW 53 -> 55 on 2026-11-12 (DEF-3072): one new line, counted as an all-any and "
         "a comprehension: TestAShellsOptionHidesNoPipedProgram::"
         "test_a_switched_shell_fetch_meets_the_nudge asserts `any(...)` over "

@@ -969,6 +969,13 @@ class TestBinaryVerbSpellingIsUniform:
         "_DIR_VERB_RE", "_MKDIR_RE",
         "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
     })
+    #: Arms the quoted-verb roster carries whose other spellings are a ruled
+    #: limit, read nowhere: the rm nudge's carrier-fed remove (DEF-3063), a
+    #: first-use compile named as its accessor's call, spells its emit verb
+    #: `(?-i:echo|printf)`, so neither a quoted nor a binary spelling (`ECHO`,
+    #: `echo.exe`) draws its nudge; no session spells the emit verb so (SP 16,
+    #: air's note 376af5).
+    _UNREAD_BY_RULING = frozenset({"_carrier_fed_remove_re()"})
     #: The arms with no zone-deny fixture in the quoted-verb roster: proven at
     #: the pattern (the secret leg's reads), or through the hook below (the
     #: rm segment). Each sample begins with its verb.
@@ -990,9 +997,10 @@ class TestBinaryVerbSpellingIsUniform:
         fixtures = TestQuotedVerbTailIsUniform._FIXTURES
         walked = {k for k, v in fixtures.items()
                   if v and k not in self._CASE_SENSITIVE_BY_DESIGN} | set(self._PATTERN_SAMPLES)
-        assert set(fixtures) == walked | self._CASE_SENSITIVE_BY_DESIGN, sorted(
-            set(fixtures) ^ (walked | self._CASE_SENSITIVE_BY_DESIGN))
-        assert not walked & self._CASE_SENSITIVE_BY_DESIGN
+        unwalked = self._CASE_SENSITIVE_BY_DESIGN | self._UNREAD_BY_RULING
+        assert set(fixtures) == walked | unwalked, sorted(set(fixtures) ^ (walked | unwalked))
+        assert not walked & unwalked
+        assert not self._CASE_SENSITIVE_BY_DESIGN & self._UNREAD_BY_RULING
         # the inner-head arms keep their keyword pin and carry a fixture the
         # binary test walks
         assert _INNER_HEAD_ARMS <= self._CASE_SENSITIVE_BY_DESIGN
