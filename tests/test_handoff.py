@@ -395,6 +395,58 @@ class TestSlashCommandSurface:
         assert "Never amend the set-aside commit by hand" in paragraph
 
 
+class TestTheHandoffRestartsTheSeatLoop:
+    """DEF-4119: a seat's interval loop is a recurring Claude Code job, deleted
+    seven days after its creation, and no step re-created it, so a window the
+    own-clear re-primed read the expired loop as one never started. These pin
+    the handoff step that re-creates it, because the step is prose a model
+    runs and the row's probe is null by design (a text check there would flip
+    on wording, not on the loop)."""
+
+    @staticmethod
+    def _body() -> str:
+        return (REPO_ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
+
+    def test_the_loop_step_runs_after_the_commit_and_before_the_goal(self):
+        """Dies to: the step moved after step 7, which writes the new id into
+        the goal snapshot, or past step 8, whose verb arms the clear."""
+        text = self._body()
+        assert "\n## 5b. " in text, "no step 5b in the handoff body"
+        assert text.index("\n## 5. ") < text.index("\n## 5b. ") < text.index("\n## 6. ") < text.index("\n## 7. ")
+
+    def test_the_step_re_creates_a_listed_loop_from_the_brief(self):
+        """Dies to: a step that copies the prompt from the listing, which
+        CronList shortens; one that drops the delete (two loops tick), the
+        create, `recurring` or the cron spelling /loop itself used; one that
+        deletes before it creates, which leaves no loop when the create
+        fails; or one that drops the note a launched window sends, since the
+        summary's Risks line is cleared with the window."""
+        text = self._body()
+        assert "\n## 5b. " in text, "no step 5b in the handoff body"
+        start = text.index("\n## 5b. ")
+        step = " ".join(text[start:text.index("\n## 6. ", start)].split())
+        for word in ("`CronList`", "`CronDelete`", "`CronCreate`", "python tools/cc/seat.py brief <seat>",
+                     "`*/<N> * * * *`", "`recurring` true", "never from the listing", "Create first",
+                     "`ESPALIER_OWN_CLEAR=1`", "mail.py send --type note"):
+            assert word in step, word
+        assert step.index("`CronCreate` with") < step.index("then `CronDelete` every id"), "delete before create"
+
+    def test_a_worktree_seat_runs_the_loop_step(self):
+        """Dies to: the preamble's worktree list stopping at step 5, which
+        tells a seat in a linked worktree to skip the re-create."""
+        text = self._body()
+        preamble = " ".join(line.lstrip(">").strip() for line in text[:text.index("\n## 1. ")].splitlines())
+        assert "steps 1 to 5b run here" in " ".join(preamble.split())
+
+    def test_the_goal_step_writes_the_new_loop_id(self):
+        """Dies to: step 7 losing the sentence. The re-create mints a new id,
+        and a goal snapshot naming the old one points the next window at a
+        loop that no longer exists."""
+        text = self._body()
+        goal = " ".join(text.split("\n## 7. ", 1)[1].split("\n## 7b. ", 1)[0].split())
+        assert "the id `CronCreate` returned in step 5b" in goal
+
+
 # ── Rendered command docs ─────────────────────────────────────────────────────
 
 
