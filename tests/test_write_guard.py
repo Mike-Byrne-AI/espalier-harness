@@ -1445,7 +1445,7 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
     @staticmethod
     def _carrier_heads(bp) -> set[str]:
         """The carrier reader's head words, read from `_CARRIER_HEAD_RE`'s
-        `head` group (`eval`, `watch`, `script`, `su` today)."""
+        `head` group (`eval`, `builtin`, `watch`, `script`, `su` today)."""
         group = bp._CARRIER_HEAD_RE.pattern.split("(?P<head>", 1)[1].split(bp._EXE_SUFFIX, 1)[0]
         return set(re.findall(r"[a-z]+", group.replace("(?i:", "")))
 
@@ -1478,7 +1478,7 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
                            bp._WRAPPER_TAIL_BINARIES)
         assert bp._CMD_POS_WRAPPER_BINARIES == "(?:" + lead + "|" + mid + "|" + tail + ")"
         assert bp._CMD_POS_SLASHED_DECLINED_BINARIES == "(?:" + lead + "|" + tail + ")"
-        assert "(?P<head>eval|(?i:" + mid + "|su)" in bp._CARRIER_HEAD_RE.pattern
+        assert "(?P<head>eval|builtin|(?i:" + mid + "|su)" in bp._CARRIER_HEAD_RE.pattern
         roster = set(re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES))
         assert set(re.findall(r"[a-z]+", mid)) == roster & self._carrier_heads(bp)
 
@@ -9489,11 +9489,11 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
-            # `_carrier_builtin_head_re`, `_carrier_fed_remove_re` (DEF-3063)
-            # and `_powershell_head_re` (DEF-4061) take no argument and return
-            # a compiled pattern, compiled on first use: no key a flag could
-            # be missing from, and no verdict
-            "_carrier_builtin_head_re", "_carrier_fed_remove_re",
+            # `_carrier_fed_remove_re` (DEF-3063) and `_powershell_head_re`
+            # (DEF-4061) take no argument and return a compiled pattern,
+            # compiled on first use: no key a flag could be missing from, and
+            # no verdict
+            "_carrier_fed_remove_re",
             # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
             # returns its mask, or the text itself: the masker's transform,
             # which reads no flag (its call graph is pinned stateless in
@@ -9501,7 +9501,9 @@ class TestCatastrophicRmFlagOrderIndependent:
             "_masked_or_raw",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
-            "_nested_shell_programs_cached", "_powershell_head_re",
+            "_nested_shell_programs_cached",
+            "_powershell_head_re",              # compiled on first use, as above
+
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
             # whether a PowerShell literal span is re-parsed as a program --
@@ -15941,12 +15943,15 @@ class TestQuotedProgramsAreReadAsPrograms:
 
     # pwsh refuses a colon-bound program switch: 7.6.5 reads the word as a
     # script file's name (its default is -File), exits 64 and runs nothing
-    # (air's drive, note 24fc34), so neither tool reads a program there
-    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    # (air's drive, note 24fc34), so neither tool's carrier reads a program
+    # there. The PowerShell tool's row holds one statement: its statement
+    # cut leaves a pwsh word's string unmasked, so a second statement in it
+    # is read by the cut, a refusal that is the cut's, not the carrier's
+    # (the code review of d349ea1)
+    @pytest.mark.parametrize("tool, program", [("Bash", "'Get-Date; gc .env'"), ("PowerShell", "'gc .env'")])
     @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
-    def test_a_pwsh_program_bound_by_a_colon_is_not_read(self, tool, switch, tmp_path):
-        command = "pwsh " + switch + "'Get-Date; gc .env'"
-        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+    def test_a_pwsh_program_bound_by_a_colon_is_not_read(self, tool, program, switch, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": "pwsh " + switch + program}, tmp_path))
 
     # Windows PowerShell 5.1 runs its first word that is no parameter as
     # command text (its default is -Command), on both tools; which
@@ -15959,6 +15964,18 @@ class TestQuotedProgramsAreReadAsPrograms:
         "powershell.exe -NoLogo 'gc .env'",
         "powershell -ExecutionPolicy Bypass 'gc .env'",
         "powershell -ExecutionPolicy Bypass -NoProfile 'gc .env'",
+        # a value then a switch before a bare program: red under a walker
+        # that reads its first candidate alone (the failure-mode review)
+        "powershell -ExecutionPolicy Bypass -NoProfile gc .env",
+        # a quoted switch: the quotes are gone before powershell.exe reads
+        # it, so it is a switch, `-Command` included (the failure-mode review)
+        'powershell.exe -NoProfile "-Command" "gc .env"',
+        "powershell '-NoProfile' 'gc .env'",
+        # 5.1 reads an en dash, em dash or horizontal bar as a parameter's
+        # lead (driven, echo only, by the code review of d349ea1)
+        "powershell " + chr(0x2013) + "NoProfile gc .env",
+        "powershell " + chr(0x2013) + "c:'gc .env'",
+        "powershell " + chr(0x2014) + "Command 'gc .env'",
     ])
     def test_a_powershell_program_with_no_command_switch_is_read(self, tool, command, tmp_path):
         assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),

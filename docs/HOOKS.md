@@ -2095,10 +2095,11 @@ and `pwsh -Command` (`iex`'s and powershell's bound by a colon too, under any
 prefix, from either tool: `iex -Command:'...'`, `powershell -c:'...'`;
 Windows PowerShell 5.1 binds no colon but runs the whole word as command
 text, so a statement after its first runs; pwsh reads a colon-bound word as
-a script file's name and runs nothing, so none is read there),
+a script file's name and runs nothing, so the carrier reads none there),
 powershell's program with no `-Command` before it, from either tool (its
-first word that is no parameter; which parameters take a value is not read,
-so each word after a switch is read as a program too),
+first word that is no parameter, a parameter led by `-`, `/` or a Unicode
+dash and quoted or not; which parameters take a value is not read, so each
+word after a switch is read as a program too),
 `cmd /c`, `/k` or `/r` (which cmd runs as `/c`; glued to the program or to
 a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
