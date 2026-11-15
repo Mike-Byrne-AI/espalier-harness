@@ -4752,3 +4752,183 @@ class TestGitCheckpointsAgreeAcrossTools:
     def test_a_tool_neither_reads_stays_silent(self, tmp_path):
         for predicate in _CHECKPOINT_PREDICATES.values():
             assert not predicate("Write", {"command": "git push --force origin v1.2.3"}, tmp_path)
+
+
+# ── A program a carrier runs ──────────────────────────────────────────────────
+
+#: The carriers whose program a bump reads as the command it is, each as the
+#: text before and after its program: ``(label, before, after)``.
+_CARRIER_FORMS = [
+    # each find narrowed by name: an un-narrowed find with a remove in its
+    # action is a sweep of its root, the wall's (pinned below)
+    ("find-exec", "find . -name x -exec ", " ';'"),
+    ("find-execdir", "find . -name .git -execdir ", " \\;"),
+    ("find-ok", "find . -name x -ok ", " ';'"),
+    ("find-exec-batch", "find . -name x -exec ", " {} +"),
+    ("fd-x", "fd -x ", ""),
+    ("fd-X", "fd -t d -X ", ""),
+    ("parallel", "parallel ", " ::: a b"),
+    ("parallel-valued", "parallel -j 4 ", " ::: a"),
+    ("eval", "eval '", "'"),
+    ("builtin-eval", "builtin eval '", "'"),
+    ("watch", "watch -n 5 '", "'"),
+    ("script", "script -qc '", "' out.log"),
+    ("su", "su -c '", "'"),
+    # the forms DEF-4120 names: su with a user, a login su, and BSD
+    # script's command after its file word
+    ("su-user", "su app -c '", "'"),
+    ("su-login-user", "su - app -c '", "'"),
+    ("su-login", "su - -c '", "'"),
+    ("script-bsd", "script out.log ", ""),
+    ("script-bsd-t", "script -t 0 out.log ", ""),
+]
+#: Each bump's program, the one its bare spelling bumps on.
+_CARRIED_PROGRAMS = {
+    "forcepush": "git push --force origin main",
+    "release": "git push origin v1.2.3",
+    "gitclean": "git clean -fdx",
+    "discard": "git reset --hard",
+    "kill": "kill -9 4242",
+    "rmrf": "rm -rf src",
+}
+_CARRIED_PREDICATES = {
+    **_CHECKPOINT_PREDICATES,
+    "discard": _speedbump._pred_discard,
+    "rmrf": _speedbump._pred_rmrf,
+}
+
+
+#: ``(label, carrier, its direct twin)``: a program a carrier runs draws
+#: exactly what its direct twin draws, on every bump (the dispatcher's
+#: ruling d144cd). An item a launcher finds, or reads from stdin, is the
+#: twin's `xargs` item; parallel's literal items are the line it runs per
+#: item; a control per carrier names a literal operand.
+_CARRIER_TWINS = [
+    ("find-items", "find . -name __pycache__ -exec rm -rf {} +", "find . -name __pycache__ | xargs rm -rf"),
+    ("find-items-each", "find . -name '*.egg-info' -type d -exec rm -rf {} ';'",
+     "find . -name '*.egg-info' -type d | xargs rm -rf"),
+    ("fd-items", "fd -t d node_modules -x rm -rf {}", "fd -t d node_modules | xargs rm -rf"),
+    ("parallel-stdin", "cat list | parallel rm -rf {}", "cat list | xargs rm -rf"),
+    ("parallel-roster-items", "parallel rm -rf {} ::: build dist", "rm -rf build dist"),
+    ("parallel-appended-item", "parallel rm -rf ::: build", "rm -rf build"),
+    ("parallel-tag-item", "parallel git push origin {} ::: v1.2.3", "git push origin v1.2.3"),
+    ("parallel-checkout-items", "parallel git -C {} push --force origin main ::: a b",
+     "git -C a push --force origin main; git -C b push --force origin main"),
+    ("parallel-pid-item", "parallel kill -9 {} ::: 4242", "kill -9 4242"),
+    ("find-control", "find . -name x -exec rm -rf src ';'", "rm -rf src"),
+    ("fd-control", "fd -x rm -rf src", "rm -rf src"),
+    ("parallel-control", "parallel rm -rf {}/old ::: src", "rm -rf src/old"),
+    ("su-control", "su -c 'rm -rf src'", "rm -rf src"),
+    ("script-control", "script -qc 'rm -rf src' out.log", "rm -rf src"),
+    ("script-bsd-control", "script out.log rm -rf src", "rm -rf src"),
+]
+#: Each control's bump and twin, which the bump must hear.
+_TWIN_CONTROLS = {label: ("rmrf", twin) for label, _carrier, twin in _CARRIER_TWINS if label.endswith("-control")}
+
+
+class _CarriedSearch:
+    """`_bash_patterns.carried_programs` behind `.search`, its cache cleared
+    before each read, for the scaling rule (`_scaling_verdict`)."""
+
+    def __init__(self, removal: bool) -> None:
+        self._removal = removal
+
+    def search(self, text: str) -> list[str]:
+        _bash_patterns._carried_programs_cached.cache_clear()
+        return _bash_patterns.carried_programs(text, removal=self._removal)
+
+
+def _hears(bump: str, command: str, root: Path) -> bool:
+    """True when the bump reads ``command`` as its program: the kill reading
+    names the pid, any other bump's predicate answers."""
+    if bump == "kill":
+        return _speedbump._named_kill_pids("Bash", {"command": command}) == [4242]
+    return _CARRIED_PREDICATES[bump]("Bash", {"command": command}, root)
+
+
+def _verdict(bump: str, command: str, root: Path) -> object:
+    """What the bump answers on ``command``: the pids the kill reading names,
+    or the predicate's answer."""
+    if bump == "kill":
+        return _speedbump._named_kill_pids("Bash", {"command": command})
+    return _CARRIED_PREDICATES[bump]("Bash", {"command": command}, root)
+
+
+class TestTheBumpsReadACarriersProgram:
+    """A program a carrier runs is the command it is: the force-push,
+    release, clean, discard and kill bumps hear it behind a carrier as they
+    hear it bare, and a carrier whose program only mentions it is silent.
+    Who it serves: the operator who fans a push, a tag push, a clean or a
+    kill across several checkouts through `find -execdir` or `parallel`,
+    who kept no confirm step there."""
+
+    @pytest.mark.parametrize("bump", sorted(_CARRIED_PROGRAMS))
+    def test_the_bare_program_is_heard(self, tmp_path, bump):
+        assert _hears(bump, _CARRIED_PROGRAMS[bump], tmp_path)
+
+    @pytest.mark.parametrize("bump", sorted(_CARRIED_PROGRAMS))
+    @pytest.mark.parametrize(
+        "before,after", [form[1:] for form in _CARRIER_FORMS], ids=[form[0] for form in _CARRIER_FORMS])
+    def test_a_carriers_program_is_heard_as_the_command(self, tmp_path, bump, before, after):
+        assert _hears(bump, before + _CARRIED_PROGRAMS[bump] + after, tmp_path)
+
+    @pytest.mark.parametrize("bump", sorted(_CARRIED_PROGRAMS))
+    @pytest.mark.parametrize("before,after", [
+        ("find . -exec echo ", " ';'"),
+        ("parallel echo ", " ::: a"),
+        ("fd -x grep -l '", "'"),
+        ("eval 'echo ", "'"),
+        ("find . -name '", "'"),
+    ], ids=["find-exec-echo", "parallel-echo", "fd-x-grep", "eval-echo", "find-name"])
+    def test_a_carriers_program_that_mentions_it_is_silent(self, tmp_path, bump, before, after):
+        assert not _hears(bump, before + _CARRIED_PROGRAMS[bump] + after, tmp_path)
+
+    @pytest.mark.parametrize(
+        "carrier,twin", [row[1:] for row in _CARRIER_TWINS], ids=[row[0] for row in _CARRIER_TWINS])
+    def test_a_carriers_program_draws_what_its_direct_twin_draws(self, tmp_path, carrier, twin):
+        """One oracle for the item rule, on every bump: an item a launcher
+        finds or reads is no remove operand (as a list piped into `xargs rm
+        -rf` names none), and parallel's literal items read as the line it
+        runs for each."""
+        for bump in sorted(_CARRIED_PROGRAMS):
+            assert _verdict(bump, carrier, tmp_path) == _verdict(bump, twin, tmp_path), bump
+
+    @pytest.mark.parametrize("label", sorted(_TWIN_CONTROLS))
+    def test_each_carriers_control_twin_is_heard(self, tmp_path, label):
+        """The differential above cannot pass by silencing every carrier:
+        each carrier's literal-operand control has a twin the bump hears."""
+        bump, twin = _TWIN_CONTROLS[label]
+        assert _hears(bump, twin, tmp_path)
+
+    @pytest.mark.parametrize("removal", [False, True], ids=["bumps", "delete"])
+    def test_a_launcher_flood_reads_linear(self, removal):
+        """The token walk on the shapes it could be fed, each cut to the
+        command cap: a launcher word per statement, a run of launchers in one
+        statement, a run of find actions, a parallel item run, and a run of
+        narrowed finds each running a program. The reader's cache is cleared
+        before every read, so each timing is a read."""
+        g = "g" + "it"
+        floods = [
+            ";fd" * 12000,
+            "parallel " * 4000,
+            "fd -x " * 6000,
+            "find . -name x -exec " * 2500,
+            "parallel echo {} ::: " + "a " * 16000,
+            ("find . -name x -exec " + g + " clean -fdx ';' ") * 900,
+        ]
+        search = _CarriedSearch(removal)
+        problems = []
+        for raw in floods:
+            probe = raw[:_SPEEDBUMP_FLOOD_LEN]
+            verdict = _scaling_verdict(search, probe, probe[: len(probe) // 2])
+            if verdict:
+                problems.append(f"{probe[:24]!r}...: {verdict}")
+        assert not problems, "; ".join(problems)
+
+    def test_an_unnarrowed_find_with_a_remove_is_the_walls(self, tmp_path):
+        """A find of the checkout with a remove in its action is a sweep of
+        its root, which the wall answers; the nudge defers to it there, the
+        program the action runs included."""
+        cmd = "find . -exec rm -rf src ';'"
+        assert _bash_patterns.has_catastrophic_bash_sweep(cmd, str(tmp_path), cwd=tmp_path)
+        assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, tmp_path)

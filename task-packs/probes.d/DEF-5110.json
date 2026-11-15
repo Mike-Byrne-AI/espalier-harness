@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5110",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _speedbump as s;p=pathlib.Path('.');b=lambda c:{'command':c};print(s._pred_gitclean('Bash',b('find . -exec git clean -fdx {} +'),p),s._pred_forcepush('Bash',b('parallel git push --force origin main ::: a'),p),s._pred_release('Bash',b('fd -x git push origin v1.2.3'),p),s._named_kill_pids('Bash',b('parallel kill 4242 ::: a')))\"",
+ "open_value": "False False False []",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "0dda307944e1",
+ "text_sha": "d585e3c255a1",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD a8a6fb7cf327)"
+}
