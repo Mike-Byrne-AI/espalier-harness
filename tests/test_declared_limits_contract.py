@@ -356,7 +356,15 @@ class TestTheSentenceSplitter:
 #: by the coverage contract's kept-job pin, which sits in no declaring
 #: sentence and is now cited by class and test name alone as its section's
 #: zone pin is, so the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 42, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 42 -> 43 on 2026-11-14 (air's b6a393, on b20da7's second item): the
+#: secret leg's blanker, which the comment-reader sentence had set aside as
+#: following the masker's rule, keeps two narrowings beside it (a backtick by
+#: its parity, a paren in a parameter expansion or an extended glob as
+#: syntax), and the paren one lets a read after a glued `#` through, one
+#: sentence pinned in `TestTwoOperandReadersCutCommentsAsTheMaskerDoes`; its
+#: cite's hit is paid by the forced PowerShell remove's glob-relief cite, now
+#: by class and test name alone, so the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 43, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
