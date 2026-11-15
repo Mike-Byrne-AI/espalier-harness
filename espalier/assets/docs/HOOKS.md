@@ -1273,7 +1273,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    PowerShell tool the relief reaches the unforced `Remove-Item -Recurse`,
    the sweeps and the forced `Remove-Item -Recurse -Force` alike, so the
    same `*/build` clean is one nudge on both tools, forced or not
-   (`tests/test_guard_false_positives.py::TestThePowerShellTierMatchesBash::test_the_glob_relief_reaches_the_forced_powershell_remove`;
+   (`TestThePowerShellTierMatchesBash::test_the_glob_relief_reaches_the_forced_powershell_remove`;
    until 2026-10-07 the forced form's bare leading glob walled wherever it
    ran).
 
@@ -2357,16 +2357,24 @@ spellings of them are work:
   spelling whose program's quotes collide with the argument's goes unread (1
   of 38 reaching rows on the differential's wrappers).
 - **The other comment readers, by ruling (2026-11-14).** Beside the masker,
-  the readers that find where a comment begins keep rules of their own, the
-  secret-read leg's word reader aside (it blanks a comment by the masker's
-  rule before it splits words), and that is a declared limit of the class,
-  driven where it reaches a kept job or a zone: the zone wall's span cutter
-  ends a word at a carriage return or an escaped blank before a `#`, which
-  bash reads as the word's text, so a protected target after one
-  (`cp a\ #x .claude/settings.json`) is let through to the after-check,
-  for the zones it watches,
+  the readers that find where a comment begins keep rules of their own, and
+  that is a declared limit of the class, driven where it reaches a kept job
+  or a zone: the zone wall's span cutter ends a word at a carriage return or
+  an escaped blank before a `#`, which bash reads as the word's text, so a
+  protected target after one (`cp a\ #x .claude/settings.json`) is let
+  through to the after-check, for the zones it watches,
   pinned by
   `tests/test_write_guard.py::TestTwoOperandReadersCutCommentsAsTheMaskerDoes::test_the_zone_cutter_lets_a_target_after_a_glued_hash_through`.
+  The secret-read leg's word reader blanks a comment by the masker's rule
+  before it splits words, narrowed in two readings: it reads a backtick by
+  its parity in the statement, and a paren inside a parameter expansion or
+  an extended glob as syntax, where the masker reads both as text. Where a
+  paren parts them inside a substitution, a `#` glued after a `)` opens a
+  comment for the leg where the masker and bash read the word's text, and
+  the words after it go unread: `cat $(echo ${x%)})#y .env` is let through
+  while bash reads the dotenv (driven on Git Bash 5.2 alone), a declared
+  false allow that takes a contrived statement, pinned by
+  `tests/test_write_guard.py::TestTwoOperandReadersCutCommentsAsTheMaskerDoes::test_the_secret_leg_lets_a_read_after_a_narrowed_paren_through`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches

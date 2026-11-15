@@ -15789,7 +15789,17 @@ class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
     stay as the declared limit `docs/HOOKS.md` names, pinned at allow here.
     The named user: an operator relying on the guard's secret-read refusal,
     with no sandbox, whose agent prints a dotenv after a file named with an
-    escaped blank and a `#`."""
+    escaped blank and a `#`.
+
+    The secret leg's blanker keeps two narrowings beside the masker's rule,
+    which its docstring states and `docs/HOOKS.md` once left out (air's
+    b6a393, on b20da7's second item): a backtick read by its parity in the
+    statement, and a paren inside a parameter expansion or an extended glob
+    read as syntax. `_NARROWINGS` holds a row on which each parts from the
+    masker beside the words the doc names it by, so a reader that closes one
+    and a doc that drops one both red the same row; the paren's false allow
+    on the secret leg is pinned at allow, a contrived statement and so no
+    reader change (SP 16)."""
 
     _SECRET_READS = (
         "cat $(true)#x .env",                 # glued to a substitution's closer
@@ -15888,6 +15898,60 @@ class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
         probe = command[:k + 1] + ";" + command[k + 1:]
         masker = bp.mask_inert_syntax(probe)[k + 1] == " "
         assert (wg._blank_bash_comments(command)[k] == " ") is masker, (command, masker)
+
+    #: Each narrowing of the blanker beside the masker's rule: a row on which
+    #: the masker reads its `#` as the word's text and the blanker opens a
+    #: comment, and the words `docs/HOOKS.md` names the narrowing by. The two
+    #: paren shapes are one narrowing, a row each. The backtick row is a
+    #: statement bash refuses (a backtick in an expansion opens a body there),
+    #: and the extended-glob row runs only with `extglob` set on an earlier
+    #: line, so neither is the doc's false allow; the paren rows below are.
+    _NARROWINGS = (
+        pytest.param("cat ${x/`/a}`true`#x .env", ("backtick", "parity"), id="backtick-parity"),
+        pytest.param("cat $(echo ${x%)})#y .env", ("paren", "parameter expansion"),
+                     id="parameter-expansion-paren"),
+        pytest.param("cat $(echo @(a)#y) .env", ("paren", "extended glob"), id="extended-glob-paren"),
+    )
+
+    @staticmethod
+    def _comment_readers_bullet() -> str:
+        """The `docs/HOOKS.md` bullet on the comment readers beside the
+        masker, its wrapping undone."""
+        text = (HOOKS_DIR.parent.parent.parent / "docs" / "HOOKS.md").read_text(encoding="utf-8")
+        start = text.index("**The other comment readers")
+        return " ".join(text[start:text.index("\n- ", start)].split())
+
+    @pytest.mark.parametrize("command, named_by", _NARROWINGS)
+    def test_each_narrowing_parts_from_the_masker_and_the_doc_names_it(self, command, named_by):
+        bp, wg = _bash_patterns_module(), _load_write_guard()
+        k = command.index("#")
+        probe = command[:k + 1] + ";" + command[k + 1:]
+        assert bp.mask_inert_syntax(probe)[k + 1] != " ", (
+            f"{command!r}: the masker reads a comment here now; re-derive the row")
+        assert wg._blank_bash_comments(command)[k] == " ", (
+            f"{command!r}: the blanker reads this `#` as the masker does now, so the narrowing "
+            "is closed: rewrite its words in the comment-reader bullet of docs/HOOKS.md and "
+            "drop the row")
+        bullet = self._comment_readers_bullet()
+        missing = [words for words in named_by if words not in bullet]
+        assert not missing, (
+            f"docs/HOOKS.md's comment-reader bullet no longer names {missing}: the blanker "
+            f"still parts from the masker on {command!r} (write_guard._blank_bash_comments)")
+
+    #: The paren narrowing's false allow: bash reads the dotenv on both
+    #: (driven on Git Bash 5.2, `echo` for `cat` and `x` set; the rows carry
+    #: a variable, so no shell runs them here).
+    _NARROWED_PAREN_READS = (
+        "cat $(echo ${x%)})#y .env",       # the expansion's `)` closes the body early
+        "cat $(echo ${x/(/a})#y .env",     # the expansion's `(` takes the body's closer
+    )
+
+    @pytest.mark.parametrize("command", _NARROWED_PAREN_READS)
+    def test_the_secret_leg_lets_a_read_after_a_narrowed_paren_through(self, command, tmp_path):
+        # The declared false allow: the day the blanker reads a paren in an
+        # expansion as text, this reds and the sentence in docs/HOOKS.md is
+        # rewritten.
+        assert_hook_allowed(run_bash_guard(command, tmp_path))
 
     @pytest.mark.parametrize("command", _ZONE_WALLED)
     def test_a_settings_target_after_a_closers_hash_meets_the_wall(self, command, tmp_path):
