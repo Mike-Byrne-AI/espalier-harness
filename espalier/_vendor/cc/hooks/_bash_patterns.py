@@ -13569,13 +13569,23 @@ if not set(_PS_STDIN_DISPATCH.values()) <= set(_STDIN_PROGRAM_WRITE_RES):
 #: driven). A redirect can be followed by an operand (`| bash > log x.sh`),
 #: which then reads as the pipe's program: the over-capture direction.
 #: PowerShell 5.1 has no input redirect (`<` is reserved), so none is taken.
-_PS_INTERP_STDIN_RE = re.compile(
+#: A SOURCE string, compiled by `_ps_interp_stdin_re` on the first scan that
+#: holds a pipe (DEF-3080, air f65c82), so no Bash call and no pipe-less
+#: PowerShell call compiles it.
+_PS_INTERP_STDIN = (
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(" + _PS_STDIN_HEAD_ALTERNATION + r")"
     + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
     + r"(?:(?=[ \t])(?P<run>" + _PS_SWITCH_RUN + r")(?:-[ \t]*)?)?"
-    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)",
-    re.IGNORECASE,
+    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)"
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _ps_interp_stdin_re() -> "re.Pattern[str]":
+    """`_PS_INTERP_STDIN`, compiled once, on first use (DEF-3080)."""
+    return re.compile(_PS_INTERP_STDIN, re.IGNORECASE)
+
+
 #: A `-File <script>` (or `/f`) switch with a value that is not `-`: the
 #: shell's program is that file, and what is piped to it is data.
 _PS_STDIN_FILE_SWITCH_RE = re.compile(r"[-/]f(?:ile)?[ \t]+[^\s\"'\-/]", re.IGNORECASE)
@@ -14230,11 +14240,16 @@ def _ps_stdin_program_spans(
     stage before the pipe being ``command[start:pipe]`` and ``at`` the head
     word's offset, where a consumer places the program (DEF-2079): the
     directory chain cuts a statement at the pipe, so the pipe itself sits
-    in none."""
+    in none. A scan with no pipe returns before the opener is compiled
+    (DEF-3080): the loop drops every match that did not open at a pipe or
+    at a call operator right after one, so such a scan yields nothing
+    either way."""
     if len(scan) != len(command):
         scan = command
+    if "|" not in scan:
+        return
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
-    for m in _PS_INTERP_STDIN_RE.finditer(scan):
+    for m in _ps_interp_stdin_re().finditer(scan):
         pipe = m.start()
         if scan[pipe] == "&":
             pipe -= 1

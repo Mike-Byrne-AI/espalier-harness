@@ -1699,7 +1699,9 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         "_PS_RUBY_DASH_E_RE": ("ruby", "ruby -e \"File.write('tools/cc/hooks/x.py','x')\""),
         "_PS_PERL_DASH_E_RE": ("perl", "perl -e 'open(F,\">tools/cc/hooks/x.py\")'"),
         "_PS_BASH_DASH_C_RE": ("bash", "bash -c \"echo x > tools/cc/hooks/x.py\""),
-        "_PS_INTERP_STDIN_RE": (
+        # the piped-stdin opener, compiled on first use (DEF-3080): read
+        # through its accessor
+        "_ps_interp_stdin_re()": (
             "python", "\"open('tools/cc/hooks/x.py','w')\" | python -"),
         # the directory verb (DEF-509): a quoted `& 'Set-Location'` moves the
         # chain exactly as the bare one does
@@ -9545,6 +9547,7 @@ class TestCatastrophicRmFlagOrderIndependent:
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
             "_powershell_head_re",              # compiled on first use, as above
+            "_ps_interp_stdin_re",              # compiled on first use, as above (DEF-3080)
 
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
@@ -17521,7 +17524,7 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_RUBY_DASH_E_RE": ("PowerShell", f"ruby -e \"File.write('{_TARGET}','x')\""),
         "_PS_PERL_DASH_E_RE": ("PowerShell", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_PS_BASH_DASH_C_RE": ("PowerShell", f"bash -c \"echo x > '{_TARGET}'\""),
-        "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
+        "_ps_interp_stdin_re()": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
                                     "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
         # powershell's head on the Bash tool (DEF-4061): the zone's remove
