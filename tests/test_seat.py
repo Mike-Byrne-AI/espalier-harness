@@ -1330,6 +1330,35 @@ class TestTheWorkerTickCommand:
         err = capsys.readouterr().err
         assert "answers no seat name" in err and "git config espalier.machine is not set" in err, err
 
+    def test_a_worktree_with_no_name_of_its_own_is_refused_as_nameless_never_as_the_dispatcher(
+            self, seat, clone, monkeypatch, capsys):
+        """A worker worktree that lost its own name answers its clone's, and
+        under a clone that is the dispatcher the verb once refused it as the
+        dispatcher, whose refusal the command body ends the tick on, so the
+        seat skipped even the reduced tick at every fire (the failure-mode
+        review, 2026-11-15, driven). Dies to: the unscoped name read."""
+        _dispatcher(clone, '"box"')
+        feat = _worktree(clone, "feat")   # no name of its own; the clone's is box, the dispatcher
+        monkeypatch.chdir(feat)
+        assert seat.main(["tick"]) == 1
+        err = capsys.readouterr().err
+        assert "answers no seat name" in err and "no name of its own" in err and "dispatcher" not in err, err
+
+    def test_the_tick_opens_with_the_head_an_older_loop_is_found_by(self, seat, clone):
+        """A loop started before the worker's line named its command carries
+        the tick itself, and CronList shows its head (this string, read from
+        air-work's loop listing on 2026-11-15); /handoff step 5b finds such a
+        loop by that head being a prefix of what the tick verb prints. Dies
+        to: the tick's opening reworded while such loops still run, which
+        leaves them unmatched until Claude Code deletes them at seven days.
+        Drop this pin seven days after the last handoff that could see one."""
+        head = "Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act o"
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        assert seat.compose_brief(clone, "box-feat", feat).tick.startswith(head)   # the seeded form
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        assert seat.compose_brief(clone, "box-feat", feat).tick.startswith(head)   # this repository's
+
 
 # -- retire --------------------------------------------------------------------------
 

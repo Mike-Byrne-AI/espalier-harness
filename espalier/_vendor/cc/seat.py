@@ -786,7 +786,11 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: copies it by hand, and a change to the tick reaches a looping seat at its
 #: next tick from a checkout that holds the change. A loop started before then
 #: carries the tick itself; ``/handoff`` step 5b knows it by a prefix of what
-#: the verb prints and re-creates it from the new line.
+#: the verb prints (``CronList`` shows about its first 80 characters, which
+#: ``tests/test_seat.py`` pins) and re-creates it from the new line. Because
+#: the verb reads this checkout's driver, a lane that edits the tick's
+#: templates runs its own draft from its next tick, committed or not: the
+#: operator's yes comes before such an edit, not at its merge.
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
@@ -1173,11 +1177,23 @@ def cmd_tick(root: Path, seat: str | None) -> int:
         if not top:
             raise Refused(f"{Path.cwd()} is not inside a git checkout")
         checkout = Path(top)
-        name, how = mail.machine_setting(checkout)
-        if name is None:
-            if how.startswith(mail.MACHINE_UNREAD):
-                raise Refused(f"the tick is composed for this checkout's seat, and {how}; {mail.RETRY_HINT}")
-            raise Refused(f"the tick is a seat's, and this checkout answers no seat name: {how}")
+        if checkout.resolve() != root.resolve():
+            # A linked worktree with no name of its own answers its clone's,
+            # which can be the dispatcher's: refused as nameless, so the
+            # command's reduced tick still runs (a dispatcher's refusal ends it).
+            own, state, why = _own_name(checkout)
+            if state == "unread":
+                raise Refused(f"the tick is composed for this checkout's seat, and {why}; {mail.RETRY_HINT}")
+            if not own:
+                raise Refused("the tick is a seat's, and this checkout answers no seat name: this worktree has no "
+                              f"name of its own ({why}), so it would answer its clone's")
+            name: str | None = own
+        else:
+            name, how = mail.machine_setting(checkout)
+            if name is None:
+                if how.startswith(mail.MACHINE_UNREAD):
+                    raise Refused(f"the tick is composed for this checkout's seat, and {how}; {mail.RETRY_HINT}")
+                raise Refused(f"the tick is a seat's, and this checkout answers no seat name: {how}")
         brief = compose_brief(root, name, checkout)
         seat = name
     else:
