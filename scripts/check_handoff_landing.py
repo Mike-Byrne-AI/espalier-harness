@@ -1356,8 +1356,8 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
         how = (
             f"This tree is a linked worktree of {main}, which checks out tracked "
             f"files only: run the suite from {main}, or copy {main / LOCAL_CODENAMES} "
-            "here (the gate read this tree's; an ignored file left in a worktree makes "
-            "`git worktree remove` ask for --force)."
+            "here (the gate read this tree's; an ignored file left in a worktree is "
+            "removed with it by `git worktree remove`)."
             if main is not None else
             "Recreate it -- memory/local-codename-arm.md says how -- before trusting "
             "the green, or pass --skip-local-arm on a tree that is not the operator's."
