@@ -995,6 +995,58 @@ class TestGovernanceMirrorParity:
             f"HOOK_EVENTS={sorted(HOOK_EVENTS)}"
         )
 
+    def test_kill_switch_verdicts_match_integrity_on_both_settings_files(self, tmp_path):
+        """DEF-4121: ci_guard's scanner re-implements _find_kill_switches inline,
+        and only its constants were pinned, so a change to which file the
+        hook-list arms read could move one copy and leave the other green. Hook
+        lists merge across the user, project and local files (the hooks
+        reference; the local file's merge driven on Claude Code 2.1.321), so the
+        arms read the project file alone, a governed event alone, and
+        disableAllHooks reads both. Pinned on verdicts, in both directions: each
+        arm is found in the project file and in neither scanner's local read,
+        and the two agree on every input (no input carries a bypass default:
+        ci_guard fails a committed one on purpose and the live scan does not,
+        DEF-1108)."""
+        import json as _json
+        cg = self._load_ci_guard()
+        ig = self._load_integrity()
+        files = [p.as_posix() for p in ig._SETTINGS_CANDIDATES]
+        assert list(cg._SETTINGS_FILES_FOR_KILL_SWITCH) == files
+        assert cg._PROJECT_SETTINGS_REL == ig.PROJECT_SETTINGS_REL == files[0]
+        arms = {
+            "is an empty list": {"hooks": {"Stop": []}},
+            "empty inner hooks list": {"hooks": {"Stop": [{"hooks": []}]}},
+            "are all no-ops": {"hooks": {"Stop": [{"hooks": [
+                {"type": "command", "command": "exit 0"}]}]}},
+        }
+        others = [
+            {"disableAllHooks": True},
+            {"disableAllHooks": "true"},
+            {"hooks": {"PreCompact": []}},
+            {"hooks": {"Notification": [{"hooks": []}]}},
+            {"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "true"}]}]}},
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 x.py"}]}]}},
+            {"hooks": {"Stop": [{"hooks": []}, {"hooks": [
+                {"type": "command", "command": "python3 x.py"}]}]}},
+            {"hooks": {"Stop": ["not an entry"]}},
+            {"hooks": {"Stop": [{"hooks": ["not a command"]}]}},
+            {"hooks": "not a table"},
+            {},
+        ]
+        (tmp_path / ".claude").mkdir()
+        for rel in files:
+            for data in [*arms.values(), *others]:
+                (tmp_path / rel).write_text(_json.dumps(data), encoding="utf-8")
+                ours = cg._scan_settings_file_for_kill_switch(rel, tmp_path)
+                assert ours == ig._find_kill_switches(rel, data), (
+                    f"kill-switch verdict drift on {rel} {data!r}: ci_guard={ours} "
+                    f"integrity={ig._find_kill_switches(rel, data)}"
+                )
+                (tmp_path / rel).unlink()
+        for arm, data in arms.items():
+            assert [arm in f for f in ig._find_kill_switches(files[0], data)] == [True]
+            assert ig._find_kill_switches(files[1], data) == []
+
 
 class TestEmptyListGovernedEventGate:
     """TP-275 6-A: the empty-top-level-list kill-switch branch must fire ONLY for

@@ -2,8 +2,9 @@
 """ConfigChange hook — blocks unsafe project/local/user settings changes.
 
 Why this hook exists (its one reason): stop a slip — or the agent under
-load — from writing a kill-switch (`disableAllHooks`, an emptied or no-op
-governed hook list) into a settings file to turn the workflow off. A
+load — from writing a kill-switch (`disableAllHooks` into a settings file, an
+emptied or no-op governed hook list into the project file, since hook lists
+merge across the files) to turn the workflow off. A
 `bypassPermissions` default is not a kill-switch and is not judged here
 (DEF-1108): the hooks still run and deny in bypass mode, a ConfigChange block
 is shown to no one and does not revert the file, and the mode is chosen at
@@ -401,10 +402,18 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
             # candidate is bounded above; relative_to() is now guaranteed
             # to succeed without the ValueError fallback that previously
             # leaked absolute paths into the audit log.
-            # Normalize the display label so a Windows audit log shows forward
-            # slashes (the rel is display-only, never compared, but the harness
-            # convention is `.replace("\\", "/")` everywhere).
+            # Forward slashes on every OS: the rel labels each finding AND
+            # decides which arms apply, since `_find_kill_switches` reads the
+            # hook-list arms in the project file alone (hook lists merge, so a
+            # local file's emptied list unwires nothing, DEF-4121).
             rel = str(candidate.relative_to(root)).replace("\\", "/")
+            # The project file under another spelling (a symlink's target, a
+            # case variant) still takes the project label, so its arms are read.
+            try:
+                if os.path.samefile(candidate, root / _integrity.PROJECT_SETTINGS_REL):
+                    rel = _integrity.PROJECT_SETTINGS_REL
+            except OSError:  # fail-open: ok no-project-file -- nothing to match; the inventory fallback below still reads both files
+                pass
             findings.extend(_integrity._find_kill_switches(rel, data))
 
     # Fall back to scanning the standard settings inventory so we still catch

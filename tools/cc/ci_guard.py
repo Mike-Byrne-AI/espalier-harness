@@ -16,9 +16,11 @@ Behavior:
   `HARNESS-UPDATE-APPROVED@<sha>`; on a push the HEAD commit message -- exit
   2 with a human-readable message that names the fragment to add.
 - UNCONDITIONAL: if .claude/settings.json or .claude/settings.local.json
-  contains a kill-switch finding (disableAllHooks: true, empty/no-op hook
-  lists) or a COMMITTED permissions.defaultMode: bypassPermissions, fail
-  merge regardless of the approval marker. Kill-switch settings cannot be
+  contains a kill-switch finding (disableAllHooks: true; a governed event's
+  empty/no-op hook list in settings.json alone, since hook lists merge across
+  the files and the local file's remove nothing) or a COMMITTED
+  permissions.defaultMode: bypassPermissions, fail merge regardless of the
+  approval marker. Kill-switch settings cannot be
   committed to the public project, and neither can a bypass default: live in
   one operator's gitignored file it is that operator's posture (the hooks
   stop treating it as a kill-switch, DEF-1108), but committed it switches
@@ -802,8 +804,12 @@ def dependabot_action_bump_allowed(
     return added_ids == removed_ids
 
 
+# The project file, where `init` writes the wiring and the one file whose hook
+# lists the kill-switch scan judges (hooks/_integrity.PROJECT_SETTINGS_REL,
+# parity-pinned in tests/test_ci_guard.py).
+_PROJECT_SETTINGS_REL = ".claude/settings.json"
 _SETTINGS_FILES_FOR_KILL_SWITCH: tuple[str, ...] = (
-    ".claude/settings.json",
+    _PROJECT_SETTINGS_REL,
     ".claude/settings.local.json",
 )
 
@@ -852,9 +858,12 @@ _ESPALIER_GOVERNED_EVENTS = frozenset({
 
 def _scan_settings_file_for_kill_switch(rel: str, root: Path) -> list[str]:
     """Local kill-switch scanner — mirrors hooks/_integrity._find_kill_switches
-    PLUS ``_find_bypass_default``: on a committed file a bypass default fails
-    the merge too, because committed it turns permission prompts off for every
-    clone (the live hooks read it as a posture, not a kill-switch, DEF-1108).
+    (``disableAllHooks`` in either file, the hook-list arms in the project file
+    alone, DEF-4121) PLUS ``_find_bypass_default``: on a committed file a bypass
+    default fails the merge too, because committed it turns permission prompts
+    off for every clone (the live hooks read it as a posture, not a kill-switch,
+    DEF-1108). The verdicts are parity-pinned against the live scan in
+    tests/test_ci_guard.py.
 
     Kept inline so ci_guard remains independent of any other tools/cc/
     module. Returns a list of "rel: reason" findings.
@@ -879,15 +888,21 @@ def _scan_settings_file_for_kill_switch(rel: str, root: Path) -> list[str]:
         mode = perms.get("defaultMode")
         if isinstance(mode, str) and mode == "bypassPermissions":
             findings.append(f'{rel}: permissions.defaultMode: "bypassPermissions"')
+    # The hook-list arms read the project file alone, as the live scan's do:
+    # hook lists merge across the user, project and local files, so a local
+    # file's emptied or no-op list removes no project hook (DEF-4121).
+    if rel != _PROJECT_SETTINGS_REL:
+        return findings
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
         for event, entries in hooks.items():
-            # Empty top-level list: a kill-switch ONLY for a governed event (it
-            # neuters a deployed Espalier hook). An empty list for a non-governed
-            # event is the adopter's own config — do not false-fail their CI.
+            # Every arm reads a governed event alone (it neuters a deployed
+            # Espalier hook). An emptied or no-op list for a non-governed event
+            # is the adopter's own config — do not false-fail their CI.
+            if event not in _ESPALIER_GOVERNED_EVENTS:
+                continue
             if isinstance(entries, list) and not entries:
-                if event in _ESPALIER_GOVERNED_EVENTS:
-                    findings.append(f"{rel}: hooks.{event} is an empty list")
+                findings.append(f"{rel}: hooks.{event} is an empty list")
                 continue
             if not (isinstance(entries, list) and entries):
                 continue

@@ -209,11 +209,16 @@ def _writer_algorithm(repo_root: Path) -> str:
     )
     return reader
 
+# The two settings files under the repo root, posix-spelled: the project file,
+# where `init` writes the wiring, and the operator's local file.
+PROJECT_SETTINGS_REL = ".claude/settings.json"
+LOCAL_SETTINGS_REL = ".claude/settings.local.json"
+
 # Files scanned for kill-switch kv pairs. Per-machine or gitignored, so
 # content-based checks sit outside the manifest.
 _SETTINGS_CANDIDATES: tuple[Path, ...] = (
-    Path(".claude") / "settings.json",
-    Path(".claude") / "settings.local.json",
+    Path(PROJECT_SETTINGS_REL),
+    Path(LOCAL_SETTINGS_REL),
 )
 
 
@@ -705,22 +710,37 @@ def _find_bypass_default(rel_path: str, data: dict) -> list[str]:
 
 
 def _find_kill_switches(rel_path: str, data: dict) -> list[str]:
-    """Settings that turn the hooks OFF: ``disableAllHooks: true`` and a governed
-    event's hook list emptied or reduced to no-ops. A bypass-permissions default
-    is not one of them (``_find_bypass_default``)."""
+    """Settings that turn the hooks OFF: ``disableAllHooks: true`` in either
+    settings file, and a governed event's hook list emptied or reduced to no-ops
+    in the project file (``PROJECT_SETTINGS_REL``, where ``init`` writes the
+    wiring). ``rel_path`` names the file, so it decides which arms apply.
+
+    Claude Code merges hook lists across the user, project and local files (the
+    hooks reference), so the same list in the local file removes no project
+    hook. Driven on Claude Code 2.1.321 (DEF-4121): each arm below, in the local
+    file, on UserPromptSubmit and Stop, and the empty list on PreToolUse, left
+    the project file's hooks firing, beside a local hook that fired with them
+    and a local ``disableAllHooks`` that silenced both. Read there, the arms
+    denied every tool call over a file that unwires nothing. An event Espalier
+    does not wire is the adopter's own and no arm reads it.
+    ``tools/cc/ci_guard.py`` applies the same split. A bypass-permissions
+    default is not a kill-switch (``_find_bypass_default``)."""
     findings: list[str] = []
     if data.get("disableAllHooks") is True:
         findings.append(f"{rel_path}: disableAllHooks: true")
+    if rel_path != PROJECT_SETTINGS_REL:
+        return findings
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
         for event, entries in hooks.items():
-            # 3.0 — Empty top-level list: no matchers at all for this event. Only
-            # a kill-switch when Espalier wires the event (an empty list there
-            # neuters a deployed hook); an empty list for a non-governed event is
-            # the adopter's own config, identical to omitting the key.
+            # Only an event Espalier wires: an emptied or no-op list for any
+            # other event neuters no deployed hook -- the adopter's own config,
+            # identical to omitting the key, for each of the three arms below.
+            if event not in _ESPALIER_GOVERNED_EVENTS:
+                continue
+            # 3.0 — Empty top-level list: no matchers at all for this event.
             if isinstance(entries, list) and not entries:
-                if event in _ESPALIER_GOVERNED_EVENTS:
-                    findings.append(f"{rel_path}: hooks.{event} is an empty list")
+                findings.append(f"{rel_path}: hooks.{event} is an empty list")
                 continue
             if not (isinstance(entries, list) and entries):
                 continue
@@ -808,7 +828,9 @@ def _scan_settings(repo_root: Path) -> list[tuple[bool, str]]:
     findings: list[tuple[bool, str]] = []
     for rel in _SETTINGS_CANDIDATES:
         path = repo_root / rel
-        rel_norm = str(rel).replace("\\", "/")
+        # Posix on every OS: the label decides which arms apply, and
+        # `_find_kill_switches` compares it with PROJECT_SETTINGS_REL.
+        rel_norm = rel.as_posix()
         # ABSENT and UNREADABLE are different answers here, and collapsing
         # them is what this whole module exists to stop doing one layer down.
         # `Path.exists()` re-raises EACCES on 3.10-3.13, so it could not be used;
@@ -1202,7 +1224,6 @@ def recorded_settings_writer(repo_root: Path, data: object, *, now: float | None
 
 WIRED_GATES_SNAPSHOT = (_hook_utils.STATE_DIR, "wired_gates.json")
 UNWIRED_PENDING = (_hook_utils.STATE_DIR, "settings_unwired_pending.json")
-PROJECT_SETTINGS_REL = ".claude/settings.json"
 
 
 def read_project_settings(repo_root: Path) -> tuple[str, object]:
@@ -1409,7 +1430,6 @@ def take_unwired_notice(repo_root: Path) -> str | None:
 # lets a change through, since Claude Code then runs the changed files.
 
 SETTINGS_GATES_SNAPSHOT = (_hook_utils.STATE_DIR, "settings_gate_values.json")
-LOCAL_SETTINGS_REL = ".claude/settings.local.json"
 DISABLE_ALL_HOOKS = "disableAllHooks"
 #: The variables that switch a gate when set: write_guard's harness roster
 #: (``write_guard._HARNESS_ENV_NAMES``, which refuses an in-session assignment

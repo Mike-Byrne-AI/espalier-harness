@@ -497,8 +497,9 @@ python -m espalier install-ci .
 ```
 
 This deploys a GitHub Actions workflow that fails the build if any
-committed file contains a kill-switch setting (`disableAllHooks`, empty
-hook lists) or a committed `bypassPermissions` default. Combined with branch
+committed settings file contains a kill-switch setting (`disableAllHooks`,
+or an empty governed hook list in `.claude/settings.json`) or a committed
+`bypassPermissions` default. Combined with branch
 protection (require the status check to pass before merging), this is
 the guarantee layer. See [`INSTALL-CI.md`](INSTALL-CI.md)
 for the one-step setup.

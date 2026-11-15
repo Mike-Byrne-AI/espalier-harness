@@ -74,8 +74,9 @@ it does not block either.
 Fires once at the start of every Claude Code session. Loads repo context
 into Claude's working memory: repo name, git branch, dirty-file count,
 ESPALIER_MEMORY.md summary, active blueprint, and harness health status. Also
-scans for kill-switch settings (`disableAllHooks`, empty hook lists) and
-integrity drift, and names anything that looks wrong in the banner's
+scans for kill-switch settings (`disableAllHooks` in either settings file, a
+governed event's hook list emptied or reduced to no-ops in the project file)
+and integrity drift, and names anything that looks wrong in the banner's
 `--- WARNINGS ---` block at the top of its body -- the boot checks' lines and
 any section whose file could not be read, each cut to its head so one long
 line cannot push the others out; an `[INFO]` line (which worktree the
@@ -1097,10 +1098,15 @@ again.
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
 
-1. **Kill-switch gate.** If any settings file contains `disableAllHooks:
-   true` or empty/no-op hook lists, *every* tool call is denied until the
-   setting is removed. This fires before anything else. A
-   `bypassPermissions` default is not in this set: it turns off Claude
+1. **Kill-switch gate.** If either settings file contains `disableAllHooks:
+   true`, or the project `.claude/settings.json` empties a governed event's
+   hook list or reduces it to no-ops, *every* tool call is denied until the
+   setting is removed. This fires before anything else. The same hook list
+   in `.claude/settings.local.json` is not in this set: Claude Code merges
+   hook lists across the user, project and local files, so it removes no
+   project hook (driven on Claude Code 2.1.321 for PreToolUse,
+   UserPromptSubmit and Stop). A
+   `bypassPermissions` default is not in this set either: it turns off Claude
    Code's permission prompts, not Espalier's hooks, which keep running and
    denying, so a session started with one works normally.
 
@@ -2461,7 +2467,9 @@ pre-v0.6.5 shell form the exec-form reader cannot prove, keeps its other edits.
 A deleted, emptied or syntax-broken project file wires nothing -- Claude Code
 loads no hooks from any of them (driven) -- and is judged so; refusing it
 blocks no repair, since the next change is judged on its own content.
-The local file keeps the kill-switch check only; it normally wires nothing. A
+The local file is not judged for an unwiring: it normally wires nothing, and
+its hook lists merge with the project file's, so an emptied one unwires no
+gate; of the kill-switch shapes, `disableAllHooks` alone is read there. A
 well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
 does not void the file (Claude Code loads each beside the gates, driven); one
 missing its required field (`url`; `server` and `tool`; `prompt`) voids the
