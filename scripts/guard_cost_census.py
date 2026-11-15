@@ -764,7 +764,7 @@ class BoxLock:
         self.why = f"{LOCK_KEY} is not set"
         self.holder_seen: dict | None = None
         self.waited_s = 0.0
-        self.taken_at: float | None = None  # time.monotonic() at the take, which the release's held_s reads
+        self.taken_at: float | None = None  # the take's time.monotonic(), set once its acquire line is logged
 
     def acquire(self) -> None:
         raw = os.environ.get(LOCK_KEY)
@@ -797,7 +797,7 @@ class BoxLock:
         while True:
             if _JSON_SAFE.try_lock_file(self.fh):
                 self.held = True
-                self.taken_at = time.monotonic()
+                taken_at = time.monotonic()
                 self.record["started"] = _now_stamp()
                 self.fh.seek(0)
                 self.fh.truncate()
@@ -808,6 +808,7 @@ class BoxLock:
                 self.outcome, self.why = ("waited", "") if last_report is not None else ("taken", "")
                 log_outcome(self.path, self.outcome, self.record, self.holder_seen, self.waited_s,
                             stream=self.stream)
+                self.taken_at = taken_at  # once the acquire line is down, as the plugin's
                 return
             record = read_record(self.path)
             if inside_holder(record):
@@ -851,9 +852,9 @@ class BoxLock:
                 self.fh.seek(0)
                 self.fh.truncate()
                 self.fh.flush()
-                held_s = time.monotonic() - self.taken_at if self.taken_at is not None else 0.0
-                if self.path is not None:
-                    log_outcome(self.path, "released", self.record, held_s=held_s, stream=self.stream)
+                if self.path is not None and self.taken_at is not None:
+                    log_outcome(self.path, "released", self.record, held_s=time.monotonic() - self.taken_at,
+                                stream=self.stream)
                 _JSON_SAFE.unlock_file(self.fh)
         finally:
             self._close()

@@ -419,6 +419,46 @@ class TestTheBoxLock:
         lock.release()
         assert at_unlock == [["taken", "released"]], at_unlock
 
+    def test_the_census_times_its_hold_from_the_take_never_from_the_queue(self, tmp_path, monkeypatch):
+        """The plugin's rule: three refused takes at a 0.1 s poll, then a
+        release at once. Mutation: the hold timed from the wait's start."""
+        path, refusals = tmp_path / "box.lock", [3]
+        real_try = census._JSON_SAFE.try_lock_file
+
+        def try_lock_file(fh):
+            if refusals[0]:
+                refusals[0] -= 1
+                return False
+            return real_try(fh)
+
+        monkeypatch.setattr(census._JSON_SAFE, "try_lock_file", try_lock_file)
+        monkeypatch.setattr(census, "POLL_S", 0.1)
+        monkeypatch.setenv(_box_lock.LOCK_KEY, str(path))
+        monkeypatch.delenv(_box_lock.HOLDER_KEY, raising=False)
+        monkeypatch.delenv(_box_lock.WAIT_KEY, raising=False)
+        lock = census.BoxLock(stream=io.StringIO())
+        lock.acquire()
+        lock.release()
+        waited, released = _log_lines(path)
+        assert (waited["outcome"], released["outcome"]) == ("waited", "released"), (waited, released)
+        assert waited["waited_s"] >= 0.25 and released["held_s"] < waited["waited_s"] / 2, (waited, released)
+
+    def test_a_census_acquire_that_fails_before_its_line_logs_no_release(self, tmp_path, monkeypatch):
+        """A record the take cannot write (one value JSON cannot encode) fails
+        after the take and before the acquire line: the run goes unguarded and
+        leaves no ``released`` line to pair with nothing. Mutation: the release
+        line keyed on the hold alone."""
+        path = tmp_path / "box.lock"
+        monkeypatch.setattr(census, "build_record", lambda: {"seat": "s", "lane": "l", "pid": os.getpid(),
+                                                             "unwritable": object()})
+        monkeypatch.setenv(_box_lock.LOCK_KEY, str(path))
+        monkeypatch.delenv(_box_lock.HOLDER_KEY, raising=False)
+        monkeypatch.delenv(_box_lock.WAIT_KEY, raising=False)
+        lock = census.BoxLock(stream=io.StringIO())
+        lock.acquire()
+        assert lock.outcome == "unguarded" and not lock.held
+        assert [line["outcome"] for line in _log_lines(path)] == ["unguarded"], _log_lines(path)
+
     def test_a_census_run_takes_and_clears_a_free_lock(self, tmp_path):
         path = tmp_path / "box.lock"
         proc = _run("--calls", "1", "--kind", "read", "--json", extra_env={_box_lock.LOCK_KEY: str(path)})

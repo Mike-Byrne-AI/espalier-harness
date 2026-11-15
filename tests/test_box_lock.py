@@ -3,9 +3,10 @@
 ``tests/_box_lock.py`` takes a kernel lock on the file ``ESPALIER_BOX_LOCK``
 names when the run is an xdist run that will run tests, names the holder while
 it waits, passes a nested run through on the inherited holder pair, says what
-it did in the terminal summary, and leaves a record of every wait. Each case
-here drives real pytest children on a scratch test file with the plugin loaded
-by ``-p``, the way ``tests/test_file_lock.py`` drives the primitive: what the
+it did in the terminal summary, and leaves a record of every wait and every
+release. Each case here but ``TestEachHoldLogsItsRelease`` (in-process, on
+what the plugin writes) drives real pytest children on a scratch test file
+with the plugin loaded by ``-p``, the way ``tests/test_file_lock.py`` drives the primitive: what the
 kernel does is the question, so only real processes can answer it. A holder
 never sleeps for a margin: it waits on a release marker the test writes, and
 the test writes it at the waiter's own first waiting line, never after a sleep,
@@ -334,7 +335,10 @@ class TestEachHoldLogsItsRelease:
         from datetime import datetime
         lock = self._lock(tmp_path, monkeypatch)
         lock.acquire()
-        time.sleep(1.2)  # the hold's length, which the line must carry: nothing races it
+        # The hold's length, which the line must carry: nothing races it. Past
+        # the 1.2 asserted, since Windows' monotonic clock ticks at 15.6 ms and
+        # a 1.2 s sleep read 1.187 in 10 of 150 holds (the lane's review).
+        time.sleep(1.3)
         lock.release()
         lines = self._lines(tmp_path)
         assert [ln["outcome"] for ln in lines] == ["taken", "released"], lines
@@ -362,6 +366,46 @@ class TestEachHoldLogsItsRelease:
         lock.acquire()
         lock.release()
         assert at_unlock == [["taken", "released"]], at_unlock
+
+    def test_the_holds_length_runs_from_the_take_never_from_the_queue(self, tmp_path, monkeypatch):
+        """A run that queued must not read its wait as its hold (DEF-4077's
+        class, there for the hold's age). The take is refused three times at a
+        0.1 s poll, then the hold is released at once. Mutation: the hold
+        timed from the wait's start."""
+        bl = _box_lock()
+        real, refusals = bl._primitive(), [3]
+
+        def try_lock_file(fh: IO[str]) -> bool:
+            if refusals[0]:
+                refusals[0] -= 1
+                return False
+            return real.try_lock_file(fh)
+
+        monkeypatch.setattr(bl, "POLL_S", 0.1)
+        monkeypatch.delenv(bl.WAIT_KEY, raising=False)
+        lock = self._lock(tmp_path, monkeypatch, types.SimpleNamespace(try_lock_file=try_lock_file,
+                                                                       unlock_file=real.unlock_file))
+        lock.acquire()
+        lock.release()
+        waited, released = self._lines(tmp_path)
+        assert (waited["outcome"], released["outcome"]) == ("waited", "released"), (waited, released)
+        assert waited["waited_s"] >= 0.25 and released["held_s"] < waited["waited_s"] / 2, (waited, released)
+
+    def test_an_acquire_that_fails_before_its_line_logs_no_release(self, tmp_path, monkeypatch):
+        """A failure between the take and its acquire line (here the stamp)
+        releases the lock and leaves no ``released`` line without an acquire
+        line to pair with (the lane's review drove it). Mutation: the release
+        line keyed on the hold alone."""
+        bl = _box_lock()
+        lock = self._lock(tmp_path, monkeypatch)
+
+        def stamp() -> str:
+            raise RuntimeError("stamp")
+
+        monkeypatch.setattr(bl, "_now_stamp", stamp)
+        with pytest.raises(RuntimeError):
+            lock.acquire()
+        assert not lock.held and self._lines(tmp_path) == []
 
 
 class TestWhichRunsTheLockGates:
