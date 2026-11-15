@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from tests._first_use_patterns import first_use_patterns
 from tests._live_tree import checkout_glob
 from tests._platform_standin import without_the_alarm
 from tests._pytest_ini import declared_pytest_timeout
@@ -3332,12 +3333,17 @@ _SWITCH_REDIRECT_ROWS = [
 
 
 def _patterns_composing(fragment: str) -> set[str]:
-    """Every compiled module-level pattern in the two hook modules whose
-    source holds ``fragment``."""
+    """Every compiled pattern in the two hook modules whose source holds
+    ``fragment``: the module-level ones, and those compiled on first use
+    behind a cache, named as calls (``_carrier_fed_remove_re()``), which a
+    walk of the namespace alone cannot see (DEF-3063)."""
     import _speedbump  # noqa: E402
 
-    return {name for mod in (_bash_patterns, _speedbump) for name, value in vars(mod).items()
-            if isinstance(value, re.Pattern) and fragment in value.pattern}
+    found = {name for mod in (_bash_patterns, _speedbump) for name, value in vars(mod).items()
+             if isinstance(value, re.Pattern) and fragment in value.pattern}
+    for mod in (_bash_patterns, _speedbump):
+        found |= {name for name, value in first_use_patterns(mod).items() if fragment in value.pattern}
+    return found
 
 
 def test_every_pattern_composing_a_redirect_unit_has_a_redos_row():

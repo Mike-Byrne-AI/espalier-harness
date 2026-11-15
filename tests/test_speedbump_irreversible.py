@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._first_use_patterns import first_use_patterns
 from tests._spaced_paths import PS, fill, quoted
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -3746,7 +3747,9 @@ class TestCommandPositionClassClose:
         write_guard._load_the_pattern_path()
         seen, found = set(), {}
         for mod in (_bash_patterns, _speedbump, write_guard):
-            for name, obj in vars(mod).items():
+            # a pattern compiled on first use behind a cache is no module
+            # attribute: read through its accessor, named as its call (DEF-3063)
+            for name, obj in [*vars(mod).items(), *first_use_patterns(mod).items()]:
                 if not isinstance(obj, _re.Pattern) or id(obj) in seen:
                     continue
                 seen.add(id(obj))
@@ -4375,7 +4378,8 @@ class TestCommandPositionClassClose:
         verb_re = _re.compile(r"\b(?:" + "|".join(cls._COMMAND_VERBS) + r")\b")
         found = {}
         for mod in (_speedbump, _bash_patterns, write_guard):
-            for name, obj in vars(mod).items():
+            # the first-use compiles too, named as their accessors' calls
+            for name, obj in [*vars(mod).items(), *first_use_patterns(mod).items()]:
                 if not isinstance(obj, _re.Pattern):
                     continue
                 if not verb_re.search(obj.pattern.replace("\\b", " ")):

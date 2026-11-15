@@ -1780,8 +1780,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        56, "747c0502699f24da16df80d75c70984b395e0e789797bc4e351456abf88a8e15",
+        56, "aa0878be68769b606ab327d8ba4a1bd743815e9de1a375006ca0b21f38fabfb1",
         "CORRECT_BY_REMEDY",
+        "RE-PINNED on 2026-11-14 (DEF-3078's lane), the same rows, 56 with DEF-2083's below: three roster "
+        "comprehensions (TestQuotedVerbTailIsUniform's and "
+        "TestPowerShellQuotedVerbBehindTheCallOperator's test_the_roster_is_the_modules_anchored_arms, "
+        "TestQuotedTargetSurvivesTheRoot._roster) now iterate "
+        "`itertools.chain(vars(bp).items(), first_use_patterns(bp).items())`, rooted at `bp` as "
+        "before and wider by the first-use compiles a namespace walk never saw; each still asserts "
+        "equality against its roster. "
         "GREW 55 -> 56 on 2026-11-14 (DEF-2083): one for-plain, "
         "TestAGapAfterAPipeIsRead::test_the_masker_memo_holds_a_long_rows_judgment "
         "walks `list(vars(bp).values())` to `cache_clear()` every memo before it counts "
