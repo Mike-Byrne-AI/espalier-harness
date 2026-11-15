@@ -1930,6 +1930,26 @@ the Bash tool hands to PowerShell (and one the PowerShell tool hands to `bash`)
 is read by the hard tier only, so such a program meets the wall or nothing,
 never the one-re-issue nudge.
 
+**A program a carrier runs.** On the Bash tool the confirm-once checkpoints
+read each program a carrier runs as the command it is, one level down: what
+find's `-exec`, `-execdir`, `-ok` and `-okdir` actions and fd's `-x` and `-X`
+run (an argv, with no shell between), the line GNU parallel hands its shell,
+and the programs `su -c` and `script` run (util-linux `script -c`, and BSD
+`script`'s words after its file word). So a force push, a tag push, a clean,
+a discard, a kill or a recursive delete fanned out through a carrier draws
+what its direct twin draws, and the fetch-and-execute checkpoint reads the
+same programs. An item a launcher finds, or reads from a file or
+stdin, is no remove operand, as a list piped into `xargs rm -rf` names none,
+so `find . -name __pycache__ -exec rm -rf {} +` stays silent; parallel's
+literal items stand in for its placeholder, or follow its command, as the
+line it runs for each item, so `parallel rm -rf {} ::: build dist` reads as
+`rm -rf build dist` and `parallel git push origin {} ::: v1.2.3` as the tag
+push it is. Not read for the nudge: a launcher behind a wrapper switch's word value
+(`sudo -u app parallel ...`), a parallel switch that takes a value the reader
+does not list (its value reads as the program's first word), parallel's items
+past its first sixteen or from more than one source, and anything deeper than
+one level, which the coverage contract below does not promise.
+
 **The nested program's directory** was declared a
 third limit on 2026-09-19 ("judged from the payload's directory, not from a
 directory the outer statement moved to") and is not one: read at the site and

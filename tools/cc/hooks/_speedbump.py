@@ -404,15 +404,28 @@ def _masked_command(tool_input: dict) -> str:
     )
 
 
+def _carried(command: str, *, removal: bool = False) -> list[str]:
+    """`_bash_patterns.carried_programs`, or none where an upgrade kept an
+    older pattern module without it: the bumps that module can serve keep
+    running on the command and its shells' programs, as before the carrier
+    reader, rather than every Bash checkpoint going quiet on the missing
+    name."""
+    reader = getattr(_bash_patterns, "carried_programs", None)
+    return reader(command, removal=removal) if reader is not None else []
+
+
 def _scan_texts(tool_input: dict) -> list[str]:
     """The masked command and, beside it, every program it hands to a shell
     through a reader head (`_bash_patterns.nested_shell_programs`), each
     masked the same way -- the operator's widening of the §C49 carve-out
     (2026-09-11, the Bash trio's third step): a delete or a force-push a
     PROGRAM hands to a shell bumps as the bare spelling does, and a mention
-    inside the program is data."""
+    inside the program is data. Each program a carrier runs
+    (`_bash_patterns.carried_programs`: find's exec actions, fd, parallel,
+    `su -c`, `script -c`) is read the same way, one level down (DEF-5110)."""
+    command = tool_input.get("command", "")
     texts = [_masked_command(tool_input)]
-    for program in _bash_patterns.nested_shell_programs(tool_input.get("command", "")):
+    for program in (*_bash_patterns.nested_shell_programs(command), *_carried(command)):
         texts.append(_bash_patterns.splice_line_continuations(
             _bash_patterns.mask_inert_syntax(program)))
     return texts
@@ -493,11 +506,12 @@ def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str |
     hands to a shell -- carries its raw twin, so a quoted pathspec inside a
     nested program is read whole too (review: `echo 'git checkout "hooks/my
     file.py"' | bash` kept the truncated capture while the bare spelling
-    was fixed)."""
+    was fixed). A program a carrier runs (`_bash_patterns.carried_programs`)
+    is read as a shell's program is (DEF-5110)."""
     if tool_name == "Bash":
         command = tool_input.get("command", "")
         readings: list[tuple[str, str | None, bool]] = [(*_bash_reading(command), True)]
-        for program in _bash_patterns.nested_shell_programs(command):
+        for program in (*_bash_patterns.nested_shell_programs(command), *_carried(command)):
             readings.append((*_bash_reading(program), True))
         return readings
     if tool_name == "PowerShell":
@@ -1056,6 +1070,15 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
            or _bash_patterns.has_catastrophic_bash_sweep(t, str(root), cwd=cwd or root)
            for t in texts):
         return False
+    # DEF-5110: each program a carrier runs (find's exec actions, fd,
+    # parallel, `su -c`, `script`) joins the texts AFTER the defer, DEF-3063's
+    # order, read from nowhere as a shell's program is: a launcher runs it
+    # where the walk cannot follow. In the defer, a catastrophic target
+    # behind a carrier no wall reads would be a silent allow; here it draws
+    # the nudge, and where a wall does read it the wall answers first at the
+    # hook. The delete reading's view (`removal`): an item a launcher finds
+    # or reads is no operand, and parallel's literal items are its twin's.
+    texts.extend(_carried(texts[0], removal=True))
     for index, text in enumerate(texts):
         # The temp-root carve-out reads each operand as the walls place it:
         # the command itself from the directory it runs in, a program handed
