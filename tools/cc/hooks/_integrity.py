@@ -1496,6 +1496,28 @@ def settings_env_text(value: object) -> str | None:
     return None
 
 
+def settings_object(raw: bytes | str | None) -> object:
+    """Settings content parsed as Claude Code loads it: the object, or None
+    for content that is absent or not a JSON object (a byte-order mark read,
+    the way ``_settings_object`` reads a file)."""
+    return None if raw is None else load_json_dict_safe(raw, default=None)
+
+
+def settings_text(raw: bytes) -> str:
+    """A settings file's bytes as the text Claude Code's Edit matches against:
+    a byte-order mark read, a byte that does not decode replaced (as
+    ``load_json_dict_safe`` reads the same bytes, so the two reads of one file
+    agree), and CRLF folded to LF -- the Edit tool matches an ``old_string``
+    written with LF against a CRLF file (driven on Claude Code 2.1.321,
+    2026-11-15), so a model that kept the CR would read that Edit as one the
+    tool fails."""
+    try:
+        text = decode_bom(raw)
+    except UnicodeDecodeError:  # fail-open: ok text-fallback -- the replacing decode below is the text the tool reads, so the Edit is still judged
+        text = raw.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n")
+
+
 def _settings_object(path: Path) -> dict:
     try:
         data = load_json_dict_safe(path.read_bytes(), default=None)
@@ -1504,25 +1526,47 @@ def _settings_object(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def effective_settings_values(repo_root: Path) -> dict[str, tuple[object, str]]:
+def settings_gate_values(data: object) -> dict[str, object]:
+    """The gate keys one settings object sets, each mapped to its value:
+    ``disableAllHooks`` as written, and ``env.<NAME>`` (the string a process
+    receives) for each name in ``SETTINGS_GATE_ENV_NAMES``. Anything that is
+    not an object sets nothing, as Claude Code drops a broken file, and a null
+    value sets nothing."""
+    values: dict[str, object] = {}
+    if not isinstance(data, dict):
+        return values
+    if data.get(DISABLE_ALL_HOOKS) is not None:
+        values[DISABLE_ALL_HOOKS] = data[DISABLE_ALL_HOOKS]
+    env = data.get("env")
+    if isinstance(env, dict):
+        for name, raw in env.items():
+            text = settings_env_text(raw)
+            if isinstance(name, str) and text is not None and settings_env_name(name) in SETTINGS_GATE_ENV_NAMES:
+                values["env." + settings_env_name(name)] = text
+    return values
+
+
+#: ``effective_settings_values``' default: the user file read from disk.
+_FROM_DISK = object()
+
+
+def effective_settings_values(repo_root: Path, *, user_data: object = _FROM_DISK) -> dict[str, tuple[object, str]]:
     """Each gate key the three settings files set, mapped to (the value Claude
     Code takes, the label of the file it comes from): ``disableAllHooks`` and
     ``env.<NAME>`` for each name in ``SETTINGS_GATE_ENV_NAMES``. A file that is
     absent, unreadable or not an object sets nothing, as Claude Code drops a
     broken one (driven 2026-10-08 for the project file), and a null value sets
-    nothing. Raises RuntimeError where no home directory is found."""
+    nothing. ``user_data``, where given, stands in for the user file's parsed
+    content: a write of that file judged before it lands
+    (``user_settings_switches``). Raises RuntimeError where no home directory
+    is found."""
     values: dict[str, tuple[object, str]] = {}
-    for label, path in reversed(settings_files(repo_root)):
-        data = _settings_object(path)
-        if data.get(DISABLE_ALL_HOOKS) is not None:
-            values[DISABLE_ALL_HOOKS] = (data[DISABLE_ALL_HOOKS], label)
-        env = data.get("env")
-        if not isinstance(env, dict):
-            continue
-        for name, raw in env.items():
-            text = settings_env_text(raw)
-            if isinstance(name, str) and text is not None and settings_env_name(name) in SETTINGS_GATE_ENV_NAMES:
-                values["env." + settings_env_name(name)] = (text, label)
+    files = settings_files(repo_root)
+    user_label = files[-1][0]
+    for label, path in reversed(files):
+        data = user_data if label == user_label and user_data is not _FROM_DISK else _settings_object(path)
+        for key, value in settings_gate_values(data).items():
+            values[key] = (value, label)
     return values
 
 
@@ -1544,6 +1588,113 @@ def take_settings_gate_values(repo_root: Path) -> dict:
         elif live is not None and live != files["env." + name]:
             owned.append(name)
     return {"files": files, "launch": launch, "owned": owned}
+
+
+def gate_value_loosens(name: str, before: str | None, after: str | None, mode: str) -> bool:
+    """``after`` loosens the gate ``name`` switches against ``before``, each
+    read by its gate's own grammar (None is unset): the maintenance switch
+    turned on; the stop gate moved off ``full`` (``light`` is the default
+    floor, so turning it on tightens); the suite command changed where Gate 1
+    runs one -- the stop gate full before the change and after it (``mode``).
+    With no command in the env, Gate 1 runs the declared or detected suite
+    (``stop_gate._resolve_core_tests``), so a command written then replaces
+    it. Under light the gate runs nothing, so a command set there, or with
+    the gate turned full in the same change, tightens. A roster name with no
+    grammar here loosens on any change: a switch added to the roster is
+    refused until it is taught (fail closed). config_guard (``_gate_value_loosens``) and
+    write_guard (``user_settings_switches``) read this one rule, so the two
+    helper names it reads are on the start floor of every deny hook that
+    imports this module (each hook's helper-name roster lists them); both are
+    older than every other name those floors already hold past v0.8.0b2's
+    helper, so no kept helper that passed before is refused for them."""
+    if name == _maintenance_mode.ENV_VAR:
+        active = _maintenance_mode._maintenance_mode_active
+        return active(after) and not active(before)
+    if name == "ESPALIER_STOP_GATE":
+        full = "full"
+        return _hook_utils.stop_gate_mode(before) == full and _hook_utils.stop_gate_mode(after) != full
+    if name == _hook_utils.STOP_GATE_TEST_CMD_ENV:
+        return mode == "full" and (after or "").strip() != (before or "").strip()
+    return (after or "") != (before or "")
+
+
+def _shown(value: str | None) -> str:
+    """A gate variable's value as a finding shows it: quoted and cut, or unset."""
+    return json.dumps(value[:80]) if value is not None else "unset"
+
+
+def user_settings_switches(repo_root: Path, before: object, after: object) -> list[str]:
+    """What a write of the user settings file switches off, as findings (none
+    for a write that switches nothing off): ``before`` is the file's content
+    now and ``after`` the content the write leaves, each parsed (anything not
+    an object sets nothing, as Claude Code drops a broken file). write_guard
+    refuses such a write before it lands (DEF-5112): config_guard refuses the
+    change at ConfigChange, but its refusal leaves the file as written, and
+    every session on the machine launches from that file next.
+
+    Judged by config_guard's rule (``gate_value_loosens``) against the files
+    on disk now, not SessionStart's snapshot, at two layers:
+
+    - the user file's own values, before and after, with Gate 1's mode read
+      from the file's own stop gate: the file reaches every repository on the
+      machine, so a value a higher file in this one outranks is judged all the
+      same (config_guard's merged read lets ``disableAllHooks`` through there);
+    - the session's values, as config_guard reads them: each key from the
+      highest-precedence file that sets it, else the launch environment's;
+      a name the files set while this process holds another value belongs to
+      a source above them (managed settings, ``--settings``) and is not this
+      layer's to judge, and a stop gate so owned runs the value this process
+      holds.
+
+    The two judges read different starts, so they can part both ways: the
+    session's own test command written into a user file whose stop gate is
+    full is refused here (the file layer judges the command), where
+    config_guard lets it through (its files layer skips the command, which
+    replaces nothing this session); and a switch already on disk that
+    SessionStart's snapshot lacks (a shell write earlier) passes an ordinary
+    Edit here, where config_guard refuses the whole change.
+
+    Raises RuntimeError where no home directory is found."""
+    findings: list[str] = []
+    mine_before, mine_after = settings_gate_values(before), settings_gate_values(after)
+    dah = DISABLE_ALL_HOOKS
+    if mine_after.get(dah) is True and mine_before.get(dah) is not True:
+        findings.append(f"{dah}: true")
+
+    def text(values: dict, key: str) -> str | None:
+        value = values.get(key)
+        return value if isinstance(value, str) else None
+
+    start = take_settings_gate_values(repo_root)
+    merged_after = {key: value for key, (value, _label) in effective_settings_values(repo_root, user_data=after).items()}
+
+    def session(files: dict, name: str) -> str | None:
+        key = "env." + name
+        return text(files, key) if key in files else start["launch"].get(name)
+
+    full = "full"
+
+    def mode(was: str | None, now: str | None) -> str:
+        both = _hook_utils.stop_gate_mode(was) == full and _hook_utils.stop_gate_mode(now) == full
+        return full if both else "light"
+
+    gate = "ESPALIER_STOP_GATE"
+    file_mode = mode(text(mine_before, "env." + gate), text(mine_after, "env." + gate))
+    if gate in start["owned"]:
+        held = os.environ.get(gate)
+        session_mode = mode(held, held)
+    else:
+        session_mode = mode(session(start["files"], gate), session(merged_after, gate))
+    for name in SETTINGS_GATE_ENV_NAMES:
+        key = "env." + name
+        was, now = text(mine_before, key), text(mine_after, key)
+        if gate_value_loosens(name, was, now, file_mode):
+            findings.append(f"env.{name}: {_shown(now)} (the file had {_shown(was)})")
+        elif name not in start["owned"]:
+            was = session(start["files"], name)
+            if gate_value_loosens(name, was, session(merged_after, name), session_mode):
+                findings.append(f"env.{name}: {_shown(now)} (the session runs {_shown(was)})")
+    return findings
 
 
 def read_settings_gate_values(repo_root: Path) -> dict | None:

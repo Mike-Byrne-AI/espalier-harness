@@ -21421,8 +21421,8 @@ def _unwrapped_legs(source: str) -> list:
     """The calls in `_run_main` that read the command and are not judged on
     both readings: a hard leg (`check_*`) outside a lambda handed to
     `_either_glued_reading`, the snapshot or the bump outside one handed to
-    `_main_reading_then_glued`. The Write tools' leg and MCP's read no shell
-    text."""
+    `_main_reading_then_glued`. The Write tools' legs (the zone check and the
+    user settings file's, DEF-5112) and MCP's read no shell text."""
     import ast
     fn = next(n for n in ast.walk(ast.parse(source))
               if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
@@ -21440,7 +21440,7 @@ def _unwrapped_legs(source: str) -> list:
         name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
         if name in ("snapshot_discard", "check_fired"):
             want = "_main_reading_then_glued"
-        elif name.startswith("check_") and name not in ("check_write_edit", "check_mcp"):
+        elif name.startswith("check_") and name not in ("check_write_edit", "check_mcp", "check_user_settings_write"):
             want = "_either_glued_reading"
         else:
             continue

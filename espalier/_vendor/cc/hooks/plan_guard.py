@@ -81,11 +81,11 @@ try:
     # Every helper name this hook's import graph takes (write_guard.py says why).
     _PLAN_GUARD_HELPER_NAMES = (
         "DENIED", "MCPPayloadUnverifiable", "MCP_PATH_FIELDS", "MUTATION_TOOLS", "SOURCE_LANGUAGE_EXTENSIONS",
-        "STACK_ROOT_FILES", "STATE_DIR", "atomic_write_text", "harness_exempt_prefixes", "has_active_plan",
+        "STACK_ROOT_FILES", "STATE_DIR", "STOP_GATE_TEST_CMD_ENV", "atomic_write_text", "harness_exempt_prefixes", "has_active_plan",
         "iter_mcp_path_leaves", "lock_file", "normalize_path", "normalize_path_str", "os_error_text",
         "read_stdin_safely", "read_text_nofollow", "read_toml_string_list", "read_toml_table",
         "resolve_project_root", "rooted", "say_bad_stdin", "say_once", "say_stack_table_fault", "source_extensions",
-        "unlock_file", "warn", "warn_exc",
+        "stop_gate_mode", "unlock_file", "warn", "warn_exc",
     )
     for _name in _PLAN_GUARD_HELPER_NAMES:
         getattr(_hook_utils, _name)

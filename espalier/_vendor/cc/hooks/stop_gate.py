@@ -121,12 +121,13 @@ try:
         "CODE_REVIEWED", "DOCS_REFRESHED", "HANDOFF_GATE_FLAG", "HANDOFF_GATE_HOLD", "HANDOFF_GATE_HOLD_RECHECK_S",
         "ONCE_FLAG_PREFIX",
         "OPERATOR_RELIEF_AGENT",
-        "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure",
+        "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "STOP_GATE_TEST_CMD_ENV", "SpawnFailure",
         "atomic_write_text", "floor_text", "has_active_plan", "lane_upstream", "lock_file", "origin_default_ref",
         "plan_completion",
         "python_command_hint", "read_stdin_safely", "read_toml_table",
         "relief_agents_line", "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
-        "spawn_tree_checked", "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
+        "spawn_tree_checked", "split_command", "stop_gate_mode", "stop_gate_test_cmd", "unlock_file", "warn",
+        "warn_exc",
     )
     for _name in _STOP_GATE_HELPER_NAMES:
         getattr(_hook_utils, _name)

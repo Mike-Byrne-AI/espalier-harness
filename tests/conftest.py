@@ -958,6 +958,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # The time budget: a judgment that outruns it is refused, never let
             # through when Claude Code's timeout cancels the hook.
             "test_write_guard_time_budget",
+            # A Write or Edit of the user settings file that switches a gate
+            # off is refused (DEF-5112): drives the deployed hook on scratch
+            # homes, beside the kill-switch gate.
+            "test_write_guard_user_settings",
             # The role-map gate: anti-regression rows drive the catastrophic-rm
             # hard-deny and the protected-zone guard, so this belongs in the
             # security slice rather than the fast unit one.

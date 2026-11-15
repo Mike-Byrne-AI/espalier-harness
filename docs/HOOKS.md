@@ -1109,6 +1109,18 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `bypassPermissions` default is not in this set either: it turns off Claude
    Code's permission prompts, not Espalier's hooks, which keep running and
    denying, so a session started with one works normally.
+   A Write or Edit of the user settings file (`~/.claude/settings.json`, or
+   `settings.json` under `CLAUDE_CONFIG_DIR`) is refused where its result
+   turns `disableAllHooks` on or loosens a gate variable in its `env` map, by
+   `config_guard`'s rule (section 5), and passes otherwise, so an edit of your
+   global settings keeps working; this runs under maintenance mode too. The
+   file is judged on its own as well as for this session: it reaches every
+   repository on the machine, so a value a higher file here outranks is
+   judged all the same. An Edit that Claude Code would fail, and a result
+   that is not a strict JSON object (which Claude Code does not load), pass.
+   A Bash, PowerShell or MCP write of the file is a declared limit, its
+   content unread and no such call paying for the check
+   (`tests/test_write_guard_user_settings.py::TestAShellWriteOfTheFileIsADeclaredLimit::test_a_shell_or_mcp_write_of_the_user_file_passes`).
 
 2. **Protected-zone mutations.** The mutations the guard can read of a
    harness infrastructure path are denied -- a write into it, a delete of
@@ -1303,7 +1315,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    is judged by containment first, so `C:\myapp\build` with the repo at
    `C:\myapp` is the nudge's, and the Bash tool reads a drive path the same
    way, its Git Bash `/c/...` spelling included on Windows, both pinned by
-   `tests/test_denial_reasons.py::TestDangerousBashPlainEnglish::test_the_claims_hold_against_the_classifier`),
+   `TestDangerousBashPlainEnglish::test_the_claims_hold_against_the_classifier`),
    an absolute path with a `..` step -- and one nudge on any other path or
    variable) are
    also caught, by every switch spelling that runs -- the unambiguous
@@ -2465,7 +2477,7 @@ spellings of them are work:
 
 | Control | Effect |
 |---------|--------|
-| `ESPALIER_MAINTENANCE_MODE=1` | Bypasses the protected-zone check. Kill-switch gate, dangerous-command blocking and the speed-bump checkpoints (`CP-*`) still run; outside maintenance the zone checks answer before them, so a bump fires only on a call that can proceed. One advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`; `/status --log` counts it). |
+| `ESPALIER_MAINTENANCE_MODE=1` | Bypasses the protected-zone check. Kill-switch gate, the user settings file's write check, dangerous-command blocking and the speed-bump checkpoints (`CP-*`) still run; outside maintenance the zone checks answer before them, so a bump fires only on a call that can proceed. One advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 **Denial-hint surface.** Protected-zone denials append a
 discoverability hint pointing at the maintenance-mode escape:
@@ -2586,7 +2598,14 @@ by label (never the home path), and is told once at the next PostToolUse: the
 change was not applied, the file keeps it, and it takes effect at the next
 launch, which the operator decides. A later change let through clears the
 note, and so does a fresh session; SessionStart's banner names the maintenance
-switch it started with, not the other values.
+switch it started with, not the other values. Because this refusal leaves the
+file as written, `write_guard` judges a Write or Edit of the user file before
+it lands (section 4), by the same rule but against the files on disk rather
+than this record, so the two can part both ways: the session's own test
+command written into a user file whose stop gate is `full` is refused at the
+write and let through here, and a switch already on disk that the record
+lacks (a shell write earlier) lets an ordinary Edit through at the write
+while this hook refuses the change.
 
 **What you see when blocked:**
 
@@ -3242,7 +3261,7 @@ Espalier-Harness has three levels of configuration, from surgical to nuclear:
 
 What maintenance mode does NOT bypass:
 - stop_gate's gate 1 (pytest, where opted in), gate 5 (the handoff gate) and gate 4 (the blueprint finalize)
-- write_guard's kill-switch gate and dangerous-command blocking
+- write_guard's kill-switch gate, its user settings file write check and dangerous-command blocking
 - write_guard's speed-bump checkpoints (`CP-*`), which run under maintenance with no zone check ahead of them
 - config_guard (settings safety)
 - post_write_check (advisory — already non-blocking)
@@ -3535,7 +3554,7 @@ inside a window of twenty.
 | `pretooluse_blocked_protected_zone` | refusal | a write to a protected harness zone is denied (Write/Edit, Bash, PowerShell, or MCP) |
 | `pretooluse_blocked_dangerous_command` | refusal | a dangerous Bash/PowerShell pattern (`rm -rf /`, fork bomb, …) is denied |
 | `pretooluse_blocked_no_active_plan` | refusal | `plan_guard` denies a source write with no active execution plan |
-| `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set |
+| `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set, or (`details.kind` `user_settings_write`) a Write or Edit of the user settings file is denied because its result would turn the hooks off or loosen a gate; `details.findings` names each switch and `details.file_path` the file by label, never the home path |
 | `pretooluse_blocked_secret_path` | refusal | a read of a secret-bearing path (a dotenv file, a `secrets/` directory, a credentials file) is denied — for Read/Edit/Grep, and for a Bash or PowerShell command that would print it |
 | `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
 | `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline and `details.bytes` the payload's length |

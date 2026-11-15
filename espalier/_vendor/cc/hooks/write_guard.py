@@ -306,7 +306,7 @@ try:
     _WRITE_GUARD_HELPER_NAMES = (
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_LEAFWALK_MAX_NODES",
         "MCP_PATH_FIELDS",
-        "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_clean_path_prefixes",
+        "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "STOP_GATE_TEST_CMD_ENV", "_append_jsonl", "_clean_path_prefixes",
         "_is_abs_leaf", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
         "_write_counter", "adopter_protected_prefixes", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
@@ -473,10 +473,10 @@ _aliases_protected_inode = _protected_zones.aliases_protected_inode
 #: replaced, so every record below (the Bash prefix, the three PowerShell
 #: arms, cmd's `set`) refuses each name the same way. The stop gate's two
 #: names are literals: the zero-cross-import rule keeps
-#: `stop_gate.STOP_GATE_MODE_ENV` out of reach, and reading
-#: `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to this guard's
-#: start floor, which a kept older helper then refuses every call for;
-#: tests/test_hook_constant_parity.py pins both to their constants.
+#: `stop_gate.STOP_GATE_MODE_ENV` out of reach, and the alternation below must
+#: be a literal; `_hook_utils.STOP_GATE_TEST_CMD_ENV` is on this guard's start
+#: floor all the same since DEF-5112 (`_integrity.gate_value_loosens` reads
+#: it). tests/test_hook_constant_parity.py pins both to their constants.
 _HARNESS_ENV_NAMES: tuple[str, ...] = (
     _maintenance_mode.ENV_VAR,
     "ESPALIER_STOP_GATE",
@@ -3215,6 +3215,121 @@ def check_write_edit(tool_input: dict, root: Path) -> int:
     return 0
 
 
+def _names_user_settings(file_path: str, root: Path, user: Path) -> bool:
+    """``file_path`` names the user settings file ``user``: the same spelling,
+    the same file where both exist (a symlink to it, a hard link, a case
+    variant on a disk that folds case), or the same folder and the same name
+    (a write that creates the file, or names it through a link to its
+    folder). Two stats on a Write or an Edit, none on any other call. The
+    tilde is expanded by ``os.path.expanduser``, which leaves an unknown
+    user's ``~name`` as it is where ``Path.expanduser`` raises."""
+    target = Path(os.path.expanduser(file_path))
+    if not target.is_absolute():
+        target = root / target
+    if os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(user)):
+        return True
+    try:
+        if os.path.samefile(target, user):
+            return True
+    except OSError:  # fail-open: ok deliberate -- one of the two files is absent or unreadable: the folder test below decides
+        pass
+    if target.name != user.name:
+        return False
+    try:
+        return os.path.samefile(target.parent, user.parent)
+    except OSError:  # fail-open: ok deliberate -- a folder that does not exist holds no settings file a session loads
+        return False
+
+
+def _user_settings_result(tool_name: str, tool_input: dict, text: str | None, exists: bool) -> str | None:
+    """The user settings file's text after this Write or Edit, or None where
+    Claude Code's tool would fail and change nothing: an Edit whose
+    ``old_string`` is not in the file, or is there more than once without
+    ``replace_all``, or of a file it cannot read (an empty ``old_string``
+    creates a file that does not exist, and fails on one that does)."""
+    if tool_name == "Write":
+        content = tool_input.get("content")
+        return content if isinstance(content, str) else None
+    old, new = tool_input.get("old_string"), tool_input.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return None
+    if not exists:
+        return new if old == "" else None
+    if text is None or old == "" or old not in text:
+        return None
+    if tool_input.get("replace_all") is True:
+        return text.replace(old, new)
+    return text.replace(old, new, 1) if text.count(old) == 1 else None
+
+
+def check_user_settings_write(tool_name: str, tool_input: dict, root: Path) -> int:
+    """Refuse a Write or Edit of the user settings file (``~/.claude/settings.json``,
+    or ``settings.json`` under ``CLAUDE_CONFIG_DIR``) whose result turns
+    ``disableAllHooks`` on or loosens a gate variable in its ``env`` map, by
+    config_guard's rule (``_integrity.user_settings_switches``); every other
+    edit of the file passes (DEF-5112, the operator's ruling).
+
+    Why at the write: config_guard refuses the same change at ConfigChange,
+    but that refusal leaves the file as written, and every session on the
+    machine launches from it next. The project and local files are a
+    protected zone, refused whole; the user file is in no zone, so "add X to
+    my global settings" keeps working.
+
+    Runs under maintenance mode too, beside the kill-switch gate: that bypass
+    is for harness self-edits, and none writes a hooks-off switch into the
+    user's own file.
+
+    Edges, each deliberate:
+    - NotebookEdit is not judged: Claude Code refuses it on a file that is not
+      ``.ipynb`` (driven 2026-11-15 on 2.1.321), so it never writes this one.
+    - A Bash or PowerShell write of the file is a declared limit (the ruling):
+      its content is not read, and no shell call pays for this check.
+    - An Edit Claude Code would fail changes nothing and passes
+      (``_user_settings_result``), and so does a result that is not a JSON
+      object, which sets nothing (Claude Code drops a broken file)."""
+    if tool_name not in ("Write", "Edit"):
+        return 0
+    file_path = tool_input.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return 0
+    try:
+        user = _integrity.user_settings_path()
+    except RuntimeError as exc:
+        _hook_utils.say_once(
+            root, "user-settings-unlocated", "write_guard", "pretooluse_failed_open_user_settings",
+            f"the user settings file could not be located ({type(exc).__name__}); "
+            "a write of it is not judged this session",
+            fault=type(exc).__name__,
+        )
+        return 0
+    if not _names_user_settings(file_path, root, user):
+        return 0
+    exists = True
+    try:
+        raw: bytes | None = user.read_bytes()
+    except FileNotFoundError:  # fail-open: ok deliberate -- an absent file sets nothing: a Write creates it and its whole text is judged
+        raw, exists = None, False
+    except OSError:  # fail-open: ok deliberate -- an unreadable file is judged as empty: a Write that turns a switch on is still refused, and an Edit Claude Code cannot read fails and changes nothing
+        raw = None
+    after = _user_settings_result(
+        tool_name, tool_input, None if raw is None else _integrity.settings_text(raw), exists)
+    if after is None:
+        return 0
+    # user_settings_path() answered above, so the settings files it reads
+    # again here are located the same way (no second RuntimeError to catch).
+    findings = _integrity.user_settings_switches(
+        root, _integrity.settings_object(raw), _integrity.settings_object(after))
+    if not findings:
+        return 0
+    label = _integrity.user_settings_label()
+    reason = _denial_reasons.USER_SETTINGS_SWITCH.format(
+        tool=tool_name, label=label, findings="; ".join(findings))
+    return _audit_deny(
+        root, "pretooluse_blocked_kill_switch", reason,
+        tool=tool_name, kind="user_settings_write", file_path=label, findings=findings,
+    )
+
+
 # The directory a command runs in (DEF-509): the payload's `cwd` and the
 # command's own chain, read the same way by post_write_check -- both through
 # `_hook_utils`, so the verdict and the registry payload name one place.
@@ -5040,6 +5155,16 @@ def _run_main(data: dict | None = None) -> int:
         rc = _either_glued_reading(lambda: check_powershell(_read(), root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="PowerShell")
+            return rc
+
+    # The user settings file (DEF-5112) -- runs ALWAYS, including under
+    # MAINTENANCE_MODE, beside the kill-switch gate above: a Write or Edit whose
+    # result turns the hooks off or loosens a gate there reaches every session
+    # on the machine, and no harness self-edit writes one. Write and Edit only:
+    # no shell call pays for it.
+    if tool_name in ("Write", "Edit"):
+        rc = check_user_settings_write(tool_name, tool_input, root)
+        if rc:
             return rc
 
     # Maintenance mode, read once and quietly: it decides whether the

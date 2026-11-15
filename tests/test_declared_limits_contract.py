@@ -364,7 +364,14 @@ class TestTheSentenceSplitter:
 #: sentence pinned in `TestTwoOperandReadersCutCommentsAsTheMaskerDoes`; its
 #: cite's hit is paid by the forced PowerShell remove's glob-relief cite, now
 #: by class and test name alone, so the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 43, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 43 -> 44 on 2026-11-15 (air's 565178, operator ruling 54f420): a
+#: Bash, PowerShell or MCP write of the user settings file is not read by the
+#: check that refuses a Write or Edit of it turning the hooks off, one
+#: sentence pinned in `TestAShellWriteOfTheFileIsADeclaredLimit`; its cite's
+#: hit is paid by the drive-root claims table's cite, which sits in no
+#: declaring sentence and is now cited by class and test name alone, as its
+#: own test's docstring cites it, so the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 44, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
