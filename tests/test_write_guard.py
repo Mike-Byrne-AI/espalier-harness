@@ -719,8 +719,15 @@ class TestQuotedVerbTailIsUniform:
         "_SHELL_DASH_C_RE": ("sh", "sh -c 'rm tools/cc/hooks/x.py'"),
         # the quoted-program carriers (DEF-1131) feed the secret leg and the
         # nested-launch scan, not a zone deny; the quoted verb is proven where
-        # their tier is (TestQuotedProgramsAreReadAsPrograms's quoted-head row)
+        # their tier is (TestQuotedProgramsAreReadAsPrograms's quoted-head row,
+        # and its builtin row for the quoted words the opener walks past)
         "_CARRIER_HEAD_RE": None,
+        # powershell's head on the Bash tool (DEF-4061), a first-use compile
+        # named as its accessor's call: the secret leg's reader of the program
+        # it runs, no zone deny; its spellings are walked at the pattern
+        # (TestBinaryVerbSpellingIsUniform's _PATTERN_SAMPLES) and its quoted head
+        # in TestQuotedProgramsAreReadAsPrograms
+        "_powershell_head_re()": None,
         "_TAR_CREATE_RE": None,
         "_ZIP_RE": None,
         "_DD_IF_RE": None,
@@ -1072,6 +1079,9 @@ class TestBinaryVerbSpellingIsUniform:
         # the secret leg's carrier opener (DEF-1131): its binary heads; its
         # builtin head, `eval`, is pinned case-sensitive in the test below
         "_CARRIER_HEAD_RE": ("watch", "watch 'cat notes'"),
+        # powershell's head (DEF-4061), compiled on first use: read through
+        # its accessor below
+        "_powershell_head_re()": ("powershell", "powershell -Command 'cat notes'"),
     }
 
     @staticmethod
@@ -1108,7 +1118,8 @@ class TestBinaryVerbSpellingIsUniform:
     def test_a_read_arm_takes_every_spelling_at_the_pattern(self, arm):
         bp = _bash_patterns_module()
         verb, bare = self._PATTERN_SAMPLES[arm]
-        pattern = getattr(bp, arm)
+        # a first-use compile is named as its accessor's call (DEF-3063)
+        pattern = first_use_patterns(bp)[arm] if arm.endswith("()") else getattr(bp, arm)
         assert pattern.search(bare), (arm, bare)
         for spelled in self._spellings(verb):
             text = spelled + bare[len(verb):]
@@ -1465,7 +1476,7 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
     @staticmethod
     def _carrier_heads(bp) -> set[str]:
         """The carrier reader's head words, read from `_CARRIER_HEAD_RE`'s
-        `head` group (`eval`, `watch`, `script`, `su` today)."""
+        `head` group (`eval`, `builtin`, `watch`, `script`, `su` today)."""
         group = bp._CARRIER_HEAD_RE.pattern.split("(?P<head>", 1)[1].split(bp._EXE_SUFFIX, 1)[0]
         return set(re.findall(r"[a-z]+", group.replace("(?i:", "")))
 
@@ -1486,6 +1497,29 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         assert len(declined) == len(set(declined))
         assert bp._CMD_POS_WRAPPER_BUILTINS in bp._CMD_POS_SLASHED_WRAPPER_WORD
         assert bp._CMD_POS_SLASHED_DECLINED_BINARIES in bp._CMD_POS_SLASHED_WRAPPER_WORD
+
+    def test_the_carrier_wrappers_are_one_fragment_the_three_rosters_read(self):
+        # DEF-4061's one table (ruling 2dccd4): `watch` and `script` are
+        # wrappers and carrier verbs, so the roster, the carrier opener's
+        # head group and the slashed decline compose one literal fragment;
+        # the two pins around this one hold one relation each, and passed a
+        # head added outside the roster and a carrier wrapper dropped from it
+        bp = _bash_patterns_module()
+        lead, mid, tail = (bp._WRAPPER_LEAD_BINARIES, bp._WRAPPER_CARRIER_BINARIES,
+                           bp._WRAPPER_TAIL_BINARIES)
+        assert bp._CMD_POS_WRAPPER_BINARIES == "(?:" + lead + "|" + mid + "|" + tail + ")"
+        assert bp._CMD_POS_SLASHED_DECLINED_BINARIES == "(?:" + lead + "|" + tail + ")"
+        assert "(?P<head>eval|builtin|(?i:" + mid + "|su)" in bp._CARRIER_HEAD_RE.pattern
+        roster = set(re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES))
+        assert set(re.findall(r"[a-z]+", mid)) == roster & self._carrier_heads(bp)
+
+    def test_every_carrier_head_has_its_reader_by_name(self):
+        # the failure-mode review of DEF-4061: the reader sent every head
+        # but `eval` and `watch` to the switch reader, so a carrier added to
+        # the fragment that runs its trailing words got the wrong reader
+        # unseen; each head the opener reads is a key of the one table
+        bp = _bash_patterns_module()
+        assert set(bp._CARRIER_READERS) == self._carrier_heads(bp)
 
     def test_every_wrapper_carrier_keeps_its_program_behind_a_slashed_flag_argument(self, tmp_path):
         # the hand-written rows below name `watch` and `script`; this one
@@ -9488,9 +9522,10 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
-            # `_carrier_fed_remove_re` (DEF-3063) takes no argument and returns
-            # a compiled pattern, compiled on first use: no key a flag could
-            # be missing from, and no verdict
+            # `_carrier_fed_remove_re` (DEF-3063) and `_powershell_head_re`
+            # (DEF-4061) take no argument and return a compiled pattern,
+            # compiled on first use: no key a flag could be missing from, and
+            # no verdict
             "_carrier_fed_remove_re",
             # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
             # returns its mask, or the text itself: the masker's transform,
@@ -9500,6 +9535,8 @@ class TestCatastrophicRmFlagOrderIndependent:
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
+            "_powershell_head_re",              # compiled on first use, as above
+
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
             # whether a PowerShell literal span is re-parsed as a program --
@@ -13212,6 +13249,36 @@ class TestCmdReceivesAWordWithoutABlankBare:
         # read once, never twice (the code review's duplicate)
         assert programs("cmd //c rd /s /q 'my (x86) dir'") == ['rd /s /q "my (x86) dir"']
 
+    @pytest.mark.parametrize("switch, twin", [("/r", "/c"), ("/R", "/C"), ("/d/r", "/d/c")],
+                             ids=["r", "upper-r", "glued-run"])
+    def test_cmds_r_switch_hands_on_the_program_its_c_twin_does(self, switch, twin):
+        """DEF-4061's sibling sites (air's 13e01f): cmd runs `/r` as `/c`
+        (driven on Windows, echo only), so every reader of cmd's program
+        switch takes it from one set, `_CMD_PROGRAM_SWITCH_LETTERS`: the
+        outer walk on both tools, Start-Process's argument list and a cmd a
+        cmd statement starts. Each reads `/r` as its `/c` twin, on the
+        catastrophic delete the wall exists for: a zone path would pass with
+        the gap open, since a PowerShell zone reader already refuses it."""
+        bp = _bash_patterns_module()
+
+        def programs(command: str, bash: bool) -> list[str]:
+            raw, scan = bp._bash_scan_pair(command) if bash else bp.powershell_scan_pair(command)
+            return [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=bash)]
+
+        for bash in (False, True):
+            slash = "//" if bash else "/"
+            got, want = (programs("cmd " + s.replace("/", slash) + " rd /s /q %USERPROFILE%", bash)
+                         for s in (switch, twin))
+            assert want and got == want, (bash, got, want)
+        start = "Start-Process cmd -ArgumentList '{} rd /s /q C:\\'"
+        got, want = programs(start.format(switch), False), programs(start.format(twin), False)
+        assert want and got == want, (got, want)
+        if "/d" not in switch:            # a nested glued run: two levels, the limit
+            for s, t in ((switch, twin), ("/" + switch, "/" + twin)):
+                words = ["rd", "/s", "/q", "C:\\"]
+                assert bp._cmd_nested_program([s, *words]) == bp._cmd_nested_program([t, *words])
+                assert bp._cmd_nested_program([t, *words]) == "rd /s /q C:\\"
+
     _CMD_META_ROSTER = ["&", "|", "(", ")", "<", ">", "^", ";", ","]
 
     def test_the_metacharacter_roster_is_pinned(self):
@@ -15850,6 +15917,125 @@ class TestQuotedProgramsAreReadAsPrograms:
         assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
 
+    # DEF-4061: a carrier's program bound to its switch with no blank, behind
+    # a flag of either case, or under a long switch the reader did not name
+    # or a prefix getopt_long takes, and an `eval` behind the `builtin`
+    # builtin -- one literal launch level each, composed from each leg's
+    # spellings around the one program the leg reads; the spaced twins are
+    # the table above (every row here allowed at 0097b9f; the flag-case and
+    # prefix rows, the builtin rows past the first three and the colon rows
+    # on the Bash tool allowed at 33db633 too)
+    @pytest.mark.parametrize("switch", [
+        "su -c", "su -lc", "su root -c", "script -q -c", "script -qc",
+        "su --session-command=", "su --session-command ",
+        "su -Pc", "script -Fc", "su --comm ", "su --com=",
+    ])
+    def test_a_su_or_script_program_bound_to_its_switch_is_read(self, switch, tmp_path):
+        assert_hook_denied(run_bash_guard(switch + "'cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # the review of DEF-4061's first cut: a value glued to a switch ahead of
+    # the program switch hides nothing behind it -- the value's letters are
+    # not flags (script's timing file, su's shell) -- and of two program
+    # switches su runs the last, so both are read (the first two refused at
+    # 0097b9f and allowed at 33db633; the third allowed at both)
+    @pytest.mark.parametrize("ahead", ["script -ttrace.log -c ", "su -stcsh -c ", "su -c true -c "])
+    def test_a_value_glued_ahead_of_the_program_switch_hides_nothing(self, ahead, tmp_path):
+        assert_hook_denied(run_bash_guard(ahead + "'cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # `builtin` and `command` before `eval`, each quoted or followed by
+    # `--`, and a quoted or escaped `eval` (each of the 24 driven on bash,
+    # echo only)
+    @pytest.mark.parametrize("verb", ["eval", '"eval"', "\\eval"])
+    @pytest.mark.parametrize("head", [
+        "builtin", "builtin command", "command builtin", "builtin --", "builtin builtin",
+        '"builtin"', "builtin 'command'", "builtin -- command --",
+    ])
+    def test_an_eval_behind_the_builtin_builtin_is_read(self, head, verb, tmp_path):
+        assert_hook_denied(run_bash_guard(head + " " + verb + " 'cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("head", ["iex", "Invoke-Expression", "powershell"])
+    @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
+    def test_a_program_bound_to_its_switch_by_a_colon_is_read(self, head, switch, tmp_path):
+        command = head + " " + switch + "'gc .env'"
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # the Bash tool's twin (the failure-mode review): Windows PowerShell 5.1
+    # binds no colon-bound switch but runs the whole word as command text,
+    # so a statement after the first runs (driven, echo only); read on
+    # powershell's head alone (air 63f101 (3))
+    @pytest.mark.parametrize("head", ["powershell", "PowerShell.exe"])
+    @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
+    def test_a_powershell_program_bound_by_a_colon_on_the_bash_tool_is_read(self, head, switch, tmp_path):
+        command = head + " " + switch + "'Get-Date; gc .env'"
+        assert_hook_denied(run_bash_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # pwsh refuses a colon-bound program switch: 7.6.5 reads the word as a
+    # script file's name (its default is -File), exits 64 and runs nothing
+    # (air's drive, note 24fc34), so neither tool's carrier reads a program
+    # there. The PowerShell tool's row holds one statement: its statement
+    # cut leaves a pwsh word's string unmasked, so a second statement in it
+    # is read by the cut, a refusal that is the cut's, not the carrier's
+    # (the code review of d349ea1)
+    @pytest.mark.parametrize("tool, program", [("Bash", "'Get-Date; gc .env'"), ("PowerShell", "'gc .env'")])
+    @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
+    def test_a_pwsh_program_bound_by_a_colon_is_not_read(self, tool, program, switch, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": "pwsh " + switch + program}, tmp_path))
+
+    # Windows PowerShell 5.1 runs its first word that is no parameter as
+    # command text (its default is -Command), on both tools; which
+    # parameters take a value is not read, so a word after a switch is read
+    # as a program and as that switch's value (air 63f101 (3))
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize("command", [
+        "powershell 'gc .env'",
+        "powershell -NoProfile gc .env",
+        "powershell.exe -NoLogo 'gc .env'",
+        "powershell -ExecutionPolicy Bypass 'gc .env'",
+        "powershell -ExecutionPolicy Bypass -NoProfile 'gc .env'",
+        # a value then a switch before a bare program: red under a walker
+        # that reads its first candidate alone (the failure-mode review)
+        "powershell -ExecutionPolicy Bypass -NoProfile gc .env",
+        # a quoted switch: the quotes are gone before powershell.exe reads
+        # it, so it is a switch, `-Command` included (the failure-mode review)
+        'powershell.exe -NoProfile "-Command" "gc .env"',
+        "powershell '-NoProfile' 'gc .env'",
+        # 5.1 reads an en dash, em dash or horizontal bar as a parameter's
+        # lead (driven, echo only, by the code review of d349ea1)
+        "powershell " + chr(0x2013) + "NoProfile gc .env",
+        "powershell " + chr(0x2013) + "c:'gc .env'",
+        "powershell " + chr(0x2014) + "Command 'gc .env'",
+    ])
+    def test_a_powershell_program_with_no_command_switch_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # BSD script (macOS, FreeBSD) has no -c: it runs the words after its file
+    # word, past its switches, `-t` taking a value (air 63f101 (2))
+    @pytest.mark.parametrize("command", [
+        "script out.log cat .env",
+        "script -q out.log cat .env",
+        "script -t 0 out.log cat .env",
+        "script -qt0 out.log cat .env",
+        "script -- out.log cat .env",
+    ])
+    def test_a_bsd_script_program_after_its_file_word_is_read(self, command, tmp_path):
+        assert_hook_denied(run_bash_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # cmd runs `/r` as `/c` (driven on Windows, echo only), so it is read
+    # spaced too; a glued run is one switch after another
+    @pytest.mark.parametrize("head", ["cmd", "cmd.exe"])
+    @pytest.mark.parametrize("switch", ["/c", "/C", "/k", "/r", "/r ", "/s/c", "/q/c", "/q/c "])
+    def test_cmds_program_glued_to_its_switch_is_read(self, head, switch, tmp_path):
+        command = head + " " + switch + '"type .env"'
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
     @pytest.mark.parametrize("tool, command", [
         # A string a later statement runs is read where it runs: the four
         # twins DEF-1045 held refused by the old split, now by the reader.
@@ -15884,8 +16070,42 @@ class TestQuotedProgramsAreReadAsPrograms:
         ("PowerShell", "Write-Output 'a; Invoke-Expression \"type .env\"'"),
         # a subexpression inside a single-quoted string is text
         ("PowerShell", "Write-Host 'see $(gc .env)'"),
+        # the bound and walked-past forms are opened on the masked text too
+        ("Bash", "echo 'builtin eval cat .env'"),
+        ("Bash", "echo 'su -c\"cat .env\"'"),
+        ("PowerShell", "Write-Host 'iex -Command:\"gc .env\"'"),
+        ("PowerShell", "Write-Host 'cmd /c\"type .env\"'"),
     ])
     def test_a_string_no_carrier_runs_is_a_mention(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        # a colon-bound switch that is not the program switch: the script
+        # file is the program and the quoted word its argument
+        ("PowerShell", "pwsh -File:x.ps1 'gc .env'"),
+        ("Bash", "pwsh -File:x.ps1 'gc .env'"),
+        # a cmd switch that is not a program switch: cmd runs nothing it
+        # was handed (driven, echo only)
+        ("PowerShell", 'cmd /d "type .env"'),
+    ])
+    def test_a_quoted_word_behind_a_switch_that_runs_nothing_is_not_read(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        # pwsh's first word is a script file (its default is -File)
+        ("PowerShell", "pwsh 'gc .env'"),
+        # the script file is the program (a declared limit)
+        ("PowerShell", "powershell -File x.ps1 'gc .env'"),
+        # a word read past a switch as a candidate program names no read
+        ("PowerShell", "powershell -NoProfile Write-Output .env"),
+        ("Bash", "powershell -NoProfile Write-Output .env"),
+        # BSD script with no command after its file word, or one reading
+        # nothing secret
+        ("Bash", "script out.log"),
+        ("Bash", "script -t 0 out.log"),
+        ("Bash", "script -q out.log cat README.md"),
+    ])
+    def test_a_word_no_shell_runs_as_a_secret_read_is_not_read(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
 
 
@@ -16781,6 +17001,8 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
                                     "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
+        "_powershell_head_re()": "powershell's head on the Bash tool (DEF-4061): the secret leg's "
+                                 "reader of the program it runs; no zone deny reads it",
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
         "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
                           "no zone deny reads it",

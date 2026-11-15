@@ -4802,6 +4802,7 @@ def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
 
     return [
         ("_bash_patterns._carrier_fed_remove_re()", _bash_patterns._carrier_fed_remove_re()),
+        ("_bash_patterns._powershell_head_re()", _bash_patterns._powershell_head_re()),
     ]
 
 

@@ -3397,8 +3397,11 @@ a real command can fill is a coverage hole with no receipt, and a must-deny row
 at the padded length is what reds a future bound.
 The exception, with its receipt: the `-c` cluster (`_POSIX_SHELL_C_CLUSTER`,
 either sign, eight letters a side of the `c`) stays bounded in
-`_SHELL_DASH_C_RE` and `_PS_BASH_DASH_C_RE`, and so does the carriers'
-`_CARRIER_C_CLUSTER_RE`. Its cost sits inside ONE token, where each `c` in a long
+`_SHELL_DASH_C_RE` and `_PS_BASH_DASH_C_RE` (the carriers' reader of
+`script` / `su` switches had a third copy until DEF-4061 replaced it with a
+walk over each word, `_switch_programs`: one word already in hand, the first
+`c` found by a string search, so no split point exists and no bound is
+needed). Its cost sits inside ONE token, where each `c` in a long
 letter run is a split point, and no second parse can be taken away without
 dropping clusters bash accepts: unbounded it read 113 / 451 / 1800 ms at
 4 / 8 / 16 KB on one token (measured on review, at load 3.5), so a cluster of

@@ -2084,8 +2084,24 @@ The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out
-of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
-`su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
+of a string is read as a program too: Bash `eval` (behind `builtin` and
+`command` too, each quoted or followed by `--`), `watch`, `script -c` and
+`su -c` (su's `--session-command` too, either long switch under any prefix
+getopt_long takes, every `-c` program on the line, and the value glued to a
+`-c` as one word behind flags of either case: `su -c'...'`,
+`script -qc'...'`), and BSD `script`'s command, the words after its file
+word (`script -q out.log <program>`); PowerShell `Invoke-Expression` / `iex`
+and `pwsh -Command` (`iex`'s and powershell's bound by a colon too, under any
+prefix, from either tool: `iex -Command:'...'`, `powershell -c:'...'`;
+Windows PowerShell 5.1 binds no colon but runs the whole word as command
+text, so a statement after its first runs; pwsh reads a colon-bound word as
+a script file's name and runs nothing, so the carrier reads none there),
+powershell's program with no `-Command` before it, from either tool (its
+first word that is no parameter, a parameter led by `-`, `/` or a Unicode
+dash and quoted or not; which parameters take a value is not read, so each
+word after a switch is read as a program too),
+`cmd /c`, `/k` or `/r` (which cmd runs as `/c`; glued to the program or to
+a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
 an expandable string) and an `@(...)` array subexpression outside every
 string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
@@ -2095,8 +2111,7 @@ iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
 carries after the started shell's `-Command` or `-c`, or a program piped
 to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
-argument list, the colon-bound `-Command:'...'`, a glued
-`cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
+argument list and the words after a quoted program (`cmd /c "type" .env`).
 A PowerShell statement that opens with a quoted string is read as the
 command its first word names, which is what refuses a string piped into
 `iex`, unless nothing in the command can run the string: the right-hand
