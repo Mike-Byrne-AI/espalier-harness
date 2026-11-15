@@ -4791,6 +4791,15 @@ _CARRIER_FORMS = [
     ("su-login", "su - -c '", "'"),
     ("script-bsd", "script out.log ", ""),
     ("script-bsd-t", "script -t 0 out.log ", ""),
+    # the user-switching launchers DEF-2090 adds to the launcher roster, which
+    # the hard tier and the bumps both read
+    ("runuser-login", "runuser -l app -c '", "'"),
+    ("runuser-user", "runuser -u app -- ", ""),
+    ("gosu", "gosu app ", ""),
+    ("su-exec", "su-exec app ", ""),
+    ("sg", "sg app -c '", "'"),
+    ("flock", "flock /tmp/lk -c '", "'"),
+    ("flock-argv", "flock -w 5 /tmp/lk ", ""),
 ]
 #: Each bump's program, the one its bare spelling bumps on.
 _CARRIED_PROGRAMS = {

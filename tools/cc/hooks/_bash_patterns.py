@@ -2827,8 +2827,6 @@ _PARALLEL_LITERAL_SOURCES = frozenset({":::", ":::+"})
 #: launcher started, and a variable read as one keeps its conservative
 #: reading.
 _ARGV_BARE_CHARS = frozenset("-_./=:,+@%~^$")
-#: The launchers' own words, the substring test before any walk.
-_LAUNCHER_WORDS = ("find", "fd", "parallel")
 #: The words a statement's head walk steps past to reach a launcher: the
 #: anchor's wrapper roster (its three binary fragments and its builtins,
 #: read from the same literals, so a wrapper added there is stepped here),
@@ -3071,24 +3069,171 @@ def _parallel_programs(words: list[str], removal: bool) -> list[str]:
     return programs
 
 
+# ── A program a user-switching launcher runs (DEF-2090) ──────────────────────
+#: runuser, gosu, su-exec, sg and flock each run a program as another user,
+#: group or lock holder: the same container user's ways in that `su` is
+#: (air ea974c (1)). runuser and flock hand a `-c` program to a shell, sg
+#: hands its one command word to one, and gosu, su-exec, `runuser -u` and
+#: flock's argv form exec an argv. None takes any item, so ``removal`` reads
+#: nothing here.
+#: runuser's short switches that take a value (util-linux su-common.c:
+#: `-c`, `-g`, `-G`, `-s`, `-u`, `-w`), and its long ones without dashes.
+_RUNUSER_VALUED = frozenset("cgGsuw")
+_RUNUSER_VALUED_LONG = (
+    "command", "session-command", "group", "supp-group", "shell", "user", "whitelist-environment",
+)
+#: flock's switches that take a value (util-linux flock.c: `-w`, `-E`), and
+#: its long ones without dashes; its other switches are flags.
+_FLOCK_VALUED = frozenset("wE")
+_FLOCK_VALUED_LONG = ("timeout", "wait", "conflict-exit-code")
+
+
+def _switch_step(words: list[str], k: int, valued: frozenset[str], valued_long: tuple[str, ...]) -> tuple[int, str]:
+    """One getopt switch word at ``k``: a short letter in ``valued`` taking
+    the rest of its word or, ending it, the next word; a long switch under
+    any prefix of ``valued_long`` taking the next word unless glued with
+    `=`. Returns the offset past the switch and its value, and the valued
+    letter met (a long switch's first letter standing for it), or ``""``."""
+    word = words[k]
+    if word.startswith("--"):
+        name, eq, _value = word[2:].partition("=")
+        hit = next((long for long in valued_long if long.startswith(name)), "")
+        return k + (2 if hit and not eq else 1), hit[:1]
+    at = next((j for j, ch in enumerate(word[1:], 1) if ch in valued), 0)
+    return k + (2 if at == len(word) - 1 else 1), word[at] if at else ""
+
+
+def _switch_walk_end(words: list[str], valued: frozenset[str], valued_long: tuple[str, ...]) -> int:
+    """Where a getopt that stops at its first operand (flock's `+`) stops on
+    ``words``: past each switch word (`_switch_step`) and a `--`, at the
+    first operand or a lone `-`."""
+    k = 0
+    while k < len(words) and words[k].startswith("-") and words[k] != "-":
+        if words[k] == "--":
+            return k + 1
+        k, _letter = _switch_step(words, k, valued, valued_long)
+    return k
+
+
+def _runuser_programs(words: list[str], removal: bool) -> list[str]:
+    """Every program runuser runs. Its getopt permutes (util-linux
+    su-common.c gives no leading `+`), so up to a `--` every switch word is
+    runuser's own and every other word an operand, kept in order before the
+    words after the `--`. With `-u` / `--user` the program is that argv:
+    `runuser rm -u app -- -rf ~` runs `rm -rf ~`, a dash word before any
+    `--` is a switch of runuser's, and `-c`, `-l`, `-s` or a lone `-`
+    beside `-u` is refused (util-linux 2.41.4, driven), so su's switch
+    programs are read from the words before the `--` alone, never from the
+    argv's own `-c` (`runuser -u app -- grep -c P f` runs grep). Without
+    `-u` runuser is su: its words after the user go to the login shell,
+    where a `-c` anywhere, past a `--` too, runs a program, so every word is
+    read for one (`_switch_programs`, the reader su takes)."""
+    operands: list[str] = []
+    met = ""
+    k, end = 0, len(words)
+    while k < len(words):
+        word = words[k]
+        if word == "--":
+            end = k
+            operands += words[k + 1:]
+            break
+        if word.startswith("-") and word != "-":
+            k, letter = _switch_step(words, k, _RUNUSER_VALUED, _RUNUSER_VALUED_LONG)
+            met += letter
+        else:
+            operands.append(word)
+            k += 1
+    if "u" not in met:
+        return _switch_programs(words)
+    programs = _switch_programs(words[:end])
+    if operands:
+        programs.append(_argv_text(operands))
+    return programs
+
+
+def _user_spec_programs(words: list[str], removal: bool) -> list[str]:
+    """The program gosu or su-exec runs: the argv after its user spec, its
+    first word. Neither reads a switch before the spec (gosu's `--help` and
+    `--version` run nothing), so a first word opening with a dash names
+    none."""
+    if len(words) < 2 or words[0].startswith("-"):
+        return []
+    return [_argv_text(words[1:])]
+
+
+def _sg_programs(words: list[str], removal: bool) -> list[str]:
+    """The program sg runs: the one word after its group, past a leading
+    `-` and an optional `-c`, which sg hands to `/bin/sh -c` (shadow's
+    newgrp.c; a program of several words is quoted into one). A group word
+    opening with a dash is refused with sg's usage (shadow 4.13, driven), so
+    it runs nothing, and ast-grep's `sg -p PATTERN`, the other program named
+    sg, hands no pattern on as a program."""
+    k = 2 if words[:1] == ["-"] else 1
+    if k > len(words) or words[k - 1].startswith("-"):
+        return []
+    if words[k:k + 1] == ["-c"]:
+        k += 1
+    return [word for word in words[k:k + 1] if word]
+
+
+def _flock_programs(words: list[str], removal: bool) -> list[str]:
+    """The program flock runs once it holds its lock: past its switches
+    (`_switch_walk_end`) and the lock's file, the one word after `-c` /
+    `--command`, which flock hands to a shell, else the argv it execs. A
+    descriptor alone (`flock -n 9`) runs nothing."""
+    k = _switch_walk_end(words, _FLOCK_VALUED, _FLOCK_VALUED_LONG)
+    rest = words[k + 1:]
+    if rest[:1] in (["-c"], ["--command"]):
+        return [word for word in rest[1:2] if word]
+    return [_argv_text(rest)] if rest else []
+
+
 #: The reader each launcher takes, keyed by `_verb_key` of its word.
 _LAUNCHER_READERS: dict[str, Callable[[list[str], bool], list[str]]] = {
     "find": _find_programs, "fd": _fd_programs, "fdfind": _fd_programs, "parallel": _parallel_programs,
+    "runuser": _runuser_programs, "gosu": _user_spec_programs, "su-exec": _user_spec_programs,
+    "sg": _sg_programs, "flock": _flock_programs,
 }
+#: The launchers' own words, the substring test before any walk: the reader
+#: keys, less any that holds another (`fdfind` holds `fd`), so a launcher
+#: added to the readers is gated in on arrival, one entry. `sg` is two
+#: letters, as `fd` is: a command holding either is walked, and the walk's
+#: head test keeps it to a launcher.
+_LAUNCHER_WORDS = tuple(
+    key for key in _LAUNCHER_READERS if not any(other != key and other in key for other in _LAUNCHER_READERS)
+)
+#: The launchers whose program the hard tier reads from this walk
+#: (DEF-2090): the five user-switching launchers, judged as su's program is
+#: (`_HARD_TIER_CARRIER_HEADS`). A later launcher is a reader on
+#: `_LAUNCHER_READERS` and a place on this roster or the skipped one, never
+#: a pattern.
+_HARD_TIER_LAUNCHER_HEADS = frozenset({"runuser", "gosu", "su-exec", "sg", "flock"})
+#: The launchers the hard tier leaves out, which keep their status (air
+#: 91d13d): find, fd and parallel run their program on items they find or
+#: read, which are no operand (`_unknown_items`), and a find's root is its
+#: own sweep reader's (`iter_unnarrowed_bash_sweep_roots`). The two sets
+#: partition `_LAUNCHER_READERS`, so a launcher added there is placed on one
+#: side before its first test passes, pinned by
+#: tests/test_write_guard.py::TestTheHardTierReadsWhatALauncherRuns.
+_HARD_TIER_LAUNCHER_SKIPPED = frozenset({"find", "fd", "fdfind", "parallel"})
 
 
-def _statement_launcher_programs(words: list[str], removal: bool) -> list[str]:
+def _statement_launcher_programs(
+    words: list[str], removal: bool, heads: frozenset[str] | None = None,
+) -> list[str]:
     """The programs one statement's launcher runs: its head walked past
     assignments, wrappers and keywords (`_LAUNCH_STEP_WORDS`) to a launcher
     (`_verb_key`, so a path, a quote, a case or an `.exe` reads as the
     plain word), the words after it handed to that launcher's reader. Any
-    other head runs no launcher."""
+    other head runs no launcher, nor does a launcher outside ``heads`` where
+    a roster is given: its words are its own, read one level down or not
+    at all."""
     stepped = False
     for k, word in enumerate(words):
         key = _verb_key(word)
         reader = _LAUNCHER_READERS.get(key)
         if reader is not None:
-            return reader(words[k + 1:], removal)
+            return reader(words[k + 1:], removal) if heads is None or key in heads else []
         if key in _LAUNCH_STEP_WORDS:
             stepped = True
         elif not (stepped and (word.startswith("-") or word[:1].isdigit())) and not (
@@ -3097,9 +3242,13 @@ def _statement_launcher_programs(words: list[str], removal: bool) -> list[str]:
     return []
 
 
-def _launcher_program_bodies(command: str, scan: str, removal: bool) -> Iterator[str]:
+def _launcher_program_bodies(
+    command: str, scan: str, removal: bool, *, heads: frozenset[str] | None = None,
+) -> Iterator[str]:
     """Yield every program a launcher on the Bash tool runs (find's exec
-    actions, fd's exec switches, GNU parallel), by a token walk: the
+    actions, fd's exec switches, GNU parallel, and the user-switching
+    launchers of DEF-2090), or those of ``heads`` alone where a roster is
+    given (the hard tier's, `_HARD_TIER_LAUNCHER_HEADS`), by a token walk: the
     statement starts are the directory chain's boundaries
     (`_CHAIN_BOUNDARY_RE`) on ``scan``, the masked twin, and only a
     statement holding a launcher's own word has its words read, from the
@@ -3109,9 +3258,9 @@ def _launcher_program_bodies(command: str, scan: str, removal: bool) -> Iterator
     read cut there lost every action after the first and read `\\;` as a
     lone backslash. A start inside a read already made is that read's, so
     a run of quoted terminators costs one read, not one per terminator. No
-    pattern of its own: a command naming no launcher pays three substring
-    tests. ``removal`` reads an unknown item as the delete reading does
-    (`_unknown_items`)."""
+    pattern of its own: a command naming no launcher pays a substring test
+    per launcher word (`_LAUNCHER_WORDS`). ``removal`` reads an unknown item
+    as the delete reading does (`_unknown_items`)."""
     if len(scan) != len(command):
         scan = command
     low = scan.lower()
@@ -3126,14 +3275,16 @@ def _launcher_program_bodies(command: str, scan: str, removal: bool) -> Iterator
             continue
         words, used = _launcher_words(command[start:], 0)
         read_to = start + used
-        yield from _statement_launcher_programs(words, removal)
+        yield from _statement_launcher_programs(words, removal, heads)
 
 
 def carried_programs(command: str, *, removal: bool = False) -> list[str]:
     """Every program a carrier on the Bash tool runs, one level down: what
     `eval`, `builtin`, `watch`, `script` and `su` hand a shell
-    (`_carrier_program_bodies`) and what find, fd and parallel run
-    (`_launcher_program_bodies`), over every reading the walls judge
+    (`_carrier_program_bodies`) and what every launcher on
+    `_LAUNCHER_READERS` runs (`_launcher_program_bodies`: find, fd and
+    parallel, and runuser, gosu, su-exec, sg and flock, DEF-2090), over
+    every reading the walls judge
     (`_wall_readings`). The speed bumps read each beside the command and
     the programs it hands to a shell (`nested_shell_programs`), so a push, a
     clean, a discard, a kill or a recursive delete a carrier runs bumps as

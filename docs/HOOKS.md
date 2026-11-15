@@ -1913,7 +1913,30 @@ BSD script execs its command where the outer command stands, so reading it
 from the payload's directory is a declared over-refusal, and so is a `-c`
 read from any switch word on script's line (`script -q out.log grep -c
 '...' notes`). Behind `builtin eval`, a second level of launch wrapper,
-neither carrier's program is read. A program piped to `-Command -`
+neither carrier's program is read. The same records read, one level down
+from the same two directories, the program a user-switching launcher runs:
+`runuser` (its `-c` and long switches, as su's, and with `-u` the argv after
+the user), `gosu` and `su-exec` (the argv after the user), `sg` (its one
+command word) and `flock` (the `-c` program, or the argv after its file).
+None of the five stands on a wrapper roster, so the outer scan read none of
+their programs. gosu, su-exec, `runuser -u` and flock's argv form exec where
+the outer command stands, so judging their argv from the unknown directory
+is BSD script's declared over-refusal (`cd sub && gosu app rm -rf .` is
+refused where `cd sub && rm -rf .` nudges). find, fd and parallel are left
+to the sweep reader and the nudge. Past one level, and declared limits: a
+launcher inside a program the outer scan reads in place (a bare `bash -c
+"gosu app ..."`, `eval 'gosu app ...'`), where a switched `-c`, `su -c` or
+`watch` hands the launcher one level down and it walls; su fed its program
+on stdin (`echo '...' | su app`, `su app <<< '...'`), a launcher ahead of
+the piped shell; `builtin eval "sudo ..."`; and a wrapper switch's word
+value ahead of the launcher (`sudo -u bob gosu app ...`), which ends the
+walk to the launcher here as it does for the nudge (`sudo gosu app ...` is
+read), each pinned in
+`tests/test_write_guard.py::TestTheHardTierReadsWhatALauncherRuns::test_the_recorded_limits_stay_unread`.
+runuser's switches are read where getopt permutes them
+(`runuser rm -u app -- -rf ~`), and with `-u` the argv's own `-c` is the
+argv's; `sg` with a dash-led group word (ast-grep's `sg -p`) runs nothing.
+A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
@@ -1960,8 +1983,9 @@ never the one-re-issue nudge.
 read each program a carrier runs as the command it is, one level down: what
 find's `-exec`, `-execdir`, `-ok` and `-okdir` actions and fd's `-x` and `-X`
 run (an argv, with no shell between), the line GNU parallel hands its shell,
-and the programs `su -c` and `script` run (util-linux `script -c`, and BSD
-`script`'s words after its file word). So a force push, a tag push, a clean,
+the programs `su -c` and `script` run (util-linux `script -c`, and BSD
+`script`'s words after its file word), and the programs runuser, gosu,
+su-exec, sg and flock run (the hard tier's readers above). So a force push, a tag push, a clean,
 a discard, a kill or a recursive delete fanned out through a carrier draws
 what its direct twin draws, and the fetch-and-execute checkpoint reads the
 same programs. An item a launcher finds, or reads from a file or
@@ -2229,8 +2253,8 @@ kill-switch gate still runs. A git the judgment asks (the discard snapshot, a
 dirty-tree check) is given only the budget that is left, so on a large repo
 or a cold cache a slow git costs its snapshot, said once, and the call is
 still judged. Inside the child, a state write the judgment has in flight
-finishes before the child's refusal exits, pinned by
-`tests/test_write_guard_time_budget.py::TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`;
+finishes before the child's refusal exits, pinned in the time-budget tests by
+`TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`;
 a write still in flight at the parent's deadline is killed with the child,
 and a line it cut off loses only itself: every line-record append of the
 hooks starts on a line of its own after a torn one (`own_line` in

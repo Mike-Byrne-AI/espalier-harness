@@ -25544,3 +25544,212 @@ class TestTheHardTierReadsWhatSuAndScriptRun:
             "rm -rf y", "rm -rf z",
         ]
         assert list(bp._carrier_program_bodies(command, scan))[0] == "rm -rf x"
+
+
+class TestTheHardTierReadsWhatALauncherRuns:
+    """DEF-2090 (the siblings of DEF-4120, air's ruling ea974c (1) on
+    win-2's note 6804d8): the hard tier read no program from runuser, gosu,
+    su-exec, sg or flock, the same container user's ways in that `su` is,
+    so a recursive delete of the home directory, the root or the checkout
+    handed to any of them was a plain allow where the same program under
+    `bash -lc` walled. None of the five stands on a wrapper roster, so the
+    program after it sits at no command position the tier's in-place scan
+    reads; gosu and su-exec are the Dockerfile entrypoint idiom. The tier
+    now reads the programs DEF-5110's launcher walk returns for those five
+    heads (`_bash_patterns._HARD_TIER_LAUNCHER_HEADS`) and judges each as
+    another shell's, as it judges `bash -lc`'s; find, fd and parallel keep
+    their status. No pattern is added: the walk is gated by a substring
+    test (`_LAUNCHER_WORDS`). The oracle is the twin: each program walls
+    under `bash -lc`, and each form walls where its twin does."""
+
+    #: Each launcher's spellings, `{}` the program: su's switches and `-u`'s
+    #: argv on runuser, a user spec then an argv on gosu and su-exec, the
+    #: one command word on sg, and flock's `-c` and argv after its file.
+    _FORMS = [
+        "runuser -l app -c '{}'", "runuser app -c '{}'", "runuser -u app -- {}",
+        "runuser --user=app -- {}",
+        "gosu app {}", "gosu app:app {}", "exec gosu app {}", "sudo gosu app {}",
+        "su-exec app {}", "su-exec app:app {}",
+        "sg app -c '{}'", "sg app '{}'", "sg - app -c '{}'",
+        "flock /tmp/lk -c '{}'", "flock -w 5 /tmp/lk -c '{}'", "flock -x /tmp/lk --command '{}'",
+        "flock /tmp/lk {}",
+    ]
+    #: `${HOME}` and `~/*` are the outer shell's, expanded before the
+    #: launcher starts, as `$HOME` and `~` are: an argv launcher's words go
+    #: to the tier bare, never single-quoted as a literal brace or glob.
+    _PROGRAMS = {
+        "home": "rm -rf ~", "home-var": "rm -rf $HOME", "home-braced": "rm -rf ${HOME}",
+        "home-glob": "rm -rf ~/*", "root": "rm -rf /", "checkout": "rm -rf .",
+    }
+
+    @pytest.mark.parametrize("program", list(_PROGRAMS), ids=list(_PROGRAMS))
+    def test_each_program_walls_under_its_twin(self, tmp_path, program):
+        assert _delete_verdict(run_bash_guard("bash -lc '" + self._PROGRAMS[program] + "'", tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("program", list(_PROGRAMS), ids=list(_PROGRAMS))
+    @pytest.mark.parametrize("form", _FORMS)
+    def test_a_program_a_launcher_runs_meets_the_wall_its_twin_meets(self, tmp_path, form, program):
+        assert _delete_verdict(run_bash_guard(form.format(self._PROGRAMS[program]), tmp_path)) == "wall"
+
+    #: Every record of the tier, read in a shell launcher's program as in
+    #: `bash -lc`'s (the su class above walls each twin); an argv launcher
+    #: execs a simple command, so only those ride it.
+    @pytest.mark.parametrize("member", list(TestCrossShellRouting._TIER_MEMBERS))
+    def test_every_tier_record_reads_flock_s_program(self, tmp_path, member):
+        result = run_bash_guard("flock /tmp/lk -c '" + TestCrossShellRouting._TIER_MEMBERS[member] + "'", tmp_path)
+        if member == "env-prefix":
+            assert_hook_denied(result)
+        else:
+            assert _delete_verdict(result) == "wall"
+
+    @pytest.mark.parametrize("member", [
+        k for k in TestCrossShellRouting._TIER_MEMBERS
+        if k not in TestTheHardTierReadsWhatSuAndScriptRun._NOT_AN_ARGV
+    ])
+    def test_every_simple_tier_record_reads_gosu_s_argv(self, tmp_path, member):
+        text = TestCrossShellRouting._TIER_MEMBERS[member]
+        assert _delete_verdict(run_bash_guard("gosu app " + text, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -lc \"gosu app rm -rf ~\"", "sh -e -c \"flock /tmp/lk rm -rf ~\"", "su -c 'gosu app rm -rf ~'",
+        "watch gosu app rm -rf ~",
+    ], ids=["switched-c", "switch-then-c", "su", "watch"])
+    def test_a_launcher_in_a_program_handed_one_level_down_is_read_there(self, tmp_path, cmd):
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    def test_an_argv_judged_from_the_unknown_directory_is_a_declared_over_refusal(self, tmp_path):
+        # gosu, su-exec, runuser -u and flock exec their argv where the outer
+        # command stands, and the tier judges every program it reads from
+        # the unknown directory as well, as it judges BSD script's: a
+        # checkout delete after a `cd` walls where its bare spelling nudges.
+        (tmp_path / "sub").mkdir()
+        assert _delete_verdict(run_bash_guard("cd sub && rm -rf .", tmp_path)) != "wall"
+        assert _delete_verdict(run_bash_guard("cd sub && gosu app rm -rf .", tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("form", ["gosu app {}", "flock /tmp/lk -c '{}'"], ids=["argv", "shell"])
+    @pytest.mark.parametrize("text", [
+        "rm -rf build", "rm -rf ~/.cache/pip", "ls -la", "make test", "git status",
+    ], ids=["relative", "home-subdir", "read-only", "make", "git"])
+    def test_a_program_that_is_no_wipe_meets_no_wall(self, tmp_path, form, text):
+        # A fresh project per call: a bump the first call armed would read
+        # as an allow on the re-issue.
+        twin, carried = tmp_path / "twin", tmp_path / "carried"
+        twin.mkdir()
+        carried.mkdir()
+        assert _delete_verdict(run_bash_guard("bash -lc '" + text + "'", twin)) != "wall", text
+        assert _delete_verdict(run_bash_guard(form.format(text), carried)) != "wall", text
+
+    @pytest.mark.parametrize("cmd", [
+        "runuser rm -u app -- -rf ~", "runuser rm --user=app -- -rf /", "runuser rm -u app -- -rf .",
+    ], ids=["home", "root", "checkout"])
+    def test_a_program_runuser_s_permuted_switches_run_meets_the_wall(self, tmp_path, cmd):
+        # runuser's getopt permutes up to a `--` (util-linux 2.41.4, driven),
+        # so an operand before `-u` is the first word of the argv it runs:
+        # each runs the program its `bash -lc` twin above walls.
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        "gosu app", "gosu --help", "su-exec app id", "runuser -l app", "runuser -u app -- pytest -q",
+        "sg docker -c 'docker ps'", "flock -n 9", "flock /tmp/lk -c 'make test'",
+        # The argv's own `-c` is grep's: runuser refuses `-c` beside `-u`,
+        # so only the words before the `--` are read for one.
+        "runuser -u app -- grep -c 'rm -rf ~' notes.md",
+        # ast-grep is the other program named sg: shadow's sg refuses a
+        # dash-led group word, so a search pattern is never a program.
+        "sg -p 'rm -rf ~' src/", "sg --pattern 'rm -rf ~' src/",
+    ])
+    def test_a_launcher_with_no_program_or_a_plain_one_is_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo \"gosu app rm -rf ~\"",
+        "git commit -m 'flock -c reads rm -rf ~ now'",
+        "grep -n 'sg app -c rm -rf ~' notes.md",
+        "cat <<'EOF'\ngosu app rm -rf ~\nrunuser -u app -- rm -rf ~\nEOF",
+    ], ids=["echo", "commit", "grep", "heredoc"])
+    def test_a_mention_of_a_launcher_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo 'rm -rf ~' | su app", "su app <<< 'rm -rf ~'", "builtin eval \"sudo rm -rf ~\"",
+        "bash -c \"gosu app rm -rf ~\"", "eval 'gosu app rm -rf ~'",
+        "sudo -u bob gosu app rm -rf ~", "sudo -u bob flock /tmp/lk -c 'rm -rf ~'",
+    ], ids=[
+        "su-stdin-pipe", "su-here-string", "builtin-eval-sudo", "bare-c-launcher", "eval-launcher",
+        "wrapper-value-argv", "wrapper-value-shell",
+    ])
+    def test_the_recorded_limits_stay_unread(self, tmp_path, cmd):
+        # Recorded as limits, each past one level: a launcher ahead of a
+        # piped shell (ea974c (2)); builtin, eval, sudo (ea974c (3)); and a
+        # launcher inside a program the outer scan reads in place, a bare
+        # `bash -c`'s or eval's, where the walk reads statement heads and
+        # `_CMD_POS`, which may not grow, names no launcher (su is read
+        # there, by `_CMD_POS`'s exec-quote position). And a wrapper
+        # switch's word value ahead of the launcher (`sudo -u bob`), which
+        # ends the head walk (`_LAUNCH_STEP_WORDS`): declared for the nudge
+        # first, and the hard tier reads the same walk (`sudo gosu` walls).
+        # A fix flips this row and docs/HOOKS.md's line together.
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) != "wall"
+
+    def test_the_hard_tier_reads_the_five_launchers_alone(self):
+        # find, fd and parallel keep their status: an item a launcher finds
+        # is no operand, and a find's root is its own sweep reader's.
+        bp = _bash_patterns_module()
+        heads, skipped = bp._HARD_TIER_LAUNCHER_HEADS, bp._HARD_TIER_LAUNCHER_SKIPPED
+        assert heads == frozenset({"runuser", "gosu", "su-exec", "sg", "flock"})
+        assert skipped == frozenset({"find", "fd", "fdfind", "parallel"})
+        # a partition: a launcher added to the readers is placed on one side
+        assert heads | skipped == set(bp._LAUNCHER_READERS) and not heads & skipped
+        # and a head the tier reads is spelled in this class's forms
+        assert heads <= {word for form in self._FORMS for word in form.split()}
+        command = "find . -name x -exec rm -rf x ';'; gosu app rm -rf y; flock /tmp/lk -c 'rm -rf z'"
+        scan = bp.mask_inert_syntax(command)
+        assert list(bp._launcher_program_bodies(command, scan, True, heads=heads)) == ["rm -rf y", "rm -rf z"]
+        assert list(bp._launcher_program_bodies(command, scan, True))[0] == "rm -rf x"
+
+    #: runuser's rows are shapes util-linux 2.41.4's runuser runs, driven in
+    #: WSL with harmless programs: its getopt permutes up to a `--` (an
+    #: operand before `-u` is the argv's first word), a dash word before any
+    #: `--` is its own switch, `-l` and `-c` beside `-u` are refused, and in
+    #: su mode a `-c` past a `--` goes to the shell. A `--` that is `-u`'s
+    #: value names a user.
+    @pytest.mark.parametrize("key,words,programs", [
+        ("runuser", ["-l", "app", "-c", "P"], ["P"]),
+        ("runuser", ["app", "-c", "P"], ["P"]),
+        ("runuser", ["--command=P", "app"], ["P"]),
+        ("runuser", ["app", "--", "-c", "P"], ["P"]),
+        ("runuser", ["-u", "app", "--", "rm", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["rm", "-u", "app", "--", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["rm", "--user=app", "--", "-rf", "~"], ["rm -rf ~"]),
+        ("runuser", ["--user", "app", "id"], ["id"]),
+        ("runuser", ["-g", "wheel", "-uapp", "--", "rm", "x y"], ["rm 'x y'"]),
+        ("runuser", ["-pu", "app", "--", "id"], ["id"]),
+        ("runuser", ["-u", "app", "--", "grep", "-c", "P", "f"], ["grep -c P f"]),
+        ("runuser", ["-u", "--", "--", "id"], ["id"]),
+        ("runuser", ["-u", "app"], []),
+        ("runuser", ["-", "app"], []),
+        ("gosu", ["app", "rm", "-rf", "~"], ["rm -rf ~"]),
+        ("gosu", ["app"], []),
+        ("gosu", ["--help"], []),
+        ("su-exec", ["app:app", "rm", "-rf", "~"], ["rm -rf ~"]),
+        ("su-exec", [], []),
+        ("sg", ["app", "-c", "P"], ["P"]),
+        ("sg", ["app", "P"], ["P"]),
+        ("sg", ["-", "app", "-c", "P"], ["P"]),
+        ("sg", ["app"], []),
+        ("sg", ["-", "app", "P"], ["P"]),
+        ("sg", ["-p", "P", "src/"], []),
+        ("sg", ["--pattern", "P", "src/"], []),
+        ("sg", ["-"], []),
+        ("flock", ["/tmp/lk", "-c", "P"], ["P"]),
+        ("flock", ["/tmp/lk", "--command", "P"], ["P"]),
+        ("flock", ["-w", "5", "/tmp/lk", "-c", "P"], ["P"]),
+        ("flock", ["-xw5", "/tmp/lk", "-c", "P"], ["P"]),
+        ("flock", ["--timeout", "5", "-E", "3", "/tmp/lk", "rm", "-rf", "~"], ["rm -rf ~"]),
+        ("flock", ["--timeout=5", "--", "/tmp/lk", "id"], ["id"]),
+        ("flock", ["-n", "9"], []),
+        ("flock", ["/tmp/lk"], []),
+    ])
+    def test_each_launcher_reader_returns_the_program_it_runs(self, key, words, programs):
+        bp = _bash_patterns_module()
+        assert bp._LAUNCHER_READERS[key](words, False) == programs

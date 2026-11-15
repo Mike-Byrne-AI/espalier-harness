@@ -371,7 +371,15 @@ class TestTheSentenceSplitter:
 #: hit is paid by the drive-root claims table's cite, which sits in no
 #: declaring sentence and is now cited by class and test name alone, as its
 #: own test's docstring cites it, so the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 44, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 44 -> 45 on 2026-11-15 (air's ea974c (2) and (3), on the
+#: user-switching launchers): a launcher past one level, su fed on stdin,
+#: `builtin eval "sudo ..."` and a wrapper switch's word value ahead of a
+#: launcher, one sentence pinned in
+#: `TestTheHardTierReadsWhatALauncherRuns::test_the_recorded_limits_stay_unread`;
+#: its cite's hit is paid by the time-budget section's state-write cite,
+#: which sits in no declaring sentence and is now cited by class and test
+#: name alone, so the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 45, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

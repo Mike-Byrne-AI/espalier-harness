@@ -3921,6 +3921,24 @@ def _bash_dangerous_reason_here(
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason
+            # The program a user-switching launcher runs (DEF-2090): runuser,
+            # gosu, su-exec, sg and flock run theirs as another user, group or
+            # lock holder, the same container user's ways in that su is, and
+            # none stands on a wrapper roster, so the scan above read none of
+            # them and a home directory's delete there was a plain allow where
+            # its `bash -c` twin walled. Read by DEF-5110's launcher walk, for
+            # the heads of `_HARD_TIER_LAUNCHER_HEADS` alone (find, fd and
+            # parallel keep their status), in the delete reading's view, and
+            # judged as su's program is: an argv the launcher execs where the
+            # outer command stands, judged from the unknown directory as well,
+            # is BSD script's declared over-refusal. No pattern is added: the
+            # walk is gated by its substring test (`_LAUNCHER_WORDS`).
+            for program in _bash_patterns._launcher_program_bodies(
+                spliced, pair, True, heads=_bash_patterns._HARD_TIER_LAUNCHER_HEADS,
+            ):
+                reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
+                if reason:
+                    return reason
     return None
 
 
