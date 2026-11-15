@@ -4723,6 +4723,38 @@ def test_reinject_marker_substring_detection_preserved(text, should_match):
     )
 
 
+# DEF-4122: the guard-pattern classify row reads first-use accessors and their
+# source strings over the same uncapped PostToolUse text, scanning the whole of
+# it (finditer), so each of its three readers carries this budget on the runs
+# that stress its spans.
+from _reinject import (  # noqa: E402
+    _COMPILE_SOURCE_RE,
+    _FIRST_USE_ACCESSOR_RE,
+    _MODULE_LEVEL_ASSIGN_RE,
+    _WORD_RE,
+)
+
+_FIRST_USE_READER_RUNS: list[tuple[str, "re.Pattern[str]", str]] = [
+    ("accessor-decorators-no-def", _FIRST_USE_ACCESSOR_RE, "@functools.lru_cache\n" * (_WORST_CASE_BODY_LEN // 21)),
+    ("accessor-one-long-decorator", _FIRST_USE_ACCESSOR_RE, "@cache(" + "x" * _WORST_CASE_BODY_LEN),
+    ("word-long-identifiers", _WORD_RE, ("a" * 200 + " ") * (_WORST_CASE_BODY_LEN // 201)),
+    ("accessor-long-def-names", _FIRST_USE_ACCESSOR_RE,
+     ("@cache\n@x\ndef " + "a" * 120 + "\n") * (_WORST_CASE_BODY_LEN // 131)),
+    ("source-compile-runs", _COMPILE_SOURCE_RE, "compile(" * (_WORST_CASE_BODY_LEN // 8)),
+    ("source-blank-run", _COMPILE_SOURCE_RE, ("compile(" + " \n" * 30 + "a" * 90) * (_WORST_CASE_BODY_LEN // 158)),
+    ("assign-name-lines-no-equals", _MODULE_LEVEL_ASSIGN_RE, ("a" * 90 + " \n") * (_WORST_CASE_BODY_LEN // 92)),
+    ("assign-annotation-runs", _MODULE_LEVEL_ASSIGN_RE, ("x:" + "y" * 130 + "\n") * (_WORST_CASE_BODY_LEN // 133)),
+]
+
+
+@pytest.mark.parametrize("label,rx,payload", _FIRST_USE_READER_RUNS,
+                         ids=[label for label, _, _ in _FIRST_USE_READER_RUNS])
+def test_reinject_first_use_readers_are_linear(label, rx, payload):
+    _assert_search_under_budget(
+        label, lambda text: list(rx.finditer(text)), payload, _CI_SAFE_BUDGET_MS / 1000.0
+    )
+
+
 # ---------------------------------------------------------------------------
 # Derived ReDoS population — every extraction regex carries a linear-time budget
 #
@@ -4793,44 +4825,103 @@ _DERIVED_MUST_INCLUDE = frozenset({
 })
 
 
+def _pattern_modules():
+    """The guard's pattern modules, by the roster the contract walks
+    (`_reinject._GUARD_PATTERN_MODULES`, which tests/test_reinject_pins.py binds
+    to `TestCommandPositionClassClose`), so a module split off one of them
+    joins this walk with no edit here."""
+    import importlib
+
+    import _reinject  # noqa: E402
+
+    return tuple(importlib.import_module(name) for name in _reinject._GUARD_PATTERN_MODULES)
+
+
 def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
     """The patterns compiled on their first use rather than at import, which
     the derivation above cannot see (it reads module-level ``_RE`` names):
-    enrolled BY HAND, each through its accessor, and read by both budget
-    arms below beside the derived population (DEF-3063)."""
-    import _bash_patterns  # noqa: E402
-
-    return [
-        ("_bash_patterns._carrier_fed_remove_re()", _bash_patterns._carrier_fed_remove_re()),
-        ("_bash_patterns._powershell_head_re()", _bash_patterns._powershell_head_re()),
-    ]
+    each through its accessor, by `tests/_first_use_patterns.py`'s rule over
+    the three pattern modules, read by both budget arms below beside the
+    derived population (DEF-3063; it walked `_bash_patterns` alone, by hand,
+    until DEF-4122). The check below compares it with the source."""
+    return sorted((f"{module.__name__}.{name}", pattern) for module in _pattern_modules()
+                  for name, pattern in first_use_patterns(module).items())
 
 
 _FIRST_USE_REGEXES = _first_use_regexes()
 
 
-def test_every_first_use_compile_is_enrolled():
-    """The hand list above is checked against the source: every
-    ``re.compile(`` inside a function of `_bash_patterns` names its
-    accessor in `_FIRST_USE_REGEXES`, so a pattern compiled on first use
-    cannot ship outside both budget arms by being left off the list (the
-    failure-mode review of DEF-3063: nothing compared the list with the
-    module). Module-level compiles are the derivation's."""
-    import ast
-
-    import _bash_patterns  # noqa: E402
-
-    tree = ast.parse(Path(_bash_patterns.__file__).read_text(encoding="utf-8"))
+def _compiling_functions(sources: dict[str, str]) -> set[str]:
+    """``module.function`` for each function in ``sources`` (module name to
+    its text) whose body calls ``re.compile(``, except write_guard's
+    pattern-path steps (``@_on_the_pattern_path``): the loader runs each once
+    and binds its pattern to a module-level name the derivation reads."""
     compiling: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    for module, text in sources.items():
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(ast.unparse(d) == "_on_the_pattern_path" for d in node.decorator_list):
+                continue
             for call in ast.walk(node):
                 if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
                         and call.func.attr == "compile"
                         and isinstance(call.func.value, ast.Name) and call.func.value.id == "re"):
-                    compiling.add(node.name)
-    enrolled = {name.split(".")[-1].rstrip("()") for name, _ in _FIRST_USE_REGEXES}
-    assert compiling == enrolled, (sorted(compiling), sorted(enrolled))
+                    compiling.add(f"{module}.{node.name}")
+    return compiling
+
+
+def test_every_first_use_compile_is_enrolled():
+    """The derived list above is checked against the source: every
+    ``re.compile(`` inside a function of the three pattern modules names its
+    accessor in `_FIRST_USE_REGEXES`, so a pattern compiled after import
+    cannot ship outside both budget arms: one the rule cannot call (an
+    accessor taking an argument) or compiles on every call (no cache) reds
+    here (the failure-mode review of DEF-3063: nothing compared the list with
+    the module). Module-level compiles are the derivation's."""
+    sources = {m.__name__: Path(m.__file__).read_text(encoding="utf-8") for m in _pattern_modules()}
+    compiling = _compiling_functions(sources)
+    enrolled = {name.rstrip("()") for name, _ in _FIRST_USE_REGEXES}
+    assert compiling == enrolled, (
+        f"compiled after import but not enrolled: {sorted(compiling - enrolled)}; enrolled but compiling "
+        f"nothing: {sorted(enrolled - compiling)}. A pattern compiled after import is budgeted only through "
+        "a zero-argument cached accessor (tests/_first_use_patterns.py's rule), or an @_on_the_pattern_path "
+        "step in write_guard binding a module-level _RE name; give it one of the two, or move the compile "
+        "to import")
+    # the carve-out's premise: each step binds what it compiles to a name the
+    # derivation reads, so a step binding any other name escapes neither arm
+    derived = {name for name, _ in _DERIVED_REGEXES}
+    unread = sorted(_step_bound_compiles(sources.get("write_guard", "")) - derived)
+    assert not unread, f"pattern-path steps bind compiles the derivation cannot read: {unread}"
+
+
+def _step_bound_compiles(text: str) -> set[str]:
+    """The names write_guard's pattern-path steps bind straight to a
+    ``re.compile(`` call."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(text)) if text else ():
+        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and any(ast.unparse(d) == "_on_the_pattern_path" for d in node.decorator_list)):
+            for assign in ast.walk(node):
+                if (isinstance(assign, ast.Assign) and isinstance(assign.value, ast.Call)
+                        and isinstance(assign.value.func, ast.Attribute) and assign.value.func.attr == "compile"):
+                    names |= {t.id for t in assign.targets if isinstance(t, ast.Name)}
+    return names
+
+
+def test_the_enrolment_check_reads_every_pattern_module_and_spares_the_loader_steps():
+    """An uncached compile, or a cached one taking an argument, in any of the
+    three modules is read (the rule enrols neither, so the check reds), and a
+    pattern-path step is not (DEF-4122: the check walked `_bash_patterns`
+    alone)."""
+    step = "@_on_the_pattern_path\ndef _build_the_x():\n    global _X_RE\n    _X_RE = re.compile('x')\n"
+    sources = {
+        "_bash_patterns": "@functools.lru_cache(maxsize=8)\ndef _arg_re(text):\n    return re.compile(text)\n",
+        "_speedbump": "def _per_call_re():\n    return re.compile('y')\n",
+        "write_guard": step + "def _per_call(text):\n    return re.compile(text).search('z')\n",
+    }
+    assert _compiling_functions(sources) == {"_bash_patterns._arg_re", "_speedbump._per_call_re",
+                                             "write_guard._per_call"}
 
 #: Adversarial payload shapes. Each is a repeated token run chosen to stress a
 #: DIFFERENT quantifier family. The env-assignment and separator runs are the

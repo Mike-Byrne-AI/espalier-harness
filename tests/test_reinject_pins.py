@@ -223,6 +223,87 @@ class TestGuardPatternClassify:
         out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": step}, root)
         assert "`_X_RE`" in out, out
 
+    _ACCESSOR = ('@functools.lru_cache(maxsize=1)\ndef _x_re() -> "re.Pattern[str]":\n'
+                 '    """`_X`, compiled once, on first use."""\n    return re.compile(_X, re.IGNORECASE)\n')
+
+    def _accessor_on_disk(self, tmp_path, source: str):
+        root = self._root(tmp_path)
+        (root / "tools" / "cc" / "hooks" / "_bash_patterns.py").write_text(
+            f"import functools\nimport re\n{source}\n\n{self._ACCESSOR}", encoding="utf-8")
+        return root
+
+    def test_an_edit_of_a_first_use_source_string_is_read_as_its_accessor(self, tmp_path):
+        """DEF-4122: a pattern compiled on first use behind a cache has no
+        module-level binding, so the row was silent on an edit of the source
+        string the accessor compiles; it reads that edit, on the accessor the
+        file on disk holds, and names the accessor's call."""
+        root = self._accessor_on_disk(tmp_path, '_X = r"plain"')
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/_bash_patterns.py",
+                             "old_string": '_X = _CMD_POS + r"plain"', "new_string": '_X = r"plain"'}, root)
+        assert "`_x_re()`" in out and "compiling on first use" in out, out
+
+    def test_an_anchored_or_carried_source_string_neither_fires_nor_spends_the_flag(self, tmp_path):
+        root = self._accessor_on_disk(tmp_path, '_X = _CMD_POS + r"rm"')
+        fp = "tools/cc/hooks/_bash_patterns.py"
+        assert "_UNANCHORED_BY_DESIGN" not in _fire(
+            "Edit", {"file_path": fp, "old_string": '_X = _CMD_POS + r"mv"', "new_string": '_X = _CMD_POS + r"rm"'}, root)
+        assert "_UNANCHORED_BY_DESIGN" not in _fire(
+            "Edit", {"file_path": fp, "old_string": '_X = r"rm"\n', "new_string": '_X = r"rm"\n# note\n'}, root)
+        out = _fire("Edit", {"file_path": fp, "new_string": '_BRAND_NEW_RE = re.compile(r"y")\n'}, root)
+        assert "`_BRAND_NEW_RE`" in out, out
+
+    def test_a_new_accessor_is_judged_by_its_source_string(self, tmp_path):
+        """Its own statement names only the source: the anchor is read there,
+        in the call's text or else on disk."""
+        root = self._accessor_on_disk(tmp_path, '_X = _CMD_POS + r"rm"')
+        fp = "tools/cc/hooks/_bash_patterns.py"
+        assert "_UNANCHORED_BY_DESIGN" not in _fire("Edit", {"file_path": fp, "new_string": self._ACCESSOR}, root)
+        out = _fire("Edit", {"file_path": fp, "new_string": '_Y = r"plain"\n\n\n' + self._ACCESSOR.replace(
+            "_x_re", "_y_re").replace("(_X,", "(_Y,")}, root)
+        assert "`_y_re()`" in out and "`_x_re()`" not in out, out
+
+    _REVIEWED = {
+        # (disk as the write left it, the Edit's old and new text, whether it fires)
+        "an interior line drops the anchor": (
+            '_X = (\n    r"(?P<emit>x)"\n)', '    _CMD_POS + r"(?P<emit>x)"\n', '    r"(?P<emit>x)"\n', True),
+        "a first line alone, the anchor below it": (
+            '_X: str = (\n    _CMD_POS + r"x"\n)', '_X = (\n', '_X: str = (\n', False),
+        "the anchor composed in the accessor's body": ('_X = r"y"', '_X = r"x"\n', '_X = r"y"\n', False),
+        "the anchor in a second source": ('_X = r"y"\n_B = _CMD_POS + r"b"', '_X = r"x"\n', '_X = r"y"\n', False),
+        "the anchor dropped from a second source": (
+            '_X = r"y"\n_B = r"b"', '_B = _CMD_POS + r"b"\n', '_B = r"b"\n', True),
+    }
+
+    @pytest.mark.parametrize("case", sorted(_REVIEWED), ids=sorted(_REVIEWED))
+    def test_an_accessor_is_judged_with_every_source_it_reads(self, tmp_path, case):
+        """Both reviews of DEF-4122's reader drove these: the accessor reads
+        ``_X`` (and ``_B``, or the anchor in its own body, where the case binds
+        one), and an edit is placed in the file as the write left it."""
+        disk, old, new, fires = self._REVIEWED[case]
+        body = "_X + _CMD_POS" if "body" in case else ("_X + _B" if "_B" in disk else "_X")
+        accessor = self._ACCESSOR.replace("(_X,", f"({body},")
+        root = self._root(tmp_path)
+        (root / "tools" / "cc" / "hooks" / "_bash_patterns.py").write_text(
+            f"import functools\nimport re\n{disk}\n\n\n{accessor}", encoding="utf-8")
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/_bash_patterns.py", "old_string": old, "new_string": new},
+                    root)
+        assert ("`_x_re()`" in out) is fires, out
+
+    def test_an_accessor_whose_source_lives_elsewhere_draws_no_word(self, tmp_path):
+        root = self._root(tmp_path)
+        accessor = self._ACCESSOR.replace("(_X,", "(_bash_patterns._X,")
+        (root / "tools" / "cc" / "hooks" / "write_guard.py").write_text(f"import re\n{accessor}", encoding="utf-8")
+        assert "_UNANCHORED_BY_DESIGN" not in _fire(
+            "Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": accessor}, root)
+
+    def test_a_cached_compile_taking_an_argument_or_compiling_nothing_is_no_accessor(self, tmp_path):
+        root = self._root(tmp_path, "_speedbump.py")
+        for body in ('@functools.lru_cache(maxsize=8)\ndef _arg_re(text):\n    return re.compile(text)\n',
+                     '@functools.lru_cache(maxsize=1)\ndef _held():\n    return _A_RE\n',
+                     '@functools.cached_property\ndef _prop_re():\n    return re.compile(r"p")\n'):
+            assert "_UNANCHORED_BY_DESIGN" not in _fire(
+                "Edit", {"file_path": "tools/cc/hooks/_speedbump.py", "new_string": body}, root), body
+
     def test_write_guard_alone_is_told_where_a_built_pattern_goes(self, tmp_path):
         root = self._root(tmp_path, "write_guard.py", "_speedbump.py")
         guard = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py",
@@ -284,15 +365,11 @@ class TestGuardPatternClassify:
             for mod in _reinject._GUARD_PATTERN_MODULES
         }
         missed = sorted(k for k in found if k.split(".", 1)[1] not in seen[k.split(".", 1)[0]])
-        # a first-use compile (an accessor behind a cache, named as its call)
-        # has no module-level binding for the row's regex to see, so the row
-        # is silent on an edit to its source string: the blind spot of every
-        # reader of module-level compiles alone, the cost census's included.
-        # Pinned whole, so no new one hides, until a reader of first-use
-        # compiles lands for them all
-        first_use_unwatched = ["_bash_patterns._carrier_fed_remove_re()",
-                               "_bash_patterns._powershell_head_re()"]
-        assert missed == first_use_unwatched, missed
+        # a first-use compile (an accessor behind a cache) is seen as its call,
+        # `_carrier_fed_remove_re()`, the name the contract walks it by: #642
+        # pinned both live ones here as unwatched until DEF-4122's reader
+        assert any(k.endswith("()") for k in found), "no first-use pattern in the population: re-derive this pin"
+        assert missed == [], missed
 
     def test_the_module_roster_is_the_contracts_own(self):
         """Read from the contract's source, never restated here: the tuple of
