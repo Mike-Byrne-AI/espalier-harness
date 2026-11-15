@@ -44,7 +44,17 @@ library's own differ by interpreter), the hooks-folder patterns the loader
 compiled first (``loader_patterns``, ``loader_chars``: the imports compile the
 rest), the shared fragment
 ``_bash_patterns._CMD_POS_NO_VERB``'s length (and ``_CMD_POS``'s), and how many
-of the patterns, and of their characters, embed it. ``loader_ran`` and
+of the patterns, and of their characters, embed it. Then, with the recorder
+still in place, it calls each pattern compiled on first use behind a cache
+(``FIRST_USE_RULE``: a module-level cached accessor of the three modules that
+takes no argument and whose body names ``compile``; ``tests/_first_use_patterns.py``'s
+rule, carried here and pinned equal to it): ``first_use_patterns`` and
+``first_use_chars`` are those accessors and their patterns' characters, each
+counted whether or not an import compiled it first (note 0b0d58's hand probe),
+and ``summed_patterns`` and ``summed_chars`` are the distinct patterns the hooks
+folder compiled across the imports, the loader and those calls: the figure a
+cost gate reads, since a pattern moved behind an accessor is still compiled by
+every call that opens its check (DEF-4122). ``loader_ran`` and
 ``fragment_found`` say whether those two were there: a tree whose
 ``write_guard`` has no ``_load_the_pattern_path`` (before DEF-946, 2026-11-08)
 is read by its imports alone and says so, and on this checkout that is an error,
@@ -443,11 +453,44 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
 
 # -- --compile and --import-time ---------------------------------------------
 
+#: ``tests/_first_use_patterns.py::first_use_patterns``, carried: the census runs
+#: in a fresh interpreter over a tree that may hold no ``tests`` folder, and a
+#: script imports nothing from ``tests/``. ``{"<accessor>()": pattern}`` for each
+#: function ``module`` defines behind ``functools.lru_cache`` or
+#: ``functools.cache`` that takes no argument and whose body names ``compile``,
+#: each called once; only a compiled pattern it returns is kept.
+#: ``tests/test_guard_cost_census.py`` pins it equal to the helper both ways and
+#: its function body equal to the helper's, statement for statement (the
+#: docstring and annotations apart).
+FIRST_USE_RULE = r'''
+def first_use_patterns(module):
+    found = {}
+    for name, obj in vars(module).items():
+        wrapped = getattr(obj, "__wrapped__", None)
+        code = getattr(wrapped, "__code__", None)
+        if not hasattr(obj, "cache_info") or code is None:
+            continue
+        if getattr(wrapped, "__module__", None) != module.__name__:
+            continue
+        if code.co_argcount or code.co_kwonlyargcount or "compile" not in code.co_names:
+            continue
+        value = obj()
+        if isinstance(value, re.Pattern):
+            found[f"{name}()"] = value
+    return found
+'''
+#: The modules whose first-use accessors the child calls: the guard's pattern
+#: modules, as ``tools/cc/hooks/_reinject.py::_GUARD_PATTERN_MODULES`` names the
+#: roster the anchoring contract walks (pinned equal by the census's tests). A
+#: module of them the tree does not hold, or the imports never load, is skipped.
+FIRST_USE_MODULES = ("_bash_patterns", "_speedbump", "write_guard")
+
 #: Run in a fresh ``-I -B`` interpreter with the hooks folder as its argument:
 #: the recorder is in place before the first hook module imports, and a compile
 #: whose call stack passes through the hooks folder is the hooks' own.
 COMPILE_CHILD = r'''
 import json, os, re, sys
+''' + FIRST_USE_RULE + f"FIRST_USE_MODULES = {FIRST_USE_MODULES!r}\n" + r'''
 hooks = sys.argv[1]
 sys.path.insert(0, hooks)
 inside = os.path.join(hooks, "")
@@ -484,11 +527,18 @@ else:
         loader_ran = True
         loaded = ours - before
         method = "imports and write_guard._load_the_pattern_path"
+imported = dict(seen)
+path = set(ours)
+first_use = {}
+for module in [sys.modules.get(name) for name in FIRST_USE_MODULES]:
+    if module is not None:
+        for name, value in first_use_patterns(module).items():
+            first_use[module.__name__ + "." + name] = value
 re._compile = original
 fragment = getattr(_bash_patterns, "_CMD_POS_NO_VERB", None)
 cmd_pos = getattr(_bash_patterns, "_CMD_POS", None)
 found = isinstance(fragment, str) and bool(fragment)
-texts = [k[0] for k in seen if isinstance(k[0], str)]
+texts = [k[0] for k in imported if isinstance(k[0], str)]
 embedding = [t for t in texts if found and fragment in t]
 tools_cc = os.path.dirname(os.path.abspath(hooks))
 modules = sorted({os.path.abspath(m.__file__) for m in list(sys.modules.values())
@@ -499,10 +549,15 @@ print(json.dumps({
     "method": method,
     "loader_ran": loader_ran,
     "fragment_found": found,
-    "patterns": len(seen),
+    "patterns": len(imported),
     "compiled_chars": sum(len(t) for t in texts),
-    "hooks_patterns": len(ours),
-    "hooks_chars": sum(len(k[0]) for k in ours if isinstance(k[0], str)),
+    "hooks_patterns": len(path),
+    "hooks_chars": sum(len(k[0]) for k in path if isinstance(k[0], str)),
+    "first_use_patterns": len(first_use),
+    "first_use_chars": sum(len(p.pattern) for p in first_use.values() if isinstance(p.pattern, str)),
+    "first_use_names": sorted(first_use),
+    "summed_patterns": len(ours),
+    "summed_chars": sum(len(k[0]) for k in ours if isinstance(k[0], str)),
     "loader_patterns": len(loaded),
     "loader_chars": sum(len(k[0]) for k in loaded if isinstance(k[0], str)),
     "fragment_len": len(fragment) if found else None,
@@ -906,9 +961,11 @@ def render(result: dict) -> str:
     if result["mode"] == "compile":
         c = result["compile"]
         lines += [f"method:  {c['method']}",
-                  f"patterns compiled (distinct):      {c['patterns']} ({c['hooks_patterns']} from the hooks folder)",
-                  f"characters compiled (distinct):    {c['compiled_chars']} ({c['hooks_chars']} from the hooks folder)",
+                  f"patterns at import and load:       {c['patterns']} ({c['hooks_patterns']} from the hooks folder)",
+                  f"characters at import and load:     {c['compiled_chars']} ({c['hooks_chars']} from the hooks folder)",
                   f"first compiled by the loader:      {c['loader_patterns']} patterns, {c['loader_chars']} characters",
+                  f"compiled on first use (accessors): {c['first_use_patterns']} patterns, {c['first_use_chars']} characters",
+                  f"path plus first use (distinct):    {c['summed_patterns']} patterns, {c['summed_chars']} characters",
                   f"_CMD_POS_NO_VERB length:           {c['fragment_len']}",
                   f"_CMD_POS length:                   {c['cmd_pos_len']}",
                   f"patterns embedding the fragment:   {c['embedding_patterns']}",

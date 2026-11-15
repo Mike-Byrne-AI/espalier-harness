@@ -1016,6 +1016,27 @@ _MODULE_LEVEL_COMPILE_RE = re.compile(
 )
 #: A `global` statement inside a function, and the names it declares.
 _STEP_GLOBAL_RE = re.compile(r"(?m)^[ ]{4,12}global[ \t]+(?P<names>[A-Za-z_][\w, \t]{0,400})$")
+#: A module-level accessor that compiles a pattern on its first use behind a
+#: cache (tests/_first_use_patterns.py's rule, read from source): a column-0
+#: `lru_cache` or `cache` decorator, bare or through `functools.`, up to three
+#: more decorators, then a `def` taking no argument; its body naming
+#: `compile(` is read on the statement. The name is captured with its
+#: parentheses, the call name every census of first-use patterns reads it by
+#: (`_carrier_fed_remove_re()`), and the empty `indent` group gives the match
+#: the shape `_binding_statement` reads. Every span is bounded and each pair of
+#: neighbours is disjoint (ReDoS class 5).
+_FIRST_USE_ACCESSOR_RE = re.compile(
+    r"(?m)^@(?:functools\.)?(?:lru_cache|cache)\b[^\n]{0,120}\n(?:@[^\n]{0,200}\n){0,3}"
+    r"(?P<indent>)def[ \t]{1,8}(?P<name>[A-Za-z_]\w{0,80}\(\))"
+)
+#: The name an accessor hands `re.compile(` first: its source string, bound at
+#: module level beside it (a quoted literal's prefix letter is no name).
+_COMPILE_SOURCE_RE = re.compile(r"\bcompile\([ \t\n]{0,40}(?P<src>[A-Za-z_]\w{0,80})(?![\w\"'])")
+#: A name bound at column 0, annotated or not (never a comparison).
+_MODULE_LEVEL_ASSIGN_RE = re.compile(r"(?m)^(?P<indent>)(?P<name>[A-Za-z_]\w{0,80})[ \t]{0,8}(?::[^=\n]{0,120})?=(?!=)")
+#: A word an accessor's statement reads: each one bound at module level is one
+#: of its source strings.
+_WORD_RE = re.compile(r"[A-Za-z_]\w{0,80}")
 
 
 def _step_globals(text: str) -> "set[str]":
@@ -1023,14 +1044,56 @@ def _step_globals(text: str) -> "set[str]":
     return {n.strip() for g in _STEP_GLOBAL_RE.finditer(text) for n in g.group("names").split(",")}
 
 
+def _first_use_accessor_matches(text: str) -> "list[re.Match[str]]":
+    """The first-use accessors ``text`` defines: each match of
+    `_FIRST_USE_ACCESSOR_RE` whose statement names `compile(`."""
+    return [m for m in _FIRST_USE_ACCESSOR_RE.finditer(text) if "compile(" in _binding_statement(text, m)]
+
+
 def _module_level_compile_matches(text: str, declared: "frozenset[str]" = frozenset()) -> "list[re.Match[str]]":
     """The bindings ``text`` makes at module level to `re.compile(`: at column
     0, or indented under a `global` that declares the name, in ``text`` or in
     ``declared`` (the file's own, read from disk: an Edit of one line of a step
-    carries no `global` line)."""
+    carries no `global` line); and the first-use accessors it defines, each
+    named as its call, since a pattern moved behind one is still a pattern the
+    contract walks (DEF-4122), in the order the text holds them."""
     names = _step_globals(text) | declared
-    return [m for m in _MODULE_LEVEL_COMPILE_RE.finditer(text)
-            if not m.group("indent") or m.group("name") in names]
+    found = [m for m in _MODULE_LEVEL_COMPILE_RE.finditer(text)
+             if not m.group("indent") or m.group("name") in names]
+    return sorted(found + _first_use_accessor_matches(text), key=lambda m: m.start())
+
+
+def _code_of(statement: str) -> str:
+    """``statement`` without its triple-quoted strings and full-line comments,
+    so a docstring naming `_CMD_POS` or a source string is no reading of it."""
+    for quote in ('"""', "'''"):
+        statement = "".join(statement.split(quote)[::2])
+    return "\n".join(line for line in statement.split("\n") if not line.lstrip().startswith("#"))
+
+
+def _first_use_accessors(text: str) -> "dict[str, tuple[str, set[str]]]":
+    """``{accessor call name: (its code, the words its code reads)}`` for each
+    first-use accessor ``text`` defines: a source string is any of those words
+    bound at module level (``re.compile(_A + _B)`` reads both)."""
+    found: dict[str, tuple[str, set[str]]] = {}
+    for m in _first_use_accessor_matches(text):
+        code = _code_of(_binding_statement(text, m))
+        found.setdefault(m.group("name"), (code, set(_WORD_RE.findall(code))))
+    return found
+
+
+def _module_level_statements(text: str, wanted: "set[str]") -> "dict[str, tuple[int, str]]":
+    """``{name: (offset, statement)}`` for the statement that first binds each
+    name of ``wanted`` at column 0 in ``text``, read in one pass (a whole
+    module written holds every accessor)."""
+    found: dict[str, tuple[int, str]] = {}
+    if not wanted or not text:
+        return found
+    for m in _MODULE_LEVEL_ASSIGN_RE.finditer(text):
+        name = m.group("name")
+        if name in wanted and name not in found:
+            found[name] = (m.start(), _binding_statement(text, m))
+    return found
 
 
 def _binding_statement(text: str, m: "re.Match[str]") -> str:
@@ -1217,7 +1280,8 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
     )
 
 
-def _unanchored_new_bindings(new: str, old: str, declared: "frozenset[str]" = frozenset()) -> list[str]:
+def _unanchored_new_bindings(new: str, old: str, declared: "frozenset[str]" = frozenset(),
+                             disk: str = "") -> list[str]:
     """Names bound at module level to `re.compile(` in ``new`` that this call
     actually introduces or changes, and that compose no command-position
     anchor. A statement carried unchanged from ``old`` (an Edit's context) is
@@ -1225,39 +1289,90 @@ def _unanchored_new_bindings(new: str, old: str, declared: "frozenset[str]" = fr
     satisfies the contract: neither may spend the row's once-per-session flag,
     or a genuinely new pattern later in the session draws nothing (driven by
     the failure-mode review, 2026-10-03). ``declared``: the `global` names the
-    file on disk declares."""
+    file on disk declares; ``disk``: that file's text, read after the write.
+
+    A first-use accessor is named as its call and judged as a whole (DEF-4122):
+    anchored where its statement or any of its source strings (the words it
+    reads bound at module level, each as ``disk`` holds it, else as ``new``
+    does) composes the anchor, and given no word where the name it hands
+    `re.compile(` first is bound in neither (an import, another module's
+    attribute: unread here). An edit of a source string changes the accessor's
+    pattern too: one that binds the name, or one whose text sits inside the
+    name's statement as the write left it (an interior line). Its limits: a
+    deletion carries no text to place, and an edit whose text recurs earlier in
+    the file is placed at the first occurrence."""
     names: list[str] = []
+    accessors = {**_first_use_accessors(disk), **_first_use_accessors(new)}
+    reads: set[str] = set().union(*(used for _, used in accessors.values()))
+    on_disk = _module_level_statements(disk, reads)
+    in_new = _module_level_statements(new, reads)
+
+    def anchored(accessor: str) -> bool:
+        statement, used = accessors[accessor]
+        first = _COMPILE_SOURCE_RE.search(statement)
+        if first and first.group("src") not in on_disk and first.group("src") not in in_new:
+            return True
+        return "_CMD_POS" in statement + "".join(
+            _code_of((on_disk.get(word) or in_new.get(word) or (0, ""))[1]) for word in sorted(used))
+
     for m in _module_level_compile_matches(new, declared):
         statement = _binding_statement(new, m)
-        if "_CMD_POS" in statement or (old and statement.strip() in old):
+        name = m.group("name")
+        if old and statement.strip() in old:
             continue
-        names.append(m.group("name"))
+        if anchored(name) if name in accessors else "_CMD_POS" in statement:
+            continue
+        names.append(name)
+    named = set(names)
+    where = disk.find(new) if new and disk else -1
+    for accessor, (_, used) in accessors.items():
+        if accessor in named:
+            continue
+        for word in sorted(used):
+            if word in in_new:
+                changed = in_new[word][1]
+            elif word in on_disk and where != -1 and on_disk[word][0] < where + len(new) \
+                    and where < on_disk[word][0] + len(on_disk[word][1]):
+                changed = on_disk[word][1]
+            else:
+                continue
+            if not (old and changed.strip() in old) and not anchored(accessor):
+                names.append(accessor)
+                named.add(accessor)
+                break
     return names
 
 
 def _render_guard_pattern_classify(tool_name: str, tool_input: dict, root: Path) -> "str | None":
     """A Write or Edit that binds a new or changed, unanchored module-level
-    pattern in a guard module. Reads the call's own text only: a Bash-derived
-    write carries none, and reading the whole file back would match every edit
-    of these modules."""
+    pattern in a guard module. Judges the call's own text, reading the file
+    back only for context (its `global` names, its first-use accessors and
+    their source strings): a Bash-derived write carries no text, and judging
+    the whole file would match every edit of these modules."""
     hit = _pointer_target(tool_input, root, _GUARD_PATTERN_MODULE_RE)
     if hit is None or _once_flag(root, "REINJECT-GUARD-PATTERN-CLASSIFY").exists():
         return None
     base, rel = hit
-    # The file's own `global` declarations, read after the write: an Edit of
-    # one binding inside a step carries no `global` line of its own.
+    # The file as the write left it: its own `global` declarations (an Edit of
+    # one binding inside a step carries no `global` line of its own), and its
+    # first-use accessors and their source strings (an Edit of a source string
+    # carries no accessor).
     try:
-        on_disk = frozenset(_step_globals((base / rel).read_text(encoding="utf-8", errors="replace")))
+        disk = (base / rel).read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):  # fail-open: ok telemetry -- an advisory classify; an unreadable file reads the call's own text alone
-        on_disk = frozenset()
-    names = _unanchored_new_bindings(_new_content(tool_input), tool_input.get("old_string", "") or "", on_disk)
+        disk = ""
+    names = _unanchored_new_bindings(_new_content(tool_input), tool_input.get("old_string", "") or "",
+                                     frozenset(_step_globals(disk)), disk)
     if not names:
         return None
     shown = ", ".join(f"`{n}`" for n in names[:3]) + (" ..." if len(names) > 3 else "")
     in_write_guard = rel.endswith("write_guard.py")
+    first_use = (" (a name ending in `()` is an accessor compiling on first use: the contract reads "
+                 "its pattern by that call, and its source string is what composes the anchor)"
+                 if any(n.endswith("()") for n in names) else "")
     return (
         f"`{rel}` binds {shown} to a compiled pattern that composes no command-position "
-        "anchor. tests/test_speedbump_irreversible.py::TestCommandPositionClassClose::"
+        f"anchor{first_use}. tests/test_speedbump_irreversible.py::TestCommandPositionClassClose::"
         "test_every_pattern_is_anchored_or_classified reds on any module-level pattern in "
         "_bash_patterns, _speedbump or write_guard that is neither anchored nor declared: "
         "compose `_bash_patterns._CMD_POS` (or `_PS_CMD_POS`) when it decides whether a "

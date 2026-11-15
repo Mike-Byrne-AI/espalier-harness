@@ -191,6 +191,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "script unclassified and reds there instead of shrinking the population silently "
         "(2026-10-09).",
     ),
+    # 3 row(s), shapes: comprehension
+    "tests/test_guard_cost_census.py": (
+        3, "c1c859cd360fbd8305ecbb63066d46b9f7b946398c54a2d3f7ed7c8d82f3e628",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
+        "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
+        "hand literal at tests/test_guard_cost_census.py:304 (set(helper) == keys) before the carried "
+        "rule is compared, so a population that shrinks reds there; the third, the live tree's, is "
+        "floored at tests/test_guard_cost_census.py:346 and held equal to the census child's own names, "
+        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST.",
+    ),
     # 1 row(s), shapes: comprehension
     "tests/test_harness_config.py": (
         1, "79257e73e45e5ab44bfb1d6d398d556a8cd5456428d20e777630ec5191cefe86",
@@ -1238,7 +1249,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        3, "b0eea306ea0378585c2932e322a4c3e070ca757a4559eed4832e2c48601c655d",
+        4, "9397a001d23c296f864d3dfff657bdcc9c9cb043e7683f6b4904729db39ebcfd",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
@@ -1246,7 +1257,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "the plan-mode bridge's reader budget) iterates the bridge test module's "
         "hand-written shape table, loaded by path so the two files cannot drift, behind "
         "a count floor of 7 and a per-shape length floor -- a table that lost rows or "
-        "shrank a shape reds before the loop runs",
+        "shrank a shape reds before the loop runs. The fourth (2026-11-15, DEF-4122) "
+        "imports _reinject._GUARD_PATTERN_MODULES for the first-use enrolment, the roster "
+        "tests/test_reinject_pins.py binds both ways to the anchoring contract's own walk, "
+        "and the enrolment it feeds is held equal to an AST read of the same modules' "
+        "source, so a module dropped from the roster leaves its accessors compiled and "
+        "unenrolled, which reds there",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
