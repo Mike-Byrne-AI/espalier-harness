@@ -19,6 +19,7 @@ from types import ModuleType
 
 import pytest
 
+from tests._first_use_patterns import first_use_patterns
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
@@ -671,7 +672,10 @@ class TestQuotedVerbTailIsUniform:
     #: verb). ``None`` marks an anchored arm whose bare fixture is NOT a
     #: protected-zone deny, so the quoted spelling is proven where that arm's own
     #: tier is: ``_RM_SEGMENT_RE`` feeds the hard tier, whose flag-order class
-    #: drives ``"rm" -rf /`` (TestCatastrophicRmFlagOrderIndependent).
+    #: drives ``"rm" -rf /`` (TestCatastrophicRmFlagOrderIndependent). A ``None``
+    #: whose comment names a ruling instead marks an arm whose quoted spelling is
+    #: a declared limit, read nowhere: rostered so the census stays whole, and
+    #: the comment says so.
     _FIXTURES: dict[str, tuple[str, str] | None] = {
         "_TEE_RE": ("tee", "tee -a tools/cc/hooks/x.py"),
         "_SED_INPLACE_RE": ("sed", "sed -i 's/a/b/' tools/cc/hooks/x.py"),
@@ -705,6 +709,13 @@ class TestQuotedVerbTailIsUniform:
         "_FOR_SUBST_REMOVE_RE": ("find", 'for f in $(find tools/cc/hooks); do rm -rf "$f"; done'),
         "_TAIL_LOOP_REMOVE_RE": ("find", 'while read f; do rm -rf "$f"; done < <(find tools/cc/hooks)'),
         "_FOR_WORDS_REMOVE_RE": None,
+        # a first-use compile, named as its accessor's call (DEF-3063): the rm
+        # nudge's carrier-fed remove, no zone deny. Its emit verb takes no
+        # quoted spelling (`"echo" x | xargs rm -rf` draws no carrier nudge
+        # where the bare one does), a declared limit by SP 16 (no session
+        # quotes the emit verb; air's note 376af5, beside ack 40ec7f), not
+        # proven in its tier
+        "_carrier_fed_remove_re()": None,
         "_SHELL_DASH_C_RE": ("sh", "sh -c 'rm tools/cc/hooks/x.py'"),
         # the quoted-program carriers (DEF-1131) feed the secret leg and the
         # nested-launch scan, not a zone deny; the quoted verb is proven where
@@ -752,8 +763,10 @@ class TestQuotedVerbTailIsUniform:
     def test_the_roster_is_the_modules_anchored_arms(self):
         import re
         bp = _bash_patterns_module()
+        # a pattern compiled on first use behind a cache is read through its
+        # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
-            name for name, value in vars(bp).items()
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_BASH_PATTERNS", bp._CMD_POS)
@@ -1041,6 +1054,13 @@ class TestBinaryVerbSpellingIsUniform:
         "_DIR_VERB_RE", "_MKDIR_RE",
         "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
     })
+    #: Arms the quoted-verb roster carries whose other spellings are a ruled
+    #: limit, read nowhere: the rm nudge's carrier-fed remove (DEF-3063), a
+    #: first-use compile named as its accessor's call, spells its emit verb
+    #: `(?-i:echo|printf)`, so neither a quoted nor a binary spelling (`ECHO`,
+    #: `echo.exe`) draws its nudge; no session spells the emit verb so (SP 16,
+    #: air's note 376af5).
+    _UNREAD_BY_RULING = frozenset({"_carrier_fed_remove_re()"})
     #: The arms with no zone-deny fixture in the quoted-verb roster: proven at
     #: the pattern (the secret leg's reads), or through the hook below (the
     #: rm segment). Each sample begins with its verb.
@@ -1062,9 +1082,10 @@ class TestBinaryVerbSpellingIsUniform:
         fixtures = TestQuotedVerbTailIsUniform._FIXTURES
         walked = {k for k, v in fixtures.items()
                   if v and k not in self._CASE_SENSITIVE_BY_DESIGN} | set(self._PATTERN_SAMPLES)
-        assert set(fixtures) == walked | self._CASE_SENSITIVE_BY_DESIGN, sorted(
-            set(fixtures) ^ (walked | self._CASE_SENSITIVE_BY_DESIGN))
-        assert not walked & self._CASE_SENSITIVE_BY_DESIGN
+        unwalked = self._CASE_SENSITIVE_BY_DESIGN | self._UNREAD_BY_RULING
+        assert set(fixtures) == walked | unwalked, sorted(set(fixtures) ^ (walked | unwalked))
+        assert not walked & unwalked
+        assert not self._CASE_SENSITIVE_BY_DESIGN & self._UNREAD_BY_RULING
         # the inner-head arms keep their keyword pin and carry a fixture the
         # binary test walks
         assert _INNER_HEAD_ARMS <= self._CASE_SENSITIVE_BY_DESIGN
@@ -1676,8 +1697,10 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
     def test_the_roster_is_the_modules_anchored_arms(self):
         import re
         bp = _bash_patterns_module()
+        # a pattern compiled on first use behind a cache is read through its
+        # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
-            name for name, value in vars(bp).items()
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._PS_CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_PS_PATTERNS", bp._PS_CMD_POS)
@@ -17203,6 +17226,8 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_PERL_DASH_E_RE": ("PowerShell", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_PS_BASH_DASH_C_RE": ("PowerShell", f"bash -c \"echo x > '{_TARGET}'\""),
         "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
+        "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
+                                    "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
         "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
                           "no zone deny reads it",
@@ -17295,8 +17320,10 @@ class TestQuotedTargetSurvivesTheRoot:
         # `_CMD_POS_NO_VERB`, which `_CMD_POS` begins with: the Bash
         # discovered-head resolver composes the no-verb anchor alone, and its
         # PowerShell twin composes `_PS_CMD_POS`; one census sees both
+        # the first-use compiles too, named as their accessors' calls: a
+        # namespace walk alone never saw `_carrier_fed_remove_re()` (DEF-3063)
         anchored = {
-            name for name, value in vars(bp).items()
+            name for name, value in itertools.chain(vars(bp).items(), first_use_patterns(bp).items())
             if isinstance(value, re.Pattern)
             and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS in value.pattern)
         }
