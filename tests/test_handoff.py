@@ -416,15 +416,20 @@ class TestTheHandoffRestartsTheSeatLoop:
 
     def test_the_step_re_creates_a_listed_loop_from_the_brief(self):
         """Dies to: a step that copies the prompt from the listing, which
-        CronList shortens, or one that drops the delete (two loops tick) or
-        the create, or the cron spelling /loop itself used."""
+        CronList shortens; one that drops the delete (two loops tick), the
+        create, `recurring` or the cron spelling /loop itself used; one that
+        deletes before it creates, which leaves no loop when the create
+        fails; or one that drops the note a launched window sends, since the
+        summary's Risks line is cleared with the window."""
         text = self._body()
         assert "\n## 5b. " in text, "no step 5b in the handoff body"
         start = text.index("\n## 5b. ")
         step = " ".join(text[start:text.index("\n## 6. ", start)].split())
         for word in ("`CronList`", "`CronDelete`", "`CronCreate`", "python tools/cc/seat.py brief <seat>",
-                     "`*/<N> * * * *`", "never from the listing"):
+                     "`*/<N> * * * *`", "`recurring` true", "never from the listing", "Create first",
+                     "`ESPALIER_OWN_CLEAR=1`", "mail.py send --type note"):
             assert word in step, word
+        assert step.index("`CronCreate` with") < step.index("then `CronDelete` every id"), "delete before create"
 
     def test_a_worktree_seat_runs_the_loop_step(self):
         """Dies to: the preamble's worktree list stopping at step 5, which
@@ -439,7 +444,7 @@ class TestTheHandoffRestartsTheSeatLoop:
         loop that no longer exists."""
         text = self._body()
         goal = " ".join(text.split("\n## 7. ", 1)[1].split("\n## 7b. ", 1)[0].split())
-        assert "the id step 5b printed" in goal
+        assert "the id `CronCreate` returned in step 5b" in goal
 
 
 # ── Rendered command docs ─────────────────────────────────────────────────────

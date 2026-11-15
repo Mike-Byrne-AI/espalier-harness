@@ -774,8 +774,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: dispatcher proposes every assign. Every figure in a template is rendered
 #: from ``DISPATCHER_TICK``, never typed. A change to the tick changes what
 #: every worker seat does, which is the operator's decision; a seat already
-#: looping keeps its old tick until its loop is started again from a brief
-#: composed from a checkout that holds the change.
+#: looping keeps its old tick until its next handoff re-creates the loop from a
+#: brief composed in its own checkout (``/handoff`` step 5b), or until its loop
+#: is started again from a brief composed from a checkout that holds the change.
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "

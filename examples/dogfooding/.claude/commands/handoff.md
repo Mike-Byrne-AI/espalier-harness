@@ -329,39 +329,51 @@ recurring job seven days after it was created, however many handoffs ran in
 between. A window the own-clear re-primes after that finds no loop and, as its
 note says, reads itself as the operator's own, so nothing wakes the seat once a
 turn ends on a question. Each handoff re-creates the loop, which starts its
-seven days again. Where `git config espalier.machine` names no seat, skip this
-step.
+seven days again.
 
-1. Call `CronList`. Where it lists no job, there is nothing to re-create: a
-   loop that already expired is not brought back here; say so on the
-   summary's `Risks:` line.
-2. Read the seat's loop line: the last line of
-   `python tools/cc/seat.py brief <seat>`, where `<seat>` is that
-   `git config espalier.machine` value. It reads `/loop <N>m <prompt>`.
-   `CronList` shortens a long prompt, so the prompt comes from the brief,
-   never from the listing.
-3. The listed job is the seat's loop when it is recurring, runs every `<N>`
-   minutes and its listed prompt starts as `<prompt>` does. Leave any other
-   job alone: a one-shot reminder, another recurring job, a loop of the
-   operator's own.
-4. `CronDelete` that job, then `CronCreate` with `cron` `*/<N> * * * *`,
+1. Read the seat's name, `git config espalier.machine`, and its loop line, the
+   last line of `python tools/cc/seat.py brief <seat>`: `/loop <N>m <prompt>`.
+   Where no name is set, the brief refuses, or `<N>` is not a divisor of 60
+   below 60 (the cron below would leave an uneven gap each hour), skip this
+   step and say so in one line.
+2. Load `CronList`, `CronCreate` and `CronDelete` where the session lists them
+   as deferred tools; a tool that cannot be loaded is not an empty list. Call
+   `CronList` and note the id of every job that is the seat's loop: recurring,
+   listed as running every `<N>` minutes, and its listed prompt, less the
+   trailing ellipsis, a prefix of `<prompt>`. `CronList` shortens a long
+   prompt, so the prompt comes from the brief, never from the listing.
+3. Where at least one job matches, `CronCreate` with `cron` `*/<N> * * * *`,
    `prompt` the loop line's text after `/loop <N>m ` exactly, and `recurring`
-   true, the spelling `/loop` itself uses. Call `CronList` again: the new id
-   is listed, every `<N>` minutes, and the old one is gone. Where the create
-   fails, the seat now has no loop: say so on `Risks:` with the loop line, for
-   the operator to start it again.
+   true, the spelling `/loop` itself uses; call `CronList` and see the new id;
+   then `CronDelete` every id step 2 noted. Create first: a job fires only
+   while the session is idle, so the two cannot both tick inside this turn,
+   while a delete before a create that fails would leave the seat no loop.
+   Where the create fails, delete nothing.
+4. Call `CronList` once more: exactly one job matches, the new id.
+
+Where nothing matches, create nothing: an expired loop is not brought back
+here, and a job that does not match (a reminder, a loop of the operator's own)
+is left alone. In a window `seat.py launch` started (`ESPALIER_OWN_CLEAR=1`), a
+seat left with no loop (none matched, or the create failed) stalls after the
+clear, and the summary's `Risks:` line goes with the window: say so in this
+turn's reply and, where `espalier.toml` names a dispatcher, in one note to it
+(`python tools/cc/mail.py send --type note --text "<what step 5b found>"`), so
+a reader outside the window learns it.
 
 The new id is not the old one: step 7 writes it where the goal snapshot names
-the loop. The brief is composed from this checkout, so a tick changed here
-since the loop started takes effect at this re-create. This runs before step
-8, whose verb arms the clear: the loop the next window keeps is the one this
-step left.
+the loop, and a seat in a linked worktree has no goal step (the preamble), so
+it writes none. The brief is composed from this checkout, so a tick changed
+here since the loop started takes effect at this re-create, unless the change
+moved the interval or the opening step 2 matches on: that reads as no match
+and is reported as above. This runs before step 8, whose verb arms the clear:
+the loop the next window keeps is the one this step left.
 
 <!-- espalier:self-host-only -->
 On this repository the step is `DEF-4119`'s fix, as the operator ruled it
-(call 6d8d93, option A, ack 6b40aa): the handoff alone re-creates the loop, so
-a seat that goes seven days without a handoff loses it. air-work's loop
-a7691fb6 expired that way on 2026-11-14, six re-primes after its creation.
+(call 6d8d93, option A, ack 6b40aa) and the dispatcher amended its order and
+match (ack 7023cb): the handoff alone re-creates the loop, so a seat that goes
+seven days without a handoff loses it. air-work's loop a7691fb6, created
+2026-11-07, expired that way on 2026-11-14.
 <!-- /espalier:self-host-only -->
 
 ## 6. Refresh the working-summary doc
@@ -474,8 +486,9 @@ distinct from ESPALIER_MEMORY.md's durable knowledge and the session log's rows
 `_Updated: <date>_` line so staleness stays visible; keep it tight (it is
 byte-bounded in the banner) and honest — no "release-ready" without the evidence.
 
-Where the snapshot names the seat's loop by its id, write the id step 5b printed
-and its new expiry, seven days from that re-create: the old id is gone.
+Where the snapshot names the seat's loop by its id, write the id `CronCreate`
+returned in step 5b and its new expiry, seven days from that re-create: the old
+id is gone.
 
 <!-- espalier:self-host-only -->
 **What the file keeps on this repository, where several seats run (2026-10-23):** its

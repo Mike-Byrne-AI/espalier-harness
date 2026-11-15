@@ -1148,14 +1148,15 @@ class TestBrief:
         `/loop Nm`, the spelling /loop itself used for both live loops on
         2026-11-14. That cron runs every N minutes only when N divides 60
         (`*/7` fires at :56 and again at :00), so this pins each loop line's
-        interval to a divisor of the hour. Dies to: a tick changed to an
-        interval that does not divide it, which the step would re-create as a
-        loop with an uneven gap."""
+        interval to a divisor of the hour below 60 (`*/60` is no interval).
+        Dies to: a tick changed to an interval that does not divide it, which
+        the step would re-create as a loop with an uneven gap."""
         import re
         for loop in (seat.WORKER_TICK, seat.DISPATCHER_TICK):
             match = re.match(r"/loop (\d+)m ", loop)
             assert match, loop[:40]
-            assert 60 % int(match.group(1)) == 0, match.group(0)
+            minutes = int(match.group(1))
+            assert minutes < 60 and 60 % minutes == 0, match.group(0)
 
     def test_an_adopters_worker_keeps_the_stop_and_ask_form(self, seat, clone):
         """The proceed authority is this repository's operator's decision (the
