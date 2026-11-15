@@ -1174,6 +1174,11 @@ def test_live_ledger_grows_no_new_dangling_id_references():
         # TP-703e and TP-703g left the live file with that row, so neither is here.
         "TP-450", "TP-475", "TP-703a", "TP-703b", "TP-703c", "TP-703d", "TP-703f",
         "TP-703i", "TP-703j", "TP-704",
+        # Joined 2026-11-15, the same ruling's last pack: TP-707 stayed at the root until
+        # its one live citing row, DEF-4122, was struck (#653). The struck rows keep the id
+        # (DEF-4122 and DEF-4048 in their closing text, and the struck TP-707 section-3
+        # row); no live row cites it, so nothing was re-keyed.
+        "TP-707",
     }
     found = _dangling_id_references(_PACKS, _LEDGER)
     # A pack withheld from the seed by an export-ignore row (.gitattributes,
