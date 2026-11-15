@@ -942,6 +942,450 @@ class TestInitNamesARetiredDenyRule:
         assert "retired deny rule" not in err, err[-1500:]
 
 
+class TestEveryMergeCallerNamesASupersededAllow:
+    """DEF-1155: up to 0.8.0b2 the workflow and self-host profiles derived
+    ``Bash(<binary> *)`` from a fingerprinted command (``Bash(npm *)`` from
+    ``npm test``, which pre-approves ``npm install``, ``npm exec`` and ``npm
+    publish``). The narrowing of 2026-10-06 reaches a fresh install only, since
+    the merge never removes a rule, and only ``doctor`` said the broad rule was
+    still there: ``upgrade`` and ``merge-settings`` listed the narrow rules as
+    missing, a remedy that leaves the broad one granting everything they
+    narrow. Every caller of the merge now names it in doctor's sentence,
+    read-only, judged against the profile the file was rendered from (an init
+    re-run records its own profile before it reaches the report)."""
+
+    BROAD = "Bash(npm *)"
+    TWIN = "PowerShell(npm *)"
+    WARN = "carries allow rules that match ones an older init wrote"
+    STEP = "delete Bash(npm *) from permissions.allow in .claude/settings.json"
+
+    @staticmethod
+    def _node_tree(root: Path, *, scripts: str = '{"test": "jest"}', **extra) -> Path:
+        """A real init, in process, of a repository whose fingerprint lists
+        ``npm test``: the workflow profile renders ``Bash(npm test)`` and
+        ``Bash(npm test *)`` for it, never the bare binary."""
+        import argparse
+
+        from espalier.cli import cmd_init
+
+        (root / "README.md").write_text("# t\n", encoding="utf-8")
+        (root / "package.json").write_text('{"name": "t", "scripts": %s}\n' % scripts,
+                                           encoding="utf-8")
+        (root / ".git").mkdir()
+        assert cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True,
+                                           **extra)) == 0
+        return root
+
+    def _plant(self, root: Path, *, drop_narrow: bool = False, rules: tuple[str, ...] = ()) -> bytes:
+        """The broad rule an older init derived, in the allow list (or
+        ``rules``); with ``drop_narrow`` the narrow pair that init never wrote
+        goes too, the file such an install holds."""
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        allow = [r for r in data["permissions"]["allow"]
+                 if not (drop_narrow and r.startswith("Bash(npm test"))]
+        data["permissions"]["allow"] = allow + list(rules or (self.BROAD,))
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        return settings.read_bytes()
+
+    @staticmethod
+    def _drop(root: Path, rule: str) -> None:
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["permissions"]["allow"].remove(rule)
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+    @staticmethod
+    def _init(root: Path, **extra) -> int:
+        import argparse
+
+        from espalier.cli import cmd_init
+
+        return cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True, **extra))
+
+    @staticmethod
+    def _merge(root: Path, *, profile: str | None = None, add_allows: bool = False) -> int:
+        import argparse
+
+        from espalier.cli import cmd_merge_settings
+
+        return cmd_merge_settings(argparse.Namespace(repo=str(root), profile=profile,
+                                                     add_allows=add_allows, repair=False))
+
+    def test_the_shared_reporter_names_the_rule_and_the_delete_step(self, capsys):
+        from espalier.cli import _report_allow_gaps
+
+        _report_allow_gaps(
+            missing=(), added=(), note="", profile="workflow", prefix="merge-settings:",
+            hint_command=lambda: "unused", superseded=((self.BROAD, "the reason"),),
+        )
+        captured = capsys.readouterr()
+        assert f"merge-settings: WARN: .claude/settings.json {self.WARN}" in captured.err, captured.err
+        assert "the reason" in captured.err and self.STEP in captured.err, captured.err
+        assert "'workflow' profile" in captured.err and captured.err.isascii(), captured.err
+        assert self.BROAD not in captured.out, captured.out
+        # An operator who keeps the rule on purpose is told the line comes back.
+        assert "every run names it while it is there" in captured.err, captured.err
+
+    def test_merge_settings_names_the_rule_and_never_says_nothing_to_do(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        assert "Nothing to do" in capsys.readouterr().out, "the control: a clean wired tree says it"
+        before = self._plant(root)
+        assert self._merge(root) == 0
+        captured = capsys.readouterr()
+        assert f"merge-settings: WARN: .claude/settings.json {self.WARN}" in captured.err, captured.err[-2500:]
+        assert self.STEP in captured.err, captured.err[-2500:]
+        assert "Nothing to do" not in captured.out, captured.out
+        assert (root / ".claude" / "settings.json").read_bytes() == before, "nothing removes a rule"
+
+    def test_add_allows_appends_the_narrow_rules_and_still_names_the_broad_one(self, tmp_path, capsys, monkeypatch):
+        """The row's adopter: the install holds the broad rule and not the
+        narrow pair, and ``--add-allows`` appends the pair; the run says the
+        broad rule still grants everything the pair narrows."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root, drop_narrow=True)
+        capsys.readouterr()
+        assert self._merge(root, add_allows=True) == 0
+        captured = capsys.readouterr()
+        allow = json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert "Bash(npm test *)" in allow and self.BROAD in allow, allow
+        assert self.WARN in captured.err and self.STEP in captured.err, captured.err[-2500:]
+
+    def test_merge_settings_judges_the_file_by_its_installed_profile_not_the_flag(self, tmp_path, capsys, monkeypatch):
+        """``--profile`` names the rules to compare and append; the file was
+        rendered from the recorded profile, which decides whether a rule
+        matches one an older init wrote."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root)
+        capsys.readouterr()
+        assert self._merge(root, profile="minimal") == 0
+        err = capsys.readouterr().err
+        assert self.WARN in err and "'workflow' profile" in err, err[-2500:]
+
+    def test_a_first_wiring_says_the_rule_matches_never_that_init_wrote_it(self, tmp_path, capsys, monkeypatch):
+        """The probe's tree: a settings file the adopter brought, holding the
+        broad rule, wired by ``merge-settings``. No init rendered it, so the
+        sentence says the rule matches one an older init wrote."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        (root / ".claude" / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": [self.BROAD]}}) + "\n", encoding="utf-8")
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        err = capsys.readouterr().err
+        assert self.WARN in err and self.STEP in err, err[-2500:]
+        assert "rules an older init wrote" not in err and "init derived it" not in err, err[-2500:]
+
+    def test_upgrade_on_a_current_tree_names_the_rule_and_never_says_nothing_to_do(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        capsys.readouterr()
+        assert _upgrade(root, execute=False) == 0
+        assert "nothing to do" in capsys.readouterr().out, "the control: a clean current tree says it"
+        before = self._plant(root)
+        assert _upgrade(root, execute=False) == 0
+        captured = capsys.readouterr()
+        assert f"[upgrade] WARN: .claude/settings.json {self.WARN}" in captured.err, captured.err[-2500:]
+        assert "nothing to do" not in captured.out, captured.out[-2500:]
+        assert "matches one an older init wrote" in captured.out, captured.out[-2500:]
+        assert (root / ".claude" / "settings.json").read_bytes() == before
+
+    def test_upgrade_execute_names_the_rule_once(self, tmp_path, capsys, monkeypatch):
+        """``--execute`` deploys through init's path and then reports from its
+        own merge; the deploy's copy is init's alone, so the WARN is said once."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root)
+        (root / "docs" / "CHEAT-SHEET.md").unlink()  # drift, so --execute deploys
+        capsys.readouterr()
+        assert _upgrade(root, execute=True) == 0
+        captured = capsys.readouterr()
+        assert "[upgrade] re-deployed" in captured.out, captured.out[-1500:]
+        assert captured.err.count(self.WARN) == 1, captured.err[-2500:]
+
+    def test_a_plain_init_rerun_names_the_rule_and_leaves_the_file_alone(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        before = self._plant(self._node_tree(tmp_path))
+        capsys.readouterr()
+        assert self._init(tmp_path) == 0
+        err = capsys.readouterr().err
+        assert f"[init] WARN: .claude/settings.json {self.WARN}" in err, err[-2500:]
+        assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
+
+    def test_init_wire_hooks_names_the_rule(self, tmp_path, capsys, monkeypatch):
+        from espalier import cli
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_stream_isatty", lambda _stream: False)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text('{"name": "t", "scripts": {"test": "jest"}}\n',
+                                               encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": [self.BROAD]}}) + "\n", encoding="utf-8")
+        assert self._init(tmp_path, wire_hooks=True) == 0
+        err = capsys.readouterr().err
+        assert f"--wire-hooks: WARN: .claude/settings.json {self.WARN}" in err, err[-2500:]
+
+    def test_a_rerun_under_another_profile_judges_the_file_by_the_one_it_was_rendered_from(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        """A re-run records its own profile before it deploys, so a report that
+        read the record there would judge a workflow file by minimal's rules,
+        which derive nothing, and name nothing."""
+        monkeypatch.chdir(tmp_path)
+        self._plant(self._node_tree(tmp_path))
+        capsys.readouterr()
+        assert self._init(tmp_path, profile="minimal") == 0
+        err = capsys.readouterr().err
+        assert self.WARN in err and "'workflow' profile" in err, err[-2500:]
+
+    def test_a_rule_on_a_minimal_install_is_never_called_an_older_inits(self, tmp_path, capsys, monkeypatch):
+        """The other direction: the minimal profile never derived a rule from
+        the fingerprint, so a broad rule there is the operator's, and a re-run
+        under workflow does not call it one an older init wrote."""
+        monkeypatch.chdir(tmp_path)
+        self._plant(self._node_tree(tmp_path, profile="minimal"))
+        capsys.readouterr()
+        assert self._init(tmp_path, profile="workflow") == 0
+        err = capsys.readouterr().err
+        assert self.BROAD not in err, err[-2500:]
+        # Reach: the re-run passed the report and rendered the fresh file beside
+        # the kept one, so the rule went unnamed by the verdict, not by an exit.
+        assert (tmp_path / ".claude" / "settings.json.new").is_file()
+
+    def test_doctor_says_the_sentence_merge_settings_says(self, tmp_path, capsys, monkeypatch):
+        """One sentence: doctor's warning is the one every caller of the merge
+        prints."""
+        from espalier.doctor import run_doctor_check
+
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root)
+        hits = [w for w in run_doctor_check(root, skip_self_host=True)["warnings"] if self.BROAD in w]
+        assert len(hits) == 1, hits
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        assert hits[0] in capsys.readouterr().err, hits[0]
+
+    def test_the_powershell_twin_is_named_until_it_is_gone_too(self, tmp_path, capsys, monkeypatch):
+        """0.8.0b2 on a Windows host wrote the PowerShell twin of every Bash
+        rule, the broad one derived from ``npm test`` among them (the twins
+        shipped in it, 2026-09-25; the narrowing came 2026-10-06). Deleting
+        the Bash rule alone leaves ``PowerShell(npm *)`` pre-approving every
+        npm subcommand through the PowerShell tool, so the twin is named
+        beside it, and named alone once the Bash rule is gone."""
+        from espalier.doctor import run_doctor_check
+
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root, rules=(self.BROAD, self.TWIN))
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        err = capsys.readouterr().err
+        assert f"delete {self.BROAD}, {self.TWIN} from permissions.allow" in err, err[-2500:]
+        assert "every run names them while they are there" in err, err[-2500:]
+        assert any(self.TWIN in w for w in run_doctor_check(root, skip_self_host=True)["warnings"])
+        self._drop(root, self.BROAD)
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        err = capsys.readouterr().err
+        assert f"delete {self.TWIN} from permissions.allow" in err, err[-2500:]
+
+    def test_upgrades_summary_counts_the_rule_and_its_twin(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root, rules=(self.BROAD, self.TWIN))
+        capsys.readouterr()
+        assert _upgrade(root, execute=False) == 0
+        out = capsys.readouterr().out
+        assert "carries allow rules that match ones an older init wrote" in out, out[-2500:]
+
+    def test_a_python_only_rules_twin_is_named_on_a_tree_without_python(self, tmp_path, monkeypatch):
+        """The static Python rules were twinned on a Windows render too, and on
+        a Node tree the profile renders neither spelling."""
+        from espalier.cli import settings_superseded_allows
+
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root, rules=("PowerShell(ruff *)",))
+        named = settings_superseded_allows(root / ".claude" / "settings.json", profile="workflow",
+                                           repo_root=root)
+        assert [rule for rule, _ in named] == ["PowerShell(ruff *)"], named
+
+    def test_the_twin_of_a_rule_the_profile_still_renders_is_not_named(self, tmp_path):
+        """On a Python tree whose test command is ``pytest -q`` the profile
+        still renders ``Bash(pytest *)``, and a Windows render its twin: the
+        twin is today's rule, not a superseded one."""
+        from espalier.cli import settings_superseded_allows
+
+        for sub in ("reports", ".claude"):
+            (tmp_path / sub).mkdir()
+        (tmp_path / "reports" / "repo_fingerprint.json").write_text(json.dumps({
+            "languages": ["python"], "test_commands": ["pytest -q"],
+            "inferred_actions": {"test": ["pytest -q"]},
+        }), encoding="utf-8")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": [
+            "Bash(pytest *)", "PowerShell(pytest *)", "PowerShell(cargo *)"]}}), encoding="utf-8")
+        assert settings_superseded_allows(settings, profile="workflow", repo_root=tmp_path) == ()
+        # The control: a twin no render of this tree writes is still the operator's
+        # to keep, and one the profile no longer renders is named.
+        (tmp_path / "reports" / "repo_fingerprint.json").write_text(json.dumps({
+            "languages": ["rust"], "test_commands": ["cargo test"],
+            "inferred_actions": {"test": ["cargo test"]},
+        }), encoding="utf-8")
+        named = [rule for rule, _ in settings_superseded_allows(settings, profile="workflow",
+                                                                repo_root=tmp_path)]
+        assert named == ["PowerShell(cargo *)", "Bash(pytest *)", "PowerShell(pytest *)"], named
+
+    def test_a_lead_the_old_analyzer_never_wrote_is_never_named(self, tmp_path):
+        """The derivation is frozen with its leads: a test command today's
+        analyzer writes and 0.8.0b2's never could (``dotnet test``, a Python
+        runner) led no bare rule, so the matching rule is the operator's."""
+        from espalier.cli import settings_superseded_allows
+
+        for sub in ("reports", ".claude"):
+            (tmp_path / sub).mkdir()
+        (tmp_path / "reports" / "repo_fingerprint.json").write_text(json.dumps({
+            "languages": ["csharp"], "test_commands": ["dotnet test", "uv run pytest", "make test"],
+            "inferred_actions": {"test": ["dotnet test"]},
+        }), encoding="utf-8")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"permissions": {"allow": [
+            "Bash(dotnet *)", "Bash(uv *)", "Bash(make *)"]}}), encoding="utf-8")
+        named = [rule for rule, _ in settings_superseded_allows(settings, profile="workflow",
+                                                                repo_root=tmp_path)]
+        assert named == ["Bash(make *)"], named  # the control: a lead it did write
+
+    def test_a_pnpm_tree_names_the_npm_rule_and_leaves_a_pnpm_rule_alone(self, tmp_path, capsys, monkeypatch):
+        """Until 2026-10-06 the analyzer read every Node repository as npm, so
+        a pnpm tree initialized then holds ``Bash(npm *)``, derived from
+        ``npm test``; today's fingerprint says ``pnpm test`` and never leads
+        with npm. The narrowing landed that morning, before the analyzer read
+        the manager that evening, so no init derived ``Bash(pnpm *)``: that
+        rule is the operator's."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        root = self._node_tree(tmp_path)
+        fingerprint = json.loads((root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
+        assert "pnpm test" in fingerprint["test_commands"], fingerprint["test_commands"]  # the control
+        self._plant(root, rules=(self.BROAD, "Bash(pnpm *)"))
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        err = capsys.readouterr().err
+        assert f"{self.STEP} if you" in err, err[-2500:]
+        assert "Bash(pnpm *)" not in err, err[-2500:]
+
+    def test_a_command_no_older_init_derived_from_names_nothing(self, tmp_path, capsys, monkeypatch):
+        """0.8.0b2 derived from the test commands and the build action alone, so
+        on a tree whose only script is ``lint`` (``npm run lint`` among the
+        fingerprint's actions) no init wrote ``Bash(npm *)``: it is the
+        operator's, and the reason would claim a derivation that never ran."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path, scripts='{"lint": "eslint ."}')
+        fingerprint = json.loads((root / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
+        assert "npm run lint" in json.dumps(fingerprint["inferred_actions"]), fingerprint  # the control
+        self._plant(root)
+        capsys.readouterr()
+        assert self._merge(root) == 0
+        err = capsys.readouterr().err
+        assert self.BROAD not in err, err[-2500:]
+
+    def test_a_disarmed_tree_is_not_told_repair_clears_the_rule(self, tmp_path, capsys, monkeypatch):
+        """``merge-settings --repair`` re-arms the hooks and touches no rule, so
+        a version-current upgrade over a disarmed tree that names the rule says
+        the rule is the operator's to fix, as it does for a retired deny rule."""
+        monkeypatch.chdir(tmp_path)
+        root = self._node_tree(tmp_path)
+        self._plant(root)
+        _rewire_every_hook(root, "no-such-python-w0")
+        capsys.readouterr()
+        _upgrade(root, execute=False)
+        out = capsys.readouterr().out
+        assert "--repair` does, on request" in out, out[-2500:]  # the control: the disarmed remedy
+        assert "for the hooks; what the WARN above names is yours to fix by hand" in out, out[-2500:]
+
+    def test_init_wire_hooks_judges_by_the_recorded_profile_not_the_flag(self, tmp_path, capsys, monkeypatch):
+        """``--wire-hooks`` with ``--profile`` records that profile before it
+        wires; the hookless file it wires was rendered under the record's, so
+        the rule is judged by that one."""
+        from espalier import cli
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_stream_isatty", lambda _stream: False)
+        root = self._node_tree(tmp_path)
+        (root / ".claude" / "settings.json").write_text(
+            json.dumps({"permissions": {"allow": [self.BROAD]}}) + "\n", encoding="utf-8")
+        capsys.readouterr()
+        assert self._init(root, wire_hooks=True, profile="minimal") == 0
+        err = capsys.readouterr().err
+        assert f"--wire-hooks: WARN: .claude/settings.json {self.WARN}" in err, err[-2500:]
+        assert "'workflow' profile" in err, err[-2500:]
+
+    def test_every_merge_report_gets_the_verdict_and_every_deploy_its_rendered_profile(self):
+        """Derived from espalier/, as the retired-rule census is: a caller of
+        the shared reporter added later that leaves ``superseded=`` out, or
+        hands it something other than the verdict, says nothing of the broad
+        rule; a verdict judged by the run's own profile (``profile_name``,
+        ``args``) judges a re-run's file by the wrong rules; and a deploy that
+        leaves ``rendered_profile=`` out falls back to the record, which an
+        init has already overwritten by then."""
+        import ast
+
+        census = TestEveryRetiredRuleReportGoesThroughTheGate
+        verdict = "settings_superseded_allows"
+        reports, deploys, judged, ok, bad = {}, [], set(), set(), []
+        for rel, tree in census._engine_modules():
+            for func in ast.walk(tree):
+                if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                from_verdict, from_other = set(), set()
+                for node in ast.walk(func):
+                    targets = (node.targets if isinstance(node, ast.Assign)
+                               else [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For))
+                               else [])
+                    names = {t.id for t in targets if isinstance(t, ast.Name)}
+                    if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                            and census._called(node.value, verdict)):
+                        from_verdict |= names
+                    else:
+                        from_other |= names
+                gated = from_verdict - from_other
+                for call in ast.walk(func):
+                    if not isinstance(call, ast.Call):
+                        continue
+                    kw = {k.arg: k.value for k in call.keywords}
+                    if census._called(call, "_report_allow_gaps"):
+                        reports[id(call)] = f"{rel}:{call.lineno}"
+                        value = kw.get("superseded")
+                        if value is not None and (
+                                (isinstance(value, ast.Call) and census._called(value, verdict))
+                                or (isinstance(value, ast.Name) and value.id in gated)):
+                            ok.add(id(call))  # an enclosing function bound it from the verdict
+                        if None in kw:
+                            bad.append(f"{rel}:{call.lineno} (**)")
+                    elif census._called(call, verdict) and id(call) not in judged:
+                        judged.add(id(call))  # a nested function's call is walked twice
+                        words = {n.id for n in ast.walk(kw.get("profile", ast.Constant(None)))
+                                 if isinstance(n, ast.Name)}
+                        if "profile" not in kw or words & {"profile_name", "args"}:
+                            bad.append(f"{rel}:{call.lineno} (profile=)")
+                    elif census._called(call, "deploy_harness") and f"{rel}:{call.lineno}" not in deploys:
+                        deploys.append(f"{rel}:{call.lineno}")
+                        if "rendered_profile" not in kw:
+                            bad.append(f"{rel}:{call.lineno} (rendered_profile=)")
+        bad += [where for key, where in reports.items() if key not in ok]
+        assert len(reports) >= 5 and len(deploys) >= 2 and len(judged) >= 7, (reports, deploys, judged)
+        assert not bad, sorted(set(bad))
+
+
 def _plant_retired_rule(root: Path) -> None:
     import json
 

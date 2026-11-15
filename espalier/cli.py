@@ -1765,30 +1765,61 @@ def settings_foreign_read_denies(settings_path: Path) -> tuple[str, ...]:
     return _foreign_read_denies(existing)
 
 
+class SupersededAllows(tuple):
+    """The ``(rule, why)`` pairs :func:`settings_superseded_allows` names, and
+    ``profile``: the one they were judged against, which the sentence names
+    (:func:`superseded_allow_advice`). One verdict, so no surface judges the
+    file by one profile and names another, as ``RetiredRules`` carries its
+    ``held``; a plain tuple everywhere else."""
+
+    profile: str
+
+    def __new__(cls, pairs: "Sequence[tuple[str, str]]" = (), profile: str = "") -> "SupersededAllows":
+        obj = super().__new__(cls, pairs)
+        obj.profile = profile
+        return obj
+
+
 def settings_superseded_allows(
     settings_path: Path, *, profile: str, repo_root: Path,
-) -> tuple[tuple[str, str], ...]:
-    """``(rule, why)`` for each allow rule ``settings_path`` carries that an
-    older ``init`` wrote and this profile no longer renders for this tree:
+) -> SupersededAllows:
+    """``(rule, why)`` for each allow rule ``settings_path`` carries that
+    matches one an older ``init`` wrote and this profile no longer renders
+    for this tree:
 
     * ``Bash(<binary> *)`` for a binary that leads one of the repository's
-      fingerprinted commands -- the bare-binary rule the workflow and
-      self-host profiles derived until 2026-10-06 (``Bash(npm *)``
-      pre-approves ``npm install``, ``npm exec`` and ``npm publish``);
+      test commands or its build action -- the bare-binary rule the workflow
+      and self-host profiles derived until 2026-10-06 (``Bash(npm *)``
+      pre-approves ``npm install``, ``npm exec`` and ``npm publish``), as
+      0.8.0b2 derived it (:func:`_pre_narrowing_broad_allows`);
     * a Python-only rule (``settings_profiles.PYTHON_ONLY_ALLOWS``) on a
       fingerprint without Python, where ``ruff format .`` or ``black .`` would
-      rewrite the harness's vendored ``tools/cc/``.
+      rewrite the harness's vendored ``tools/cc/``;
+    * and the ``PowerShell(...)`` twin of each, which a render on a Windows
+      host wrote beside the Bash rule from 0.8.0b2 on: deleting the Bash rule
+      alone leaves the twin granting the same commands through the
+      PowerShell tool.
 
     Only for the profiles that derive rules from the fingerprint; empty when
     the file, the fingerprint or the comparison is unavailable. Read-only by
     contract, like ``settings_stale_denies``: the merge never removes an
-    operator's rule, so doctor names it and the delete is theirs. Exact
-    strings only, so a rule the operator wrote in another spelling is theirs.
+    operator's rule, so every caller of the merge and doctor name it and the
+    delete is theirs. Exact strings only, so a rule the operator wrote in
+    another spelling is theirs; and a match by text cannot tell the rule an
+    older init wrote from the same line written by hand (a settings file the
+    adopter brought, which no init rendered), so the reason says the line
+    matches one, as ``_stale_denies``' does. ``profile`` is the one the file
+    was rendered from, as the record names it (an ``init --profile`` re-run
+    over a file it keeps records the asked-for one instead, DEF-5113): the
+    profiles that derive nothing name nothing, so a
+    caller that passed one it had just recorded (an ``init`` re-run) would
+    judge the file by the wrong rules (DEF-1155).
     """
     from espalier.settings_profiles import (
         PYTHON_ONLY_ALLOWS,
         get_profile,
         is_python_fingerprint,
+        powershell_twins,
     )
 
     try:
@@ -1798,44 +1829,122 @@ def settings_superseded_allows(
             (repo_root / "reports" / "repo_fingerprint.json").read_bytes()
         ))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return ()
+        return SupersededAllows(profile=profile)
     if not profile_def.python_only or not isinstance(existing, dict) or not isinstance(fingerprint, dict):
-        return ()
+        return SupersededAllows(profile=profile)
     permissions = existing.get("permissions")
     allow = permissions.get("allow") if isinstance(permissions, dict) else None
     if not isinstance(allow, list):
-        return ()
+        return SupersededAllows(profile=profile)
     present = {rule for rule in allow if isinstance(rule, str)}
     canonical = set(_profile_allow_list(profile, fingerprint=fingerprint, repo_root=repo_root, posix=True))
-    commands: list[object] = list(fingerprint.get("test_commands") or [])
-    inferred = fingerprint.get("inferred_actions")
-    if isinstance(inferred, dict):
-        for listed in inferred.values():
-            if isinstance(listed, list):
-                commands.extend(listed)
-    # A Python runner leads a command only since init reads its lockfile, and
-    # init never derived a bare rule for one, so a `Bash(uv *)` is the operator's.
-    runner_names = {runner.name for runner in _stack_table.stack("python").runners}
-    out: list[tuple[str, str]] = []
-    for cmd in commands:
-        tokens = cmd.split() if isinstance(cmd, str) else []
-        if not tokens or tokens[0] in ("python", "python3") or tokens[0] in runner_names:
-            continue
-        rule = f"Bash({tokens[0]} *)"
-        if rule in present and rule not in canonical and rule not in dict(out):
-            out.append((rule, (
-                f"init derived it from `{cmd}` before 2026-10-06; it pre-approves every "
-                f"`{tokens[0]}` subcommand, and the profile now renders the command's own "
-                "narrowed rules instead"
-            )))
+    # What a Windows render of today's profile writes is not superseded either.
+    canonical |= set(powershell_twins(sorted(canonical)))
+    candidates = list(_pre_narrowing_broad_allows(fingerprint))
     if not is_python_fingerprint(fingerprint):
-        for rule in sorted(PYTHON_ONLY_ALLOWS & present):
-            if rule not in canonical:
-                out.append((rule, (
-                    "the profile renders it for a Python repository only; here the only "
-                    "Python is the harness's vendored tools/cc/, which a formatter would rewrite"
-                )))
+        candidates.extend((rule, (
+            "the profile renders it for a Python repository only; here the only "
+            "Python is the harness's vendored tools/cc/, which a formatter would rewrite"
+        )) for rule in sorted(PYTHON_ONLY_ALLOWS))
+    out: list[tuple[str, str]] = []
+    for rule, why in candidates:
+        for spelling, reason in (
+            (rule, why),
+            (powershell_twins([rule])[0], why + "; this is the PowerShell twin a Windows "
+             "host's render wrote beside the Bash rule, granting the same commands to that tool"),
+        ):
+            if spelling in present and spelling not in canonical and spelling not in dict(out):
+                out.append((spelling, reason))
+    return SupersededAllows(out, profile=profile)
+
+
+#: The leading binaries 0.8.0b2's analyzer could write into a test command or
+#: the build action (``pytest -q``, ``npm test``, ``cargo test``, ``go test
+#: ./...``, ``make test``; ``npm run build``, ``make build``): the only ones
+#: the bare-binary derivation ever read. Frozen with
+#: :func:`_pre_narrowing_broad_allows`.
+_PRE_NARROWING_LEADS = frozenset({"pytest", "npm", "cargo", "go", "make"})
+
+
+def _pre_narrowing_broad_allows(fingerprint: dict) -> tuple[tuple[str, str], ...]:
+    """``(rule, why)`` for each bare-binary ``Bash(<binary> *)`` rule the
+    workflow and self-host profiles derived from this repository before the
+    narrowing of 2026-10-06, rebuilt from today's fingerprint the way 0.8.0b2
+    derived it (its ``settings_profiles._workflow_fingerprint_allows``): the
+    leading binary of each test command and of the ``build`` action, the only
+    action it read, among the leads its analyzer could write
+    (:data:`_PRE_NARROWING_LEADS`). Two things today's analyzer reads
+    differently are put back:
+
+    * every Node repository was fingerprinted as npm until 2026-10-06, when
+      the narrowing merged before the analyzer read the manager, so a
+      command led by any Node package manager stands for ``npm test`` or
+      ``npm run build``, and no init ever derived ``Bash(pnpm *)``,
+      ``Bash(yarn *)`` or ``Bash(bun *)``: those are the operator's;
+    * a lead the old analyzer never wrote (a Python interpreter, which it
+      never wrote as a command's lead; a Python runner, read only since init
+      reads its lockfile; a stack's test command added later) never led a
+      bare rule, so a ``Bash(uv *)`` or ``Bash(dotnet *)`` is the operator's.
+      The ``full`` profile's static ``Bash(python *)``, ``Bash(pip *)`` and
+      ``Bash(git *)`` are not this family: that profile still renders them.
+
+    Frozen on purpose, its leads with its logic: it names what older inits
+    wrote, so it moves only when that history is found to be read wrong,
+    never with today's derivation."""
+    node_managers = {pm.name for pm in _stack_table.stack("node").package_managers}
+    inferred = fingerprint.get("inferred_actions")
+    build = inferred.get("build") if isinstance(inferred, dict) else None
+    tests = fingerprint.get("test_commands")
+    roles = [("test", cmd) for cmd in (tests if isinstance(tests, list) else [])]
+    roles += [("build", cmd) for cmd in (build if isinstance(build, list) else [])]
+    out: list[tuple[str, str]] = []
+    for role, cmd in roles:
+        tokens = cmd.split() if isinstance(cmd, str) else []
+        if not tokens:
+            continue
+        lead, then = tokens[0], cmd
+        if lead in node_managers:
+            lead, then = "npm", ("npm test" if role == "test" else "npm run build")
+        if lead not in _PRE_NARROWING_LEADS:
+            continue
+        rule = f"Bash({lead} *)"
+        if rule in dict(out):
+            continue
+        # The version, not the date: an install from the 0.8.0b2 release wrote
+        # it on any day, and a checkout of the source until 2026-10-06.
+        why = f"a rule of this text is what init derived from `{then}` through 0.8.0b2"
+        if then != cmd:
+            why += f", which read every Node repository as npm (this one runs `{cmd}`)"
+        out.append((rule, why + (
+            f"; it pre-approves every `{lead}` subcommand, and the profile now renders the "
+            "command's own narrowed rules instead"
+        )))
     return tuple(out)
+
+
+def superseded_allow_advice(
+    superseded: "Sequence[tuple[str, str]]", *, profile: str,
+) -> tuple[str, str]:
+    """The warning and the delete step for the allow rules
+    :func:`settings_superseded_allows` names, spelled once: doctor prints
+    them as a warning and a next step, every caller of the merge as one WARN
+    line (:func:`_report_allow_gaps`), so the two voices cannot drift
+    (DEF-1155). ``profile`` is the one the rules were judged against."""
+    rules = [rule for rule, _ in superseded]
+    warning = (
+        ".claude/settings.json carries allow rules that match ones an older init wrote "
+        f"and the {profile!r} profile no longer renders for this repository: "
+        + "; ".join(f"{rule} ({why})" for rule, why in superseded)
+    )
+    them, they = ("it", "it is") if len(rules) == 1 else ("them", "they are")
+    step = (
+        f"delete {', '.join(rules)} from permissions.allow in .claude/settings.json if you "
+        f"did not write {them} yourself (merge-settings never removes a rule; the narrowed "
+        "rules it appends with --add-allows cover your repository's own commands); every "
+        # Kept on purpose, a rule is still read by its text, so the line repeats.
+        f"run names {them} while {they} there"
+    )
+    return warning, step
 
 
 #: ``_retired_rules_to_name``'s "the caller made no armament read" default.
@@ -1979,12 +2088,17 @@ def _report_allow_gaps(
     stale: "Sequence[tuple[str, str]]" = (),
     scoped: "Sequence[tuple[str, int]]" = (),
     repo_root: "Path | None" = None,
+    superseded: "Sequence[tuple[str, str]]" = (),
 ) -> None:
     """One voice for every caller of the merge: what was appended, what the
     file still lacks (with the opt-in that appends it), why the block could
     not be compared, which retired deny rule the file still carries
     (``stale``: ``(rule, why)`` pairs, a WARN each, with the one-line fix --
-    nothing here removes a rule), which bare profile rule the file scopes
+    nothing here removes a rule), which allow rule matches a broad one an
+    older init wrote that the profile no longer renders (``superseded``:
+    :func:`settings_superseded_allows`' verdict, one WARN in doctor's
+    sentence, :func:`superseded_allow_advice`, DEF-1155; a plain tuple of
+    pairs is read against ``profile``), which bare profile rule the file scopes
     by path (``scoped``: ``(rule, count)`` pairs, said once each: not a gap,
     never appended, DEF-989), or, under ``repo_root``, the statusLine of the
     operator's own the merge stepped aside from and the indicators it does
@@ -2038,6 +2152,12 @@ def _report_allow_gaps(
     if held:
         print(f"{prefix} WARN: .claude/settings.json carries a retired deny rule, kept "
               f"because {held}.", file=sys.stderr)
+    if superseded:
+        # No armament gate, unlike the retired deny rule: deleting an allow
+        # rule only makes Claude Code ask, so it never takes a guard away.
+        warning, step = superseded_allow_advice(
+            superseded, profile=getattr(superseded, "profile", "") or profile)
+        print(f"{prefix} WARN: {warning}. To clear it, {step}.", file=sys.stderr)
     if repo_root is not None:
         kept = _doctor.foreign_statusline_note(repo_root / ".claude" / "settings.json", repo_root)
         if kept:
@@ -2150,6 +2270,9 @@ def _report_allow_gaps_read_only(
                                      blockers=blockers),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
         repo_root=repo_root,
+        # Both callers pass the installed profile, the one the file was
+        # rendered from (upgrade records nothing over it first).
+        superseded=settings_superseded_allows(settings_path, profile=profile, repo_root=repo_root),
     )
     return bool(missing), note or ""
 
@@ -3899,6 +4022,7 @@ def _reconcile_existing_settings(
     repo_root: Path,
     caller_reports_permissions: bool = False,
     sandbox_posture: bool = False,
+    rendered_profile: str | None = None,
 ) -> SettingsOutcome:
     """Reconcile a pre-existing ``.claude/settings.json``.
 
@@ -3911,7 +4035,11 @@ def _reconcile_existing_settings(
     (deploy_harness owns the single ``skipped`` list).
 
     In case (a) a retired deny rule the file still carries is named, read-only,
-    as ``upgrade`` and ``doctor`` name it (DEF-4017). ``upgrade --execute``
+    as ``upgrade`` and ``doctor`` name it (DEF-4017), and so is a broad allow
+    rule matching one an older init wrote (DEF-1155), judged by
+    ``rendered_profile``: the profile the file was rendered from, which
+    ``init`` reads before it records its own (``None`` reads the record as it
+    stands; ``--wire-hooks`` is judged by the same). ``upgrade --execute``
     deploys through here and then reports from its own merge, so it passes
     ``caller_reports_permissions`` and the WARN is said once. The default is
     to report: a caller that forgets the flag repeats a WARN, where the
@@ -3956,7 +4084,7 @@ def _reconcile_existing_settings(
         return _wire_hooks_into_existing(
             settings_path, existing=existing,
             profile_name=profile_name, repo_root=repo_root,
-            sandbox_posture=sandbox_posture,
+            sandbox_posture=sandbox_posture, rendered_profile=rendered_profile,
         )
     py = _remedy_py()  # the interpreter to spell in a remedy (DEF-758)
     # The armament read, when case (a)'s retired-rule report needs it first.
@@ -4004,7 +4132,7 @@ def _reconcile_existing_settings(
                 return _wire_hooks_into_existing(
                     settings_path, existing=existing,
                     profile_name=profile_name, repo_root=repo_root,
-                    sandbox_posture=sandbox_posture,
+                    sandbox_posture=sandbox_posture, rendered_profile=rendered_profile,
                 )
         # Not a TTY, or the operator declined: preserve + WARN (self-remedying).
         print(
@@ -4085,13 +4213,15 @@ def _reconcile_existing_settings(
         # repair an install, and it said nothing of a retired deny rule while
         # upgrade, doctor, merge-settings and --wire-hooks named it (DEF-4017).
         # The same WARN, read-only: nothing here removes a rule. The retired
-        # rules only, not the profile's allow gaps: a plain re-run has already
-        # recorded the default profile over a minimal or full install's, so a
-        # gap read here would name the default's rules, Write among them, with
-        # an append that widens permissions. Case (b) never gets it: no
-        # Espalier hook is wired there, so the write_guard check that replaces a
-        # retired Read() rule is not running, and "delete that line" would take
-        # away an adopter's only guard on a secret file. That branch's WARN
+        # rules and the broad allow rules below, not the profile's allow gaps:
+        # a re-run has already recorded its own profile (a --profile flag's or
+        # espalier.toml's over the record; a plain one keeps the record since
+        # DEF-2004), so a gap read here could name another profile's rules,
+        # Write among them, with an append that widens permissions. Case (b)
+        # never gets it: no Espalier hook is wired there, so the write_guard
+        # check that replaces a retired Read() rule is not running, and "delete
+        # that line" would take away an adopter's only guard on a secret file
+        # (and no init rendered that file's allow rules). That branch's WARN
         # sends them to merge-settings or --wire-hooks, which wire the hooks and
         # name the rule in the same run. The same holds here when the wiring
         # does not run (an interpreter this host lacks, a neutered gate): the
@@ -4099,22 +4229,33 @@ def _reconcile_existing_settings(
         # after the repair.
         if not caller_reports_permissions:
             stale = settings_stale_denies(settings_path) or ()
-            if stale:
+            if stale:  # the armament read spawns, so only where a rule needs it
                 armament = _enforcement_claim_blockers(repo_root, settings_path)
                 armament_read = True
-                named = _retired_rules_to_name(
-                    stale, repo_root=repo_root, settings_path=settings_path, blockers=armament,
+            # An empty list is an empty verdict, with no read of the blockers.
+            named = _retired_rules_to_name(
+                stale, repo_root=repo_root, settings_path=settings_path, blockers=armament,
+            )
+            # The broad allow rules an older init derived (DEF-1155), judged by
+            # the profile this file was rendered from, never the one this run
+            # just recorded: minimal derives nothing, so a re-run under it
+            # would name nothing over a workflow file, and a re-run under
+            # workflow would call a minimal install's own rule init's. No
+            # armament gate: deleting an allow rule only makes Claude Code ask.
+            superseded = settings_superseded_allows(
+                settings_path, profile=rendered_profile or installed_settings_profile(repo_root),
+                repo_root=repo_root,
+            )
+            # A rule held back on a tree the claim reads as armed is said
+            # too, with its reason (DEF-2006); an empty verdict is falsy.
+            if named or named.held or superseded:
+                _report_allow_gaps(
+                    missing=(), added=(), note="", stale=named, prefix="[init]",
+                    # Read for allow gaps only, and none are passed.
+                    profile=profile_name or "workflow",
+                    hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
+                    stream=sys.stderr, superseded=superseded,
                 )
-                # A rule held back on a tree the claim reads as armed is said
-                # too, with its reason (DEF-2006); an empty verdict is falsy.
-                if named or named.held:
-                    _report_allow_gaps(
-                        missing=(), added=(), note="", stale=named, prefix="[init]",
-                        # Read for allow gaps only, and none are passed.
-                        profile=profile_name or "workflow",
-                        hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
-                        stream=sys.stderr,
-                    )
     # Render the fresh template alongside so the operator can diff the existing
     # file against what a fresh init would emit. The only case that suppresses
     # this — a wired-in-place --wire-hooks merge — already returned above.
@@ -4148,6 +4289,7 @@ def _wire_hooks_into_existing(
     profile_name: str | None,
     repo_root: Path,
     sandbox_posture: bool = False,
+    rendered_profile: str | None = None,
 ) -> SettingsOutcome:
     """Arm an existing hookless ``.claude/settings.json`` in place.
 
@@ -4199,6 +4341,12 @@ def _wire_hooks_into_existing(
             scoped=merge_result.scoped_allows,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
             stream=sys.stderr, repo_root=repo_root,
+            # Judged by the profile the file was rendered from, never the one
+            # init just recorded (DEF-1155; ``_reconcile_existing_settings``).
+            superseded=settings_superseded_allows(
+                settings_path, profile=rendered_profile or installed_settings_profile(repo_root),
+                repo_root=repo_root,
+            ),
         )
     if merge_result.status == MERGE_WIRED:
         # Wired in place -> the live file already carries the hooks, so suppress
@@ -4492,6 +4640,7 @@ def deploy_harness(
     wire_hooks: bool = False,
     caller_reports_permissions: bool = False,
     sandbox_posture: bool = False,
+    rendered_profile: str | None = None,
 ) -> dict:
     """Deploy the mechanical harness layer into a target repo.
 
@@ -4499,7 +4648,11 @@ def deploy_harness(
     to ``.claude/settings.json``. ``None`` resolves to the default
     profile (``"workflow"``). ``caller_reports_permissions`` is for a caller
     that names a retired deny rule itself (``upgrade --execute``;
-    ``_reconcile_existing_settings`` says why).
+    ``_reconcile_existing_settings`` says why). ``rendered_profile`` is the
+    profile a settings file already here was rendered from, read by a caller
+    that records its own profile before deploying (``init``); the broad allow
+    rules the reconcile names are judged by it (DEF-1155). ``None`` reads the
+    record as it stands.
 
     Iteration invariant (BC-030/031): the asset set this function
     regenerates is derived from import-time enumeration of packaged
@@ -4621,6 +4774,7 @@ def deploy_harness(
             repo_root=repo_root,
             caller_reports_permissions=caller_reports_permissions,
             sandbox_posture=sandbox_posture,
+            rendered_profile=rendered_profile,
         )
         settings_hooks_wired = outcome.settings_hooks_wired
         posture_state = outcome.posture_state
@@ -8506,6 +8660,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     # reader that compares it against a profile (doctor, upgrade,
     # merge-settings) needs the one it was rendered from (DEF-715 review). The
     # report has the same per-machine lifecycle as the file it describes.
+    # The record's profile is read first: a settings file already here was
+    # rendered from it, not from this run's, and the deploy judges the broad
+    # allow rules it names by that one (DEF-1155). With no record, this run's
+    # is the comparison: a file here then is one the adopter brought, or one
+    # their repository tracks (DEF-11), rendered on another clone under a
+    # profile this one never recorded.
+    rendered_profile = (installed_settings_profile(repo_root)
+                        if (reports_dir / "harness_config.json").is_file() else profile_name)
     plan_dict["settings_profile"] = profile_name
     atomic_write_text(
         reports_dir / "harness_config.json",
@@ -8525,6 +8687,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         profile_name=profile_name,
         wire_hooks=getattr(args, "wire_hooks", False),
         sandbox_posture=getattr(args, "sandbox_posture", False),
+        rendered_profile=rendered_profile,
     )
 
     # Record the README deploys (already done above-fingerprint) in the deploy
@@ -11471,6 +11634,12 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     # every gate wired to `echo`, which this command used to report as active.
     missing = _enforcement_claim_blockers(repo_root, settings_path)
     unverified = missing is None
+    # Judged against the profile the file was rendered from, never --profile:
+    # the flag names the rules to compare and append, and the record says
+    # which rules an older init wrote here (DEF-1155).
+    superseded = settings_superseded_allows(
+        settings_path, profile=installed_settings_profile(repo_root), repo_root=repo_root,
+    )
 
     def _gaps(announce_added: bool = True) -> None:
         _report_allow_gaps(
@@ -11480,7 +11649,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
                                          settings_path=settings_path, blockers=missing),
             scoped=result.scoped_allows,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
-            announce_added=announce_added, repo_root=repo_root,
+            announce_added=announce_added, repo_root=repo_root, superseded=superseded,
         )
 
     if result.status == MERGE_ALREADY:
@@ -11497,7 +11666,8 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
                                              settings_path=settings_path, blockers=missing)
         if result.missing_allows:
             tail = " Hook events are current; the allow rules below are not."
-        elif repaired or named_stale or named_stale.held or missing != [] or result.allow_note:
+        elif (repaired or named_stale or named_stale.held or missing != [] or result.allow_note
+              or superseded):
             tail = ""
         else:
             tail = " Nothing to do."
@@ -12225,6 +12395,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             lacking = False
             uncompared = ""
             stale_rules: tuple = ()
+            superseded_rules: tuple = ()
             # One armament read for the whole branch: the retired-rule WARN, the
             # sentence that points at it and the disarmed narration below must
             # agree, and a flaky interpreter read three times can answer three
@@ -12247,6 +12418,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     settings_stale_denies(repo_root / ".claude" / "settings.json") or (),
                     repo_root=repo_root, settings_path=repo_root / ".claude" / "settings.json",
                     blockers=vc_blockers,
+                )
+                # And for the broad allow rule the report above names (DEF-1155),
+                # the same read the report made.
+                superseded_rules = settings_superseded_allows(
+                    repo_root / ".claude" / "settings.json",
+                    profile=installed_settings_profile(repo_root), repo_root=repo_root,
                 )
             # And once more for espalier's statusLine (DEF-798): a file wired
             # before the merge learned to add the key has none, and this branch
@@ -12334,6 +12511,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 # Held back on a tree the claim reads as armed (DEF-2006).
                 file_states.append("keeps a retired deny rule while write_guard does not run "
                                    "(the WARN above says why)")
+            if len(superseded_rules) == 1:
+                file_states.append("carries an allow rule that matches one an older init wrote "
+                                   "(the WARN above names it)")
+            elif superseded_rules:  # a Bash rule and its PowerShell twin, most often
+                file_states.append("carries allow rules that match ones an older init wrote "
+                                   "(the WARN above names them)")
             if no_statusline:
                 file_states.append("has no statusLine")
             if shell_mismatch:
@@ -12344,7 +12527,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if states:
                 if disarmed:
                     remedy = " -- `merge-settings . --repair` does, on request"
-                    if uncompared or stale_rules:
+                    if uncompared or stale_rules or superseded_rules:
                         # --repair re-arms espalier's entries and touches no rule.
                         remedy += ", for the hooks; what the WARN above names is yours to fix by hand"
                 elif no_statusline:
@@ -12574,9 +12757,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # The installed profile, as this command's own gap report reads it: a
         # deploy with none renders the default beside a minimal install, the
         # posture change DEF-2004 closed for init (the failure-mode review).
+        installed = installed_settings_profile(repo_root)
         result = deploy_harness(
             repo_root, harness, fp, caller_reports_permissions=True,
-            profile_name=installed_settings_profile(repo_root),
+            # Nothing here records a profile first, so the file was rendered
+            # from the one it renders (DEF-1155: init's deploy is the other).
+            profile_name=installed, rendered_profile=installed,
         )
         written = list(result["deployed"])
         # Every file, never truncated (DEF-1064), and the marker sentence on
@@ -12775,6 +12961,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
                 repo_root=repo_root,
+                superseded=settings_superseded_allows(settings_path, profile=profile,
+                                                      repo_root=repo_root),
             )
     elif getattr(args, "sandbox_posture", False):
         # The flag with no settings file to write into is answered, not dropped.

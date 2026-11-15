@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5113",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import argparse,contextlib,io,json,os,sys,tempfile,pathlib;sys.path.insert(0,os.getcwd());from espalier import cli;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);(d/\"README.md\").write_text(\"# t\\n\");(d/\"package.json\").write_text(json.dumps(dict(name=\"t\",scripts=dict(test=\"jest\"))));(d/\".git\").mkdir();os.chdir(d);b=io.StringIO();c1=contextlib.redirect_stdout(b);c2=contextlib.redirect_stderr(b);c1.__enter__();c2.__enter__();cli.cmd_init(argparse.Namespace(repo=str(d),config=None,write_gitignore=True));s=(d/\".claude/settings.json\").read_bytes();cli.cmd_init(argparse.Namespace(repo=str(d),config=None,write_gitignore=True,profile=\"minimal\"));c2.__exit__(None,None,None);c1.__exit__(None,None,None);print(\"record=\"+cli.installed_settings_profile(d),\"kept=\"+str((d/\".claude/settings.json\").read_bytes()==s))'",
+ "open_value": "record=minimal kept=True",
+ "why_not": null,
+ "row_sha": "63b93fdc9886",
+ "text_sha": "0b94a1df4528",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD 5d50f915feb1)"
+}
