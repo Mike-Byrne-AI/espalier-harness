@@ -1931,7 +1931,9 @@ on stdin (`echo '...' | su app`, `su app <<< '...'`), a launcher ahead of
 the piped shell; `builtin eval "sudo ..."`; and a wrapper switch's word
 value ahead of the launcher (`sudo -u bob gosu app ...`), which ends the
 walk to the launcher here as it does for the nudge (`sudo gosu app ...` is
-read). runuser's switches are read where getopt permutes them
+read), each pinned in
+`tests/test_write_guard.py::TestTheHardTierReadsWhatALauncherRuns::test_the_recorded_limits_stay_unread`.
+runuser's switches are read where getopt permutes them
 (`runuser rm -u app -- -rf ~`), and with `-u` the argv's own `-c` is the
 argv's; `sg` with a dash-led group word (ast-grep's `sg -p`) runs nothing.
 A program piped to `-Command -`
@@ -2251,8 +2253,8 @@ kill-switch gate still runs. A git the judgment asks (the discard snapshot, a
 dirty-tree check) is given only the budget that is left, so on a large repo
 or a cold cache a slow git costs its snapshot, said once, and the call is
 still judged. Inside the child, a state write the judgment has in flight
-finishes before the child's refusal exits, pinned by
-`tests/test_write_guard_time_budget.py::TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`;
+finishes before the child's refusal exits, pinned in the time-budget tests by
+`TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`;
 a write still in flight at the parent's deadline is killed with the child,
 and a line it cut off loses only itself: every line-record append of the
 hooks starts on a line of its own after a torn one (`own_line` in
