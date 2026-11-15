@@ -1909,7 +1909,22 @@ BSD script execs its command where the outer command stands, so reading it
 from the payload's directory is a declared over-refusal, and so is a `-c`
 read from any switch word on script's line (`script -q out.log grep -c
 '...' notes`). Behind `builtin eval`, a second level of launch wrapper,
-neither carrier's program is read. A program piped to `-Command -`
+neither carrier's program is read. The same records read, one level down
+from the same two directories, the program a user-switching launcher runs:
+`runuser` (its `-c` and long switches, as su's, and with `-u` the argv after
+the user), `gosu` and `su-exec` (the argv after the user), `sg` (its one
+command word) and `flock` (the `-c` program, or the argv after its file).
+None of the five stands on a wrapper roster, so the outer scan read none of
+their programs. gosu, su-exec, `runuser -u` and flock's argv form exec where
+the outer command stands, so judging their argv from the unknown directory
+is BSD script's declared over-refusal (`cd sub && gosu app rm -rf .` is
+refused where `cd sub && rm -rf .` nudges). find, fd and parallel are left
+to the sweep reader and the nudge. Past one level, and declared limits: a
+launcher inside a program the outer scan reads in place (a bare `bash -c
+"gosu app ..."`, `eval 'gosu app ...'`), where a switched `-c`, `su -c` or
+`watch` hands the launcher one level down and it walls; su fed its program
+on stdin (`echo '...' | su app`, `su app <<< '...'`), a launcher ahead of
+the piped shell; and `builtin eval "sudo ..."`. A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
@@ -1956,8 +1971,9 @@ never the one-re-issue nudge.
 read each program a carrier runs as the command it is, one level down: what
 find's `-exec`, `-execdir`, `-ok` and `-okdir` actions and fd's `-x` and `-X`
 run (an argv, with no shell between), the line GNU parallel hands its shell,
-and the programs `su -c` and `script` run (util-linux `script -c`, and BSD
-`script`'s words after its file word). So a force push, a tag push, a clean,
+the programs `su -c` and `script` run (util-linux `script -c`, and BSD
+`script`'s words after its file word), and the programs runuser, gosu,
+su-exec, sg and flock run (the hard tier's readers above). So a force push, a tag push, a clean,
 a discard, a kill or a recursive delete fanned out through a carrier draws
 what its direct twin draws, and the fetch-and-execute checkpoint reads the
 same programs. An item a launcher finds, or reads from a file or
