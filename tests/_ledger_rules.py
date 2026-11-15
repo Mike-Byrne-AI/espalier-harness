@@ -223,9 +223,15 @@ TEXT_OVER_OWN_SUBJECT = {
     # DEF-383b left on 2026-10-16 with its row (struck by lane
     # wired-interpreter-argv: doctor asks the remedy once per call; its
     # probe counted the call's spelling in the function's text).
-    "DEF-392c", "DEF-392d",
+    # DEF-392c, DEF-415h, DEF-449, DEF-576, DEF-588, DEF-590 and DEF-889 left on
+    # 2026-11-15 with their rows (struck by lane
+    # the-ledger-review-closes-its-records-rows, the ledger review's records
+    # lane: five closed as not work on the operator's ruling, their probes
+    # retired still reading open; DEF-576 and DEF-889, fixed long before,
+    # re-keyed to the defect and struck on it).
+    "DEF-392d",
     "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
-    "DEF-415f", "DEF-415h", "DEF-416b",
+    "DEF-415f", "DEF-416b",
     # DEF-419c, DEF-419e and DEF-477 left on 2026-11-02 with their rows (struck
     # by lane the-mirror-census-diagnoses-each-mutant, the C34 class: the census
     # reads identical bytes, the curated-name pin reads the hook's own pattern,
@@ -240,7 +246,6 @@ TEXT_OVER_OWN_SUBJECT = {
     # the-pre-flight-derives-each-demand-from-its-enforcer, the C30 class: the
     # two harness-guard advisories carry one refusal statement held to the
     # script; the hook-count sites are held to the docs their audits read).
-    "DEF-449",
     # DEF-486 and DEF-561 left on 2026-10-30 with their rows (struck by lane
     # gate-populations-derive-from-the-live-source, the C37 class-fix: the
     # README's skip list is a generated region; the status guard reads the
@@ -260,7 +265,7 @@ TEXT_OVER_OWN_SUBJECT = {
     # names the rows it cannot read).
     "DEF-516",
     "DEF-523",
-    "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
+    "DEF-579", "DEF-623", "DEF-629",
     "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
     "DEF-645", "DEF-649", "DEF-660",
     # DEF-662 left on 2026-10-08 with its row (struck by lane
@@ -277,12 +282,7 @@ TEXT_OVER_OWN_SUBJECT = {
     #: comments skipped, holding no status guard -- driven: a guard inserted after the
     #: measurement flips it, a comment inside the block or prose outside it does not.
     "DEF-885",
-    #: DEF-889 (filed 2026-09-21 at the corpus fold): the deliverable IS a markdown link
-    #: in docs/README.md; the probe reads it through the engine's own link extractor
-    #: (reflect_protocol._extract_local_links), keyed on a link whose target resolves to
-    #: the orphaned doc -- driven: a Reference-table row with that link flips it, a prose
-    #: sentence naming the path does not, so no comment or pointer can satisfy it.
-    "DEF-889",
+    #: DEF-889 left this set on 2026-11-15 (the note above the DEF-392d entry).
     #: DEF-896 and DEF-878 left this set on 2026-09-22: both struck (the link form
     #: deleted and the archive gate gained an absolute-link arm; the staging check
     #: re-based on `git diff --name-only` and pinned by the checklist contract), so

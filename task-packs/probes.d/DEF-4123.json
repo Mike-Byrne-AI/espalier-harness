@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4123",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "an audit whose own first wave pre-registers the metric (call 35136c); a size probe would pin the line count the ruling says is not the cost",
+ "row_sha": "53ba08860024",
+ "text_sha": "b417edc99b4f",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing)"
+}

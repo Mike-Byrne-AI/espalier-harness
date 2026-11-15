@@ -477,8 +477,10 @@ not reinstate it.
 **The success criterion is therefore inverted from the usual one: this run is
 CORRECT when it stops RED at "Verify tag matches the built version".** A run that
 goes green past that step means the guard did not hold — stop and investigate
-before anything else. The unproven handshake is a real remaining gap, tracked as
-`DEF-449`.
+before anything else. The handshake this ritual cannot reach was proven by the
+real publishes instead: the `v0.8.0b1` (2026-09-25) and `v0.8.0b2` (2026-09-27)
+tag runs of `publish.yml` each ran `pypa/gh-action-pypi-publish` to success
+through its OIDC step, so no rehearsal of it is owed.
 
 1. **Confirm the PyPI namespace is reserved** (per the "PyPI
    maintainer-side setup" subsection above). The reservation must be
@@ -506,11 +508,12 @@ before anything else. The unproven handshake is a real remaining gap, tracked as
    project's first release, immutably, from a throwaway branch — while you sat
    watching for a red step that had quietly gone green.
    ⚠ **Consequence, stated honestly: as written, this ritual stops at the version
-   guard and does NOT exercise the OIDC handshake it was written to prove.** That
-   is a real gap, not a solved problem — it is tracked as `DEF-449`. Closing it
-   needs an upload target that cannot burn the namespace (TestPyPI via
-   `repository-url`, or a re-publish of an already-published version), which is a
-   design decision, not a text fix. Do not "fix" it by aligning the versions.
+   guard and does NOT exercise the OIDC handshake it was written to prove.** The
+   first real publishes proved it instead (`v0.8.0b1`, then `v0.8.0b2`, through the
+   same `publish.yml` step). A rehearsal that reached it would need an upload
+   target that cannot burn the namespace (TestPyPI via `repository-url`, or a
+   re-publish of an already-published version), and none is owed. Do not "fix"
+   it by aligning the versions.
 
 4. **Watch the publish workflow.**
    ```bash

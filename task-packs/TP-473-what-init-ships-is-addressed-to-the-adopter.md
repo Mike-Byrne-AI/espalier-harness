@@ -160,8 +160,9 @@ Paths these touch, for the scope walk:
 - **Behaviour defects in deployed bodies the gate cannot see**, each with its own oracle:
   `DEF-944` (`/commit` ignores `git_conventions`), `DEF-1040` (a stale protocol sentence; home
   `tests/test_documented_claims.py::TestHookProtocolStaleForms`), `DEF-1141` (stamp-then-amend),
-  `DEF-1148` (`tools/cc/ship.py::open_pr` title), `DEF-901` (two Purpose readers disagree).
-  A positive-match scanner cannot express a behaviour; these stay rows.
+  `DEF-1148` (`tools/cc/ship.py::open_pr` title), `DEF-901` (two Purpose readers disagree;
+  struck 2026-11-15, the readers now share one rule). A positive-match scanner cannot
+  express a behaviour; these stay rows.
 - **First-run rows that are not audience-shaped:** `DEF-993` (help wraps at hyphens),
   `DEF-912` (bare repo path in remedies), `DEF-994` (a venv line in source-checkout docs `init`
   never deploys), `DEF-996` (a `.bak` promise true on no tree: stale, not mis-addressed),

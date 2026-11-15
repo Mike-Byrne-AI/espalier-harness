@@ -25,6 +25,17 @@
 > contract, and the three scanner registries the reconciliation test does not reach.
 > `DEF-913`'s "no shared source" is stale on the same evidence; repin it with rev.3.
 
+> ⚠ **Note (2026-11-15): carried from `DEF-548`, struck that day as a duplicate of `DEF-913`.**
+> Rev.3 must not derive `tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS` from the
+> canon as 438-B plans: that list is the citation gate's exemption, and widening it to the
+> axis exempts records the gate checks today. The harm the 2026-11-15 ledger review verified
+> is on the consumer side: tests import that narrow list as "the record set"
+> (`tests/test_python_floor.py::TestTheRetiredWiringPromiseIsGone` allows
+> `docs/FAILURE_MODES.md`, a canon record, by hand), so the unit for that registry is to
+> repoint the record-question consumers to `RECORD_SURFACES` and leave the exemption to its
+> own purpose. `DEF-913`'s probe is weaker than the retired one (one path typed into every
+> registry flips it); rev.3's repin of it is the place to fix that.
+
 ## Status
 
 - **Kind: PACK**

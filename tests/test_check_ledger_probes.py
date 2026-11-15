@@ -757,54 +757,11 @@ class TestTheLiveProbeFile:
             f"file would grade STRIKE instead of UNRESOLVED: {missing[:10]}"
         )
 
-    #: The two report headings and the all-clear a probe greps out of
-    #: `scripts/check_pack_landing.py`'s stdout. Keyed on what binds the probe
-    #: to `task-packs/Done/`, not on how it runs the script: `subprocess`,
-    #: `os.system`, `runpy` and `python3 -m` all read the same lines
-    #: (failure-mode pass, 2026-09-22).
-    _LANDING_LINT_LINES = ("ROADMAP packs in Done/", "incomplete Landing stanza",
-                           "carry a terminal State")
-
-    @pytest.mark.skipif(
-        not _HAS_LIVE_ROSTER,
-        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
-    )
-    def test_a_probe_that_reads_the_landing_lints_report_declares_done_and_reads_its_marker(self):
-        """`scripts/check_pack_landing.py` is tracked and always present; the
-        folder it reads is not. A probe that reads its REPORT answers about
-        `task-packs/Done/` and must (1) declare it, or the public checkout's
-        first strike run grades it fixed, and (2) key on the lint's SCANNED
-        NOTHING marker, or a `Done/` that exists but holds no pack -- reachable
-        by the landing checklist's own `mkdir -p` -- lets it answer over nothing
-        (`DEF-858`, both measured 2026-09-22). Keyed on the probes file alone, so
-        the verdict is the same on the seed tree."""
-        probes = _live_roster_probes()
-        readers = [
-            p for p in probes
-            if p.get("cmd") and any(line in p["cmd"] for line in self._LANDING_LINT_LINES)
-        ]
-        assert readers, (
-            "no live probe reads the landing lint's report: the chore drained and its "
-            "rows were struck -- DELETE this ratchet rather than leave a guard that can "
-            "no longer fail for the right reason"
-        )
-
-        def declares_done(p: dict) -> bool:
-            inputs = p.get("inputs")
-            return isinstance(inputs, list) and "task-packs/Done" in [
-                x.replace("\\", "/").rstrip("/") for x in inputs if isinstance(x, str)
-            ]
-
-        undeclared = [p["id"] for p in readers if not declares_done(p)]
-        assert not undeclared, (
-            f"probe(s) read check_pack_landing.py's report without declaring task-packs/Done "
-            f"in `inputs`, so a checkout without it grades them STRIKE_CANDIDATE: {undeclared}"
-        )
-        blind = [p["id"] for p in readers if "SCANNED NOTHING" not in p["cmd"]]
-        assert not blind, (
-            f"probe(s) grep the lint's report without keying on its SCANNED NOTHING "
-            f"marker, so a Done/ that exists but holds no pack lets them answer: {blind}"
-        )
+    # The landing-lint reader ratchet (DEF-858) went on 2026-11-15: the chore its
+    # probes read drained, their rows were struck, and no live probe reads the
+    # lint's report, so its non-empty arm could no longer fail for the right
+    # reason, as its own message directed. A new probe that reads the report
+    # still owes `inputs: ["task-packs/Done"]` and the SCANNED NOTHING key.
 
     #: Path literals a command NAMES that are not what it READS: an absence
     #: check, a classifier argument, pattern text. Declaring one in `inputs`

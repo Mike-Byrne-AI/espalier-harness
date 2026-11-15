@@ -1627,7 +1627,7 @@ class TestRepin:
 @pytest.mark.contract
 def test_the_probes_file_is_byte_stable_under_its_own_serializer():
     """The sidecar is tracked since 2026-09-21. Pin the exact spelling
-    scripts/ledger_row.py writes (`json.dumps(..., indent=1, ensure_ascii=False)`
+    tools/cc/ledger_row.py writes (`json.dumps(..., indent=1, ensure_ascii=False)`
     plus a trailing newline) so a reformat is a deliberate act, not a
     two-thousand-line hunk riding along with a one-row repin (the failure-mode
     lane, 2026-09-21)."""
