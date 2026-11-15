@@ -3154,7 +3154,30 @@ def _preflight_runs_ruff(root: Path) -> bool:
         makefile = ""
     if re.search(r"^lint:", makefile, flags=re.MULTILINE):
         return False
+    if _one_python_runner_named(root):
+        # The inferred lint runs under the runner's `run` (`uv run ruff check .`),
+        # which brings its own ruff, as a declared `uv run ruff` does above.
+        return False
     return _ruff_is_declared(root)
+
+
+def _one_python_runner_named(root: Path) -> bool:
+    """Whether the lockfile of exactly one of the stack table's Python runners
+    is at the root, so the engine's inferred commands run under that runner.
+    Twin of ``espalier.analyze.detect_python_runner`` naming one; a deployed
+    table older than its runners names none, and the lint reads as bare."""
+    try:
+        import _stack_table  # noqa: E402 -- tools/cc/, on the path above
+
+        runners = getattr(_stack_table.stack("python"), "runners", ())
+    # fail-open: ok deliberate -- an unreadable table names no runner; the hook layer's table read says the fault once a session
+    except Exception:  # noqa: BLE001 -- the table's import or its first call, on any deployed version
+        return False
+    names = {
+        runner.name for runner in runners for lockfile in runner.lockfiles
+        if (root / lockfile).is_file()
+    }
+    return len(names) == 1
 
 
 # DEF-1122: on an adopter's tree, which tools here the tree makes load-bearing

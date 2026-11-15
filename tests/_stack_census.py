@@ -75,6 +75,7 @@ SEED_MANIFESTS = frozenset({
 })
 SEED_LOCKFILES = frozenset({
     "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
+    "uv.lock", "poetry.lock", "Pipfile.lock", "pdm.lock", "requirements.lock", "requirements-dev.lock",
 })
 
 

@@ -365,19 +365,28 @@ def _inferred_ruff_without_the_vendored_tree(command: str) -> str:
     already names an exclude, verbatim. Only the INFERRED line is edited: a
     declared ``[extra_actions] lint`` is the adopter's exact line and runs as
     written (init's ruff note tells them about the exclude). ``detect_actions``
-    keeps spelling ``ruff check .``: the fingerprint's strings are pinned byte
+    keeps spelling ``ruff check .`` (under a Python runner's ``run`` where a
+    lockfile names one): the fingerprint's strings are pinned byte
     for byte, and the exclude is this runner's business. No ``--no-cache``,
     unlike the body's fallback: this is the adopter's own ruff on their own
     tree, and the cache directory it writes carries its own ``.gitignore``;
     the fallback's flag is for a ruff that merely happened to be on PATH.
     Rebuilt from the tokens the test above read, never from a fixed-width
-    slice of the text (the failure-mode review drove a doubled space)."""
+    slice of the text (the failure-mode review drove a doubled space). A
+    Python runner's ``run`` in front (``uv run ruff check .``, the line a
+    runner's lockfile infers) is kept in front, and the rest is read the same."""
     words = command.split()
-    if words[:2] != ["ruff", "check"]:
+    lead: list[str] = []
+    for runner in _stack_table.stack("python").runners:
+        if words[:len(runner.run)] == list(runner.run):
+            lead = list(runner.run)
+            break
+    body = words[len(lead):]
+    if body[:2] != ["ruff", "check"]:
         return command
-    if any(word.startswith(("--exclude", "--extend-exclude")) for word in words):
+    if any(word.startswith(("--exclude", "--extend-exclude")) for word in body):
         return command
-    return " ".join(["ruff", "check", "--extend-exclude", VENDORED_RUFF_EXCLUDE, *words[2:]])
+    return " ".join([*lead, "ruff", "check", "--extend-exclude", VENDORED_RUFF_EXCLUDE, *body[2:]])
 
 
 def preflight_command(action: str, repo_root: str | Path = ".") -> str:
