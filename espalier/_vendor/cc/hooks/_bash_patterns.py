@@ -2732,16 +2732,48 @@ _CARRIER_READERS: dict[str, Callable[[list[str]], list[str]]] = {
 }
 
 
-def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
+#: The carriers whose program the hard tier reads from this walk (DEF-4120):
+#: su hands it to the target user's login shell and BSD script execs it
+#: after its file word, and the tier's in-place scan read su's program in no
+#: spelling (`su` is on no wrapper roster), nor BSD script's command after
+#: its file word where no switch or a valued `-t` comes first (the head walk
+#: takes the file word for the command), so a recursive delete of a home
+#: directory behind either was a plain allow where its `bash -c` twin was
+#: refused. The tier judges each program as it judges `bash -lc`'s, from the
+#: payload's directory and the unknown one. Every switch word on script's
+#: line is read for a `-c` (the walk does not stop at the file word), so
+#: `script -q <file> grep -c '<delete text>' notes` walls: a declared
+#: over-refusal, which also reads `script <file> bash -lc '<program>'`.
+_HARD_TIER_CARRIER_HEADS = frozenset({"su", "script"})
+#: The carriers the hard tier leaves out, each for its reason. `eval` and
+#: `watch`: the in-place scan reads their programs already (`_CMD_POS`
+#: walks both), and `eval` runs in the calling shell, so judging its program
+#: from the unknown directory as well would refuse `cd build && eval
+#: '<delete> *'`, which the in-place reading leaves to the nudge.
+#: `builtin`: on no `_CMD_POS` roster, so a su or script program behind
+#: `builtin eval` is unread here, its words taken by the `builtin` head (a
+#: second level of launch wrapper, outside the coverage contract's one:
+#: docs/HOOKS.md). The two sets partition `_CARRIER_READERS`, so a carrier
+#: added there is placed on one side before its first test passes, pinned by
+#: tests/test_write_guard.py::TestTheHardTierReadsWhatSuAndScriptRun.
+_HARD_TIER_CARRIER_SKIPPED = frozenset({"eval", "watch", "builtin"})
+
+
+def _carrier_program_bodies(
+    command: str, scan: str, *, heads: frozenset[str] | None = None,
+) -> Iterator[str]:
     """Yield every program each carrier on the Bash tool hands to a shell
     (DEF-1131), by the head's reader (`_CARRIER_READERS`): opener on
     ``scan``, words from the raw ``command`` at the
     same offsets, the length guard of the readers above. The yielded text
     is what the shell receives, so the consumer runs its own masker on it:
-    the secret leg reads it with the Bash roster one level down. The
-    nested-launch scan does not read it (it reads every quoted word
-    quote-blind, which holds more carriers than this roster names:
-    `write_guard._statement_launches_claude`, DEF-1044)."""
+    the secret leg reads it with the Bash roster one level down, and the
+    hard tier reads the programs of ``heads`` alone
+    (`_HARD_TIER_CARRIER_HEADS`, DEF-4120). A head outside ``heads`` still
+    takes its words, so a carrier among them is read one level down or not
+    at all, never here. The nested-launch scan does not read it (it reads
+    every quoted word quote-blind, which holds more carriers than this
+    roster names: `write_guard._statement_launches_claude`, DEF-1044)."""
     if len(scan) != len(command):
         scan = command
     # A carrier among the words already read (`eval eval ...`) is read one
@@ -2752,7 +2784,10 @@ def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
             continue
         words, used = _carrier_words(command[m.end():], 0)
         read_to = m.end() + used
-        for program in _CARRIER_READERS[_verb_key(m.group("head"))](words):
+        key = _verb_key(m.group("head"))
+        if heads is not None and key not in heads:
+            continue
+        for program in _CARRIER_READERS[key](words):
             if program:
                 yield program
 

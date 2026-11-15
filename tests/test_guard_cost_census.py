@@ -11,7 +11,7 @@ the child's environment and sets them only to a fixture lock of its own, so a
 run under a seat's tier never queues behind that tier, or another seat's, on the
 real box lock.
 """
-# slow-exempt: about fifteen census children, the guard rows each spawning the guard once or twice (about 0.3 s each on the Air)
+# slow-exempt: about twenty census children, the guard rows each spawning the guard once or twice (about 0.3 s each on the Air)
 from __future__ import annotations
 
 import importlib.util
@@ -198,6 +198,160 @@ class TestCompile:
         assert proc.returncode == 0, proc.stderr
         got = json.loads(proc.stdout)["compile"]
         assert got["loader_ran"] and got["fragment_found"] and got["hooks_patterns"] > 100, got
+
+
+#: A pattern module holding each shape the first-use rule must keep or leave:
+#: two accessors it keeps (``_grown_re``, whose source is ``{n}`` characters,
+#: and ``_other_re``) beside one taking an argument, one taking a keyword only,
+#: one returning text, one returning an import-time pattern without naming
+#: ``compile``, and an uncached compile.
+_FIRST_USE_A = (
+    "import functools\n"
+    "import re\n"
+    "_CMD_POS_NO_VERB = '(?:^|;)'\n"
+    "_CMD_POS = _CMD_POS_NO_VERB + 'x'\n"
+    "A = re.compile(_CMD_POS_NO_VERB + 'rm')\n"
+    "_GROWN = 'g' * {n}\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _grown_re():\n    return re.compile(_GROWN)\n\n\n"
+    "@functools.cache\ndef _other_re():\n    return re.compile('other')\n\n\n"
+    "@functools.lru_cache(maxsize=8)\ndef _with_arg_re(text):\n    return re.compile(text)\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _keyword_re(*, flags=0):\n    return re.compile('kw', flags)\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _text():\n    return 'compiled by nobody'\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _held():\n    return A\n\n\n"
+    "def _uncached_re():\n    return re.compile('uncached')\n"
+)
+#: A second module: an accessor it imports from the first (the first's, never
+#: its own), one of its own, and one whose pattern an import compiled first.
+_FIRST_USE_B = (
+    "import functools\n"
+    "import re\n"
+    "from {a} import _other_re\n"
+    "S = re.compile('plain')\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _sb_re():\n    return re.compile('speed', re.I)\n\n\n"
+    "@functools.lru_cache(maxsize=1)\ndef _dup_re():\n    return re.compile('plain')\n"
+)
+
+
+def _first_use_hooks(root: Path, *, n: int) -> Path:
+    hooks = root / "tools" / "cc" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "_bash_patterns.py").write_text(_FIRST_USE_A.format(n=n), encoding="utf-8")
+    (hooks / "_speedbump.py").write_text(_FIRST_USE_B.format(a="_bash_patterns"), encoding="utf-8")
+    return root
+
+
+class TestFirstUse:
+    """DEF-4122: a pattern moved behind a cached accessor is still compiled by
+    every call that opens its check, so the census counts it, and the summed
+    line is what a cost gate reads."""
+
+    def _figures(self, root: Path) -> dict:
+        proc = _run("--compile", "--root", str(root), "--json")
+        assert proc.returncode == 0, proc.stderr
+        got = json.loads(proc.stdout)["compile"]
+        assert "summed_chars" in got, f"the census counts no first-use compile: it read {sorted(got)}"
+        return got
+
+    def test_each_first_use_pattern_is_counted_beside_the_imports(self, tmp_path):
+        got = self._figures(_first_use_hooks(tmp_path, n=40))
+        assert (got["hooks_patterns"], got["hooks_chars"]) == (2, 14), got
+        assert got["first_use_names"] == ["_bash_patterns._grown_re()", "_bash_patterns._other_re()",
+                                          "_speedbump._dup_re()", "_speedbump._sb_re()"], got
+        assert (got["first_use_patterns"], got["first_use_chars"]) == (4, 40 + 15), got
+        # _dup_re's pattern is the import's own key: no new compile, so the
+        # distinct sum leaves it out where the per-accessor figure counts it
+        assert (got["summed_patterns"], got["summed_chars"]) == (5, 14 + 40 + 10), got
+
+    def test_a_first_use_pattern_grown_on_a_scratch_copy_raises_the_sum(self, tmp_path):
+        small = self._figures(_first_use_hooks(tmp_path / "small", n=40))
+        grown = self._figures(_first_use_hooks(tmp_path / "grown", n=1_040))
+        assert grown["hooks_chars"] == small["hooks_chars"], (small, grown)
+        assert grown["first_use_chars"] - small["first_use_chars"] == 1_000, (small, grown)
+        assert grown["summed_chars"] - small["summed_chars"] == 1_000, (small, grown)
+
+    def test_the_text_prints_the_first_use_and_summed_lines(self, tmp_path):
+        proc = _run("--compile", "--root", str(_first_use_hooks(tmp_path, n=40)))
+        assert proc.returncode == 0, proc.stderr
+        assert "compiled on first use (accessors): 4 patterns, 55 characters" in proc.stdout, proc.stdout
+        assert "path plus first use (distinct):    5 patterns, 64 characters" in proc.stdout, proc.stdout
+
+    def test_the_carried_rule_is_the_helpers_both_ways(self, tmp_path, monkeypatch):
+        """The census cannot import ``tests/_first_use_patterns.py``, so it
+        carries the rule; every shape the fixture holds, kept or left, reads
+        the same through both (an accessor one keeps and the other drops reds
+        on the set, either way round)."""
+        import re
+
+        from tests._first_use_patterns import first_use_patterns
+
+        a_name, b_name = "first_use_fixture_a_4122", "first_use_fixture_b_4122"
+        (tmp_path / f"{a_name}.py").write_text(_FIRST_USE_A.format(n=40), encoding="utf-8")
+        (tmp_path / f"{b_name}.py").write_text(_FIRST_USE_B.format(a=a_name), encoding="utf-8")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        for name in (a_name, b_name):
+            spec = importlib.util.spec_from_file_location(name, tmp_path / f"{name}.py")
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            monkeypatch.setitem(sys.modules, name, module)
+            spec.loader.exec_module(module)
+        carried: dict = {"re": re}
+        exec(census.FIRST_USE_RULE, carried)  # noqa: S102 -- the script's own constant, run as its child runs it
+        expected = {a_name: {"_grown_re()", "_other_re()"}, b_name: {"_sb_re()", "_dup_re()"}}
+        for name, keys in expected.items():
+            module = sys.modules[name]
+            helper = {k: v.pattern for k, v in first_use_patterns(module).items()}
+            ours = {k: v.pattern for k, v in carried["first_use_patterns"](module).items()}
+            assert set(helper) == keys, (name, sorted(helper))
+            assert ours == helper, (name, sorted(ours), sorted(helper))
+
+    def test_the_carried_rule_is_the_helpers_statement_for_statement(self):
+        """A drift no fixture shape exercises (a new skip in the helper) still
+        reds: the two function bodies are one AST, the docstring and the
+        annotations apart."""
+        import ast
+
+        def body(source: str) -> str:
+            fn = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)
+                      and n.name == "first_use_patterns")
+            stmts = fn.body[1:] if isinstance(fn.body[0], ast.Expr) and isinstance(
+                fn.body[0].value, ast.Constant) else fn.body
+            plain = [ast.Assign(targets=[s.target], value=s.value, lineno=0) if isinstance(s, ast.AnnAssign)
+                     else s for s in stmts]
+            return ast.dump(ast.Module(body=plain, type_ignores=[]))
+
+        helper = (REPO_ROOT / "tests" / "_first_use_patterns.py").read_text(encoding="utf-8")
+        assert body(census.FIRST_USE_RULE) == body(helper)
+
+    def test_the_child_walks_the_roster_the_anchoring_contract_walks(self, monkeypatch):
+        monkeypatch.syspath_prepend(str(REPO_ROOT / "tools" / "cc" / "hooks"))
+        import _reinject
+
+        assert census.FIRST_USE_MODULES == _reinject._GUARD_PATTERN_MODULES
+
+    def test_this_checkouts_sum_is_its_imports_plus_each_first_use_pattern(self, monkeypatch):
+        """On the live tree the summed line is the import figure plus note
+        0b0d58's hand probe, and the census names the accessors the helper
+        names."""
+        import importlib
+        import re
+
+        from tests._first_use_patterns import first_use_patterns
+
+        got = self._figures(REPO_ROOT)
+        monkeypatch.syspath_prepend(str(REPO_ROOT / "tools" / "cc" / "hooks"))
+        modules = [importlib.import_module(name) for name in census.FIRST_USE_MODULES]
+        guard = next(m for m in modules if m.__name__ == "write_guard")
+        guard._load_the_pattern_path()   # as the child does, before any accessor is called
+        helper = {f"{m.__name__}.{k}": v for m in modules for k, v in first_use_patterns(m).items()}
+        assert helper, "the helper reads no first-use pattern on this tree: re-derive this row"
+        assert got["first_use_names"] == sorted(helper), (got["first_use_names"], sorted(helper))
+        chars = sum(len(v.pattern) for v in helper.values() if isinstance(v, re.Pattern))
+        assert (got["first_use_patterns"], got["first_use_chars"]) == (len(helper), chars), got
+        assert (got["summed_patterns"], got["summed_chars"]) == (
+            got["hooks_patterns"] + len(helper), got["hooks_chars"] + chars), (
+            "the distinct sum is not the import figure plus each first-use pattern: an accessor's pattern an "
+            "import or the loader also compiles (no first use: drop the accessor), or an accessor compiling "
+            f"more than the pattern it returns (read it): {got}")
 
 
 class TestCallsAgainstTheCheckout:
