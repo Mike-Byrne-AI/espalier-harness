@@ -104,9 +104,18 @@ AUDIT_ONLY_SOURCES = frozenset({"policy_settings"})
 #: The source Claude Code gives a change to a command or skill file, naming the
 #: markdown file (driven on 2.1.321, DEF-3092): no settings file to read.
 _SKILLS_SOURCE = "skills"
-#: The record's ``file`` for an unreadable in-root file neither settings file
-#: is: a fixed word, since a record carries no payload text.
+#: How a record names a file the change named that no settings file is: a
+#: fixed word inside the root and another outside it, since a record carries
+#: no payload text (DEF-3092, DEF-5117).
 _OTHER_FILE_LABEL = "another-in-root-file"
+_OUTSIDE_FILE_LABEL = "a-file-outside-the-root"
+#: The source Claude Code gives a change to the user settings file, which it
+#: names by its absolute path (the hooks reference).
+_USER_SOURCE = "user_settings"
+#: The settings file a source names where the payload gives no path; the user
+#: file's label is read when asked (``CLAUDE_CONFIG_DIR`` moves it).
+_SOURCE_LABELS = {"local_settings": _integrity.LOCAL_SETTINGS_REL,
+                  "project_settings": _integrity.PROJECT_SETTINGS_REL}
 
 
 _resolve_project_root = _hook_utils.resolve_project_root
@@ -122,21 +131,95 @@ def block(reason: str) -> int:
     return 0
 
 
-def _names_project_settings(file_path: str | None, source: str, root: Path) -> bool:
-    """The change is to the project ``.claude/settings.json``: by the payload's
-    path, compared by LOCATION (the directory resolved, the file name not, so a
-    settings file symlinked out of the repo still counts), or, with no path,
-    by the source Claude Code names. Path equality folds case on Windows."""
+def _same_file(path: Path, candidate: Path) -> bool:
+    """``path`` names ``candidate``: the same location (the folder resolved,
+    the name kept, so a file that is gone or a link out of the root still
+    counts; path equality folds case on Windows), or the same file where both
+    exist (a symlink's target, a hard link, a case variant on a disk that
+    folds case). Raises OSError or RuntimeError where a folder cannot be
+    resolved."""
+    if path.parent.resolve() / path.name == candidate.parent.resolve() / candidate.name:
+        return True
     try:
-        project = (root / ".claude").resolve() / "settings.json"
-        if file_path:
-            path = Path(file_path)
-            if not path.is_absolute():
-                path = root / path
-            return path.parent.resolve() / path.name == project
-    except OSError:  # fail-open: ok deliberate -- an unresolvable path is not judged as the project file; the kill-switch scan still runs
+        return os.path.samefile(path, candidate)
+    except OSError:  # fail-open: ok deliberate -- one of the two is absent or cannot be stat-ed, so it is not that file on disk; the location test above has answered
         return False
-    return source == "project_settings"
+
+
+def _settings_label(file_path: str | None, source: str, root: Path) -> str | None:
+    """The one rule for which settings file a ConfigChange names (DEF-5117):
+    the label of the project, the local or the user file, or None for a change
+    no settings file is (a skill, managed policy, a path elsewhere).
+    ``_run_main`` reads it once a change (``_locate``), and every judgment and
+    record of this hook reads that answer.
+
+    With no path, the source names the file. A path is matched against the
+    project file, then the local file, by ``_same_file``, so a local file that
+    is the project file takes the project label and its hook-list arms are
+    read; then the user file, by its source and name (Claude Code gives its
+    absolute path with ``source: user_settings``, which no root bound can
+    hold) or as the same file. The path decides before the source: a payload
+    naming the project file is the project file whatever source it carries.
+    Raises OSError or RuntimeError where a path cannot be resolved or, at the
+    user file, no home is found."""
+    if not file_path:
+        return _integrity.user_settings_label() if source == _USER_SOURCE else _SOURCE_LABELS.get(source)
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = root / path
+    for label in (_integrity.PROJECT_SETTINGS_REL, _integrity.LOCAL_SETTINGS_REL):
+        if _same_file(path, root / label):
+            return label
+    if (source == _USER_SOURCE and path.name == "settings.json") or _same_file(path, _integrity.user_settings_path()):
+        return _integrity.user_settings_label()
+    return None
+
+
+def _locate(file_path: str | None, source: str, root: Path) -> str | None:
+    """``_settings_label`` for this change; where it raises, the change is
+    judged as no settings file's -- the gate-switch and unwiring checks are
+    skipped, the kill-switch scan of the inventory still runs -- and that is
+    said once a session."""
+    try:
+        return _settings_label(file_path, source, root)
+    except (OSError, RuntimeError) as exc:
+        _hook_utils.say_once(
+            root, "settings-locate", "config_guard", "configchange_failed_open_settings_locate",
+            f"the changed settings file could not be located ({type(exc).__name__}); "
+            "its gate-switch and unwiring checks are skipped and the inventory scan still runs",
+            fault=type(exc).__name__,
+        )
+        return None
+
+
+def _in_root(file_path: str | None, root: Path) -> Path | None:
+    """The payload's path resolved, where it lies inside the root; else None.
+
+    Path-traversal guard: stdin-supplied ``file_path`` is bounded to ``root``
+    via ``relative_to``, so a traversal payload (``../../etc/passwd``) is
+    never opened. No Git Bash drive-prefix translation here ON PURPOSE
+    (DEF-731's helper is ``_hook_utils._msys_drive_to_windows``): a ``/c/...``
+    spelling fabricates an out-of-root path, ``relative_to`` raises, and the
+    kill-switch scan falls back to the settings inventory -- fail-safe,
+    nothing skipped."""
+    if not file_path:
+        return None
+    try:
+        resolved = (root / file_path).resolve()
+        resolved.relative_to(root)  # raises ValueError if outside root
+    except (OSError, RuntimeError, ValueError):  # fail-open: ok deliberate -- an out-of-root or unresolvable spelling is no in-root file; the kill-switch scan falls back to the full settings inventory, nothing skipped
+        return None
+    return resolved
+
+
+def _record_file(label: str | None, file_path: str | None, root: Path) -> str | None:
+    """How a record names the file a change named: its settings label, a
+    fixed word for any other file (``_OTHER_FILE_LABEL`` inside the root,
+    ``_OUTSIDE_FILE_LABEL`` outside it), or None for a change naming none --
+    never the payload's text, which can carry the home directory."""
+    if label is not None or not file_path:
+        return label
+    return _OTHER_FILE_LABEL if _in_root(file_path, root) is not None else _OUTSIDE_FILE_LABEL
 
 
 def _unwiring_findings(root: Path) -> list[str]:
@@ -185,35 +268,6 @@ def _unwiring_findings(root: Path) -> list[str]:
 #: tests/test_hook_constant_parity.py pins equal to write_guard's
 #: ``_HARNESS_ENV_NAMES`` (the roster an in-session assignment may not set).
 _GATE_ENV_NAMES: tuple[str, ...] = _integrity.SETTINGS_GATE_ENV_NAMES
-_USER_SOURCE = "user_settings"
-_SOURCE_RANK = {"local_settings": 0, "project_settings": 1, _USER_SOURCE: 2}
-
-
-def _changed_settings_label(file_path: str | None, source: str, root: Path) -> str | None:
-    """The label of the settings file Claude Code says changed, or None for a
-    change no settings file of the three is (a skill, managed policy, a path
-    elsewhere).
-
-    The user file is named by its source or its location: Claude Code gives
-    its absolute path (``source: user_settings``, the hooks reference), which
-    no root bound can hold. A project file is matched by location (the
-    directory resolved, as ``_names_project_settings`` matches it), so a path
-    elsewhere opens nothing. With no path, the source names the file. Raises
-    OSError or RuntimeError where a path cannot be resolved or no home found."""
-    files = _integrity.settings_files(root)
-    if not file_path:
-        rank = _SOURCE_RANK.get(source)
-        return None if rank is None else files[rank][0]
-    path = Path(file_path)
-    if not path.is_absolute():
-        path = root / path
-    if source == _USER_SOURCE and path.name == "settings.json":
-        return files[_SOURCE_RANK[_USER_SOURCE]][0]
-    where = path.parent.resolve() / path.name
-    for label, candidate in files:
-        if where == candidate.parent.resolve() / candidate.name:
-            return label
-    return None
 
 
 #: Whether a gate variable's new value loosens its gate: the one rule, in
@@ -222,12 +276,11 @@ def _changed_settings_label(file_path: str | None, source: str, root: Path) -> s
 _gate_value_loosens = _integrity.gate_value_loosens
 
 
-def _judge_gate_switch(file_path: str | None, source: str,
-                       root: Path) -> tuple[list[str], dict | None, str | None]:
+def _judge_gate_switch(label: str | None, root: Path) -> tuple[list[str], dict | None]:
     """(the findings for a change to one of the three settings files that
-    switches a gate off, the snapshot to record if it is let through, the
-    changed file's label) -- ``([], None, None)`` for a change no settings
-    file is (DEF-3081).
+    switches a gate off, the snapshot to record if it is let through) --
+    ``([], None)`` for a change no settings file is (DEF-3081). ``label`` is
+    the changed file's, ``_settings_label``'s answer for this change.
 
     Why apart from ``_scan_payload``: hook lists merge across the files (the
     hooks reference), so an emptied hook list in the user file removes no
@@ -245,12 +298,11 @@ def _judge_gate_switch(file_path: str | None, source: str,
     value, so a file value that outranks a stricter launch value is caught. A
     variable a source above the three files owns is not the change's to move.
     No snapshot (a session older than this hook, or a SessionStart cut short)
-    takes the values this process runs with as the start. Raises nothing: a
-    file it cannot locate judges nothing, said once."""
+    takes the values this process runs with as the start. Raises nothing: the
+    files' values it cannot read judge nothing, said once."""
+    if label is None:
+        return [], None
     try:
-        label = _changed_settings_label(file_path, source, root)
-        if label is None:
-            return [], None, None
         after_values = _integrity.effective_settings_values(root)
     except (OSError, RuntimeError, ValueError) as exc:
         _hook_utils.say_once(
@@ -259,7 +311,7 @@ def _judge_gate_switch(file_path: str | None, source: str,
             "the gate-switch check is skipped",
             fault=type(exc).__name__,
         )
-        return [], None, None
+        return [], None
     after = {key: value for key, (value, _label) in after_values.items()}
     snapshot = _integrity.read_settings_gate_values(root)
     if snapshot is None:
@@ -322,7 +374,7 @@ def _judge_gate_switch(file_path: str | None, source: str,
             f"{where}: env.{name}: {json.dumps(now[:80]) if now is not None else 'unset'} "
             f"(the session runs {json.dumps(was[:80]) if was is not None else 'unset'})"
         )
-    return findings, {"files": after, "launch": launch, "owned": owned}, label
+    return findings, {"files": after, "launch": launch, "owned": owned}
 
 
 def _accept_gate_values(root: Path, record: dict) -> None:
@@ -341,68 +393,37 @@ def _accept_gate_values(root: Path, record: dict) -> None:
         )
 
 
-def _settings_label_at(candidate: Path, root: Path) -> str | None:
-    """The label of the settings file at ``candidate`` -- the project or the
-    local file, matched as the same file, so a symlink's target or a case
-    variant takes its label -- or None for any other file. The project file is
-    tried first, so a local file that is the project file takes the project
-    label and its hook-list arms are read.
+def _scan_payload(file_path: str | None, root: Path, source: str = "", *, label: str | None) -> list[str]:
+    """Scan the changed settings file for kill-switch findings; ``label`` is
+    ``_settings_label``'s answer for this change.
 
-    A ConfigChange names other files: a change to a command or a skill file
-    reaches this hook with ``source: skills`` and the markdown file's path
-    (driven on Claude Code 2.1.321, 2026-11-16: an append to, a replace of
-    and an add under ``.claude/commands/``, and an append to a ``SKILL.md``),
-    and such a file holds no settings to scan (DEF-3092): ``_scan_payload``
-    reads no file a ``skills`` change names. A file another source names is
-    read whatever it is; this names it."""
-    for label in (_integrity.PROJECT_SETTINGS_REL, _integrity.LOCAL_SETTINGS_REL):
-        try:
-            if candidate == (root / label).resolve() or os.path.samefile(candidate, root / label):
-                return label
-        except OSError:  # fail-open: ok deliberate -- the candidate is not that file by location, and one side cannot be stat-ed; the caller still reads the candidate under its own path
-            continue
-    return None
+    The project or the local file is read at its label's path, wherever a
+    link there points: that is the file Claude Code loads, and the inventory
+    scan below reads it the same way, so no root bound holds it out (one
+    symlinked out of the root was dropped unread and unvoiced, DEF-5117). The
+    user file is not read here: ``_judge_gate_switch`` judges it, since only
+    ``disableAllHooks`` among these shapes switches anything off from that
+    file (hook lists merge across the files). A change to a command or a
+    skill file reaches this hook with ``source: skills`` and the markdown
+    file's path (driven on Claude Code 2.1.321, 2026-11-16: an append to, a
+    replace of and an add under ``.claude/commands/``, and an append to a
+    ``SKILL.md``); such a file holds no settings and is not read (DEF-3092).
+    Any other source's in-root file (``_in_root``) is read, as an unknown
+    source's change is judged rather than waved through.
 
-
-def _scan_payload(file_path: str | None, root: Path, source: str = "") -> list[str]:
-    """Scan the candidate settings file for kill-switch findings.
-
-    Falls back to scanning the active settings inventory if the payload's
-    `file_path` is missing, unreadable, points outside the repo root, or
-    comes with ``source: skills``, which names a command or skill markdown
-    file (``_settings_label_at``), never a settings file. Any other source's
-    in-root file is read, as an unknown source's change is judged rather
-    than waved through. We never crash -- best-effort scan; a file that
-    cannot be read or parsed is said once a session for each file, by its
-    label (``_OTHER_FILE_LABEL`` for a file neither settings file is).
-
-    Path-traversal guard: stdin-supplied ``file_path`` is bounded to
-    ``root`` via ``relative_to``. A traversal payload (``../../etc/passwd``)
-    is dropped here so the scanner never opens files outside the repo. The
-    user settings file, which Claude Code names by its absolute path, is
-    therefore not read here: ``_judge_gate_switch`` reads it by its
-    source, since only ``disableAllHooks`` among these shapes switches
-    anything off from that file (hook lists merge across the files).
+    Falls back to scanning the active settings inventory where no file was
+    read or the read found nothing. We never crash -- best-effort scan; a
+    file that cannot be read or parsed is said once a session for each file,
+    by its label (``_OTHER_FILE_LABEL`` for a file neither settings file is).
     """
     candidate: Path | None = None
-    if file_path:
-        try:
-            # No Git Bash drive-prefix translation here ON PURPOSE (DEF-731's
-            # helper is `_hook_utils._msys_drive_to_windows`): a `/c/...`
-            # spelling of a settings file fabricates an out-of-root path,
-            # `relative_to` raises, and the scan falls back to the settings
-            # inventory below -- fail-safe, nothing skipped.
-            resolved = (root / file_path).resolve()
-            resolved.relative_to(root)  # raises ValueError if outside root
-            candidate = resolved
-        except (OSError, ValueError):  # fail-open: ok deliberate -- an out-of-root or unresolvable spelling falls back to the full settings inventory below; nothing is skipped
-            candidate = None
+    if label is not None and label in (_integrity.PROJECT_SETTINGS_REL, _integrity.LOCAL_SETTINGS_REL):
+        candidate = root / label
+    elif label is None and source != _SKILLS_SOURCE:
+        candidate = _in_root(file_path, root)
 
     findings: list[str] = []
-    if source == _SKILLS_SOURCE:
-        candidate = None
     if candidate is not None and candidate.exists():
-        label = _settings_label_at(candidate, root)
         try:
             # decode_bom (UTF-8/16/32 BOM-tolerant) — runtime kill-switch
             # reader; a BOM'd settings.json (incl. PowerShell UTF-16) must not
@@ -417,7 +438,7 @@ def _scan_payload(file_path: str | None, root: Path, source: str = "") -> list[s
             named = label or _OTHER_FILE_LABEL
             _hook_utils.say_once(
                 root, f"settings-unreadable-{named}", "config_guard", "configchange_failed_open_settings_read",
-                f"{label or candidate.name} could not be read or parsed ({type(exc).__name__}); "
+                f"{named} could not be read or parsed ({type(exc).__name__}); "
                 "its kill-switch scan is skipped",
                 fault=type(exc).__name__, file=named,
             )
@@ -426,8 +447,9 @@ def _scan_payload(file_path: str | None, root: Path, source: str = "") -> list[s
             # `_find_kill_switches` reads the hook-list arms in the project
             # file alone (hook lists merge, so a local file's emptied list
             # unwires nothing, DEF-4121); the project file under another
-            # spelling (a symlink's target, a case variant) takes its label;
-            # any other in-root file is named by its own path.
+            # spelling (a symlink's target, a case variant) takes its label
+            # from the one rule; any other in-root file is named by its own
+            # path inside the root.
             rel = label or str(candidate.relative_to(root)).replace("\\", "/")
             findings.extend(_integrity._find_kill_switches(rel, data))
 
@@ -512,7 +534,10 @@ def _run_main() -> int:
     root = _resolve_project_root()
     say_bad_stdin(root, "config_guard", "configchange_failed_open_bad_stdin", data)
 
-    findings = _scan_payload(file_path, root, source)
+    # Which settings file the change names, by the one rule, read once: every
+    # judgment below and every record's file field read this answer (DEF-5117).
+    label = _locate(file_path, source, root)
+    findings = _scan_payload(file_path, root, source, label=label)
     # The gate switches a settings change can make beyond the kill-switch scan
     # (DEF-3081): the user file's disableAllHooks, and a gate variable in any
     # file's env map, judged against SessionStart's snapshot. Refused like a
@@ -520,21 +545,20 @@ def _run_main() -> int:
     # tells Claude the file still holds it.
     switched: list[str] = []
     accepted: dict | None = None
-    changed_label: str | None = None
     if not findings and source not in AUDIT_ONLY_SOURCES:
-        switched, accepted, changed_label = _judge_gate_switch(file_path, source, root)
+        switched, accepted = _judge_gate_switch(label, root)
         findings = switched
 
     # Judged apart from the kill-switch scan (which refuses the
     # change on its own when it finds one): its own record, its own restore.
-    if not findings and source not in AUDIT_ONLY_SOURCES and _names_project_settings(file_path, source, root):
+    if not findings and source not in AUDIT_ONLY_SOURCES and label == _integrity.PROJECT_SETTINGS_REL:
         unwired = _unwiring_findings(root)
         if unwired:
             try:
                 _integrity.append_audit(
                     root,
                     {"event_type": "configchange_blocked_unwired",
-                     "details": {"source": source, "file_path": file_path, "findings": unwired}},
+                     "details": {"source": source, "file_path": label, "findings": unwired}},
                 )
             except Exception:  # noqa: BLE001, S110 -- audit best-effort; hook protocol forbids stderr noise
                 pass
@@ -564,10 +588,11 @@ def _run_main() -> int:
                  # (the policy type is that family's: DEF-1152).
                  "hook": "config_guard",
                  "source": source,
-                 # A gate switch can name the user file, whose payload path
-                 # carries the home directory: its findings name each file by
-                 # label, and so does this field.
-                 "file_path": changed_label if switched else file_path,
+                 # The file the change named, by the one rule's label or a
+                 # fixed word, never the payload's text, which can carry the
+                 # home directory (DEF-5117); the findings name each file
+                 # they were found in by its label.
+                 "file_path": _record_file(label, file_path, root),
                  "kind": "gate_switch" if switched else "kill_switch",
                  "findings": findings,
              }},

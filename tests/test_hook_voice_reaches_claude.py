@@ -310,7 +310,7 @@ class TestTheRestLeaveARecord:
             raise OSError("simulated")
 
         monkeypatch.setattr(cg._integrity, "scan_for_kill_switches", _broken)
-        assert cg._scan_payload(None, tmp_path) == []
+        assert cg._scan_payload(None, tmp_path, label=None) == []
         assert len(_records("configchange_failed_open_scan")) == 1
 
     def test_post_compact_unreadable_blueprint(self, tmp_path):
@@ -500,15 +500,153 @@ class TestTheSettingsReadRecordNamesASettingsFile:
         assert [rec["details"].get("file") for rec in records] == ["another-in-root-file"], records
 
     def test_a_settings_file_it_cannot_locate_writes_its_own_type(self, tmp_path, monkeypatch):
-        """The gate-switch site's fault is a file it could not locate, not one
-        it read and could not parse: its own type, so the read type's count
-        means the second alone."""
+        """A file the one rule cannot locate is not one read and not parsed:
+        its own type, so the read type's count means the second alone. The
+        rule is read once a change (DEF-5117), so the fault is said once."""
         cg = _load("config_guard")
 
         def _lost(*_a):
             raise OSError("simulated")
 
-        monkeypatch.setattr(cg, "_changed_settings_label", _lost)
-        assert cg._judge_gate_switch(".claude/settings.json", "project_settings", tmp_path) == ([], None, None)
+        monkeypatch.setattr(cg, "_settings_label", _lost)
+        assert cg._locate(".claude/settings.json", "project_settings", tmp_path) is None
         assert len(_records("configchange_failed_open_settings_locate")) == 1
         assert not _records("configchange_failed_open_settings_read")
+
+    def test_settings_values_it_cannot_read_write_the_locate_type(self, tmp_path, monkeypatch):
+        """The gate-switch judgment's own read, the values the three files
+        supply, keeps the type it had: the gate-switch check is skipped."""
+        cg = _load("config_guard")
+
+        def _unread(*_a, **_k):
+            raise OSError("simulated")
+
+        monkeypatch.setattr(cg._integrity, "effective_settings_values", _unread)
+        assert cg._judge_gate_switch(".claude/settings.json", tmp_path) == ([], None)
+        assert len(_records("configchange_failed_open_settings_locate")) == 1
+        assert not _records("configchange_failed_open_settings_read")
+
+
+# ── config_guard: one rule names the settings file, and every record carries it ─
+
+
+def _config_guard_records() -> list[dict]:
+    out = []
+    for log in Path(os.environ["ESPALIER_AUDIT_DIR"]).glob("*.log"):
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                if str(rec.get("event_type", "")).startswith("configchange_"):
+                    out.append(rec)
+    return out
+
+
+class TestEveryConfigGuardRecordNamesItsFileByLabel:
+    """DEF-5117: config_guard decided which settings file a ConfigChange names
+    by three rules -- two by location, one by the resolved file then as the
+    same file, behind a root bound the payload path met first -- and its two
+    refusal records carried the payload's ``file_path`` as given. So a skills
+    change refused over a kill switch in ``.claude/settings.json`` recorded
+    the markdown file's absolute path beside a finding about the settings
+    file, and an unparseable ``settings.local.json`` symlinked out of the root
+    wrote no record: the bound dropped it before the read, and the inventory
+    scan reads it unvoiced. One rule now (``config_guard._settings_label``),
+    read once a change, and every record's file field carries its label or a
+    fixed word, never payload text."""
+
+    _WORDS = {".claude/settings.json", ".claude/settings.local.json", "$CLAUDE_CONFIG_DIR/settings.json",
+              "another-in-root-file", "a-file-outside-the-root", None}
+
+    @pytest.mark.parametrize("source,named,word", [
+        pytest.param("skills", "{root}/.claude/commands/x.md", "another-in-root-file", id="a-skills-change"),
+        pytest.param("flag_settings", "{root}/ci-settings.json", "another-in-root-file",
+                     id="an-unknown-sources-in-root-file"),
+        pytest.param("project_settings", "{outside}/settings.json", "a-file-outside-the-root",
+                     id="a-path-outside-the-root"),
+        pytest.param("project_settings", "{root}/.claude/settings.json", ".claude/settings.json",
+                     id="the-project-file"),
+        pytest.param("local_settings", "{root}/.claude/settings.local.json", ".claude/settings.local.json",
+                     id="the-local-file"),
+        pytest.param("user_settings", "{home}/settings.json", "$CLAUDE_CONFIG_DIR/settings.json", id="the-user-file"),
+        pytest.param("project_settings", None, ".claude/settings.json", id="no-path"),
+    ])
+    def test_a_refusal_names_the_changed_file_by_label(self, tmp_path, tmp_path_factory, source, named, word):
+        """Each payload shape the hook meets, over a tree whose project file
+        holds a kill switch (so every one is refused, by its own read or the
+        inventory scan) and whose local file cannot be parsed: the refusal
+        record names what the change named by a label or a fixed word, and no
+        config_guard record's details carry a path of the scratch trees."""
+        outside = tmp_path_factory.mktemp("elsewhere")
+        home = tmp_path_factory.mktemp("home")
+        switch = '{"disableAllHooks": true}'
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text(switch, encoding="utf-8")
+        (tmp_path / ".claude" / "settings.local.json").write_text("{ not json", encoding="utf-8")
+        (tmp_path / ".claude" / "commands" / "x.md").write_text("body\n", encoding="utf-8")
+        (tmp_path / "ci-settings.json").write_text(switch, encoding="utf-8")
+        (outside / "settings.json").write_text(switch, encoding="utf-8")
+        payload = {"hook_event_name": "ConfigChange", "source": source}
+        if named is not None:
+            payload["file_path"] = named.format(root=tmp_path, outside=outside, home=home)
+        r = _hook("config_guard", payload, tmp_path, CLAUDE_CONFIG_DIR=str(home))
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+        refused = _records("configchange_blocked_kill_switch")
+        assert [rec["details"]["file_path"] for rec in refused] == [word], refused
+        for rec in _config_guard_records():
+            details = rec.get("details") or {}
+            for key in ("file", "file_path"):
+                if key in details:
+                    assert details[key] in self._WORDS, rec
+            text = json.dumps(details)
+            for where in (tmp_path, outside, home):
+                assert str(where) not in text and json.dumps(str(where))[1:-1] not in text, rec
+
+    def test_the_unwired_refusal_names_the_project_file_by_label(self, tmp_path):
+        hooks = tmp_path / "tools" / "cc" / "hooks"
+        hooks.mkdir(parents=True)
+        for script in ("write_guard.py", "plan_guard.py", "config_guard.py", "stop_gate.py"):
+            (hooks / script).write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "project_settings",
+                                   "file_path": str(tmp_path / ".claude" / "settings.json")},
+                  tmp_path, CLAUDE_CONFIG_DIR=str(tmp_path / "home"))
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+        records = _records("configchange_blocked_unwired")
+        assert [rec["details"]["file_path"] for rec in records] == [".claude/settings.json"], records
+
+    @pytest.mark.parametrize("label,source", [
+        (".claude/settings.json", "project_settings"),
+        (".claude/settings.local.json", "local_settings"),
+    ])
+    def test_an_unparseable_settings_file_symlinked_out_of_the_root_is_named(
+            self, tmp_path, tmp_path_factory, label, source):
+        """The settings file is the one Claude Code loads wherever its link
+        points: it is read at its label's path, and a parse that fails is
+        said by that label."""
+        target = tmp_path_factory.mktemp("elsewhere") / "settings-target.json"
+        target.write_text("{ not json", encoding="utf-8")
+        (tmp_path / ".claude").mkdir()
+        try:
+            (tmp_path / label).symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("this host cannot make a symlink")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": source,
+                                   "file_path": str(tmp_path / label)},
+                  tmp_path, CLAUDE_CONFIG_DIR=str(tmp_path / "home"))
+        assert r.returncode == 0, r.stderr
+        records = _records("configchange_failed_open_settings_read")
+        assert [rec["details"].get("file") for rec in records] == [label], records
+
+    def test_a_local_file_that_is_the_project_file_takes_the_project_label(self, tmp_path):
+        """The project file is tried first, as the same file: a local file
+        linked to it takes its label, so its hook-list arms are read."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        try:
+            (tmp_path / ".claude" / "settings.local.json").symlink_to(tmp_path / ".claude" / "settings.json")
+        except (OSError, NotImplementedError):
+            pytest.skip("this host cannot make a symlink")
+        cg = _load("config_guard")
+        local = str(tmp_path / ".claude" / "settings.local.json")
+        assert cg._settings_label(local, "local_settings", tmp_path) == ".claude/settings.json"
