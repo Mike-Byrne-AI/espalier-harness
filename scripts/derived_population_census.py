@@ -227,7 +227,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "read by type (type(obj) is module._FirstUse). The first forces each and asserts none raises, "
         "everything present safe; the second counts them and is the remedy for both: it is held "
         "equal to an AST count of the source's _first_use( calls at "
-        "tests/test_guard_compile_ratchet.py:576 (calls == reached > 0), so a "
+        "tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so a "
         "first-use pattern made anywhere the walk cannot reach, or a predicate that narrows, reds "
         "there.",
     ),
@@ -2175,6 +2175,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "not read: the first is pinned by the reach assertion over eleven named deployed files in the "
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_write_guard_time_budget.py": (
+        1, "90e8e94308a20286c43703509f2aea6bde3a5474e556aea6888718f7b0d54136",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084, the review fix F1): one comprehension over _bash_patterns' globals "
+        "read by type (type(value) is bp._FirstUse) names every first-use pattern, and each is broken in "
+        "turn to assert none lets a protected write through a relative chain. Worth having: the "
+        "population is the defect, since any one broken pattern a directory walk swallows was the fail-"
+        "open. Blind to an empty or narrowed walk, and the remedy is both sides: a floor of 200 names in "
+        "the same test, and one file over the same type predicate is held equal to an AST count of the "
+        "source's _first_use( calls at tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so "
+        "a pattern the walk cannot reach reds there.",
     ),
     "tests/test_zone_watch.py": (
         6, "6d5ef563128ca626a097dada93fbe939fa4f1fa177fb760238d85042b32150a9",
