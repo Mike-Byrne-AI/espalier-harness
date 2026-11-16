@@ -415,3 +415,100 @@ class TestTheRestLeaveARecord:
         assert wg._run_main() == 0
         records = _records("pretooluse_failed_open_discard_snapshot")
         assert len(records) == 1 and records[0]["details"]["fault"] == "RuntimeError", records
+
+
+# ── config_guard: the settings-read record means a settings file, and names it ─
+
+
+class TestTheSettingsReadRecordNamesASettingsFile:
+    """DEF-3092: a change to a command or skill file reaches config_guard as a
+    ConfigChange with ``source: skills`` and the markdown file's path (driven
+    on Claude Code 2.1.321, 2026-11-16: an append to, a replace of and an add
+    under ``.claude/commands/`` and an append to a ``SKILL.md``, one payload
+    each). ``_scan_payload`` parsed whatever in-root file a payload named as
+    JSON, so each such change wrote ``configchange_failed_open_settings_read``
+    though no settings file went unread: the inventory scan ran after it. A
+    SessionStart catch-up that moves ``.claude/commands/`` wrote one seconds
+    into the session. The payload's file is read now only where it is the
+    local or the project settings file, and the record names that file by
+    its label, once a session for each."""
+
+    @pytest.mark.parametrize("rel", [".claude/commands/status.md", ".claude/skills/probe/SKILL.md"])
+    def test_a_skills_change_writes_no_settings_read_record(self, tmp_path, rel):
+        changed = tmp_path / rel
+        changed.parent.mkdir(parents=True)
+        changed.write_text("---\ndescription: probe\n---\n\nbody\n", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "skills",
+                                   "file_path": str(changed)}, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not r.stdout.strip(), r.stdout
+        assert not _records("configchange_failed_open_settings_read")
+
+    @pytest.mark.parametrize("label,source", [
+        (".claude/settings.json", "project_settings"),
+        (".claude/settings.local.json", "local_settings"),
+    ])
+    def test_an_unparseable_settings_file_is_named_in_the_record(self, tmp_path, label, source):
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / label).write_text("{ not json", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": source,
+                                   "file_path": str(tmp_path / label)}, tmp_path)
+        assert r.returncode == 0, r.stderr
+        records = _records("configchange_failed_open_settings_read")
+        assert [rec["details"].get("file") for rec in records] == [label], records
+
+    def test_each_settings_file_says_once_a_session(self, tmp_path):
+        """The once-key carries the label: the local file's fault is said
+        after the project file's, and the project file's again is not."""
+        (tmp_path / ".claude").mkdir()
+        for name in ("settings.json", "settings.local.json"):
+            (tmp_path / ".claude" / name).write_text("{ not json", encoding="utf-8")
+        for name, source in (("settings.json", "project_settings"),
+                             ("settings.local.json", "local_settings"),
+                             ("settings.json", "project_settings")):
+            r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": source,
+                                       "file_path": str(tmp_path / ".claude" / name)}, tmp_path)
+            assert r.returncode == 0, r.stderr
+        files = [rec["details"].get("file") for rec in _records("configchange_failed_open_settings_read")]
+        assert sorted(files) == [".claude/settings.json", ".claude/settings.local.json"], files
+
+    def test_a_kill_switch_beside_a_skills_change_is_still_refused(self, tmp_path):
+        """The skills read is the one judgment moved: the inventory scan
+        still reads both settings files on such a change."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+        changed = tmp_path / ".claude" / "commands" / "x.md"
+        changed.write_text("body\n", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "skills",
+                                   "file_path": str(changed)}, tmp_path)
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+
+    def test_an_unknown_sources_in_root_file_is_still_judged(self, tmp_path):
+        """A source this hook does not know is judged, never waved through:
+        its in-root file is read whatever it is (the failure-mode review drove
+        a block on main and an allow on the first cut of this fix)."""
+        (tmp_path / "ci-settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "flag_settings",
+                                   "file_path": str(tmp_path / "ci-settings.json")}, tmp_path)
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+
+    def test_an_unreadable_other_file_is_named_by_a_fixed_word(self, tmp_path):
+        (tmp_path / "ci-settings.json").write_text("{ not json", encoding="utf-8")
+        _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "flag_settings",
+                               "file_path": str(tmp_path / "ci-settings.json")}, tmp_path)
+        records = _records("configchange_failed_open_settings_read")
+        assert [rec["details"].get("file") for rec in records] == ["another-in-root-file"], records
+
+    def test_a_settings_file_it_cannot_locate_writes_its_own_type(self, tmp_path, monkeypatch):
+        """The gate-switch site's fault is a file it could not locate, not one
+        it read and could not parse: its own type, so the read type's count
+        means the second alone."""
+        cg = _load("config_guard")
+
+        def _lost(*_a):
+            raise OSError("simulated")
+
+        monkeypatch.setattr(cg, "_changed_settings_label", _lost)
+        assert cg._judge_gate_switch(".claude/settings.json", "project_settings", tmp_path) == ([], None, None)
+        assert len(_records("configchange_failed_open_settings_locate")) == 1
+        assert not _records("configchange_failed_open_settings_read")
