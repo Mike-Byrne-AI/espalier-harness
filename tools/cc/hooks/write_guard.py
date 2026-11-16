@@ -156,6 +156,11 @@ if __name__ == "__main__":
 # record.
 #: The flag the parent starts its judging child with.
 _JUDGE_FLAG = "--judge"
+#: What the parent adds after ``_JUDGE_FLAG`` where its runner predates the
+#: deadline's readings (``_the_keywords_it_takes``), so the child, which
+#: imports the helpers anyway, says so once inside its own run and the
+#: parent's path to the deadline pays nothing for it.
+_KEPT_RUNNER_FLAG = "--kept-runner"
 #: The parent's deadline, from the hook's first line: half a second above the
 #: child's own budget (`JUDGMENT_BUDGET_S` from the child's first line, a spawn
 #: later: the thin parent priced +40 to +67 ms a call on Windows 3.11.9, about
@@ -430,37 +435,20 @@ _CO_VARKEYWORDS = 0x08
 def _the_keywords_it_takes(runner: object, wanted: dict[str, object]) -> dict[str, object]:
     """Of ``wanted``, the keyword arguments ``runner`` takes, read from its
     code without a call: all of them where it takes ``**kwargs`` or its code
-    cannot be read. A kept, older ``tools/cc/_json_safe.py`` (every copy
-    deployed before DEF-2091) has a ``run_tree_to_deadline`` without ``heard``
+    cannot be read. A kept, older ``tools/cc/_json_safe.py`` from between the
+    hard bound and DEF-2091 has a ``run_tree_to_deadline`` without ``heard``
     and ``ahead``, and it is still the hard bound, so it is called with what
-    it takes; before this its ``TypeError`` sent the call to the in-process
-    judgment, which no deadline bounds (DEF-3048), said only as a child that
-    could not start (F1 of DEF-2094's review)."""
+    it takes and the child says so once (``_KEPT_RUNNER_FLAG``); before this
+    its ``TypeError`` sent the call to the in-process judgment, which no
+    deadline bounds (DEF-3048), said only as a child that could not start (F1
+    of DEF-2094's review). One from before the hard bound has no runner at
+    all: its ``ImportError`` is judged in process, and ``main`` names the file
+    and its repair."""
     code = getattr(runner, "__code__", None)
     if code is None or code.co_flags & _CO_VARKEYWORDS:
         return wanted
     names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
     return {name: value for name, value in wanted.items() if name in names}
-
-
-def _say_the_runner_is_kept() -> None:
-    """Say once a session that ``tools/cc/_json_safe.py`` predates this hook's
-    deadline readings (``_the_keywords_it_takes``): the hard bound holds, and
-    what a refusal at it names and records does not. The helpers import here,
-    on this path alone, so a call on a level tree pays nothing for them."""
-    try:
-        import _hook_utils  # type: ignore[import-not-found]
-
-        _hook_utils.say_once(
-            _hook_utils.resolve_project_root(), "kept-runner", "write_guard", "pretooluse_failed_open_kept_runner",
-            "tools/cc/_json_safe.py predates this hook (its run_tree_to_deadline takes no heard or ahead): the"
-            " hard bound still holds, but a refusal at it cannot say what spent the time and its record can be"
-            " lost on a busy machine; `espalier upgrade --execute .` brings it level",
-            fault="kept_runner",
-        )
-    # fail-open: ok deliberate -- a helper that cannot load: the call is still judged under the hard bound, unsaid
-    except Exception:  # noqa: BLE001, S110
-        pass
 
 
 def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _DeadlineRefusal) -> NoReturn:
@@ -533,11 +521,10 @@ def _answer_from_a_judging_child() -> None:
     heard: list[bytes] = []
     wanted: dict[str, object] = {"heard": heard, "ahead": (_HOOK_STARTED + _BUILD_THE_REFUSAL_AT_S, refusal.build)}
     readings = _the_keywords_it_takes(run_tree_to_deadline, wanted)
-    if readings.keys() != wanted.keys():
-        _say_the_runner_is_kept()
+    kept = [_KEPT_RUNNER_FLAG] if readings.keys() != wanted.keys() else []
     try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
-            [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG],
+            [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG, *kept],
             deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload, **readings,
         )
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
@@ -5157,11 +5144,24 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     protocol reads as an allow).
     """
     if _NO_JUDGING_CHILD is not None:
+        said = (f"judging child could not start ({_NO_JUDGING_CHILD}); the hard bound is off, the thread budget"
+                " judges alone")
+        if _NO_JUDGING_CHILD == "ImportError":
+            # The name import failed: a kept, older tools/cc/_json_safe.py
+            # with no runner (every release before it), named with its repair.
+            said += ("; tools/cc/_json_safe.py predates this hook (it has no run_tree_to_deadline):"
+                     " `espalier upgrade --execute .` brings it level")
         _hook_utils.say_once(
             _root_or_dot(), f"judging-child-{_NO_JUDGING_CHILD}", "write_guard",
-            "pretooluse_failed_open_time_budget",
-            f"judging child could not start ({_NO_JUDGING_CHILD}); the hard bound is off, the thread budget judges alone",
-            fault=_NO_JUDGING_CHILD,
+            "pretooluse_failed_open_time_budget", said, fault=_NO_JUDGING_CHILD,
+        )
+    if sys.argv[1:3] == [_JUDGE_FLAG, _KEPT_RUNNER_FLAG]:
+        _hook_utils.say_once(
+            _root_or_dot(), "kept-runner", "write_guard", "pretooluse_failed_open_kept_runner",
+            "tools/cc/_json_safe.py predates this hook (its run_tree_to_deadline takes no heard or ahead): the"
+            " hard bound still holds, but a refusal at it cannot say what spent the time and its record can be"
+            " lost on a busy machine; `espalier upgrade --execute .` brings it level",
+            fault="kept_runner",
         )
     begun = time.monotonic()
     clock = begun if started is None else started

@@ -361,13 +361,17 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
 
         monkeypatch.setattr(subprocess, "Popen", recording)
         monkeypatch.setattr(threading.Thread, "start", refuse_the_feeder)
+        sleeps = f"import time; time.sleep({scaled(10) + HOLD_SECONDS})"
         try:
             with pytest.raises(js.TreeStartError) as caught:
-                js.run_tree_to_deadline([sys.executable, "-c", "import sys; sys.stdin.read()"],
-                                        deadline=time.monotonic() + scaled(30), input=b"x")
+                js.run_tree_to_deadline([sys.executable, "-c", sleeps], deadline=time.monotonic() + scaled(30),
+                                        input=b"x")
             assert isinstance(caught.value.__cause__, RuntimeError), caught.value.__cause__
             assert len(made) == 1, made
-            assert made[0].wait(timeout=scaled(10)) is not None
+            try:
+                made[0].wait(timeout=scaled(10))
+            except subprocess.TimeoutExpired:
+                pytest.fail("the child outlived the raise: nothing ended the tree")
         finally:
             for proc in made:
                 proc.kill()
@@ -400,7 +404,8 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
             return proc
 
         monkeypatch.setattr(subprocess, "Popen", recording)
-        sleeps = f"import time; time.sleep({scaled(CAP_SECONDS) + HOLD_SECONDS})"
+        # The sleep outlasts the wait below however far a ceiling scales both.
+        sleeps = f"import time; time.sleep({scaled(10) + HOLD_SECONDS})"
         try:
             with pytest.raises(RuntimeError, match="an interrupt in the read"):
                 js.run_tree_to_deadline([sys.executable, "-c", sleeps], deadline=time.monotonic() + 0.5, input=b"")

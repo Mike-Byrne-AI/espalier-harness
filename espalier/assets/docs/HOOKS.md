@@ -2282,7 +2282,9 @@ ended from outside. An ordinary call finishes in a small fraction of either
 bound; the second interpreter adds its start to every call (about 30 ms on
 the Air, Python 3.14; +40 to +67 ms on Windows, Python 3.11). Where no child
 can start, the hook process judges the call itself under the 3.5 s budget
-alone and says so once (`pretooluse_failed_open_time_budget`, the record a
+alone and says so once, naming `tools/cc/_json_safe.py` and
+`espalier upgrade --execute .` where a kept, older copy has no runner at all
+(`pretooluse_failed_open_time_budget`, the record a
 judgment thread that cannot start also writes); a stdin the parent cannot
 read is judged in the hook process too, where the reader records it and the
 kill-switch gate still runs. A git the judgment asks (the discard snapshot, a

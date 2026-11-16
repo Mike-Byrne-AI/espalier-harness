@@ -864,9 +864,10 @@ TREE_DRAIN_SECONDS = 0.25
 class TreeStartError(OSError):
     """:func:`run_tree_to_deadline` could not start its child at all, or could
     not start the thread that hands it its input (the tree is ended first).
-    Either way the child never read its input, so it did nothing with it: a
-    caller can tell such a child from one that ran and whose answer was lost.
-    Nothing else raises it."""
+    Either way the child never had its input, so a child that reads its input
+    before it acts, as ``write_guard``'s judging child does, did nothing with
+    it: a caller can tell such a child from one that ran and whose answer was
+    lost. Nothing else raises it."""
 
 
 def run_tree_to_deadline(

@@ -1140,6 +1140,19 @@ class TestAFaultInTheJudgingChildsRunner:
         read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
         assert read.returncode == 0 and not _denies(read), (read.stdout, read.stderr[-300:])
 
+    def test_a_kept_json_safe_with_no_runner_names_itself_and_its_repair(self, tmp_path):
+        """Every release before the hard bound shipped a ``_json_safe.py`` with
+        no runner at all: the hook judges in its own process, as it did then,
+        and says which file and which repair (the failure-mode re-review)."""
+        root = tmp_path / "no-runner"
+        _copy_cc(root)
+        _append(root, _JSON_SAFE, "\ndel run_tree_to_deadline\n")
+        allowed = _run_payload(root, "write_guard.py", _bash("git status"), root / "audit")
+        assert allowed.returncode == 0 and not _denies(allowed), (allowed.stdout, allowed.stderr[-300:])
+        said = allowed.stderr
+        assert "judging child could not start (ImportError)" in said, said[-400:]
+        assert f"{_JSON_SAFE} predates this hook" in said and "`espalier upgrade --execute .`" in said, said[-400:]
+
 
 @pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAFloorThatRaisesIsRefused:
