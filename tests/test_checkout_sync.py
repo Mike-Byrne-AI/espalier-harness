@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2968,3 +2969,91 @@ class TestTheSweepReadsPatchesNotShas:
         self._on_main_by_patch(repos, "p.txt")
         report = cs.reap_worktrees(work, sessions=[])
         assert report.removed == ["picked-plan (its plan was never closed; the lane merged)"], report
+
+
+class TestTheDryRunJudgesPastTheHold:
+    """DEF-3090: the dry run the banner's litter line names, pasted into a
+    terminal of the operator's own, found no registry entry of its own, read
+    the session in the root checkout as another one there, and kept every
+    worktree as ``not checked``: no verdict on any tree, from a run that
+    removes nothing. The dry run now judges each tree past that hold and
+    names the session as what holds ``--apply``; the apply still stands down.
+    A session that entered a worktree keeps its registry cwd (the root) and
+    records the move in the root's marker, which the CLI now counts in that
+    worktree as SessionStart's reaper does, so judging past the hold never
+    names a tree such a session is in as removable."""
+
+    HOLD = "another live session is in this checkout (pid 4242) and may be using one"
+
+    @staticmethod
+    def _two_trees(repos) -> tuple[Path, Path]:
+        fresh = _worktree(repos, "fresh")
+        busy = _worktree(repos, "busy")
+        (busy / "draft.txt").write_text("work\n", encoding="utf-8")
+        return fresh, busy
+
+    def test_a_dry_run_judges_each_tree_past_another_session_in_the_root(self, cs, repos):
+        """Dies to: the hold keeping every tree ``not checked`` on a dry run."""
+        work = repos["work"]
+        fresh, busy = self._two_trees(repos)
+        dry = cs.reap_worktrees(work, sessions=[], held_by_other="pid 4242", dry_run=True)
+        assert dry.would_remove == ["fresh"], dry
+        assert dry.kept == [("busy", "1 uncommitted change")], dry
+        assert dry.apply_held == self.HOLD and dry.note == "", dry
+        assert fresh.is_dir() and busy.is_dir()
+
+    def test_the_apply_still_stands_down_and_judges_nothing(self, cs, repos):
+        """Control: the hold is the apply's, and the apply keeps it whole."""
+        work = repos["work"]
+        fresh, busy = self._two_trees(repos)
+        report = cs.reap_worktrees(work, sessions=[], held_by_other="pid 4242")
+        assert report.removed == [] and fresh.is_dir() and busy.is_dir()
+        assert sorted(report.kept) == [("busy", "not checked"), ("fresh", "not checked")], report
+        assert report.note == f"{self.HOLD}, so no worktree was removed" and report.apply_held == "", report
+
+    def test_the_line_gives_the_verdicts_and_names_the_session_holding_the_apply(self, cs, repos):
+        work = repos["work"]
+        self._two_trees(repos)
+        dry = cs.reap_worktrees(work, sessions=[], held_by_other="pid 4242", dry_run=True)
+        assert cs.worktrees_line(dry) == (
+            "would remove 1: fresh; kept 1: busy [1 uncommitted change]; --apply from here removes none: "
+            f"{self.HOLD} (run it from that session's shell, or once that session ends)")
+
+    @staticmethod
+    def _outside(cs, monkeypatch, registry: list[dict], markers: dict[str, list[dict]]) -> None:
+        """The CLI run from a terminal no session owns: no ``CLAUDECODE``, and
+        no registry entry among its ancestors. ``markers`` maps a tree to the
+        live session markers its state directory holds."""
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([999999], True))
+        monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: registry)
+        reader = SimpleNamespace(other_live_sessions=lambda tree, sid: markers.get(cs._norm(tree), []))
+        monkeypatch.setattr(cs, "_hook_utils_by_path", lambda: reader)
+
+    def test_the_cli_from_another_terminal_judges_each_tree(self, cs, repos, monkeypatch, capsys):
+        """The row's drive: one live session whose cwd is the root, run from a
+        terminal that is not its shell."""
+        work = repos["work"]
+        self._two_trees(repos)
+        self._outside(cs, monkeypatch, [_row(work, pid=4242, sid="root-session")], {})
+        assert cs.main(["--root", str(work), "--json"]) == 0
+        trees = json.loads(capsys.readouterr().out)["worktrees"]
+        assert trees["would_remove"] == ["fresh"], trees
+        assert trees["kept"] == [["busy", "1 uncommitted change"]], trees
+        assert trees["apply_held"] == self.HOLD, trees
+
+    def test_the_cli_keeps_a_tree_the_roots_marker_places_a_session_in(self, cs, repos, monkeypatch, capsys):
+        """Lead 2: a session that entered a worktree mid-session records the
+        move only in the root's marker. Dies to: the CLI building the reaper's
+        sessions from the registry alone, which names that tree removable."""
+        work = repos["work"]
+        fresh = _worktree(repos, "fresh")
+        entered = _worktree(repos, "entered")
+        moved = {"session_id": "moved", "cwd": str(entered), "pid": 5151, "alive": None}
+        for registry in ([], [_row(work, pid=4242, sid="root-session")]):
+            self._outside(cs, monkeypatch, registry, {cs._norm(work): [moved]})
+            assert cs.main(["--root", str(work), "--json"]) == 0
+            trees = json.loads(capsys.readouterr().out)["worktrees"]
+            assert trees["would_remove"] == ["fresh"], (registry, trees)
+            assert trees["kept"] == [["entered", "a live Claude session is in it"]], (registry, trees)
+        assert fresh.is_dir() and entered.is_dir()

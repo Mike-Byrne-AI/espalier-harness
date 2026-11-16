@@ -1,0 +1,13 @@
+### Fixed
+
+- **The catch-up's dry run gives its verdicts from any terminal.**
+  `tools/cc/checkout_sync.py` with no flag, run from a terminal other than
+  the shell of the session working in the main checkout, read that session
+  as another one in the checkout and judged no worktree under
+  `.claude/worktrees/`: every one came back `not checked`, from a run that
+  removes nothing. It now judges each worktree as it does from the session's
+  own shell, and says that `--apply` from there removes none while that
+  session is open (run it from that session's shell, or once the session
+  ends). A worktree the main checkout's session moved into, which only that
+  session's marker records, is kept as one a live session is in, the same
+  rule the session catch-up keeps it by.

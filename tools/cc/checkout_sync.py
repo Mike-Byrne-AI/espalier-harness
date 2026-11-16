@@ -46,7 +46,9 @@ Two jobs, each touching nothing unless every safety condition holds:
   background session sat in for exactly that reason). A registry that cannot
   be read in full, or (in the hook) one that does not list the session
   asking, reaps nothing. On Windows a folder a process holds open is kept.
-  While another session is live in the root checkout nothing is reaped.
+  While another session is live in the root checkout nothing is reaped; a
+  dry run still judges each worktree and names that session as what holds
+  the removal.
 
 Network and read-only git calls take their timeouts from one deadline, so
 the SessionStart hook stays inside its budget; a call that changes the tree
@@ -226,8 +228,10 @@ class Reap:
     this session, out of time), ``saved`` (paths written into the root),
     ``would_remove`` (dry run), ``unlocked`` (a dead holder's lock released
     before its removal, as ``name (pid N)``; not on the banner line), a
-    ``note`` for a reason that kept every worktree and ``unanswered``, the git
-    reads that did not answer (DEF-2046)."""
+    ``note`` for a reason that kept every worktree, ``unanswered``, the git
+    reads that did not answer (DEF-2046), and ``apply_held``: on a dry run
+    judged past another live session in the root checkout, that session, in
+    words, as what holds the apply ('' otherwise; DEF-3090)."""
     removed: list[str] = field(default_factory=list)
     kept: list[tuple[str, str]] = field(default_factory=list)
     kept_paths: list[str] = field(default_factory=list)
@@ -237,6 +241,7 @@ class Reap:
     note: str = ""
     unlocked: list[str] = field(default_factory=list)
     unanswered: int = 0
+    apply_held: str = ""
 
     def keep(self, path: Path, reason: str) -> None:
         self.kept.append((path.name, reason))
@@ -1830,7 +1835,9 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
     :func:`live_sessions` (None: the registry could not be trusted, and then
     nothing is removed; ``unreadable_note`` says why); ``held_by_other`` names
     a live session in the root checkout, which also removes nothing, since
-    that session may have entered one of them. Each worktree is named,
+    that session may have entered one of them; a dry run, which removes
+    nothing either way, judges each worktree past it and names it as what
+    holds the apply (``apply_held``; DEF-3090). Each worktree is named,
     removed or kept with its reason; ``unanswered`` counts every read that
     did not answer, in each worktree too. Never raises."""
     git = _Git(root, deadline, runner, spawner)
@@ -1858,16 +1865,23 @@ def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, ow
     if not ours:
         return report
     blocked = ""
+    shared = (f"another live session is in this checkout ({held_by_other}) and may be using one"
+              if held_by_other else "")
     if sessions is None:
         blocked = unreadable_note or "Claude Code's session registry could not be read"
-    elif held_by_other:
-        blocked = f"another live session is in this checkout ({held_by_other}) and may be using one"
+    elif shared and not dry_run:
+        blocked = shared
     if blocked:
         report.note = f"{blocked}, so no worktree was removed"
         for b in ours:
             report.keep(Path(b["worktree"]), "not checked")
         return report
     assert sessions is not None
+    # A dry run removes nothing, so the hold buys it no safety: it judges each
+    # tree and names the session as what holds the apply. From a terminal of
+    # the operator's own, the session that named the command is that session
+    # (DEF-3090).
+    report.apply_held = shared
     asked = git.unanswered
     base = default_branch(git, remote)
     if git.unanswered > asked:
@@ -2278,6 +2292,9 @@ def worktrees_line(report: Reap) -> str:
         parts.append(f"kept {len(report.kept)}: " + ", ".join(saved + ([_names(rest)] if rest else [])))
     if report.saved:
         parts.append(f"their session notes saved under cc/blueprints/ ({_plural(len(report.saved), 'file')})")
+    if report.apply_held:
+        parts.append(f"--apply from here removes none: {report.apply_held} (run it from that session's shell, "
+                     "or once that session ends)")
     if report.unanswered:
         parts.append(f"{_plural(report.unanswered, 'git read')} did not answer in time")
     return _ascii("; ".join(parts))
@@ -2345,14 +2362,14 @@ def main(argv: list[str] | None = None) -> int:
         # is not the registry this session writes to.
         note = NOT_LISTED if read else TABLE_UNREAD
         sessions = None
+    markers: list[dict[str, object]] = (
+        getattr(hook_utils, "other_live_sessions", lambda *_a: [])(root, "") if hook_utils else [])
     if sessions is not None:
         # By the entry already found: a second walk of the table could miss it.
         others = [s for s in sessions_in_checkout(sessions, root) if s is not mine]
         other = f"pid {others[0]['pid']}" if others else ""
     else:
-        rows: list[dict[str, object]] = (
-            getattr(hook_utils, "other_live_sessions", lambda *_a: [])(root, "") if hook_utils else [])
-        other = f"session {str(rows[0].get('session_id', ''))[:8]}" if rows else ""
+        other = f"session {str(markers[0].get('session_id', ''))[:8]}" if markers else ""
     plan_open = plan_in_progress(root)
     result = catch_up(root, other_session=other, plan_open=plan_open, dry_run=not args.apply)
     marker_live = None
@@ -2361,7 +2378,15 @@ def main(argv: list[str] | None = None) -> int:
         # any recent marker keeps its worktree (the Sessions line drops exited
         # windows; the reaper does not).
         marker_live = lambda tree: bool(hook_utils.other_live_sessions(tree, ""))  # type: ignore[attr-defined]  # noqa: E731
-    reap = reap_worktrees(root, sessions=sessions, own_cwd=Path.cwd(), marker_live=marker_live,
+    # A session that entered a worktree mid-session keeps its registry cwd
+    # (the root) and records the move in the root's marker: counted in that
+    # worktree, by age, as SessionStart's reaper counts it, so a dry run judged
+    # past the root's hold never names that tree removable (DEF-3090).
+    reap_sessions = None if sessions is None else sessions + [
+        {"pid": None, "session_id": row.get("session_id"), "cwd": row.get("cwd")}
+        for row in markers if row.get("cwd")
+    ]
+    reap = reap_worktrees(root, sessions=reap_sessions, own_cwd=Path.cwd(), marker_live=marker_live,
                           held_by_other=other, unreadable_note=note, dry_run=not args.apply)
     if args.json:
         print(json.dumps({"checkout": asdict(result), "worktrees": asdict(reap)}, indent=2))

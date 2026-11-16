@@ -4386,8 +4386,9 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     and ending with the paths, so the banner's per-line cut costs paths first
     (DEF-5109): a registered worktree under ``.claude/worktrees/``, the
     reaper's home, the reaper's dry run (``tools/cc/checkout_sync.py``, no
-    flag, run from this session's shell: from another terminal it reads this
-    session as one more in the checkout and judges no tree), which judges the
+    flag, run from this session's shell, where its ``--apply`` runs too: from
+    another terminal it judges each tree but reads this session as one more
+    in the checkout, which holds the apply, DEF-3090), which judges the
     session registry, a lock, an operation in
     progress, commits not in main and ignored files -- reached only when no
     reaper judged that tree at this start (a resume or compact start, catch-up
@@ -4523,9 +4524,10 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
         run = (f"`{script}`{note}" if sync is not None
                else f"`espalier upgrade --execute`, then `{script}`{note}")
-        # The dry run judges from the shell of the session it is run in: from
-        # another terminal it reads that session as one more in the checkout
-        # and holds every tree unjudged. The caveat and the remedy lead, so the
+        # The dry run is named for the shell of the session it is run in, where
+        # its --apply runs too: from another terminal it judges each tree but
+        # reads that session as one more in the checkout, which holds the apply
+        # (DEF-3090). The caveat and the remedy lead, so the
         # banner's cut costs the paths, then the reasons, then the PowerShell
         # note of the longest interpreter spelling, never either of them.
         _hook_utils.advise(
