@@ -646,28 +646,31 @@ class TestTheHookProcessExitsWithoutWaiting:
         assert "pretooluse_blocked_time_budget" in _types()
 
 
-#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. The
-#: payload's parse (``_hook_utils.read_stdin_safely`` calls ``json.loads`` in the
-#: judging thread) first starts a sleeping grandchild and records its pid,
-#: written whole and renamed into place. Then it runs ONE compiled-pattern
-#: search that backtracks for far longer than any bound here. A search holds the
-#: interpreter lock for its whole call, so the thread waiting on the budget
-#: cannot wake; only a bound outside the judging process can answer in time. It
-#: fires on the marker in the command alone, so nothing else in any process the
-#: hook starts is slowed.
+#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. In
+#: the judging child of the row that names a pid file, the begun mark's write
+#: (in the judging thread, past the payload's parse and the pattern import
+#: since air 594461; the parse was this seam until then) first starts a
+#: sleeping grandchild and records its pid, written whole and renamed into
+#: place. Then it runs ONE compiled-pattern search that backtracks for far
+#: longer than any bound here. A search holds the interpreter lock for its
+#: whole call, so the thread waiting on the budget cannot wake; only a bound
+#: outside the judging process can answer in time. Nothing else in any
+#: process the hook starts is slowed.
 _STALL_SITE = textwrap.dedent('''
-    import json, os, re, subprocess, sys
-    _loads = json.loads
-    def _stalling_loads(text, *args, **kwargs):
-        if isinstance(text, str) and "STALL-IN-ONE-C-CALL" in text:
-            sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
-            part = os.environ["STALL_PID_FILE"] + ".tmp"
-            with open(part, "w", encoding="utf-8") as fh:
-                fh.write(str(sleeper.pid))
-            os.replace(part, os.environ["STALL_PID_FILE"])
-            re.match(r"(a+)+$", "a" * 40 + "!")
-        return _loads(text, *args, **kwargs)
-    json.loads = _stalling_loads
+    import os, re, subprocess, sys
+    if sys.argv[1:2] == ["--judge"] and os.environ.get("STALL_PID_FILE"):
+        _write = os.write
+        def _stalling_write(fd, data):
+            written = _write(fd, data)
+            if fd == 2 and bytes(data).startswith(b"write_guard: judging began at "):
+                sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+                part = os.environ["STALL_PID_FILE"] + ".tmp"
+                with open(part, "w", encoding="utf-8") as fh:
+                    fh.write(str(sleeper.pid))
+                os.replace(part, os.environ["STALL_PID_FILE"])
+                re.match(r"(a+)+$", "a" * 40 + "!")
+            return written
+        os.write = _stalling_write
 ''')
 
 #: The strike row's bound on the hook process: it ends only a run the hook
@@ -721,7 +724,7 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
         pid_file = tmp_path / "sleeper.pid"
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path), PYTHONPATH=str(site),
                    STALL_PID_FILE=str(pid_file))
-        payload = _payload("Bash", {"command": "echo STALL-IN-ONE-C-CALL"})
+        payload = _payload("Bash", {"command": "git status"})
         assert _UNANSWERED_RUN_BOUND_S > timeout, "the run's bound must leave the wired timeout room to fail"
         try:
             started = time.monotonic()
@@ -1015,19 +1018,49 @@ _SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE = textwrap.dedent('''
 _PRE_MARK_SLEEP_S = 1.0
 
 #: A ``sitecustomize`` that holds the judging child in its start-up for
-#: ``_PRE_MARK_SLEEP_S`` and then, once it is judging, in the payload's own
-#: parse past the deadline (the payload carries the marker; the parent passes
-#: its bytes through unparsed), so the parent reads a child that had begun.
+#: ``_PRE_MARK_SLEEP_S`` and then, inside `_run_main`'s own work, past the
+#: deadline: the kill-switch scan's parse of the project settings, which the
+#: row seeds with the marker. The payload's parse was this seam until air
+#: 594461 moved the mark past it; the scan is judging, so a mark moved past it
+#: reds this row (the failure-mode review's F4).
 _STALL_AFTER_THE_MARK_SITE = textwrap.dedent(f'''
     import json, sys, time
     if sys.argv[1:2] == ["--judge"]:
         time.sleep({_PRE_MARK_SLEEP_S})
         _loads = json.loads
         def _stalled_loads(text, *args, **kwargs):
-            if isinstance(text, str) and "STALL-AFTER-THE-MARK" in text:
+            if isinstance(text, str) and "STALL-IN-THE-JUDGMENT" in text:
                 time.sleep(60)
             return _loads(text, *args, **kwargs)
         json.loads = _stalled_loads
+''')
+
+#: A ``sitecustomize`` that holds the judging child in the import of the
+#: pattern module past the parent's deadline, the rest of its start-up as it
+#: is: the cost a busy machine spends on any command, which air 594461 moved
+#: ahead of the begun mark (DEF-2091's residual).
+_SLOW_PATTERN_IMPORT_SITE = textwrap.dedent('''
+    import sys, time
+    if sys.argv[1:2] == ["--judge"]:
+        class _SlowPatternImport:
+            def find_spec(self, name, *args, **kwargs):
+                if name == "_bash_patterns":
+                    time.sleep(60)
+                return None
+        sys.meta_path.insert(0, _SlowPatternImport())
+''')
+
+#: A ``sitecustomize`` under which the judging child cannot import the pattern
+#: module, the rest of it as it is.
+_NO_PATTERN_MODULE_SITE = textwrap.dedent('''
+    import sys
+    if sys.argv[1:2] == ["--judge"]:
+        class _NoPatternModule:
+            def find_spec(self, name, *args, **kwargs):
+                if name == "_bash_patterns":
+                    raise ImportError("planted: the pattern module cannot import")
+                return None
+        sys.meta_path.insert(0, _NoPatternModule())
 ''')
 
 
@@ -1075,7 +1108,10 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         A child that had begun keeps the split (its judgment may have spent a
         one-shot nudge the identical re-issue would pass unseen)."""
         site = _site(tmp_path, _STALL_AFTER_THE_MARK_SITE)
-        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "echo STALL-AFTER-THE-MARK"}), site=site)
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"env": {"NOTE": "STALL-IN-THE-JUDGMENT"}}',
+                                                            encoding="utf-8")
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
         assert code == 0, (code, err)
         reason = self._refused(out)
         assert "Do: split it into shorter commands" in reason, reason
@@ -1085,6 +1121,121 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         start_up, judged = refusals[0]["start_up_s"], refusals[0]["judged_s"]
         assert start_up >= _PRE_MARK_SLEEP_S, refusals
         assert start_up + judged == pytest.approx(write_guard.HARD_DEADLINE_S, abs=0.02), refusals
+
+
+class TestTheMarkFollowsThePatternImport:
+    """Air 594461, DEF-2091's residual: the judging child imports the two
+    pattern modules before its begun mark where the call loads them, so a
+    busy machine's import is read as start-up and the refusal asks for the
+    re-issue, not the split. A read-only call still never pays the import."""
+
+    def test_a_slow_pattern_import_is_refused_with_the_re_issue(self, tmp_path):
+        site = _site(tmp_path, _SLOW_PATTERN_IMPORT_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        reason = TestTheDeadlineRefusalSaysWhatSpentTheTime()._refused(out)
+        assert "re-issue the same command once" in reason, reason
+        assert "Do: split" not in reason, reason
+        assert "had not begun judging" in reason, reason
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
+
+    def test_a_read_only_call_never_imports_the_pattern_modules(self, tmp_path):
+        """The planted import failure is the seam's proof both ways: the
+        Read call answers with its mark (it never imported the module), and
+        the Bash call is refused by the crash guard with no mark (the import
+        ran before it, inside the guard)."""
+        site = _site(tmp_path, _NO_PATTERN_MODULE_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Read", {"file_path": str(tmp_path / "notes.txt")}),
+                                       judge=True, site=site)
+        assert (code, _decisions(out.decode("utf-8"))) == (0, []), (code, out, err)
+        assert err.startswith(write_guard._BEGUN_MARK), err
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), judge=True, site=site)
+        decisions = [d["hookSpecificOutput"]["permissionDecision"] for d in _decisions(out.decode("utf-8"))]
+        assert (code, decisions) == (0, ["deny"]), (code, out, err)
+        assert write_guard._BEGUN_MARK not in err, err
+
+    def test_the_mark_reads_the_loads_run_main_makes(self, monkeypatch, guard_root, capsys):
+        """``_loads_the_pattern_path`` against `_run_main` itself, over every
+        tool the guard names in a set and each input shape, so a load that
+        moves earlier or later than the predicate says reds here (the mark
+        would then read an import as judging, or a read-only call would pay
+        it)."""
+        tools = sorted(write_guard.MUTATION_TOOLS | write_guard._CONTENT_SURFACING_TOOLS) + [
+            "mcp__server__tool", "WebFetch", "TodoWrite", ""]
+        inputs: list[object] = [{}, {"command": "echo hi"}, {"command": 7},
+                                {"file_path": str(guard_root / "notes.txt")}, "not a dict"]
+        payloads: list[dict] = [{"tool_name": t, "tool_input": i} for t in tools for i in inputs]
+        payloads += [{"tool_name": odd, "tool_input": i} for odd in (["Bash"], 7, None)
+                     for i in ({"command": "echo hi"}, {})]
+        real = write_guard._load_the_pattern_path
+        loads: list[int] = []
+
+        def _counted() -> None:
+            loads.append(1)
+            real()
+
+        monkeypatch.setattr(write_guard, "_load_the_pattern_path", _counted)
+        wrong = []
+        for data in payloads:
+            loads.clear()
+            raised = ""
+            try:
+                write_guard._run_main(dict(data))
+            except Exception as exc:  # noqa: BLE001 -- a malformed input (a tool name or command that is no string) raises, and `_judge`'s crash guard denies it in a run; a load before the raise is counted
+                raised = type(exc).__name__
+            if bool(loads) != write_guard._loads_the_pattern_path(dict(data)):
+                wrong.append((data, bool(loads), raised))
+        capsys.readouterr()
+        assert not wrong, wrong
+        assert len(payloads) >= 5 * len(write_guard.MUTATION_TOOLS), len(payloads)
+
+
+class TestABrokenFirstUsePatternRefuses:
+    """DEF-2084's first-use move took a pattern's compile error from import,
+    where the guard refused every call naming the file, into the judgment,
+    where a directory walk's ``except Exception`` read it as no match and a
+    protected write through a relative chain was allowed (the failure-mode
+    review's F1, driven by both reviewers). A pattern that does not compile
+    now raises past those handlers into the crash guard."""
+
+    _COMMAND = "cd .claude && echo x > settings.json"
+
+    def test_every_broken_first_use_pattern_refuses_and_none_allows(self, monkeypatch, guard_root, capsys):
+        import _bash_patterns as bp
+
+        (guard_root / ".claude").mkdir()  # the chain's `cd` lands, so the write is the guard's to refuse
+        write_guard._load_the_pattern_path()
+        payload = _payload("Bash", {"command": self._COMMAND})
+
+        def verdict() -> str:
+            try:
+                rc = write_guard._run_main(dict(payload))
+            except bp.FirstUseCompileError:
+                return "crash guard"
+            return "deny" if '"deny"' in capsys.readouterr().out else f"allow (rc {int(rc)})"
+
+        assert verdict() == "deny", "the control: whole, the guard refuses the write"
+        names = [name for name, value in vars(bp).items() if type(value) is bp._FirstUse]
+        allowed = []
+        for name in names:
+            with monkeypatch.context() as patch:
+                patch.setattr(bp, name, bp._FirstUse("(", 0))
+                if verdict().startswith("allow"):
+                    allowed.append(name)
+        assert len(names) >= 200, names
+        assert not allowed, f"a broken first-use pattern let the write through: {allowed}"
+
+    def test_the_crash_guard_refuses_it_and_names_the_file(self, monkeypatch, guard_root):
+        import _bash_patterns as bp
+
+        (guard_root / ".claude").mkdir()  # the chain's `cd` lands, so the write is the guard's to refuse
+        write_guard._load_the_pattern_path()
+        monkeypatch.setattr(bp, "_DIR_VERB_RE", bp._FirstUse("(", 0))
+        code, streams = _drive(monkeypatch, _payload("Bash", {"command": self._COMMAND}))
+        assert code == 0, streams.err.getvalue()
+        reason = _the_one_deny(streams)
+        assert "_bash_patterns.py" in reason, reason
 
 
 #: Stands for the guard's begun mark in the parametrize rows below, which

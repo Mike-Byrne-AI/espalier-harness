@@ -604,6 +604,49 @@ def _say_judging_began() -> None:
         pass
 
 
+#: Set by the judging child alone (the ``__main__`` block at the end), so
+#: `_judge` writes the begun mark once the payload is read and, where the call
+#: loads them, the two pattern modules are imported (`_begin_judging`). An
+#: importer (the tests) and the hook process judging in place write none.
+_MARK_THE_JUDGING = False
+
+
+def _loads_the_pattern_path(data: dict) -> bool:
+    """Whether `_run_main` loads the pattern path for this payload: a call
+    carrying a string ``command`` (the secret read parses it, the PowerShell
+    fold before it) and every mutation or MCP call (past the read-only
+    return). A tool name that is not a string loads only through the secret
+    read, and only where it hashes (the read's membership test raises on a
+    list first); without a command the read-only check raises on it. Pinned
+    against `_run_main`'s own loads by
+    tests/test_write_guard_time_budget.py::TestTheMarkFollowsThePatternImport,
+    so a new early load reds there instead of reading as judging."""
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
+        try:
+            hash(tool_name)
+        except TypeError:  # fail-open: ok deliberate -- an unhashable tool name raises in _run_main's secret read before any pattern load, so the mark goes out without the import and _judge's crash guard answers
+            return False
+        return True
+    return isinstance(tool_name, str) and (tool_name in MUTATION_TOOLS or tool_name.startswith("mcp__"))
+
+
+def _begin_judging(data: dict) -> None:
+    """The judging child, once it has read the payload: import the two
+    pattern modules where this call loads them, then write the begun mark
+    (air 594461, DEF-2091's residual). The import is start-up a busy machine
+    spends on any command, never the command's length, and no judgment has
+    run before it, so a refusal at the parent's deadline while it is still
+    going asks for the re-issue, not the split. A module that cannot import
+    raises here, inside `_judge`'s crash guard, which names its file and line
+    as the load in `_run_main` would; no mark is written then, and the deny
+    is the child's answer."""
+    if _loads_the_pattern_path(data):
+        _load_the_pattern_path()
+    _say_judging_began()
+
+
 # The hard bound: the hook process answers through a judging child (or, where
 # none can start, judges itself); the child caps its CPU and judges.
 if __name__ == "__main__":
@@ -5296,6 +5339,8 @@ def _judge(seen: list[dict] | None = None) -> int:
         data = _hook_utils.read_stdin_safely()
         if seen is not None:
             seen.append(data)
+        if _MARK_THE_JUDGING:
+            _begin_judging(data)
         return _run_main(data)
     except BaseException as exc:  # noqa: BLE001 -- fail-closed crash guard
         # [broad-except] fail-closed: any unhandled error here would
@@ -5714,7 +5759,9 @@ if __name__ == "__main__":
     # The module body ends here: a raise past it is main's crash guard's.
     _start_refusal.body_done()
     if sys.argv[1:2] == [_JUDGE_FLAG]:
-        _say_judging_began()
+        # The mark is `_judge`'s to write, past the pattern import where the
+        # call loads it (`_begin_judging`).
+        _MARK_THE_JUDGING = True
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0

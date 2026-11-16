@@ -562,10 +562,41 @@ class TestEveryFirstUsePatternCompiles:
         for name, obj in first_use.items():
             try:
                 obj.flags  # the first read of a compiled attribute compiles it
-            except Exception as exc:  # noqa: BLE001 -- any raise is the defect this row exists to catch
+            except (Exception, module.FirstUseCompileError) as exc:  # noqa: BLE001 -- any raise is the defect this row exists to catch
                 failed[name] = f"{type(exc).__name__}: {exc}"
         assert first_use, "the walk found no first-use pattern in _bash_patterns"
         assert not failed, f"first-use patterns that do not compile: {failed}"
+
+    @staticmethod
+    def _import_time_compiles(source: str) -> list[int]:
+        """The lines of every ``re.compile(...)`` call the module body runs
+        at import: outside any function, class or lambda body."""
+        lines: list[int] = []
+
+        def visit(node: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                    continue
+                if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                        and child.func.attr == "compile" and isinstance(child.func.value, ast.Name)
+                        and child.func.value.id == "re"):
+                    lines.append(child.lineno)
+                visit(child)
+        visit(ast.parse(source))
+        return lines
+
+    def test_no_pattern_compiles_at_import(self):
+        """A revert to an eager compile, or a new module-level pattern written
+        the old way, puts its cost back on every call's import, which the
+        summed ceiling cannot see (the failure-mode review's F2): it reds here."""
+        lines = self._import_time_compiles((HOOKS / "_bash_patterns.py").read_text(encoding="utf-8"))
+        assert lines == [], f"_bash_patterns compiles at import on lines {lines}: write `_first_use(...)` instead"
+
+    def test_the_import_reader_finds_a_module_level_compile_and_skips_a_deferred_one(self):
+        source = ("import re\n_A = re.compile('a')\n_B = (re.compile('b'), 1)\n"
+                  "def f():\n    return re.compile('c')\nclass K:\n    def g(self):\n        re.compile('d')\n"
+                  "_C = lambda: re.compile('e')\n")
+        assert self._import_time_compiles(source) == [2, 3]
 
     def test_every_first_use_call_is_a_module_global_the_walk_reaches(self):
         tree = ast.parse((HOOKS / "_bash_patterns.py").read_text(encoding="utf-8"))

@@ -69,6 +69,17 @@ _PATTERN_READS = ("search", "match", "fullmatch", "finditer", "findall", "sub", 
                   "flags", "groups", "groupindex", "scanner")
 
 
+class FirstUseCompileError(BaseException):
+    """A first-use pattern whose source no longer compiles (DEF-2084). Before
+    the move its ``re.error`` raised at import, and the guard refused every
+    call naming this file; at first use it would raise inside a judgment, where
+    a directory walk's ``except Exception`` reads it as no match and a protected
+    write through a relative chain is allowed (both reviewers, driven: one
+    broken pattern, ``cd .claude && echo x > settings.json`` allowed). Not an
+    ``Exception``, so no such handler holds it: it reaches the hook's crash
+    guard, which refuses the call and names this file, as the import did."""
+
+
 class _FirstUse:
     """One module-level pattern of this module, compiled on its first use (DEF-2084).
 
@@ -97,7 +108,13 @@ class _FirstUse:
         # otherwise compile all 218.
         if name not in _PATTERN_READS:
             raise AttributeError(name)
-        return self._fill(re.compile(self.pattern, self._flags), name)
+        try:
+            real = re.compile(self.pattern, self._flags)
+        except Exception as exc:  # noqa: BLE001 -- re.error or any other: the crash guard's, never a walker's (FirstUseCompileError)
+            raise FirstUseCompileError(
+                f"a first-use pattern does not compile ({type(exc).__name__}: {exc}): {self.pattern[:120]!r}"
+            ) from exc
+        return self._fill(real, name)
 
     def _fill(self, real: "re.Pattern[str]", name: str) -> Any:
         for read in _PATTERN_READS:
