@@ -6,8 +6,9 @@
   as another one in the checkout and judged no worktree under
   `.claude/worktrees/`: every one came back `not checked`, from a run that
   removes nothing. It now judges each worktree as it does from the session's
-  own shell, and says that `--apply` from there removes none while that
-  session is open (run it from that session's shell, or once the session
-  ends). A worktree the main checkout's session moved into, which only that
-  session's marker records, is kept as one a live session is in, the same
-  rule the session catch-up keeps it by.
+  own shell, and leads with what it cannot see: `--apply` from there removes
+  none while that session is open, and the verdicts assume that session is
+  in none of the worktrees (run it from that session's shell, or once the
+  session ends). A worktree the main checkout's session moved into, where
+  that session's marker records the move, is kept as one a live session is
+  in, the same rule the session catch-up keeps it by.

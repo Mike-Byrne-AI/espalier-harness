@@ -1880,8 +1880,10 @@ def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, ow
     # A dry run removes nothing, so the hold buys it no safety: it judges each
     # tree and names the session as what holds the apply. From a terminal of
     # the operator's own, the session that named the command is that session
-    # (DEF-3090).
-    report.apply_held = shared
+    # (DEF-3090). That session may be in a tree nothing read here places it
+    # in (a move its marker records only at its next start), so the line
+    # leads with the hold and says the verdicts assume it is in none.
+    report.apply_held = shared if dry_run else ""
     asked = git.unanswered
     base = default_branch(git, remote)
     if git.unanswered > asked:
@@ -2293,8 +2295,9 @@ def worktrees_line(report: Reap) -> str:
     if report.saved:
         parts.append(f"their session notes saved under cc/blueprints/ ({_plural(len(report.saved), 'file')})")
     if report.apply_held:
-        parts.append(f"--apply from here removes none: {report.apply_held} (run it from that session's shell, "
-                     "or once that session ends)")
+        # First, so no verdict reads as one that ruled the held session out.
+        parts.insert(0, f"--apply from here removes none: {report.apply_held}, and these verdicts assume it is "
+                        "in none of them (from that session's shell, or once it ends, --apply judges it too)")
     if report.unanswered:
         parts.append(f"{_plural(report.unanswered, 'git read')} did not answer in time")
     return _ascii("; ".join(parts))
@@ -2362,8 +2365,11 @@ def main(argv: list[str] | None = None) -> int:
         # is not the registry this session writes to.
         note = NOT_LISTED if read else TABLE_UNREAD
         sessions = None
+    # The caller's own marker is left out, as SessionStart leaves its own: its
+    # own cwd answers for it (a marker cwd it has since left would keep a tree).
+    own_sid = str(mine.get("session_id") or "") if mine is not None else ""
     markers: list[dict[str, object]] = (
-        getattr(hook_utils, "other_live_sessions", lambda *_a: [])(root, "") if hook_utils else [])
+        getattr(hook_utils, "other_live_sessions", lambda *_a: [])(root, own_sid) if hook_utils else [])
     if sessions is not None:
         # By the entry already found: a second walk of the table could miss it.
         others = [s for s in sessions_in_checkout(sessions, root) if s is not mine]
@@ -2381,7 +2387,8 @@ def main(argv: list[str] | None = None) -> int:
     # A session that entered a worktree mid-session keeps its registry cwd
     # (the root) and records the move in the root's marker: counted in that
     # worktree, by age, as SessionStart's reaper counts it, so a dry run judged
-    # past the root's hold never names that tree removable (DEF-3090).
+    # past the root's hold keeps a tree a recorded move places it in; a move
+    # not yet recorded is the hold's alone, which the line leads with (DEF-3090).
     reap_sessions = None if sessions is None else sessions + [
         {"pid": None, "session_id": row.get("session_id"), "cwd": row.get("cwd")}
         for row in markers if row.get("cwd")
@@ -2394,7 +2401,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Checkout:  {checkout_line(result) or 'current'}")
     print(f"Worktrees: {worktrees_line(reap) or 'none left over'}")
     if not args.apply:
-        print("(dry run; --apply does it)")
+        print("(dry run)" if reap.apply_held else "(dry run; --apply does it)")
     return 0
 
 

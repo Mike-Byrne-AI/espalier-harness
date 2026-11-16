@@ -2980,8 +2980,9 @@ class TestTheDryRunJudgesPastTheHold:
     names the session as what holds ``--apply``; the apply still stands down.
     A session that entered a worktree keeps its registry cwd (the root) and
     records the move in the root's marker, which the CLI now counts in that
-    worktree as SessionStart's reaper does, so judging past the hold never
-    names a tree such a session is in as removable."""
+    worktree as SessionStart's reaper does; a move the marker has not yet
+    recorded is the hold's alone, so the line leads with the hold and says
+    the verdicts assume the held session is in none of the trees."""
 
     HOLD = "another live session is in this checkout (pid 4242) and may be using one"
 
@@ -3015,9 +3016,13 @@ class TestTheDryRunJudgesPastTheHold:
         work = repos["work"]
         self._two_trees(repos)
         dry = cs.reap_worktrees(work, sessions=[], held_by_other="pid 4242", dry_run=True)
+        # The hold leads: the held session may be in a tree nothing read here
+        # places it in (a move its marker records only at its next start), so
+        # no verdict may read as one that ruled it out (the reviews).
         assert cs.worktrees_line(dry) == (
-            "would remove 1: fresh; kept 1: busy [1 uncommitted change]; --apply from here removes none: "
-            f"{self.HOLD} (run it from that session's shell, or once that session ends)")
+            f"--apply from here removes none: {self.HOLD}, and these verdicts assume it is in none of them "
+            "(from that session's shell, or once it ends, --apply judges it too); would remove 1: fresh; "
+            "kept 1: busy [1 uncommitted change]")
 
     @staticmethod
     def _outside(cs, monkeypatch, registry: list[dict], markers: dict[str, list[dict]]) -> None:
