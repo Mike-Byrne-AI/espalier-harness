@@ -3966,6 +3966,30 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         path = target / ".claude" / "settings.json"
         return path, json.loads(path.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _report_text(doctor):
+        """What doctor's report says: every string in its JSON, one to a
+        line. Its stdout is that JSON, where a path's backslashes are doubled
+        (a Windows path, DEF-3094) and a non-ASCII letter is a ``\\u`` escape,
+        so a path the test spells is searched for in the parsed text."""
+        try:
+            report = json.loads(doctor.stdout)
+        except ValueError:
+            pytest.fail(f"doctor printed no JSON report (rc={doctor.returncode}):\n"
+                        f"{doctor.stdout}\n{doctor.stderr}")
+
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from strings(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from strings(item)
+
+        return "\n".join(strings(report))
+
     def test_init_and_merge_settings_say_what_holds_in_place_of_the_claim(self, tmp_path):
         """DEF-3088's drive: the intercept line, the wired line's "now
         active" and the already-wired "is active" each say the session the
@@ -4063,8 +4087,7 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
                     entry["command"] = "echo"
                     entry.pop("args", None)
         path.write_text(json.dumps(settings), encoding="utf-8")
-        doctor = run("doctor")
-        out = doctor.stdout
+        out = self._report_text(run("doctor"))
         assert "only inside the virtualenv" in out, f"precondition: doctor read the name as venv-only: {out}"
         assert "add it yourself (command `python`, script path in args)" not in out, out
         floor = _python_floor.floor_text()
