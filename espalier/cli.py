@@ -987,8 +987,9 @@ class _VenvOnlyName(NamedTuple):
 #: process and keyed on PATH: a :class:`_VenvOnlyName` where the gate said the
 #: venv-only warning, None where it asked and had nothing to say. A key here
 #: means a writing command's gate asked under that PATH, so
-#: :func:`_venv_only_name` answers from it, never from doctor's reading
-#: (DEF-3088). Cleared between tests with the other verdict memos.
+#: :func:`_venv_only_name` keeps ruling 20e1d4's silence for a name with
+#: nothing outside the virtualenv (DEF-3088). Cleared between tests with the
+#: other verdict memos.
 _WRITERS_GATE_VERDICTS: "dict[str, _VenvOnlyName | None]" = {}
 
 
@@ -1043,6 +1044,14 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
         file=sys.stderr,
     )
     return 1
+
+
+def rewire_with_that_interpreter(quote: str = "`") -> str:
+    """The re-wire a venv-only name's remedy ends with, spelled once for the
+    gate's warning, the claims, the retired-rule hold and the hand-edit phrase
+    (DEF-3088, DEF-3089): typed with the Python the operator puts on PATH
+    outside the virtualenv, never the written name."""
+    return f"{quote}<that interpreter> -m espalier init . --rewire-interpreter{quote}"
 
 
 def _warn_venv_fallback_outside(
@@ -1100,9 +1109,8 @@ def _warn_venv_fallback_outside(
         f"app), so their guards fail OPEN."
         + _unheard_beside(mute)
         + f" Put a Python {floor}+ on PATH outside the virtualenv, then "
-        f"re-wire: `<that interpreter> -m espalier init . "
-        f"--rewire-interpreter`; launching Claude Code from the virtualenv is "
-        f"no fix.",
+        f"re-wire: " + rewire_with_that_interpreter() + "; launching Claude "
+        "Code from the virtualenv is no fix.",
         file=sys.stderr,
     )
 
@@ -1657,22 +1665,20 @@ def _venv_only_name(name: str) -> "_VenvOnlyName | None":
     virtualenv: the one reader every sentence that spells such a name reads
     (DEF-3088, DEF-3089), else None.
 
-    Two readings, one per process, so each report agrees with what it says
-    elsewhere. Where a writing command's gate asked under this PATH
-    (:data:`_WRITERS_GATE_VERDICTS`), the gate's verdict: set only where the
-    name finds outside the virtualenv something that does not run the
-    harness, and None on a host with nothing outside, which air's ruling
-    20e1d4 keeps told nothing. Elsewhere (doctor), doctor's own reading,
-    :func:`espalier._venv.resolves_only_inside`, the one its venv-only finding
-    is said from, nothing outside included. No new spawn in either: the gate's
-    verdict is kept, and doctor's reading asks only banners the resolver or
-    doctor's own check already kept.
+    Doctor's reading of the name itself (:func:`_venv_only_reading_of`), in
+    every process, so each name is read on its own: a wired ``python`` stays
+    venv-only after the operator puts a ``py -3`` on PATH and the resolver
+    answers that instead (the failure-mode review, driven). Where a writing
+    command's gate asked under this PATH (:data:`_WRITERS_GATE_VERDICTS`), a
+    reading with nothing outside the virtualenv is dropped: air's ruling
+    20e1d4 keeps that host told nothing by the writing commands, and doctor
+    names it. No new spawn: doctor's reading asks only banners the resolver or
+    doctor's own check already kept for the names they wire.
     """
-    path = os.environ.get("PATH", "")
-    if path in _WRITERS_GATE_VERDICTS:
-        kept = _WRITERS_GATE_VERDICTS[path]
-        return kept if kept is not None and kept.name == name else None
-    return _venv_only_reading_of(name)
+    found = _venv_only_reading_of(name)
+    if found is not None and found.outside is None and os.environ.get("PATH", "") in _WRITERS_GATE_VERDICTS:
+        return None
+    return found
 
 
 def _venv_only_reading_of(name: str) -> "_VenvOnlyName | None":
@@ -1722,13 +1728,14 @@ def hand_wiring_phrase(written: str, quote: str = "`") -> str:
     found = _venv_only_name(written)
     if found is None:
         return f"command {quote}{head}{quote}, script path in args"
-    # Its own f-string: the rewire is typed with the interpreter put on PATH,
-    # never the written name (the portability pin's pairing, DEF-758).
-    rewire = f"{quote}<that interpreter> -m espalier init . --rewire-interpreter{quote}"
+    # The rewire is typed with the interpreter put on PATH, never the written
+    # name (the portability pin's pairing, DEF-758). A launcher's flag leads
+    # the args: `py -3` as one command value names no executable (above).
     return (f"{venv_only_first_step(found, quote)}, so every entry wired with "
-            f"{quote}{head}{quote} fails open from any shell without it, and run "
-            + rewire
-            + f"; then command {quote}<that interpreter>{quote}, script path in args")
+            f"{quote}{head}{quote} fails open from any shell without that virtualenv, "
+            "and run " + rewire_with_that_interpreter(quote)
+            + f"; then command {quote}<that interpreter>{quote} (a launcher's flag, such as "
+            f"{quote}-3{quote}, leads the args), script path in args")
 
 
 def _profile_allow_list(
@@ -2247,13 +2254,12 @@ def _retired_rules_to_name(
         at = f" at {venv_only.venv}" if venv_only.venv is not None else ""
         there = (f"resolves to {venv_only.outside}, which runs no Python {floor_text()}+"
                  if venv_only.outside else "resolves to nothing")
-        rewire = "`<that interpreter> -m espalier init . --rewire-interpreter`"
         return RetiredRules(held=(
             f"write_guard runs only in a session started from the virtualenv{at}: from "
-            f"any other shell `{venv_only.name}` {there}, every guard wired with it fails "
-            f"open, and the rule is the guard left; put a Python {floor_text()} or newer "
-            "on PATH outside the virtualenv, re-wire with " + rewire
-            + ", and the run after names the rule"
+            f"any other shell `{venv_only.name}` {there}, so every guard wired with it "
+            f"fails open and the rule is the guard left; put a Python {floor_text()} or "
+            "newer on PATH outside the virtualenv, re-wire with "
+            + rewire_with_that_interpreter() + ", and the run after names the rule"
         ))
     return RetiredRules(stale)
 
@@ -9112,9 +9118,10 @@ def _venv_only_claim(
     Python 3, so the claim read empty blockers after the gate had just said
     that name fails open from any other shell. Only a wired entry counts: a
     settings file that names another interpreter keeps it (the gate's own
-    words), and its claim stands. Spawn-free: the settings walk, then the
-    kept verdicts. ``reader`` is :func:`_venv_only_name` unless a caller
-    names doctor's reading (the retired-rule hold)."""
+    words), and its claim stands. The settings walk spawns nothing; the reader
+    asks a banner only for a wired name no earlier check in the process asked,
+    once, kept. ``reader`` is :func:`_venv_only_name` unless a caller names
+    doctor's reading (the retired-rule hold)."""
     read = reader or _venv_only_name
     entries = _wired_espalier_entries(settings_path)
     if not entries:
@@ -9138,12 +9145,12 @@ def _venv_only_hold(found: _VenvOnlyName) -> str:
     at = f" at {found.venv}" if found.venv is not None else ""
     there = (f"`{found.name}` resolves to {found.outside}, which runs no Python {floor}+"
              if found.outside else f"`{found.name}` resolves to nothing")
-    rewire = "`<that interpreter> -m espalier init . --rewire-interpreter`"
     return (f"only in a session started from the virtualenv{at}: from any other shell "
             f"(another terminal, an IDE, the desktop app) {there}, so every hook wired "
-            f"with it exits outside the blocking range and its guard fails open. Put a "
-            f"Python {floor} or newer on PATH outside the virtualenv, then re-wire: "
-            + rewire + ".")
+            f"with it exits outside the blocking range and its guard fails open, and "
+            f"launching Claude Code from the virtualenv is no fix. Put a Python {floor} "
+            "or newer on PATH outside the virtualenv, then re-wire: "
+            + rewire_with_that_interpreter() + ".")
 
 
 # Stable MergeResult.status codes. Shared by both callers so the merge logic

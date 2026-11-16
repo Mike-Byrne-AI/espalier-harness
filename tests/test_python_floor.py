@@ -3952,9 +3952,9 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         env["ESPALIER_AUDIT_DIR"] = str(tmp_path / "audit")
         env["PYTHONPATH"] = str(REPO_ROOT)
 
-        def run(verb):
+        def run(verb, *extra):
             return subprocess.run(
-                [sys.executable, "-m", "espalier.cli", verb, str(target)],
+                [sys.executable, "-m", "espalier.cli", verb, str(target), *extra],
                 capture_output=True, text=True, timeout=scaled(120), env=env,
                 encoding="utf-8", cwd=str(target),
             )
@@ -3999,6 +3999,56 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         assert again.returncode == 0, said
         assert "-- enforcement is active only in a session started from the virtualenv" in again.stdout, said
         assert "Nothing to do." not in again.stdout, said
+        assert "launching Claude Code from the virtualenv is no fix" in again.stdout, said
+
+        # Upgrade's merge stage (both reviews: it was never driven). A
+        # version-current tree never reaches it, so the stamp is aged, as
+        # tests/test_init_upgrade_paths.py stages a stale tree.
+        manifest = target / "cc" / "PACK_MANIFEST.txt"
+        stamped = manifest.read_text(encoding="utf-8")
+        assert "# espalier-version:" in stamped, stamped[:200]
+        manifest.write_text("\n".join(
+            "# espalier-version: 0.0.0" if line.startswith("# espalier-version:") else line
+            for line in stamped.splitlines()) + "\n", encoding="utf-8")
+        upgraded = run("upgrade", "--execute")
+        said = upgraded.stdout + upgraded.stderr
+        assert upgraded.returncode == 0, said
+        assert ("settings.json hooks already current; they run only in a session started "
+                "from the virtualenv") in upgraded.stdout, said
+
+    def test_wire_hooks_says_what_holds_over_a_hookless_file(self, tmp_path):
+        """``init --wire-hooks`` arms an existing hookless settings file through
+        the merge narrators' claim (both reviews: never driven)."""
+        venv, _outside_bin, target, run = self._drive_host(tmp_path, "store")
+        (target / ".claude").mkdir()
+        (target / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        wired = run("init", "--wire-hooks")
+        said = wired.stdout + wired.stderr
+        assert wired.returncode == 0, said
+        assert not any(line.rstrip().endswith("Enforcement is now active.")
+                       for line in wired.stderr.splitlines()), said
+        assert f"Enforcement is now active only in a session started from the virtualenv at {venv}" \
+            in wired.stderr, said
+
+    def test_a_wired_name_stays_venv_only_after_a_launcher_joins_the_path(self, tmp_path, monkeypatch):
+        """The failure-mode review's F1, driven: the operator follows the
+        remedy halfway and a working ``py -3`` lands on PATH, so the resolver
+        answers it and the gate says nothing, while the hooks are still wired
+        ``python``. Each wired name is read on its own."""
+        from espalier import cli
+        from tests import _interpreter_hosts as hosts
+
+        _venv, outside_bin = self._host(tmp_path, monkeypatch, "store")
+        (hosts._cmd_stub if os.name == "nt" else hosts._sh_stub)(outside_bin, "py", working=True)
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        assert cli._detect_python_command() != "python", "precondition: the launcher answers now"
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "python",
+             "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]}]}]}}), encoding="utf-8")
+        held = cli._venv_only_claim(settings)
+        assert held is not None and held.name == "python", held
 
     def test_doctor_points_a_hand_edit_to_the_interpreter_first(self, tmp_path):
         """DEF-3089's drive: doctor says the wired name runs only inside the
@@ -4020,7 +4070,8 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         floor = _python_floor.floor_text()
         assert (f"add it yourself (first put a Python {floor} or newer on PATH outside the "
                 f"virtualenv at `{venv}`") in out, out
-        assert "then command `<that interpreter>`, script path in args)" in out, out
+        assert ("then command `<that interpreter>` (a launcher's flag, such as `-3`, leads the args), "
+                "script path in args)") in out, out
 
     @pytest.mark.parametrize("outside", ["store", "none"])
     def test_a_retired_rule_is_held_and_upgrade_says_what_holds(self, tmp_path, outside):
@@ -4033,15 +4084,7 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         oracle, ruling 20e1d4)."""
         venv, _outside_bin, target, run = self._drive_host(tmp_path, outside)
         assert run("init").returncode == 0
-        upgrade = run("upgrade")
-        said = upgrade.stdout + upgrade.stderr
-        assert upgrade.returncode == 0, said
-        if outside == "store":
-            assert "nothing to do" not in upgrade.stdout, said
-            assert f"[upgrade] the hooks run only in a session started from the virtualenv at {venv}" \
-                in upgrade.stdout, said
-        else:
-            assert "the hooks run only in a session started" not in said, said
+        # The hold first, so both hosts prove it red at the lane's base.
         path, settings = self._settings(target)
         settings.setdefault("permissions", {}).setdefault("deny", []).append("Bash(rm -rf /*)")
         path.write_text(json.dumps(settings), encoding="utf-8")
@@ -4053,6 +4096,17 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         doctor = run("doctor").stdout
         assert "only inside the virtualenv" in doctor, f"precondition: doctor read the name: {doctor}"
         assert "carries the retired deny rule Bash(rm -rf /*)" not in doctor, doctor
+        upgrade = run("upgrade")
+        said = upgrade.stdout + upgrade.stderr
+        assert upgrade.returncode == 0, said
+        assert "harness is current" in upgrade.stdout, f"precondition: the version-current branch: {said}"
+        if outside == "store":
+            assert "nothing to do" not in upgrade.stdout, said
+            assert f"[upgrade] the hooks run only in a session started from the virtualenv at {venv}" \
+                in upgrade.stdout, said
+        else:
+            # The control: the writers' claims keep ruling 20e1d4's silence.
+            assert "the hooks run only in a session started" not in said, said
 
     @pytest.mark.parametrize("outside", ["store", "none", "working"])
     def test_the_reader_takes_the_gates_verdict_where_it_asked(self, tmp_path, monkeypatch, outside):
@@ -4065,6 +4119,7 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         venv, outside_bin = self._host(tmp_path, monkeypatch, outside)
         doctors = cli._venv_only_name("python")
         assert cli._refuse_below_floor_wiring("init") is None
+        assert os.environ["PATH"] in cli._WRITERS_GATE_VERDICTS, "precondition: the gate kept its verdict"
         writers = cli._venv_only_name("python")
         if outside == "working":
             assert doctors is None and writers is None
@@ -4087,7 +4142,8 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
                                  f"virtualenv at `{venv}`, where `python` runs the harness only "
                                  f"inside it"), phrase
         assert "`<that interpreter> -m espalier init . --rewire-interpreter`" in phrase, phrase
-        assert phrase.endswith("then command `<that interpreter>`, script path in args"), phrase
+        assert phrase.endswith("then command `<that interpreter>` (a launcher's flag, such as `-3`, "
+                               "leads the args), script path in args"), phrase
         quoted = cli.hand_wiring_phrase("python", quote='"')
         assert '"<that interpreter>"' in quoted and "`" not in quoted, quoted
         # The launcher spelling is never a venv shim: its phrase is unchanged.
@@ -4137,6 +4193,9 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
 
         held = wired("python")
         assert held is not None and held.name == "python", held
+        # A second venv-only name, read on its own (the gate wrote `python`).
+        other = wired("python3")
+        assert other is not None and other.name == "python3", other
         assert wired(sys.executable) is None
 
     def test_the_statusline_note_spells_the_remedy_first(self, tmp_path, monkeypatch):
