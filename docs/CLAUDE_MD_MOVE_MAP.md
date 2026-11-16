@@ -205,12 +205,22 @@ The canon and claim-id comment pairs between the rules stay where they are
 ## D. Pins and consumers
 
 Read by grep over `tests/`, `scripts/`, `espalier/*.py`, `tools/cc/*.py` and
-`.claude/commands/smoke.md` at `caa80243`. A fuller census dispatch was still
-running at the threshold handoff, so the cut lane runs it again as its first
-step.
+`.claude/commands/smoke.md` at `caa80243`, plus a census dispatch under the
+assign's `census` allowance (its first row was read by hand).
+
+**One red the draft must fix before the cut:**
+`tests/test_hook_utils.py::TestProtectedZoneDocParity` (6 tests, `:358-361`
+and `:473-600`) reads the first `CLAUDE.md` line containing "protected harness
+zones", which is the `write_guard.py` row. That line must keep the phrase, all
+four zone prefixes and all five zone files in backticks, and "self-host"
+beside `espalier/` and `.github/workflows/`. The draft row above shortens
+these, so the lane's row keeps them (about 250 bytes more).
 
 | Consumer | Reads | After the drafted cut |
 |---|---|---|
+| `tests/test_agent_contracts.py:459-475` | 12 pipe rows whose first cell is a backticked `.py` name, under `## Hooks` | kept: one row per hook |
+| `tests/test_documented_claims.py:156-218` | "governs 10 of Claude Code's hook events" (`CLAUDE.md:167`) | the intro is not cut |
+| `tests/test_recall.py:4198-4210` | the `recall: skip` markers at `CLAUDE.md:5` and `:81` | not cut |
 | `tests/test_seat.py:810-812`, `:910-912` | four Rule 15 phrases, verbatim | kept by the draft |
 | `tests/test_canon_verifier_contract.py:316` | 20 claim markers in `CLAUDE.md` | markers stay |
 | `tests/_ledger_rules.py:332-335` | DEF-3034 closed on Rule 10 naming the bounds census | kept by the draft |
@@ -233,6 +243,11 @@ template.
   the operator wants hook behaviour recallable here. A Hooks-section hit before
   the cut was a 16 KB section to scan, and the row now names the HOOKS.md
   section to read, so for those queries the reading cost is about the same.
+  Against (a): this box's local recall telemetry (gitignored
+  `.espalier-state/recall_events.jsonl`) shows 6 of the 7 first answers that
+  came from `CLAUDE.md`, out of 2,352 events, were this section. No pinned
+  recall query expects it (0 hits for `CLAUDE.md ::` in the pins), and a
+  proxy cut left every pinned arm unchanged.
 - **R2, ids.** Keep them in the one-line rows (recommended; about 70 bytes), or
   drop them and leave the link from feature to id to their row files.
 - **R3, Rule 10's home.** A new single-topic `memory/` note (recommended), or a
