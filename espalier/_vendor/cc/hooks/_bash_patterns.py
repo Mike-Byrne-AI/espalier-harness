@@ -16564,13 +16564,14 @@ def _cmd_statement_targets(
     or `rmdir /s` (its operands), `del /s` or `erase /s` (each operand's root,
     `_cmd_del_root`), the native rm cmd finds on PATH with a recurse switch,
     and the same inside a cmd the statement starts again. ``if`` conditions
-    and a ``do``, ``else`` or ``call`` before the verb are stepped over.
+    and a ``do``, ``else`` or ``call`` before the verb are stepped over, and
+    the verb is read past a leading ``@`` or ``=`` (`_cmd_program_word`).
     ``recursive_only=False`` is the zone reader's reading: every delete, its
     operands as spelled (a ``del`` pattern included), recursive or not."""
     k = _cmd_statement_head(words)
     if k >= len(words):
         return
-    head = words[k].lstrip("@")
+    head = _cmd_program_word(words[k])
     low = head.lower()
     args = words[k + 1:]
     base = re.split(r"[/\\]", low)[-1]
@@ -16583,15 +16584,32 @@ def _cmd_statement_targets(
     yield from _cmd_verb_targets(low, args, recursive_only)
 
 
+def _cmd_program_word(word: str) -> str:
+    """A cmd statement's program word as cmd runs it: the ``@`` that turns
+    the statement's echo off and a leading ``=`` both skipped. cmd skips a
+    ``=`` before a statement's program word as it skips ``,`` and ``;``
+    (driven on cmd 10.0.26200 after a separator, at the line's start, after
+    an ``if`` condition and after ``call``: win-2's e2c959, win's 556496),
+    but ``=`` cannot join `_cmd_statements`' delimiters, where it would split
+    an ``if`` condition's ``1==1``; so the word is read here, by every reader
+    that takes a statement's program word: `_cmd_statement_head`'s walk,
+    the delete reader (`_cmd_statement_targets`), the secret legs' rendering
+    (`_cmd_program_as_ps`) and the harness-variable check
+    (`write_guard._cmd_program_sets_then_launches`). The drives ran ``type``
+    alone; the same skip for every verb is inferred from them."""
+    return word.lstrip("@=")
+
+
 def _cmd_statement_head(words: list[str]) -> int:
     """The index of a cmd statement's verb in its ``words``: ``if``
-    conditions and a ``do``, ``else`` or ``call`` before it stepped over
-    (``len(words)`` where none is left). The one prefix walk of both cmd
-    readers, the delete reader's and the harness-variable check's
-    (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1)."""
+    conditions and a ``do``, ``else`` or ``call`` before it stepped over,
+    each word read as cmd runs it (`_cmd_program_word`), so a ``=`` alone
+    is stepped over too (``len(words)`` where none is left). The one prefix
+    walk of both cmd readers, the delete reader's and the harness-variable
+    check's (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1)."""
     k = 0
     while k < len(words):
-        low = words[k].lower().lstrip("@")
+        low = _cmd_program_word(words[k]).lower()
         if low in ("do", "else", "call", ""):
             k += 1
             continue
@@ -16657,7 +16675,7 @@ def _cmd_program_as_ps(program: str, depth: int = 0) -> str:
         k = _cmd_statement_head(words)
         if k >= len(words):
             continue
-        head = words[k].lstrip("@")
+        head = _cmd_program_word(words[k])
         if re.split(r"[/\\]", head.lower())[-1] in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
             nested = _cmd_nested_program(words[k + 1:])
             if nested is not None:

@@ -407,6 +407,17 @@ _CMD_SET_STATEMENTS = [
     ("ps", "cmd /c set {var}=1 `& {run}"),
     # cmd in cmd in cmd: the nesting cap's row, which allows with the cap at 1
     ("bash", "cmd //c 'cmd /c \"cmd /c set {var}=1 ^& {run}\"'"),
+    # cmd skips a leading `=` before a statement's program word, at the
+    # line's start, after a separator and after `call` (drives e2c959 and
+    # 556496; `_bash_patterns._cmd_program_word`): on the set and on the
+    # run, and the run behind the `@` that turns its echo off, which the
+    # launch read as part of the word too
+    ("bash", "cmd //c '=set {var}=1 & {run}'"),
+    ("ps", "cmd /c \"echo a &=set {var}=1 & {run}\""),
+    ("bash", "cmd //c 'set {var}=1 &={run}'"),
+    ("ps", "cmd /c \"set {var}=1 & ={run}\""),
+    ("ps", "cmd /c \"call =set {var}=1 & ={run}\""),
+    ("ps", "cmd /c \"set {var}=1 & @{run}\""),
 ]
 _CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
                    for shell, t in _CMD_SET_STATEMENTS]

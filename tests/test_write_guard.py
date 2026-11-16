@@ -13559,6 +13559,109 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         assert _bash_patterns_module()._cmd_program_as_ps(program) == want
 
 
+class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
+    """cmd skips a leading ``=`` before a statement's program word, as it
+    skips the ``,`` and ``;`` the statement splitter already drops: after a
+    separator, at the line's start, after an ``if`` condition and after
+    ``call`` (win-2's drive e2c959 and win's 556496, cmd 10.0.26200, each
+    printing the probe file's marker). The cmd reader read the ``=`` as part
+    of the program word, so a read or a delete cmd runs behind one met no
+    verb on either tool, while its ``,`` twin was refused. Ruled in the
+    coverage contract (the dispatcher's 4a42dd and 3cf94f): the ``=`` sits
+    inside the text cmd runs, the slot note 5c1e1c put there. ``=`` cannot
+    join the splitter's delimiters, since it would split an ``if``
+    condition's ``1==1``, so the reader strips it from the program word
+    (`_bash_patterns._cmd_program_word`), at every reader of that word.
+    The drives ran ``type`` alone; that the skip is the same for every verb
+    is an inference from them. Each command is a fixture handed to the
+    guard as text, never run."""
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c echo a '&=' type .env"),
+        ("PowerShell", "cmd /c echo a '&=type' .env"),
+        ("PowerShell", "cmd /c if 1==1 =type .env"),
+        ("PowerShell", "cmd /c call =type .env"),
+        ("Bash", "cmd //c 'echo a &= type .env'"),
+        ("Bash", "cmd //c '=type .env'"),
+        ("Bash", "cmd //c 'if 1==1 =type .env'"),
+        ("Bash", "cmd //c 'call =type .env'"),
+    ])
+    def test_a_read_cmd_runs_behind_a_leading_equals_is_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # the separator twins, which the splitter drops as cmd's delimiters
+        ("PowerShell", "cmd /c echo a '&,' type .env"),
+        ("PowerShell", "cmd /c echo a '&,type' .env"),
+        ("PowerShell", "cmd /c echo a '&;' type .env"),
+        ("PowerShell", "cmd /c echo a '&;type' .env"),
+        ("PowerShell", "cmd /c if 1==1 ,type .env"),
+        ("PowerShell", "cmd /c call ,type .env"),
+        ("Bash", "cmd //c 'echo a &, type .env'"),
+        ("Bash", "cmd //c ',type .env'"),
+        ("Bash", "cmd //c ';type .env'"),
+        ("Bash", "cmd //c 'if 1==1 ,type .env'"),
+        ("Bash", "cmd //c 'call ,type .env'"),
+        # the do and else positions, refused before this lane
+        ("PowerShell", "cmd /c for %i in (1) do =type .env"),
+        ("PowerShell", "cmd /c if 1==2 (echo a) else =type .env"),
+        ("Bash", "cmd //c 'for %i in (1) do =type .env'"),
+        ("Bash", "cmd //c 'if 1==2 (echo a) else =type .env'"),
+    ])
+    def test_every_refusal_the_reader_made_stands(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c echo a '&=' type README.md"),
+        ("PowerShell", "cmd /c if 1==1 =type .env.example"),
+        ("PowerShell", "cmd /c set a=b"),
+        ("Bash", "cmd //c '=type .env.example'"),
+        ("Bash", "cmd //c 'echo =type .env'"),
+    ])
+    def test_a_template_an_assignment_or_a_mention_stays_allowed(self, tool, command, tmp_path):
+        """A dotenv template is no secret, a ``=`` inside a word is not at
+        its start, and a word after the program word is its argument."""
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c =rd /s /q ."),
+        ("PowerShell", "cmd /c call =rd /s /q ."),
+        ("Bash", "cmd //c '=rd /s /q .'"),
+        ("Bash", "cmd //c 'echo a &= rd /s /q .'"),
+    ])
+    def test_a_recursive_delete_cmd_runs_behind_a_leading_equals_walls(self, tool, command, tmp_path):
+        assert _delete_verdict(run_guard_from(tool, command, tmp_path, None)) == "wall", command
+
+    @pytest.mark.parametrize("program, want", [
+        ("=type .env", "type .env"),
+        ("echo a &= type .env", "echo a\ntype .env"),
+        ("echo a &=type .env", "echo a\ntype .env"),
+        ("if 1==1 =type .env", "type .env"),
+        ("if 1 == 1 =type .env", "type .env"),
+        ("call =type .env", "type .env"),
+        ("=call type .env", "type .env"),
+        ("@=type .env", "type .env"),
+        ("echo =type .env", "echo '=type' .env"),
+    ], ids=["line-start", "after-separator", "after-separator-glued", "after-if-condition",
+            "after-if-comparison", "after-call", "before-call", "after-echo-off",
+            "argument-kept"])
+    def test_the_program_word_is_read_past_its_leading_equals(self, program, want):
+        """`_cmd_program_as_ps`, the secret legs' reading of cmd's program:
+        each statement from its program word on, the ``=`` before it
+        skipped, and an argument's ``=`` kept."""
+        assert _bash_patterns_module()._cmd_program_as_ps(program) == want
+
+    @pytest.mark.parametrize("program", ["=rd /s /q build", "call =rd /s /q build",
+                                         "if exist build =rd /s /q build"],
+                             ids=["line-start", "after-call", "after-if-condition"])
+    def test_the_delete_reader_reads_past_a_leading_equals(self, program):
+        """`iter_cmd_remove_targets`, the delete reader on the Bash tool."""
+        command = "cmd //c " + program
+        assert list(_bash_patterns_module().iter_cmd_remove_targets(command)) == [["build"]]
+
+
 #: DEF-2082's forms, each beside its control one step inside the contract:
 #: cmd skips a word before its `/c` that is not a switch, and a word a
 #: switch is glued to (Git Bash drives, echo only, on the row), but the
