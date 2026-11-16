@@ -3456,7 +3456,8 @@ class TestCatastrophicEnumeratorCarrier:
         of a git span: the listing (the code review drove it to the root,
         which displaced the current location and dropped the wall to the
         nudge) and the version-control clean reader, which had the same hole
-        -- one class, one rule, `_operands`'."""
+        -- one class, one rule, `_operands`' (the clean reader also cuts a
+        word glued to its redirect, which `_operands` keeps whole)."""
         bp = self._bp()
         assert bp._git_listing_roots("git ls-files", " 2>/dev/null ")[0] == ["."]
         assert bp._git_listing_roots("git ls-files", " 2> /dev/null -z ")[0] == ["."]
@@ -14091,7 +14092,8 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
 
     # The one reading, per tool: PowerShell's `*` stream opens a redirect,
     # and on Bash `*>x` stays the word it was (a glob, then a redirect, which
-    # the operand readers there do not cut apart).
+    # `_operands` does not cut apart; `git clean`'s reader cuts it on its
+    # own, DEF-2088).
     @pytest.mark.parametrize("token, bash, powershell", [
         ("2>", 2, 2), ("2>x", 1, 1), ("2>&1", 1, 1), (">", 2, 2), (">>x", 1, 1),
         ("*>", 0, 2), ("*>>", 0, 2), ("*>x", 0, 1), ("*>&1", 0, 1),
@@ -14162,6 +14164,86 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
                               cwd=str(work), capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
         assert {p.name for p in work.iterdir()} == {".git", "notes.txt"}, (proc.stdout, proc.stderr)
+
+
+class TestAWordGluedToARedirectIsCleanedOnBash:
+    """DEF-2088 (§C0): on the Bash tool, `git clean`'s operand reader
+    (`_bash_patterns._git_clean_operands`) read a redirect only where a token
+    opens with one, so a word glued to a redirect stayed whole: `git clean
+    -fdx *>/dev/null` read `*>/dev/null` as one pathspec naming no zone, and
+    the clean of every entry in the checkout met the CP-GITCLEAN bump, which a
+    re-issue gets past, where `git clean -fdx *` meets the zone wall. Bash ends
+    a word at an unquoted `<` or `>`, so the glob `*` is an operand and
+    `>/dev/null` the redirect (the oracle row below); the same split hands the
+    reader `cc` from `cc>/dev/null`, the harness's own state directory, which
+    the glued token hid the same way. The reader now splits a bare token at
+    its first redirect operator on Bash and reads the word on as a flag or an
+    operand. `_operands`, on every call's path, keeps the glued token whole
+    (no per-call cost, ruling 40ec7f), and PowerShell's `*` stream stays
+    DEF-5108's reading. The named user: an operator whose agent cleans the
+    tree on the Bash tool with its output silenced, the gitignored state
+    under `cc/` among what the clean takes."""
+
+    @pytest.mark.parametrize("span, reading", [
+        pytest.param(" -fdx *>/dev/null ", ["*"], id="star-glued"),
+        pytest.param(" -fdx *> /dev/null ", ["*"], id="star-spaced"),
+        pytest.param(" -fdx *>>log ", ["*"], id="star-append"),
+        pytest.param(" -fdx cc>/dev/null ", ["cc"], id="zone-glued"),
+        pytest.param(" -fdx cc<in ", ["cc"], id="zone-glued-input"),
+        pytest.param(" -fd build>/dev/null ", ["build"], id="dir-glued"),
+        pytest.param(" -fdx cc&>/dev/null ", ["cc"], id="zone-glued-both-streams"),
+        pytest.param(" -fd a\\>b ", ["a\\>b"], id="escaped"),               # a control: an escaped `>` is the word's
+        # glued to the flag cluster, the target's letters read as flags: the
+        # `n` of `null` as the dry run, so the whole-tree clean read as none
+        pytest.param(" -fdx>/dev/null ", ["."], id="flags-glued"),
+        pytest.param(" -fdx 2>/dev/null ", ["."], id="stderr"),             # a control
+        pytest.param(" -fdx '*>x' ", ["*>x"], id="quoted"),                 # a control: a quoted `>` is the word's
+    ])
+    def test_the_bash_reader_splits_a_word_from_its_redirect(self, span, reading):
+        assert _bash_patterns_module()._git_clean_operands(span) == reading
+
+    def test_the_powershell_reading_is_left_as_it_was(self):
+        bp = _bash_patterns_module()
+        assert bp._git_clean_operands(" -fdx *>$null ", powershell=True) == ["."]
+        assert bp._git_clean_operands(" -fdx *> $null ", powershell=True) == ["."]
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("git clean -fdx *>/dev/null", id="star-glued"),
+        pytest.param("git clean -fdx *> /dev/null", id="star-spaced"),
+        pytest.param("git clean -fdx cc>/dev/null", id="zone-glued"),
+        pytest.param("git clean -fdx>/dev/null", id="flags-glued"),
+        pytest.param("git clean -fdx *", id="star"),                        # a control
+        pytest.param("git clean -fdx 2>/dev/null", id="stderr"),            # a control
+    ])
+    def test_a_silenced_clean_meets_the_zone_wall(self, cmd, tmp_path):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path),
+                           contains_reason="delete of protected harness zone blocked")
+
+    def test_bash_cleans_the_word_a_redirect_is_glued_to(self, tmp_path):
+        """The oracle for the split: Bash hands `git clean` the word before a
+        glued redirect, so `cc>/dev/null` cleans the untracked `cc/` and
+        leaves the other untracked file; read as one pathspec it would match
+        nothing and leave both."""
+        import shutil
+        if os.name == "nt":
+            from espalier._venv import git_bash_path
+            bash = git_bash_path()
+        else:
+            bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("no bash on this host to run the row")
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "notes.txt").write_bytes(b"x\n")
+        _git_seed_repo(work, "notes.txt")
+        (work / "loose.txt").write_bytes(b"x\n")
+        (work / "cc").mkdir()
+        (work / "cc" / "state.json").write_bytes(b"{}\n")
+        proc = subprocess.run([bash, "-c", "git clean -fdx cc>/dev/null"],
+                              cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=_git_free_base())
+        assert proc.returncode == 0, (proc.stdout, proc.stderr)
+        assert {p.name for p in work.iterdir()} == {".git", "notes.txt", "loose.txt"}, (proc.stdout, proc.stderr)
 
 
 class TestSecretPathAccess:

@@ -5,7 +5,8 @@ advisories and a read-only verb read the chain.
 into a lineage file of its own beside the ledger, ``task-packs/lineage.d/<id>.json``
 (in either ledger mode), which no strike or repin touches, so a chain survives
 the strike of a row in its middle. The chain advisory reads it at filing
-(recording-only by default: one line); the standalone-cluster advisory counts
+(the chain and the questions when it fires; one line while its print is
+off); the standalone-cluster advisory counts
 the live standalone rows on the new row's site family; ``lineage <id>`` prints
 a row's chain, its family's count and the five questions, and writes nothing.
 It pins that a strike never cuts a chain, because a parent kept anywhere a
@@ -252,15 +253,28 @@ class TestAFilingCutBeforeItsProbeFinishesItsLineage:
 
 
 class TestTheChainAdvisory:
-    """At filing with ``--sibling-of``: recording-only by default, one line
-    with the count; with the print on, the chain, the parents' children, the
+    """At filing with ``--sibling-of``: the chain, the parents' children, the
     root's site family and the five questions when the new row is a sibling
-    of a sibling or a parent's third child. stderr, exit 0, never a refusal."""
+    of a sibling or a parent's third child, nothing when it is neither; with
+    the print turned off, one recording-only line with the count. stderr,
+    exit 0, never a refusal."""
 
-    def test_the_default_prints_the_one_recording_only_line(self, lr, tmp_path, capsys):
-        """Dies to: the print's default flipped on, which shows a filer what
-        would fire while the data the threshold review reads is gathered."""
+    def test_the_print_is_on_by_default(self, lr, tmp_path, capsys):
+        """Dies to: the print's default turned back off, which hides the chain
+        from the filer the threshold review ruled should see it."""
         t = _tree(tmp_path, opted_in=True)
+        assert _file(lr, t, "DEF-5", "DEF-1") == 0
+        assert "chain advisory" not in capsys.readouterr().err, "a first sibling fired"
+        assert _file(lr, t, "DEF-6", "DEF-5") == 0
+        err = capsys.readouterr().err
+        assert "chain advisory: DEF-6 extends a chain (depth 2, a sibling of a sibling)" in err, err
+        assert "recording-only" not in err and lr.FIVE_QUESTIONS[0] in err
+
+    def test_with_the_print_off_one_recording_only_line(self, lr, tmp_path, monkeypatch, capsys):
+        """Dies to: the off path printing what would fire, which would shape
+        the filings a later review reads."""
+        t = _tree(tmp_path, opted_in=True)
+        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", False)
         assert _file(lr, t, "DEF-5", "DEF-1") == 0
         capsys.readouterr()
         assert _file(lr, t, "DEF-6", "DEF-5") == 0       # a grandchild: it would fire
@@ -272,6 +286,7 @@ class TestTheChainAdvisory:
 
     def test_at_the_recording_figure_the_line_says_the_review_is_due(self, lr, tmp_path, monkeypatch, capsys):
         t = _tree(tmp_path, opted_in=True)
+        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", False)
         monkeypatch.setattr(lr, "CHAIN_RECORDING_UNTIL", 2)
         assert _file(lr, t, "DEF-5", "DEF-1") == 0
         assert "(1 now)" in capsys.readouterr().err
@@ -282,11 +297,10 @@ class TestTheChainAdvisory:
                 "print on") in err, err
         assert "child to root" not in err
 
-    def test_with_the_print_on_a_grandchild_fires_in_a_dry_run(self, lr, tmp_path, monkeypatch, capsys):
+    def test_a_grandchild_fires_in_a_dry_run(self, lr, tmp_path, capsys):
         """Dies to: depth read from the immediate parent only, which calls a
         sibling of a sibling depth 1."""
         t = _tree(tmp_path, opted_in=True)
-        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", True)
         assert _file(lr, t, "DEF-5", "DEF-1") == 0
         assert "chain advisory" not in capsys.readouterr().err, "a first sibling fired"
         before = _snapshot(tmp_path)
@@ -298,10 +312,9 @@ class TestTheChainAdvisory:
         assert all(q in err for q in lr.FIVE_QUESTIONS)
         assert _snapshot(tmp_path) == before
 
-    def test_with_the_print_on_a_third_child_fires_on_fan_out(self, lr, tmp_path, monkeypatch, capsys):
+    def test_a_third_child_fires_on_fan_out(self, lr, tmp_path, capsys):
         """Dies to: fan-out counted without the new row."""
         t = _tree(tmp_path, opted_in=True)
-        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", True)
         assert _file(lr, t, "DEF-5", "DEF-1") == 0 and _file(lr, t, "DEF-6", "DEF-1") == 0
         assert "chain advisory" not in capsys.readouterr().err
         assert _file(lr, t, "DEF-7", "DEF-1") == 0
@@ -309,14 +322,21 @@ class TestTheChainAdvisory:
         assert "chain advisory: DEF-7 extends a chain (DEF-1 has 3 children)" in err, err
         assert "DEF-1's children: DEF-5, DEF-6, DEF-7" in err
 
-    def test_an_unreadable_lineage_file_is_a_note_never_a_refusal(self, lr, tmp_path, capsys):
+    def test_an_unreadable_lineage_file_is_a_note_never_a_refusal(self, lr, tmp_path, monkeypatch, capsys):
+        """The recording line's count shows the unreadable file left out."""
         t = _tree(tmp_path, opted_in=True)
+        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", False)
         _lineage_file(t, "DEF-9").parent.mkdir()
         _lineage_file(t, "DEF-9").write_text("{not json", encoding="utf-8")
         assert _file(lr, t, "DEF-5", "DEF-1") == 0
         err = capsys.readouterr().err
         assert "note -- a lineage file left out: task-packs/lineage.d/DEF-9.json: not JSON" in err, err
         assert "(1 now)" in err
+        monkeypatch.setattr(lr, "CHAIN_ADVISORY_PRINTS", True)
+        assert _file(lr, t, "DEF-6", "DEF-5") == 0       # the print on: a grandchild fires
+        err = capsys.readouterr().err
+        assert "a lineage file left out: task-packs/lineage.d/DEF-9.json" in err, err
+        assert "chain advisory: DEF-6 extends a chain" in err, err
 
 
 class TestTheClusterAdvisory:

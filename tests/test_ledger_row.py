@@ -3265,7 +3265,11 @@ class TestTheShippedVerbRunsTheRealRules:
         body.write_text(f"**A drafted row.** `ESPALIER_MAINTENANCE_MODE` lifts {hooks[0]} and {hooks[1]}; the "
                         f"memory file is capped at {EXPECTED_MEMORY_MD_CAP} lines; see `tools/cc/no_such_tool.py`.",
                         encoding="utf-8")
-        probe = ("python3 -c \"import subprocess;subprocess.run(['python3','-c','0']);"
+        # The literal argv is what the literal-spawn rule reads; it runs only
+        # where it resolves, so a host with no python3 still drives the verb
+        # past the probe to the rules (DEF-2089).
+        probe = ("python3 -c \"import shutil,subprocess;"
+                 "shutil.which('python3') and subprocess.run(['python3','-c','0']);"
                  "print(open('README.md').read().count('Espalier')>0)\"")
         env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
         proc = subprocess.run(

@@ -1,0 +1,15 @@
+{
+ "id": "DEF-2092",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import os,subprocess,sys,tempfile;d=tempfile.mkdtemp(dir=os.environ.get('ESPALIER_AUDIT_DIR') or None);I='import runpy,sys,time,types;sys.path.insert(0,\\\"tools/cc\\\");import _json_safe as S;S.run_tree_to_deadline=lambda *a,deadline,**k:(time.sleep(max(0,deadline-time.monotonic())),sys.meta_path.insert(0,types.SimpleNamespace(find_spec=lambda *a,**k:time.sleep(1.0))))[-1];sys.argv=[\\\"tools/cc/hooks/write_guard.py\\\"];runpy.run_path(\\\"tools/cc/hooks/write_guard.py\\\",run_name=\\\"__main__\\\")';r=subprocess.run([sys.executable,'-c',I],input=b'{}',capture_output=True,env=dict(os.environ,ESPALIER_AUDIT_DIR=d),timeout=60);print('deny=%s record=%s'%(b'deny' in r.stdout,bool(os.listdir(d))))\"",
+ "open_value": "deny=True record=False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_json_safe.py",
+  "tools/cc/hooks/_start_refusal.py",
+  "tools/cc/hooks/_integrity.py"
+ ],
+ "row_sha": "bb357b386b4e",
+ "text_sha": "7a92d09392b1",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD c968bef54eb1)"
+}
