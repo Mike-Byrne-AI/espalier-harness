@@ -374,9 +374,11 @@ class _DeadlineRefusal:
         done.wait(max(0.0, by - time.monotonic()))
 
 
-def _the_runner_ran(exc: BaseException, runner: object) -> bool:
-    """Whether ``exc`` was raised inside ``runner`` (its code is on the
-    traceback), so a judging child may have started (DEF-2094). A raise that
+def _the_runner_ran(tb: Any, runner: object) -> bool:
+    """Whether the raise whose traceback is ``tb`` was raised inside ``runner``
+    (its code is on the traceback), so a judging child may have started
+    (DEF-2094); the traceback, never the exception, is handed in, since an
+    OSError's text reaches no reader raw (the portability contract). A raise that
     never entered it started none: a ``TypeError`` binding the call's
     arguments (no frame of the callee: driven on CPython 3.10, 3.11 and 3.13),
     which a runner whose parameters ``_the_keywords_it_takes`` misread would
@@ -385,7 +387,6 @@ def _the_runner_ran(exc: BaseException, runner: object) -> bool:
     code = getattr(runner, "__code__", None)
     if code is None:
         return True
-    tb = exc.__traceback__
     while tb is not None:
         if tb.tb_frame.f_code is code:
             return True
@@ -454,7 +455,7 @@ def _the_keywords_it_takes(runner: object, wanted: dict[str, object]) -> dict[st
     return {name: value for name, value in wanted.items() if name in names}
 
 
-def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _DeadlineRefusal) -> NoReturn:
+def _refuse_a_runner_fault(fault: tuple[str, Any], payload: bytes, refusal: _DeadlineRefusal) -> NoReturn:
     """The runner raised inside it (``_the_runner_ran``), so a judging child
     may have started (DEF-2094): refuse the call naming the file that raised
     and its line, as the crash guard names a fault in a judgment, and let
@@ -466,7 +467,9 @@ def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _Deadlin
     Edit and the Bash that could repair it included, from 02:50 to 03:29Z on
     2026-11-16 on seat win, and the way out was the operator's own terminal.
     The deny goes out before the record, as the deadline's does (DEF-3048)."""
-    error = type(exc).__name__
+    # ``fault`` is the raise's class name and its wedge reading, both taken in
+    # the handler, so the exception itself goes no further.
+    error, reading = fault
     passed: tuple[str, dict] | None = None
     named: tuple[dict, dict] | None = None
     try:
@@ -474,7 +477,6 @@ def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _Deadlin
             data: object = json.loads(payload.decode("utf-8", errors="replace"))
         except ValueError:  # fail-open: ok deliberate -- an unread call is no restore: the refusal offers the terminal alone
             data = None
-        reading = _start_refusal.wedge_reading(exc)
         passed = _start_refusal.wedge_restore("write_guard", reading, error, data)
         if passed is None:
             named = _start_refusal.crash_refusal(reading, error, isinstance(data, dict))
@@ -519,7 +521,7 @@ def _answer_from_a_judging_child() -> None:
     except Exception as exc:  # noqa: BLE001 -- a helper that cannot load keeps the judgment, never an allow
         _judge_in_this_process(payload, type(exc).__name__)
         return
-    fault: Exception | None = None
+    fault: tuple[str, Any] | None = None
     refusal = _DeadlineRefusal()
     heard: list[bytes] = []
     wanted: dict[str, object] = {"heard": heard, "ahead": (_HOOK_STARTED + _BUILD_THE_REFUSAL_AT_S, refusal.build)}
@@ -535,10 +537,15 @@ def _answer_from_a_judging_child() -> None:
         return
     # fail-open: ok deliberate -- a raise the runner never saw started no child, and is judged here as above; one inside it is refused below, never judged twice
     except Exception as exc:  # noqa: BLE001
-        if not _the_runner_ran(exc, run_tree_to_deadline):
+        if not _the_runner_ran(exc.__traceback__, run_tree_to_deadline):
             _judge_in_this_process(payload, type(exc).__name__)
             return
-        answer, fault = None, exc
+        try:
+            reading = _start_refusal.wedge_reading(exc)
+        # fail-open: ok text-fallback -- a kept, older _start_refusal: the unplaced refusal below
+        except Exception:  # noqa: BLE001
+            reading = None
+        answer, fault = None, (type(exc).__name__, reading)
     # A decision is written below (the child's, or the deadline's): from here a
     # raise is no start refusal, which would add a second document after it.
     _start_refusal.body_done()

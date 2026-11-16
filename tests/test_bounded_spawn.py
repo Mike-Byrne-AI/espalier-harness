@@ -435,11 +435,11 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
         import threading
 
         js = _load_json_safe()
-        ran: list[tuple[float, threading.Thread]] = []
+        ran: list[threading.Thread] = []
         done = threading.Event()
 
         def build() -> None:
-            ran.append((time.monotonic(), threading.current_thread()))
+            ran.append(threading.current_thread())
             done.set()
 
         at = time.monotonic() + 0.5
@@ -447,10 +447,11 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
                                          deadline=time.monotonic() + CAP_SECONDS, input=b"", ahead=(at, build))
         assert answer is None, answer
         assert done.wait(scaled(10)), "the callback never ran"
+        # The order, never a clock: this module asserts no wall-clock bound,
+        # and a callback started before ``ahead`` is the answered-in-time
+        # row's red (it starts none there).
         assert len(ran) == 1, ran
-        when, thread = ran[0]
-        assert when >= at, (when, at)
-        assert thread is not threading.main_thread()
+        assert ran[0] is not threading.main_thread()
 
 
 class TestTheTreeBoundedRunEndsTheWholeTree:
