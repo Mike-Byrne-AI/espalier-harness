@@ -1,14 +1,15 @@
 {
  "id": "DEF-2093",
  "subject": "tests/_hook_spawn.py",
- "cmd": "python3 -c \"import json,os,subprocess,sys,tempfile,threading;sys.path[:0]=['tests','tools/cc/hooks','tools/cc'];import write_guard as W,_denial_reasons as R,_hook_spawn as H;why=W._budget_reason(R,W.HARD_DEADLINE_S,W._PARENT_BOUND,False,W.HARD_DEADLINE_S,0.0);deny=json.dumps(dict(hookSpecificOutput=dict(hookEventName='PreToolUse',permissionDecision='deny',permissionDecisionReason=why)));seq=[deny,deny,''];H._attempt=lambda argv,**k:subprocess.CompletedProcess(argv,0,stdout=seq.pop(0),stderr='');env=dict(os.environ,CLAUDE_PROJECT_DIR=tempfile.mkdtemp());env.pop('PYTEST_CURRENT_TEST',None);box=[];threading.excepthook=lambda a:box.append(a.exc_type.__name__);t=threading.Thread(target=lambda:H.run_hook_through([sys.executable,'tools/cc/hooks/write_guard.py'],env=env,input='{}',bare_project=True));t.start();t.join();print('fails=%s'%(box==['Failed']))\"",
+ "cmd": "python3 -c \"import json,os,subprocess,sys,tempfile,threading;sys.path[:0]=['tests','tools/cc/hooks','tools/cc'];import write_guard as W,_denial_reasons as R,_hook_spawn as H;why=W._budget_reason(R,W.HARD_DEADLINE_S,W._PARENT_BOUND,False,W.HARD_DEADLINE_S,0.0);deny=json.dumps(dict(hookSpecificOutput=dict(hookEventName='PreToolUse',permissionDecision='deny',permissionDecisionReason=why)));seq=[deny,deny,''];H._attempt=lambda argv,**k:subprocess.CompletedProcess(argv,0,stdout=seq.pop(0),stderr='');env=dict(os.environ,CLAUDE_PROJECT_DIR=tempfile.mkdtemp());env.pop('PYTEST_CURRENT_TEST',None);box=[];threading.excepthook=lambda a:box.append(a.exc_type.__name__);t=threading.Thread(target=lambda:H.run_hook_through([sys.executable,'tools/cc/hooks/write_guard.py'],env=env,input='{}',bare_project=True));t.start();t.join();print(('fails=%s'%(box==['Failed'])) if len(seq)<3 else 'unread')\"",
  "open_value": "fails=True",
  "why_not": null,
  "inputs": [
   "tools/cc/hooks/write_guard.py",
   "tools/cc/hooks/_denial_reasons.py"
  ],
- "row_sha": "9864998b09cf",
- "text_sha": "d86188cc8657",
- "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD fd17cf7a4124)"
+ "row_sha": "3a703f856327",
+ "text_sha": "a1f945e96e29",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD fd17cf7a4124)",
+ "verified_2026_11_16": "STILL_OPEN (re-pinned value unchanged on 2026-11-16: the probe prints its reading only where its stand-in was called, and unread otherwise, so a renamed _attempt reads unread rather than a strike (the failure-mode review); still fails=True at the head) [changed: probe, text]"
 }
