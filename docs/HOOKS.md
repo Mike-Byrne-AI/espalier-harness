@@ -1964,7 +1964,9 @@ outer command, judged from the payload's directory and not the `cd`'s
 nudges, and so is each kind of program above the outer scan does not read in
 place, one row per kind), are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
-`cmd /c` is a third grammar the hook has no extractor for
+`cmd /c`'s program is read with cmd's own grammar for a delete, a secret
+read and a harness variable it sets, while a zone write its program
+redirects to is refused by the outer scan's reading, not by that grammar
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).
 
 Two more declared limits sit on this reading, each pinned as the exact verdict
@@ -2169,7 +2171,9 @@ body at all.
 The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
-PowerShell) is read with that shell's roster. A program a carrier runs out
+PowerShell) is read with that shell's roster, and a program handed to cmd
+from either tool (`cmd //c type .env` on Bash) is read as cmd receives it,
+with the PowerShell roster, whose `type` and `more` are cmd's reads. A program a carrier runs out
 of a string is read as a program too: Bash `eval` (behind `builtin` and
 `command` too, each quoted or followed by `--`), `watch`, `script -c` and
 `su -c` (su's `--session-command` too, either long switch under any prefix

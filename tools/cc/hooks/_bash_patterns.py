@@ -11453,7 +11453,10 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     under a target-directory flag -- `git mv`, `rename`, a `find -exec mv`,
     the interpreter rename literals), `archive` (a tar create's, append's or
     update's inputs, `zip`'s, `dd`'s input), `alias` (the target of `ln` and
-    `ln -s`) and `read` (an interpreter literal read). Nested programs -- a
+    `ln -s`) and `read` (an interpreter literal read); and `cmd-program`,
+    whose second item is no path but a program cmd runs, rendered for the
+    PowerShell roster (`_cmd_program_as_ps`), which the secret leg reads and
+    every path consumer passes over. Nested programs -- a
     POSIX shell's `-c` word, a PowerShell program, what a reader head hands
     to a shell -- are read by the grammar that runs them, one level down, to
     the same bound as the write extractor. Same prologue as
@@ -11481,6 +11484,16 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         for _at, targets in iter_cmd_recursive_removes(
                 command, scan, bash=True, recursive_only=False):
             out.extend(("delete", t) for t in targets)
+        # The program itself, for the secret leg (DEF-2081's sibling on this
+        # tool, the dispatcher's 9c8de3): cmd's own reading, a cmd it starts
+        # read as one of its statements, rendered for the PowerShell roster
+        # the PowerShell leg's cmd branch reads it with. Here, behind the
+        # opener search this memoised reading already makes, a call holding
+        # no cmd opener pays nothing for it.
+        for _at, program in iter_cmd_programs(command, scan, bash=True, to_statement_end=True):
+            text = _cmd_program_as_ps(program)
+            if text:
+                out.append(("cmd-program", text))
     for m in _CP_MV_RE.finditer(scan):
         if m.group("verb").lower() != "mv":
             continue

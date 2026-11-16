@@ -11,7 +11,9 @@
   `cmd /c type .env` was refused. The check now also reads the line cmd
   receives, through the same reading the recursive-delete wall uses, and
   refuses a read either reading finds; every form it refused before is still
-  refused. Calls that start no cmd pay nothing for it.
+  refused. On the Bash tool the same check read no program handed to cmd at
+  all (`cmd //c type .env`); it now reads it the same way. Calls that start
+  no cmd pay nothing for it on either tool.
 
 ### Changed
 

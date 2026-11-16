@@ -13484,6 +13484,26 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         holding a blank reaches cmd quoted, one argument of `echo`."""
         assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
 
+    @pytest.mark.parametrize("command", [
+        "cmd //c type .env",
+        "cmd.exe //c more .env",
+        "cmd //c echo a \\& type .env",
+        'cmd //c "more < .env"',
+        "bash -c 'cmd //c type .env'",
+    ])
+    def test_the_bash_leg_reads_cmds_program_too(self, command, tmp_path):
+        """The sibling site on the Bash tool (the dispatcher's 9c8de3): its
+        secret leg read no program handed to cmd at all. The memoised
+        removed-operand reading, behind the cmd opener search it already
+        makes, hands the leg cmd's own reading, rendered for the PowerShell
+        roster the PowerShell leg's cmd branch reads it with."""
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", ["cmd //c type .env.example", "cmd //c echo 'type .env'"])
+    def test_the_bash_leg_allows_a_template_or_a_mention_through_cmd(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
     @pytest.mark.parametrize("command, want", [
         ("cmd /c type .env", ["type .env"]),
         ("cmd /c --% type .env", ["--% type .env", "type .env"]),
