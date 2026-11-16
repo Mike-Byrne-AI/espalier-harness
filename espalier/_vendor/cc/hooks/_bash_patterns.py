@@ -11455,8 +11455,8 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     update's inputs, `zip`'s, `dd`'s input), `alias` (the target of `ln` and
     `ln -s`) and `read` (an interpreter literal read); and `cmd-program`,
     whose second item is no path but a program cmd runs, rendered for the
-    PowerShell roster (`_cmd_program_as_ps`), which the secret leg reads and
-    every path consumer passes over. Nested programs -- a
+    PowerShell roster (`_cmd_program_as_ps`), which the secret legs read and
+    every path consumer in the hooks passes over. Nested programs -- a
     POSIX shell's `-c` word, a PowerShell program, what a reader head hands
     to a shell -- are read by the grammar that runs them, one level down, to
     the same bound as the write extractor. Same prologue as
@@ -16646,8 +16646,9 @@ def _cmd_program_as_ps(program: str, depth: int = 0) -> str:
     is single-quoted, so a separator, a group or a parameter lead cmd hands
     on as text stays text. A cmd a statement starts is read through cmd's
     grammar too (`_cmd_nested_program`, to `_CMD_NEST_MAX` levels, its
-    switch glued to a quoted program included), never handed back to
-    PowerShell's. An input redirection's file is a read whatever the verb
+    switch glued to a quoted program included) rather than handed back
+    to PowerShell's, which reads one past that depth or behind a glued
+    run of switches (`cmd /s/c`). An input redirection's file is a read whatever the verb
     (`more < .env`), as the Bash leg reads one: a `type` line of its own.
     Linear: one pass a level."""
     lines: list[str] = []

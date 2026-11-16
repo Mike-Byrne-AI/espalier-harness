@@ -2802,6 +2802,11 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         for effect, path in _bash_patterns.iter_ps_removed_or_relocated_operands(command):
             if effect in _SECRET_EFFECTS:
                 out.append(path)
+            elif effect == "cmd-program":
+                # a program cmd runs inside a Bash program this command
+                # hands a POSIX shell (`bash -c 'cmd //c type .env'`), as the
+                # Bash leg reads it (the second code review)
+                out.extend(_ps_secret_read_targets(path, _depth + 1))
     return out
 
 

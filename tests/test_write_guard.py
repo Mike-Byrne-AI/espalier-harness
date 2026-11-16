@@ -13500,6 +13500,12 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
 
+    def test_the_powershell_leg_reads_cmd_inside_a_bash_program(self, tmp_path):
+        """The second code review: the PowerShell leg's effect read met the
+        Bash program's `cmd-program` effect and dropped it."""
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": "bash -c 'cmd //c type .env'"},
+                                          tmp_path), contains_reason="Secret-path access blocked")
+
     @pytest.mark.parametrize("command", ["cmd //c type .env.example", "cmd //c echo 'type .env'"])
     def test_the_bash_leg_allows_a_template_or_a_mention_through_cmd(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
@@ -13518,7 +13524,7 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         raw, scan = bp.powershell_scan_pair(command)
         assert list(bp._ps_carrier_program_bodies(raw, scan)) == want
 
-    @pytest.mark.parametrize("unit", ["cmd /c 'x' = ", "cmd /c 'x'; return ", "cmd /c 'x' iex "],
+    @pytest.mark.parametrize("unit", ["cmd /c 'x' = ", "cmd /c 'x' return ", "cmd /c 'x' iex "],
                              ids=["assignment", "return", "carrier-word"])
     def test_a_chain_of_cmds_in_one_statement_is_read_once(self, unit):
         """An opener inside text an earlier opener handed cmd is read there,
