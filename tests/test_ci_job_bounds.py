@@ -601,7 +601,10 @@ class TestThePostMergeProofRunsEveryTip:
         """DEF-2015: a concurrency group cancels a post-merge run -- the running
         one under `cancel-in-progress`, a pending one without it (GitHub keeps
         one pending run per group) -- and main went unproven through whole
-        stretches of merges. Each push's run goes to the end, beside the next."""
+        stretches of merges. Each push's run goes to the end, beside the next.
+        The board leans on this too: `tools/cc/board.py::read_post_merge` names
+        every cancelled post-merge run as a cut or a hand cancel (DEF-4106), and
+        under a group each superseded run would be named on the base line."""
         workflow = _workflows()["post-merge.yml"]
         grouped = ["workflow"] * ("concurrency" in workflow) + [
             job_id for job_id, job in (workflow.get("jobs") or {}).items() if "concurrency" in job
