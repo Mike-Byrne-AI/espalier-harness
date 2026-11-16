@@ -2048,9 +2048,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "`endswith('-prefix')`) killed with 6 red, allow-arm rows among them. On its own this "
         "row is weak; it is kept because it names the intent at the definition site.",
     ),
-    # 8 row(s), shapes: for-assert, parametrize
+    # 10 row(s), shapes: comprehension, for-assert, parametrize
     "tests/test_write_guard_env_prefix_polarity.py": (
-        9, "c4ef72844d62959d8ed673b85bd9960052f30bc90940065f62e98cbf2b9bba0f",
+        10, "081a30e3932cc5b216c38f6c9c79947505a8095e39e9ca11204a99318f7ce5a7",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-13 (the floor-roster lane): eight rows run this file's hand-written Bash, "
         "PowerShell and cmd populations once per name in `write_guard._HARNESS_ENV_NAMES`, so a "
@@ -2059,7 +2059,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "literals in write_guard.py) and this file's :543 (the three names held by hand). "
         "2026-11-13, same lane: a ninth row compares the guard's literal alternation with the "
         "roster's names; a name the roster gains or drops without the literal reds it, and one "
-        "both drop reds this file's :543 as above.",
+        "both drop reds this file's :543 as above. 2026-11-16 (the cmd leading-= lane): a tenth "
+        "row runs the cmd reader's test-run relief pin "
+        "(`test_cmd_s_test_run_relief_reads_the_words_as_typed`) once per roster name, the same "
+        "remedy as the eight; its held row reds a name the check stops reading.",
     ),
     "tests/test_write_guard_pattern_message_coupling.py": (
         6, "def930a6139b4dfa0f7b9d283d6415c07158b9eb7ed525d13943325fd73b87d5",
