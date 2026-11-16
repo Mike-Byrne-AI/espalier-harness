@@ -418,7 +418,10 @@ replaced its probe's subject is struck directly, with the closing text saying
 what the probe read and why the tests are the evidence now -- no repin-then-
 strike dance. `--strikes` afterwards still reports any OTHER probe the lane
 moved (a maintainer row underneath the class flipped this way and was struck
-in-lane with its reasoning).
+in-lane with its reasoning). Superseded since 2026-10-25: the strike drives
+the probe at the base and the head and refuses one still open at the head
+(an undrivable one is a printed note); a row a ruling closes while its defect
+stands is struck with `strike --declined <ruling id>` since 2026-11-16.
 
 **A comment-level tier adjudication earns the slice plus the touched files, not
 a second tier (precedent `0863d10`, repeated 2026-09-12).** A docstring citing

@@ -31,6 +31,15 @@ Usage::
     python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --base origin/main \\
         --guard tests/test_hooks.py::TestX::test_y
 
+    # close a row a ruling declined while its defect stands (not work, a
+    # duplicate of a live row, a declared limit): the probe is driven at the
+    # head alone and refused if it no longer reads open (a fix); the struck
+    # row records the ruling and the reading ahead of the closing text, and
+    # the strike retires the probe. Every strike refuses where the base holds
+    # a probe for the row that this tree lost or emptied of its command, so a
+    # probe is never removed or disabled by hand first.
+    python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --declined <ruling message id>
+
     # file a row after an existing one in the same section, its id left out so
     # it is minted from this seat's block; the probe is run first and must
     # print --open-value, or nothing is written (and the number is given back).
@@ -1735,7 +1744,8 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
                     say(f"note -- {line}; the closing text says what the base showed")
             if at_head[0] == _CHK.STILL_OPEN:
                 refusals.append(f"the probe of {rid} reads its open value {probe['open_value']!r} at the head "
-                                "too (the defect is still there)")
+                                "too (the defect is still there); where the dispatcher or the operator ruled the "
+                                "row closed while its defect stands, strike it with strike --declined <ruling id>")
             elif at_head[0] != _CHK.STRIKE_CANDIDATE:
                 line = f"{rid}'s probe could not be driven at the head ({at_head[0]}: {at_head[1]})"
                 if explicit:
@@ -1778,6 +1788,195 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
                 else:
                     say(f"the guard {node} is red at {where} ({base_said}) and green at the head")
     return refusals
+
+
+#: One ruling id, as ``strike --declined`` writes it into the struck row: a
+#: mail message's id or its six-character suffix, an issue, a link. One token,
+#: since it lands inside the row's bold closing text in a table cell: a pipe
+#: would split the row, a space would read as prose, and a ``*``, a ``~`` or a
+#: backtick would end the bold or the strike mark early.
+_RULING_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/#@+-]{0,119}")
+#: The stamp's opening, which a plain strike's closing text may not carry.
+_DECLINE_STAMP = re.compile(r"declined on ruling\b", re.IGNORECASE)
+
+
+def _decline_refusal(ruling: str, *, guards: tuple[str, ...], base: str | None, no_base: bool) -> str | None:
+    """Why ``strike --declined <ruling>`` cannot run as asked, else None: a
+    ruling that is not one token, or a flag that speaks to a fix's base drive,
+    which a decline does not make. ``--base`` among them: beside a decline it
+    would only aim the check for a probe changed by hand at another commit."""
+    if not _RULING_ID.fullmatch(ruling):
+        return (f"--declined takes one ruling id, and {ruling!r} is not one: letters, digits and . _ : / # @ + -, "
+                "starting with a letter or a digit, at most 120 characters (a mail message's id or its "
+                "six-character suffix, an issue, a link)")
+    for flag, given in (("--base", base is not None), ("--no-base", no_base), ("--guard", bool(guards))):
+        if given:
+            return (f"{flag} speaks to a fix's base drive, and a decline fixes nothing: it drives the probe at "
+                    f"the head alone; drop {flag}")
+    return None
+
+
+def _cell_text(text: str) -> str:
+    """``text`` as prose inside the bold closing text of one table cell: on
+    one line, each bare pipe escaped the way the ledger escapes one (``_cells``
+    reads ``\\|``), and each ``*``, ``~`` and backtick escaped too, so none
+    ends the bold or the strike mark early."""
+    return re.sub(r"(?<!\\)([|*~`])", r"\\\1", " ".join(text.split()))
+
+
+def _probes_changed_by_hand(ids: list[str], *, root: Path, probes: Path, data: dict,
+                            base: str | None) -> list[str]:
+    """The refusal sentences for each id of the row whose probe the base holds
+    (its file under ``probes.d/``, or its roster entry) while this tree holds
+    no entry for it, or holds one with no command where the base's had one,
+    else ``[]``: a probe removed or disabled by hand before the strike. That
+    was how a ruled close went until DEF-5114 (three lanes removed the open
+    probe and struck, and each struck row read as an ordinary strike), and the
+    refusal is what stops it working. No verb empties a command (``repin``
+    refuses ``--why-not`` beside one and keeps the old one where no new one is
+    given), so a disabled probe has no legitimate maker. Only an id with no
+    entry or no command here asks git anything, so an ordinary strike of a
+    probed row reads nothing more.
+
+    The base is the drive's (``_base_commit``: the merge-base with
+    ``origin/<default branch>``, or ``--base`` on a fix's strike), read
+    whatever ``--no-base`` says: that flag skips a drive, and this is a read
+    of two paths. A base that cannot be named is a printed note (an adopter's
+    clone with no remote), an explicit ``--base`` that cannot be read a
+    refusal, and a git read that did not answer a refusal (DEF-5079). Not
+    caught: a probe filed and changed inside one lane, which the base never
+    held, and a strike written without the verb."""
+    asked: dict[str, str] = {}
+    for i in ids:
+        here = _probe_entry(i, probes=probes, data=data)
+        if here is None:
+            asked[i] = "lost"
+        elif not here.get("cmd"):
+            asked[i] = "disabled"
+    if not asked:
+        return []
+    frag = _FRAG.probe_fragment_dir(probes)
+    try:
+        top = root.resolve()
+        frag_rel = frag.resolve().relative_to(top).as_posix()
+        roster_rel = probes.resolve().relative_to(top).as_posix()
+    except ValueError:
+        print(f"ledger_row: note -- the probe files are outside {root}, so whether the base holds a probe this "
+              "tree lost or disabled was not read", file=sys.stderr)
+        return []
+    try:
+        sha, said = _base_commit(root, base)
+        if sha is None:
+            if base is not None:
+                return [f"the base could not be read ({said}), so whether it holds a probe this tree lost or "
+                        "disabled was not read"]
+            print(f"ledger_row: note -- {', '.join(asked)} has no probe entry or command here, and whether the "
+                  f"base holds a probe this tree lost or disabled was not read ({said})", file=sys.stderr)
+            return []
+        # `<rev>:./<path>` is relative to git's working directory, the root,
+        # so a root below the repository's top level reads the same paths.
+        roster: dict[str, dict] = {}
+        loaded = _json_or_none(_git_read(root, "show", f"{sha}:./{roster_rel}"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("probes"), list):
+            roster = {p.get("id"): p for p in loaded["probes"] if isinstance(p, dict)}
+        refusals: list[str] = []
+        then = ("then strike: a fix's strike drives it, and a ruled close is strike --declined <ruling id>, which "
+                "drives it, records the ruling and retires it")
+        for i, how in asked.items():
+            text = _git_read(root, "show", f"{sha}:./{frag_rel}/{i}.json")
+            if text is not None:
+                held = _json_or_none(text)
+                entry = held if isinstance(held, dict) else {}
+                where, restore = f"{frag_rel}/{i}.json", f"git checkout {sha[:12]} -- {frag_rel}/{i}.json"
+            elif i in roster:
+                entry, where = roster[i], f"{i} in {roster_rel}"
+                restore = f"copy {i}'s entry from git show {sha[:12]}:{roster_rel} back into the roster"
+            else:
+                continue
+            if how == "lost":
+                refusals.append(f"the base {sha[:12]} holds {where} and this tree holds no probe entry for {i}: a "
+                                "probe removed by hand before a strike reads as an ordinary strike. Restore it "
+                                f"({restore}), {then}")
+            elif entry.get("cmd"):
+                refusals.append(f"the base {sha[:12]} holds a probe command for {i} ({where}) and this tree's "
+                                "entry has none: a probe disabled by hand before a strike reads as an ordinary "
+                                f"strike, and no verb empties a command. Restore it ({restore}), {then}")
+    except _GitUnanswered as exc:
+        return [f"the base could not be read ({exc}), so whether it holds a probe this tree lost or disabled was "
+                "not read: run the strike again"]
+    return refusals
+
+
+def _json_or_none(text: str | None) -> object:
+    """``text`` parsed as JSON, None where there is none or it does not parse."""
+    if not text:
+        return None
+    try:
+        return json.loads(text)  # json-dict-safe: ok both callers isinstance-check the result before any deref
+    except ValueError:
+        return None
+
+
+def _drive_a_decline(ids: list[str], *, root: Path, probes: Path,
+                     data: dict) -> tuple[list[str], list[str], str]:
+    """``(readings, refusals, where)`` for ``strike --declined``: each id's
+    probe driven at the head alone, this checkout. The readings are the
+    stamp's clauses, one per id in the cell's order, and ``where`` is the
+    checkout they were read in (its HEAD, and whether tracked files differ
+    from it), empty where nothing was driven. A probe that no longer reads
+    open is a fix, whose strike drives both sides: the one refusal. A probe
+    the runner cannot drive (UNRESOLVED) is recorded with its verdict, as a
+    row with no probe command (declared unmeasurable) or no probe entry is
+    with that said: an ordinary strike takes all three with a note, and
+    refusing them here would send a ruled close to the strike that records no
+    ruling (the failure-mode review, 2026-11-16). The base is not driven: a
+    decline claims nothing about where the defect came from, and
+    ``_probes_changed_by_hand`` has already read it."""
+    clauses: dict[str, str] = {}
+    to_drive: dict[str, dict] = {}
+    for rid in ids:
+        entry = _probe_entry(rid, probes=probes, data=data)
+        if entry is None:
+            clauses[rid] = f"{rid} carries no probe entry"
+        elif not entry.get("cmd"):
+            clauses[rid] = f"{rid} has no probe command ({_cell_text(entry.get('why_not') or 'no local oracle')})"
+        else:
+            to_drive[rid] = {"cmd": entry["cmd"], "open_value": entry.get("open_value"),
+                             "subject": entry.get("subject"), "why_not": None, "inputs": entry.get("inputs")}
+    if not to_drive:
+        return [clauses[i] for i in ids], [], ""
+    try:
+        head = _git_read(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+        edited = bool(head) and bool(_git_read(root, "status", "--porcelain", "--untracked-files=no"))
+    except _GitUnanswered:
+        head, edited = None, False
+    where = ("in this checkout" + (f" at HEAD {head[:12]}" if head else "")
+             + (" with uncommitted edits" if edited else ""))
+    with _CHK.rooted(root):
+        at_heads = {rid: _CHK.run_probe(probe) for rid, probe in to_drive.items()}
+    refusals: list[str] = []
+    for rid, (verdict, detail) in at_heads.items():
+        if verdict == _CHK.STILL_OPEN:
+            clauses[rid] = (f"{rid}'s probe read STILL_OPEN (it printed its open value "
+                            f"{_cell_text(repr(to_drive[rid]['open_value']))})")
+        elif verdict == _CHK.STRIKE_CANDIDATE:
+            refusals.append(f"the probe of {rid} no longer reads its open value at the head ({detail}): the defect "
+                            "is gone, so the close is a fix, not a decline; strike it without --declined, which "
+                            "drives the base and the head")
+        else:
+            clauses[rid] = f"{rid}'s probe could not be driven ({verdict}: {_cell_text(detail)})"
+        print(f"ledger_row: {rid}'s probe read {verdict} {where}", file=sys.stderr)
+    return [clauses[i] for i in ids if i in clauses], refusals, where
+
+
+def _decline_stamp(ruling: str, readings: list[str], where: str, retired: int) -> str:
+    """The clause a decline writes ahead of the closing text: the ruling,
+    where the probes were read, each id's reading and what the strike
+    retired."""
+    what = {0: "this strike retired no probe", 1: "this strike retired its probe"}.get(
+        retired, f"this strike retired {retired} probes")
+    return (f"declined on ruling {ruling}" + (f", read {where}" if where else "")
+            + f": {'; '.join(readings)}; {what}.")
 
 
 def _drive_in_export(tree: Path, probes: dict[str, dict]) -> dict[str, tuple[str, str]]:
@@ -1864,7 +2063,7 @@ def _head_export_reading(root: Path, probe: dict, *, no_base: bool) -> tuple[str
 def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
            anchor: str | None, dry_run: bool, despite_deferrals: bool = False,
            root: Path | None = None, base: str | None = None, no_base: bool = False,
-           guards: tuple[str, ...] = ()) -> int:
+           guards: tuple[str, ...] = (), declined: str | None = None) -> int:
     gen = _load("generate_ledger_regions")
     text = ledger.read_text(encoding="utf-8")  # ledger-read: the file's own text, edited for a legacy row; a row file is found and edited by path
     pending = _Pending(ledger, probes, (rid,))
@@ -1892,35 +2091,17 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     # the one id it was given, dropping the co-id from the struck row and
     # leaving its index row live and its probe crying wolf).
     ids = _GEN.cell_ids(line)
+    if declined is not None and (why := _decline_refusal(declined, guards=guards, base=base, no_base=no_base)):
+        print(f"ledger_row: {why}. Nothing struck.", file=sys.stderr)
+        return 2
     closing = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
-    struck_cell = " ".join(f"~~`{i}`~~" for i in ids)
-    new_line = (f"| {struck_cell} | {anchor or cells[1]} | ✅ **CLOSED {day} — {closing}** "
-                f"PRIOR TEXT: {cells[2]} | " + " | ".join(cells[3:]) + " |")
-    # A row that lives in its own file is struck there, member and index lines
-    # together; the ledger file is not touched. A legacy row is struck in the
-    # file, as it always was.
-    lines = ([home[1].member, *home[1].index] if home else text.split("\n"))
-    lines[idx] = new_line
-    index_state: dict[str, str] = {}  # per id: struck / already struck / not found
-    for i in ids:
-        ix = _index_line(i, "\n".join(lines))
-        if ix is None:
-            index_state[i] = "not found"
-        elif "~~" in ix[1].split("|")[1]:
-            index_state[i] = "already struck"
-        else:
-            j, il = ix
-            if anchor:
-                section = [c.strip() for c in il.split("|")][2]
-                lines[j] = f"| ~~`{i}`~~ | {section} | {anchor} |"
-            else:
-                lines[j] = il.replace(f"`{i}`", f"~~`{i}`~~", 1)
-            index_state[i] = "struck"
-    if home:
-        pending.rows[home[0]] = _row_file_text(home[1].section, lines[0], lines[1:])
-        new_text = text
-    else:
-        new_text = "\n".join(lines)
+    if declined is None and _DECLINE_STAMP.match(closing):
+        # Only --declined writes the stamp: one typed by hand would read as a
+        # decline whose probe nothing drove (the failure-mode review).
+        print("ledger_row: the closing text opens with the decline's stamp ('declined on ruling'), which only "
+              "--declined writes after it drives the probe; give --declined <ruling id> or reword the opening. "
+              "Nothing struck.", file=sys.stderr)
+        return 2
     # The packs are read BEFORE anything is written and before the dry run
     # prints: a deferral into this row is a reason not to strike it, and the
     # dry run must show that refusal rather than a row it would never write.
@@ -1966,15 +2147,24 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
               "note naming the row and the lane), then run the strike again. Nothing written.",
               file=sys.stderr)
         return 2
+    tree_root = root or ledger.resolve().parent.parent
     # The drive, after the cheap refusals and before anything is queued or the
     # dry run prints: each id's probe at the base (the merge-base, checked out
     # pristine) and at the head, and each --guard on both trees. Until
     # 2026-10-25 the strike drove nothing and the closing sentence was the
     # author's alone; replayed on five struck rows, two still read open at the
     # lane head. The dry run drives too, so it shows the refusal rather than a
-    # row it would never write.
-    sides = _drive_both_sides(ids, root=root or ledger.resolve().parent.parent, probes=probes, data=data,
-                              base=base, no_base=no_base, guards=guards)
+    # row it would never write. A decline drives the head alone and requires
+    # the open reading there (DEF-5114). Ahead of both, a probe the base holds
+    # and this tree lost refuses: removed by hand, it is driven by neither.
+    sides = _probes_changed_by_hand(ids, root=tree_root, probes=probes, data=data, base=base)
+    readings: list[str] = []
+    where = ""
+    if not sides and declined is None:
+        sides = _drive_both_sides(ids, root=tree_root, probes=probes, data=data,
+                                  base=base, no_base=no_base, guards=guards)
+    elif not sides:
+        readings, sides, where = _drive_a_decline(ids, root=tree_root, probes=probes, data=data)
     if sides:
         for line in sides:
             print(f"ledger_row: {line}", file=sys.stderr)
@@ -1984,10 +2174,39 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     data["probes"] = [p for p in data["probes"] if not (isinstance(p, dict) and p.get("id") in ids)]
     retired_in_roster = before - len(data["probes"])
     retired = retired_in_roster + _retire_probe_files(probes, ids, pending)
+    if declined is not None:
+        closing = _decline_stamp(declined, readings, where, retired) + (f" {closing}" if closing else "")
+    struck_cell = " ".join(f"~~`{i}`~~" for i in ids)
+    new_line = (f"| {struck_cell} | {anchor or cells[1]} | ✅ **CLOSED {day} — {closing}** "
+                f"PRIOR TEXT: {cells[2]} | " + " | ".join(cells[3:]) + " |")
+    # A row that lives in its own file is struck there, member and index lines
+    # together; the ledger file is not touched. A legacy row is struck in the
+    # file, as it always was.
+    lines = ([home[1].member, *home[1].index] if home else text.split("\n"))
+    lines[idx] = new_line
+    index_state: dict[str, str] = {}  # per id: struck / already struck / not found
+    for i in ids:
+        ix = _index_line(i, "\n".join(lines))
+        if ix is None:
+            index_state[i] = "not found"
+        elif "~~" in ix[1].split("|")[1]:
+            index_state[i] = "already struck"
+        else:
+            j, il = ix
+            if anchor:
+                section = [c.strip() for c in il.split("|")][2]
+                lines[j] = f"| ~~`{i}`~~ | {section} | {anchor} |"
+            else:
+                lines[j] = il.replace(f"`{i}`", f"~~`{i}`~~", 1)
+            index_state[i] = "struck"
+    if home:
+        pending.rows[home[0]] = _row_file_text(home[1].section, lines[0], lines[1:])
+        new_text = text
+    else:
+        new_text = "\n".join(lines)
     index_note = (f"index row {index_state[rid]}" if len(ids) == 1
                   else "index rows: " + ", ".join(f"{i} {s}" for i, s in index_state.items()))
-    if _content_rules_refuse(root or ledger.resolve().parent.parent, pending, ledger=ledger, legacy=new_line,
-                             probe=None, dry_run=dry_run):
+    if _content_rules_refuse(tree_root, pending, ledger=ledger, legacy=new_line, probe=None, dry_run=dry_run):
         return 2
     if dry_run:
         print(new_line)
@@ -1999,7 +2218,8 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
                       pending=pending, write_roster=not home or retired_in_roster > 0, probes_first=True)
     if rc == 0:
         with_ids = f" (with {', '.join(i for i in ids if i != rid)})" if len(ids) > 1 else ""
-        print(f"struck {rid}{with_ids}; {retired} probe(s) retired; regions converged")
+        how = f", declined on ruling {declined}" if declined is not None else ""
+        print(f"struck {rid}{with_ids}{how}; {retired} probe(s) retired; regions converged")
     return rc
 
 
@@ -3038,6 +3258,15 @@ def main(argv: list[str] | None = None) -> int:
                          "assertion or pytest.fail: an ImportError, AttributeError or NameError there "
                          "proves only that the lane's symbol is new, and a collection error, the engine "
                          "check or a timeout is a refusal). Repeatable; needs a readable base")
+    st.add_argument("--declined", metavar="RULING_ID",
+                    help="close a row a ruling declined while its defect stands (not work, a duplicate of a "
+                         "live row, a declared limit): the probe is driven at the head alone, a probe that no "
+                         "longer reads open is refused (that close is a fix), and the struck row records the "
+                         "ruling and the probe's reading ahead of the closing text; the strike retires the "
+                         "probe. RULING_ID is one token, best the ruling message's full id. Refused beside "
+                         "--base, --no-base or --guard, which speak to a fix's base drive. Every strike, this "
+                         "one included, refuses where the base holds a probe for the row that this tree lost "
+                         "or emptied of its command (changed by hand)")
     cl = sub.add_parser("class", help="open a class: its class-index row and its empty section")
     cl.add_argument("section", help="the new class, e.g. C7")
     cl.add_argument("--title", required=True, help="one line: the unit of work the class names")
@@ -3316,7 +3545,7 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
                       day=args.date, anchor=args.anchor, dry_run=args.dry_run,
                       despite_deferrals=args.despite_deferrals, root=root, base=args.base,
-                      no_base=args.no_base, guards=tuple(args.guard or ()))
+                      no_base=args.no_base, guards=tuple(args.guard or ()), declined=args.declined)
     if args.verb == "class":
         return new_class(args.section, ledger=ledger, probes=probes, title=args.title,
                          population=args.population, audience=args.audience,
