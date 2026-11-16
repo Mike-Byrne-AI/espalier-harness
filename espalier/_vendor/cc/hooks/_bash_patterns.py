@@ -7469,7 +7469,8 @@ def _redirect_words(tok: str, *, powershell: bool = False) -> int:
     and the whole-tree clean's zone deny fell to a bump). Without it the
     token opens no redirect: Bash splits `*>x` into the glob `*`, an
     operand, and the redirect `>x`. `_operands` reads the pair inline, on
-    every Bash call's path, and stays Bash's reading; its one PowerShell
+    every Bash call's path, and keeps such a glued token whole (`git
+    clean`'s operand reader cuts it, off that path: DEF-2088); its one PowerShell
     caller that met a `*>` (find's roots, `_find_delete_roots`) reads
     through `_ps_redirect_free` under its own flag. PowerShell's streams
     are 1 to 6 and `*`: there `0>`, `7>x` and `10>x` are words, not
@@ -11394,7 +11395,7 @@ def _git_clean_operands(span: str, *, powershell: bool = False) -> list[str]:
             # redirect is the branch above. `_operands`, on every call's path,
             # keeps the glued token whole.
             cut = min((i for i in (tok.find("<"), tok.find(">")) if i > 0), default=0)
-            if cut:
+            if cut and tok[cut - 1] != "\\":      # `a\>b` is the literal word `a>b`
                 if cut > 1 and tok[cut - 1] == "&":
                     cut -= 1                  # `w&>x`: the redirect opens at its `&`
                 skip = _redirect_words(tok[cut:]) == 2

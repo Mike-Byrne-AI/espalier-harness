@@ -3456,7 +3456,8 @@ class TestCatastrophicEnumeratorCarrier:
         of a git span: the listing (the code review drove it to the root,
         which displaced the current location and dropped the wall to the
         nudge) and the version-control clean reader, which had the same hole
-        -- one class, one rule, `_operands`'."""
+        -- one class, one rule, `_operands`' (the clean reader also cuts a
+        word glued to its redirect, which `_operands` keeps whole)."""
         bp = self._bp()
         assert bp._git_listing_roots("git ls-files", " 2>/dev/null ")[0] == ["."]
         assert bp._git_listing_roots("git ls-files", " 2> /dev/null -z ")[0] == ["."]
@@ -14091,7 +14092,8 @@ class TestAPowerShellRedirectIsNotARemovalTarget:
 
     # The one reading, per tool: PowerShell's `*` stream opens a redirect,
     # and on Bash `*>x` stays the word it was (a glob, then a redirect, which
-    # the operand readers there do not cut apart).
+    # `_operands` does not cut apart; `git clean`'s reader cuts it on its
+    # own, DEF-2088).
     @pytest.mark.parametrize("token, bash, powershell", [
         ("2>", 2, 2), ("2>x", 1, 1), ("2>&1", 1, 1), (">", 2, 2), (">>x", 1, 1),
         ("*>", 0, 2), ("*>>", 0, 2), ("*>x", 0, 1), ("*>&1", 0, 1),
@@ -14189,6 +14191,8 @@ class TestAWordGluedToARedirectIsCleanedOnBash:
         pytest.param(" -fdx cc>/dev/null ", ["cc"], id="zone-glued"),
         pytest.param(" -fdx cc<in ", ["cc"], id="zone-glued-input"),
         pytest.param(" -fd build>/dev/null ", ["build"], id="dir-glued"),
+        pytest.param(" -fdx cc&>/dev/null ", ["cc"], id="zone-glued-both-streams"),
+        pytest.param(" -fd a\\>b ", ["a\\>b"], id="escaped"),               # a control: an escaped `>` is the word's
         # glued to the flag cluster, the target's letters read as flags: the
         # `n` of `null` as the dry run, so the whole-tree clean read as none
         pytest.param(" -fdx>/dev/null ", ["."], id="flags-glued"),
