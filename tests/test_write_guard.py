@@ -13020,6 +13020,14 @@ _CMD_WORD_ORACLE_BASH = [
 ]
 _CMD_WORD_ORACLE_PS = [
     ("separator-word", "cmd /c echo a '&' echo RAN", "RAN", None),
+    # DEF-2081's spellings of the separator word and the token, predicted
+    # from the rows beside them and driven by this table on a Windows host;
+    # the secret leg's refusals of the same spellings rest on them
+    # (TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt's '&&', '|' and
+    # `--%,` rows): a row corrected here moves its refusal row with it
+    ("and-word", "cmd /c echo a '&&' echo RAN", "RAN", None),
+    ("pipe-word", "cmd /c echo a '|' echo RAN", "RAN", None),
+    ("token-glued-to-comma-after-switch", "cmd /c --%, echo RAN", "RAN", None),
     ("glued-separator", "cmd /c echo 'x&echo' RAN", "RAN", None),
     ("double-quoted-word", 'cmd /c echo "R&D"', "R", "R&D"),
     ("blank-holding-word", r"cmd /c echo 'C:\x y\R&D'", r'"C:\x y\R&D"', None),
@@ -13399,6 +13407,206 @@ class TestCmdReceivesAWordWithoutABlankBare:
         assert scan != raw                # the masker did blank the separator
         got = [t for _at, t, another in bp._ps_unforced_recursive_removes(scan, raw=raw) if another]
         assert ["build"] in got, got
+
+
+class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
+    """DEF-2081: the PowerShell secret leg read cmd's program with
+    PowerShell's grammar alone (`_bash_patterns._ps_carrier_program_bodies`),
+    so a read cmd runs behind a quoted separator word PowerShell hands it
+    bare, or behind the stop-parsing token after its switch, met no read
+    verb: `cmd /c echo a '&' type .env` and `cmd /c --% type .env` were plain
+    allows while `cmd /c type .env` was refused (driven at 35eccdc). The cmd
+    branch now reads cmd's own reading beside PowerShell's, through the
+    delete reader's one read of a cmd opener (`_cmd_opener_programs`), each
+    of cmd's statements read with the PowerShell roster, and a read either
+    reading finds is refused. Every refusal the PowerShell reading made
+    stands (5c1e1c): its walk steps over a word before the switch and reads
+    a run glued after a `-`, where cmd's walk stops. Each command is a
+    fixture handed to the guard as text, never run."""
+
+    @pytest.mark.parametrize("command", [
+        # the stop-parsing token after the switch, alone, glued to `,`, and
+        # behind the call operator, the `.exe` head or a carrier
+        "cmd /c --% type .env",
+        "cmd /c --% more .env",
+        "cmd /c --%, type .env",
+        "cmd.exe /c --% type .env",
+        "& cmd /c --% type .env",
+        "iex 'cmd /c --% type .env'",
+        # a separator word PowerShell hands cmd bare, in either quote (the
+        # '&&', '|' and `--%,` spellings rest on _CMD_WORD_ORACLE_PS's
+        # predicted rows, driven on a Windows host: correct both together)
+        "cmd /c echo a '&' type .env",
+        "cmd /c echo a '&' more .env",
+        'cmd /c echo a "&" type .env',
+        "cmd /c echo a '&&' type .env",
+        "cmd /c echo a '|' type .env",
+        "cmd /c echo a '&' copy .env con",
+        "cmd /c echo a '&' type .env 2>$null",
+        # a cmd the as-typed text starts, its switch glued to a quoted
+        # program too, and a quoted program word PowerShell hands cmd
+        # without its quotes
+        "cmd /c --% cmd /c type .env",
+        'cmd /c --% cmd /c"type .env"',
+        'cmd /c "type" .env',
+        # an input redirection's file, which the program reads
+        "cmd /c --% more < .env",
+        'cmd /c "more < .env"',
+    ])
+    def test_a_read_cmd_runs_past_a_separator_word_or_the_token_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "cmd /c type .env",
+        "cmd --% /c type .env",
+        "cmd --%/c type .env",
+        "cmd --%, /c type .env",
+        "cmd /c echo a --%& type .env",
+        "cmd /d/c type .env",
+        # the PowerShell walk's own reach, where cmd's walk stops (5c1e1c)
+        "cmd foo /c type .env",
+        "cmd -x/c type .env",
+    ])
+    def test_every_refusal_the_powershell_reading_made_stands(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "cmd /c --% type .env.example",
+        "cmd /c echo a '&' type .env.sample",
+        "cmd /c echo a '&' type README.md",
+        "cmd /c echo 'type .env'",
+        "cmd /c --% more < README.md",
+    ])
+    def test_a_template_or_a_mention_stays_allowed(self, command, tmp_path):
+        """A dotenv template is no secret on either reading, and a word
+        holding a blank reaches cmd quoted, one argument of `echo`."""
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command", [
+        "cmd //c type .env",
+        "cmd.exe //c more .env",
+        "cmd //c echo a \\& type .env",
+        'cmd //c "more < .env"',
+        "bash -c 'cmd //c type .env'",
+    ])
+    def test_the_bash_leg_reads_cmds_program_too(self, command, tmp_path):
+        """The sibling site on the Bash tool (the dispatcher's 9c8de3): its
+        secret leg read no program handed to cmd at all. The memoised
+        removed-operand reading, behind the cmd opener search it already
+        makes, hands the leg cmd's own reading, rendered for the PowerShell
+        roster the PowerShell leg's cmd branch reads it with."""
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    def test_the_powershell_leg_reads_cmd_inside_a_bash_program(self, tmp_path):
+        """The second code review: the PowerShell leg's effect read met the
+        Bash program's `cmd-program` effect and dropped it."""
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": "bash -c 'cmd //c type .env'"},
+                                          tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", ["cmd //c type .env.example", "cmd //c echo 'type .env'"])
+    def test_the_bash_leg_allows_a_template_or_a_mention_through_cmd(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command, want", [
+        ("cmd /c type .env", ["type .env"]),
+        ("cmd /c --% type .env", ["--% type .env", "type .env"]),
+        ("cmd /c echo a '&' type .env", ["echo a '&' type .env", "echo a\ntype .env"]),
+        ("cmd /c --% @type .env", ["--% @type .env", "type .env"]),
+    ], ids=["one-reading", "token", "separator-word", "echo-off-prefix"])
+    def test_the_carrier_yields_cmds_reading_once(self, command, want):
+        """The reader: cmd's reading is yielded beside PowerShell's where the
+        two differ, and not a second time where they agree, so the plain
+        form pays no second read one level down."""
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(command)
+        assert list(bp._ps_carrier_program_bodies(raw, scan)) == want
+
+    @pytest.mark.parametrize("unit", ["cmd /c 'x' = ", "cmd /c 'x' return ", "cmd /c 'x' iex "],
+                             ids=["assignment", "return", "carrier-word"])
+    def test_a_chain_of_cmds_in_one_statement_is_read_once(self, unit):
+        """An opener inside text an earlier opener handed cmd is read there,
+        never again to the same end: the yield stays linear in the command
+        (the code review drove the first cut's quadratic one: 16 K yielded
+        characters for 50 units, 1.04 M for 400, and a 3.9 KB command the
+        time budget refused)."""
+        bp = _bash_patterns_module()
+        command = unit * 200 + "cmd /c 'x'"
+        raw, scan = bp.powershell_scan_pair(command)
+        assert sum(len(p) for p in bp._ps_carrier_program_bodies(raw, scan)) <= 3 * len(command)
+
+    @pytest.mark.parametrize("program, want", [
+        ('echo a & type "my .env"', "echo a\ntype 'my .env'"),
+        ("if exist .env type .env", "type .env"),
+        (", type .env", "type .env"),
+        ("type --%x it's", "type '--%x' 'it''s'"),
+        ("type a" + chr(0x2019) + "b", "type 'a" + chr(0x2019) * 2 + "b'"),
+        ("echo a=b;c", "echo 'a=b' c"),
+        ("cmd /c type .env", "type .env"),
+        ('cmd /c"type .env"', "type .env"),
+        ("more < .env", "more\ntype .env"),
+    ], ids=["statements", "if-prefix", "leading-delimiter", "parameter-lead-and-quote",
+            "typographic-quote", "assignment-word", "nested-cmd", "nested-cmd-glued-quoted",
+            "input-redirect"])
+    def test_cmds_statements_are_rendered_as_plain_powershell_words(self, program, want):
+        """`_cmd_program_as_ps`: one statement a line, from its verb on; a
+        word PowerShell would not take as one plain argument is
+        single-quoted, each single quote doubled; a cmd a statement starts
+        is read through cmd's grammar; an input redirection's file is a
+        read of its own."""
+        assert _bash_patterns_module()._cmd_program_as_ps(program) == want
+
+
+#: DEF-2082's forms, each beside its control one step inside the contract:
+#: cmd skips a word before its `/c` that is not a switch, and a word a
+#: switch is glued to (Git Bash drives, echo only, on the row), but the
+#: delete readers' switch walk (`_bash_patterns._cmd_program_at`) stops at
+#: such a word and reads an interactive cmd. Ruled a declared limit (the
+#: dispatcher's 5c1e1c under the operator's 40ec7f): the word sits in
+#: cmd's argument slot, the unusual wrapper argument the anchor family's
+#: ruling names, and no transcript records the slip.
+_CMD_WORD_BEFORE_SWITCH_LIMITS = [
+    ("PowerShell", "cmd foo /c rd /s /q ."),
+    ("Bash", "cmd foo //c rd /s /q ."),
+    ("PowerShell", "cmd x/c rd /s /q ."),
+    ("Bash", "cmd x/c rd /s /q ."),
+    ("PowerShell", 'cmd "a b" /c rd /s /q .'),
+    # the secret leg's walk steps over a plain word before the switch
+    # (refused, TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt) but not
+    # into one the switch is glued to, nor past a quoted one
+    ("PowerShell", "cmd x/c type .env"),
+    ("PowerShell", 'cmd "a b" /c type .env'),
+]
+_CMD_WORD_BEFORE_SWITCH_CONTROLS = [
+    ("PowerShell", "cmd /c rd /s /q ."),
+    ("Bash", "cmd //c rd /s /q ."),
+]
+
+
+class TestAWordBeforeCmdsSwitchIsADeclaredLimit:
+    """DEF-2082, struck as a declared limit (docs/HOOKS.md, the coverage
+    contract): a recursive delete cmd runs behind a word before its switch,
+    or behind a switch glued to a word, is read by no delete reader, and the
+    PowerShell secret leg reads no program behind a switch glued to a word.
+    The day a reader follows one, its row reds and the contract's sentence
+    is rewritten on purpose; a control that stops walling means the reader
+    went quiet, and the limit's allow beside it proves nothing."""
+
+    @pytest.mark.parametrize("tool, command", _CMD_WORD_BEFORE_SWITCH_LIMITS)
+    def test_a_word_before_cmds_switch_is_a_declared_limit(self, tool, command, tmp_path):
+        """Each limit is a plain allow: exit 0 and nothing on stdout, so
+        neither a wall, a speed bump nor the secret-path refusal."""
+        assert _delete_verdict(run_guard_from(tool, command, tmp_path, None)) == "allow", command
+
+    @pytest.mark.parametrize("tool, command", _CMD_WORD_BEFORE_SWITCH_CONTROLS)
+    def test_each_limit_s_control_one_step_inside_walls(self, tool, command, tmp_path):
+        assert _delete_verdict(run_guard_from(tool, command, tmp_path, None)) == "wall", command
+
+    def test_the_secret_limit_s_control_is_refused(self, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": "cmd /c type .env"}, tmp_path),
+                           contains_reason="Secret-path access blocked")
 
 
 _PS_LAUNCH_FORMS = [f for f in _LAUNCH_FORMS if f[1] == "PowerShell"]

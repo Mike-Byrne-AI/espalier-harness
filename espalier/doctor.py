@@ -757,12 +757,24 @@ def foreign_statusline_note(settings_path: Path, repo_root: Path) -> "str | None
     if script != surface_contract.PRESENCE_PRESENT:
         return None
     written = _resolver_hint()
+    from espalier import cli as _cli  # lazy: cli imports doctor at top level
+    # A name that runs the harness only inside a virtualenv prints nothing in
+    # the statusLine of a session started elsewhere: the remedy first, and the
+    # interpreter it puts on PATH in the command (DEF-3089).
+    found = _cli._venv_only_name(written)
+    first = ""
+    if found is not None:
+        step = _cli.venv_only_first_step(found)
+        first = (step[0].upper() + step[1:] + ", so a command spelled with "
+                 f"`{written}` shows nothing from a shell without it; then ")
+        written = "<that interpreter>"
+    segments = f"`{written} tools/cc/statusline.py --segments`"
     return (
         "statusLine runs a command of your own, which the settings merge never "
         "rewrites, so espalier's indicators do not show in it: MAINT (maintenance "
         "mode is on, so the protected-zone and plan checks are off), "
         "STOP=full|light, bp= (the blueprint chain) and the freshness counts. "
-        f"`{written} tools/cc/statusline.py --segments`, run from the project "
+        + first + segments + ", run from the project "
         "root, prints the indicators that are on and nothing when none is, for "
         "your own line to show; this note stops once your statusLine command "
         "names tools/cc/statusline.py."
@@ -2212,7 +2224,7 @@ def _check_reporter_hook_wiring(repo_root: Path) -> list[str]:
                 remedy = (
                     "the entry names the script but runs no interpreter -- "
                     f"`{py} -m espalier merge-settings . --repair` rewrites it "
-                    + f"(backup first), or set it back to {wiring} by hand"
+                    + f"(backup first), or set it back by hand: {wiring}"
                 )
             elif shape == harness_config.GATE_MISWIRED:
                 canonical_matcher = harness_config.CANONICAL_HOOK_WIRING[script]["matcher"]
@@ -3206,7 +3218,7 @@ def run_doctor_check(
                 + (" is" if len(inert) == 1 else " are")
                 + " wired but the entry runs no interpreter; --repair rewrites "
                 "espalier's own entry to canonical (backup first), or set it "
-                + f"back to {wiring} by hand"
+                + f"back by hand: {wiring}"
             )
         orphaned = shapes.get(_hc.GATE_ORPHANED, [])
         if orphaned:

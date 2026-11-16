@@ -816,12 +816,110 @@ class TestPostMergeVerdict:
         assert "the suspects could not be read (gh api compare took longer than 15s)" in text
 
     def test_a_skipped_or_neutral_run_is_no_verdict(self, board, monkeypatch, tmp_path):
-        """Dies to: every non-SUCCESS conclusion read as red."""
+        """Dies to: every non-SUCCESS conclusion read as red, or either run
+        walked past in silence (DEF-4106: the kinds are named, as cancelled is)."""
         _stub_channel(monkeypatch, board)
         runs = [_run("completed", "skipped", "s" * 40), _run("completed", "neutral", "n" * 40)] + _GREEN_RUNS
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": runs})))
-        assert "main:     post-merge proof green on aaaaaaa" in text
+        assert ("main:     post-merge proof green on aaaaaaa; no verdict on the newer sssssss (skipped), "
+                "nnnnnnn (neutral), so main is unproven past aaaaaaa") in text
         assert "RED" not in text
+
+    def test_a_cancelled_run_newer_than_the_green_is_named_and_main_unproven_past_it(self, board, monkeypatch,
+                                                                                     tmp_path):
+        """DEF-4106 (the operator's option B, call a0f520): a post-merge run cut
+        by its timeout-minutes concludes cancelled, and the base line walked
+        past it to the older green in silence, so main read proven past merges
+        no run judged (run 42614778252, 2026-11-09: green on 4161eac while #549
+        and #550 had no verdict). Dies to: the cancelled run skipped unnamed,
+        named without its run id, or left out of the JSON."""
+        _stub_channel(monkeypatch, board)
+        runs = [_run("queued", "", "f" * 40), dict(_run("completed", "cancelled", "b" * 40), databaseId=222),
+                dict(_run("completed", "success", "a" * 40), databaseId=111)]
+        run = _gh({"pr list": [], "run list": runs})
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert line == ("main:     post-merge proof green on aaaaaaa; no verdict on the newer bbbbbbb (run 222, "
+                        "cancelled), so main is unproven past aaaaaaa; a newer run is going"), line
+        assert line.isascii()
+        pm = collected["post_merge"]
+        assert pm["verdict"] == "green" and pm["sha"] == "a" * 40
+        assert pm["no_verdict_runs"] == [{"sha": "b" * 40, "run_id": "222", "url": "u-bbb", "conclusion": "cancelled",
+                                          "newer": True}]
+        assert not [c for c in run.calls if c[1] == "api"], "a green base asks for no suspects"
+        trunk = board.render({**collected, "base": "trunk", "post_merge": {**pm, "running": False}})
+        assert ("trunk:    post-merge proof green on aaaaaaa; no verdict on the newer bbbbbbb (run 222, cancelled), "
+                "so trunk is unproven past aaaaaaa") in trunk.splitlines(), "the base's own name, never main"
+
+    def test_a_no_verdict_run_older_than_the_green_is_not_named(self, board, monkeypatch, tmp_path):
+        """The walk stops at the newest green, which proves a superset of every
+        older merge. Dies to: a cancel the green already covers named."""
+        _stub_channel(monkeypatch, board)
+        runs = [dict(_run("completed", "success", "a" * 40), databaseId=111),
+                dict(_run("completed", "cancelled", "b" * 40), databaseId=100)]
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": runs}))
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert line == "main:     post-merge proof green on aaaaaaa", line
+        assert collected["post_merge"]["no_verdict_runs"] == []
+
+    def test_a_cancelled_run_inside_a_red_stretch_is_named_and_the_suspects_unchanged(self, board, monkeypatch,
+                                                                                      tmp_path):
+        """The assign's edge: a cancelled run between the red and the last
+        green is ruled as one newer than a green (named by sha and run id), and
+        one newer than the red is named apart; the suspects still run from the
+        last green and the revert rule is unchanged. Dies to: either cancel
+        walked past unnamed, or the suspects or revert moved by it."""
+        _stub_channel(monkeypatch, board)
+        runs = [dict(_run("completed", "cancelled", "e" * 40), databaseId=920),
+                dict(_run("completed", "failure", RED_SHA), databaseId=910),
+                dict(_run("completed", "cancelled", "c" * 40), databaseId=905),
+                dict(_run("completed", "success", GREEN_SHA), databaseId=890)]
+        run = _gh({"pr list": [], "run list": runs,
+                   "api compare": {"commits": [_merge(41, "1" * 40), _merge(42, "2" * 40)]}})
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert "suspects #41, #42 (merged since the last green run on 9999999)" in line, line
+        assert "; no verdict on the newer eeeeeee (run 920, cancelled)" in line, line
+        assert "; no verdict on ccccccc (run 905, cancelled), between it and the last green" in line, line
+        assert any(f"/compare/{GREEN_SHA}...{RED_SHA}" in " ".join(c) for c in run.calls)
+        pm = collected["post_merge"]
+        assert pm["run_id"] == "910" and pm["red_runs"] == ["910"]
+        assert [(r["run_id"], r["newer"]) for r in pm["no_verdict_runs"]] == [("920", True), ("905", False)]
+        one = _gh({"pr list": [], "run list": runs, "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=one)).splitlines() if ln.startswith("main:"))
+        assert "RED after #42" in line and "Revert first: git switch -c revert/dddd111 origin/main" in line, line
+        # No green among the runs read: there is no last green to point at
+        # (the failure-mode review's rough edge), so the run is older than it.
+        no_green = _gh({"pr list": [], "run list": runs[:3]})
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=no_green)).splitlines()
+                    if ln.startswith("main:"))
+        assert "no green run in the last 20, so every merge before it is a suspect" in line, line
+        assert "; no verdict on ccccccc (run 905, cancelled), older than it" in line and "last green" not in line, line
+
+    def test_a_no_verdict_run_gh_gave_no_head_is_named_by_its_id(self, board):
+        """Dies to: a missing head rendered as a blank or as words that read as
+        a sha after 'the newer'."""
+        pm = {"verdict": "green", "sha": "a" * 40, "no_verdict_runs": [
+            {"sha": "", "run_id": "222", "conclusion": "cancelled", "newer": True},
+            {"sha": "", "run_id": "", "conclusion": "", "newer": True}]}
+        line = board.render({"read_at": "x", "post_merge": pm}).splitlines()[2]
+        assert line == ("main:     post-merge proof green on aaaaaaa; no verdict on the newer run 222 (cancelled), a run "
+                        "gh gave no head or id (no conclusion), so main is unproven past aaaaaaa"), line
+
+    def test_no_verdict_on_every_run_read_names_them(self, board, monkeypatch, tmp_path):
+        """Every run in the window cancelled: no verdict, and the line names the
+        runs instead of reading as a proof that has not started. Dies to: the
+        bare 'no post-merge verdict yet' over runs that ended."""
+        _stub_channel(monkeypatch, board)
+        runs = [dict(_run("completed", "cancelled", "b" * 40), databaseId=222)]
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": runs}))
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert line == ("main:     no post-merge verdict among the runs read: bbbbbbb (run 222, cancelled) reached "
+                        "none, so main is unproven"), line
+        assert collected["post_merge"]["verdict"] == "none"
+        empty = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": []}))
+        line = next(ln for ln in board.render(empty).splitlines() if ln.startswith("main:"))
+        assert line == "main:     no post-merge verdict yet", line
 
     def test_a_red_base_names_the_armed_pull_requests(self, board, monkeypatch, tmp_path):
         """Auto-merge lands an armed pull request on a red base: the board says

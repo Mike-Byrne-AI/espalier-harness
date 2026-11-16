@@ -182,10 +182,19 @@ is read on its own, and one that cannot be read says so on its own line:
   (Espalier's own repository does; `init` does not install one, and without it
   the line says so). Each push's run goes to the end, beside the next one, so a
   red run's suspects are the merges since the last green run before it -- more
-  than one when a run between them is red or still going: the board prints the
-  revert only when exactly one pull request merged in between, names the
-  suspects otherwise, and lists the pull requests whose armed auto-merge would
-  land on the red base. Revert first, diagnose second -- unless the dispatcher
+  than one when a run between them is red, still going or ended with no
+  verdict: the board prints the revert only when exactly one pull request
+  merged in between, names the suspects otherwise, and lists the pull requests
+  whose armed auto-merge would land on the red base. A run that ended with no
+  verdict (cancelled: a job cut by its `timeout-minutes`, a hand cancel, or a
+  run a newer one's concurrency superseded; stale, skipped, neutral or action
+  required) is never walked past in silence: each one newer than the last
+  green is named by its head and run id (`no verdict on the newer <sha> (run
+  <id>, cancelled), so <base> is unproven past <green>`; with no verdict among
+  the runs read, `no post-merge verdict among the runs read: ... reached none,
+  so <base> is unproven`), one inside a red stretch is named beside the
+  suspects, which still run from the last green, and the JSON carries them
+  under `post_merge.no_verdict_runs`. Revert first, diagnose second -- unless the dispatcher
   has ruled the red run a fix-forward: its `ack` on its own ref (any seat's
   where `espalier.toml` names no dispatcher) whose text opens with the fixed
   head the `/ship` body spells out (the ruling's marker, then `fix forward
