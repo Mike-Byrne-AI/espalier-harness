@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2094",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import json,os,shutil,subprocess,sys,tempfile;N=chr(10);r=tempfile.mkdtemp();shutil.copytree('tools/cc',r+'/tools/cc',ignore=shutil.ignore_patterns('__pycache__'));open(r+'/tools/cc/_json_safe.py','a').write(N+'def run_tree_to_deadline(*a,**k):'+N+'    raise KeyError(4)'+N);e={k:v for k,v in os.environ.items() if not k.startswith(('ESPALIER','CLAUDE'))};e.update(CLAUDE_PROJECT_DIR=r,ESPALIER_AUDIT_DIR=r+'/audit');p=json.dumps(dict(hook_event_name='PreToolUse',session_id='probe',cwd=r,tool_name='Bash',tool_input=dict(command='git restore --source=HEAD -- tools/cc/_json_safe.py')));o=subprocess.run([sys.executable,r+'/tools/cc/hooks/write_guard.py'],input=p,capture_output=True,text=True,encoding='utf-8',env=e,cwd=r,timeout=60).stdout.strip();h=json.loads(o).get('hookSpecificOutput',{}) if o.startswith('{') and N not in o else {};print('passes=%s'%('additionalContext' in h and 'permissionDecision' not in h))\"",
+ "open_value": "passes=False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_json_safe.py",
+  "tools/cc/hooks/_start_refusal.py"
+ ],
+ "row_sha": "b1129b6d2df4",
+ "text_sha": "efcb683fb810",
+ "verified_2026_11_16": "OPEN (filed 2026-11-16; probe driven at filing here and in the export of HEAD 797c7765cb3d)"
+}
