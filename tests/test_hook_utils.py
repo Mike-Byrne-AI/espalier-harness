@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-HOOKS_DIR =Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
+HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
 
 
@@ -1411,6 +1411,9 @@ class TestAdopterZoneReadingEdges:
                      id="generated_path-beside-protected_paths"),
         pytest.param(['protected_path = ["data/"]'], (), ("protected_path", "protected_paths"),
                      id="protected_path-alone"),
+        pytest.param(['excluded_paths = ["vendor/"]'], (), None, id="excluded_paths-alone"),
+        pytest.param(['protected_paths = ["data/"]', 'excluded_paths = ["vendor/"]'],
+                     (("data/", "protected"),), None, id="excluded_paths-beside-a-zone"),
     ])
     def test_a_zone_key_misspelling_is_said_and_an_engine_key_never_is(
         self, tmp_path, monkeypatch, capsys, lines, zones, said,
@@ -1419,7 +1422,11 @@ class TestAdopterZoneReadingEdges:
         (0.64 from ``protected_paths``) and drew a false "did you mean" with a
         ``config_zone_ignored`` record; a misspelled zone key beside a correct
         one was never said, since the check ran only when no zone held a
-        prefix. The zones read the same whatever is said."""
+        prefix. The zones read the same whatever is said. The last two are the
+        lane's review: ``excluded_paths`` clears the cutoff against
+        ``protected_paths`` too, but its nearest engine key is
+        ``exclude_paths`` (the engine's loader says so), so the guard leaves
+        it to the loader rather than name the wrong key."""
         hu = self._fresh(monkeypatch)
         (tmp_path / "espalier.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
         assert hu.adopter_protected_prefixes(tmp_path) == zones
@@ -1474,6 +1481,7 @@ class TestAdopterZoneReadingEdges:
             "sys.path.insert(0, sys.argv[1])\n"
             "from pathlib import Path\n"
             "import _hook_utils\n"
+            "print('before-any-read', 'difflib' in sys.modules)\n"
             "for name in sys.argv[3:]:\n"
             "    _hook_utils.adopter_protected_prefixes(Path(sys.argv[2]) / name)\n"
             "    print(name, 'difflib' in sys.modules)\n"
@@ -1484,6 +1492,9 @@ class TestAdopterZoneReadingEdges:
         )
         assert r.returncode == 0, r.stderr
         seen = dict(line.rsplit(" ", 1) for line in r.stdout.splitlines())
+        assert seen.pop("before-any-read", None) == "False", (
+            "difflib was loaded before any read (the interpreter's startup or _hook_utils' "
+            "own import), so this oracle cannot see the check's import", r.stdout)
         assert seen == {
             "known-keys-no-zone": "False", "known-keys-and-a-zone": "False",
             "a-far-unknown-key-beside-a-zone": "False", "a-misspelling": "True",

@@ -1042,8 +1042,9 @@ ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (
 #: reads). The hooks cannot import the engine, so this is a pinned copy, equal
 #: both ways (``tests/test_forced_copy_parity.py::TestEngineConfigKeysParity``).
 #: The zone-key close-match in :func:`adopter_protected_prefixes` passes over
-#: them: ``exclude_paths`` scores 0.64 against ``protected_paths`` and is a key
-#: of its own, not a misspelling of one.
+#: them (``exclude_paths`` scores 0.64 against ``protected_paths`` and is a key
+#: of its own, not a misspelling of one) and matches an unknown key against
+#: them all, speaking only where the nearest is a zone key.
 ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({
     # HarnessConfig's fields
     "preferred_profiles", "suppress_profiles", "extra_actions", "suppress_actions",
@@ -1150,8 +1151,11 @@ def adopter_protected_prefixes(root: Path) -> tuple[tuple[str, str], ...]:
         # config.load_config. Read beside a valid zone too (a misspelled
         # protect_paths next to a correct generated_paths protects nothing),
         # over the keys the engine does not know (exclude_paths is a key of its
-        # own), and only where say_once would speak: this runs in every hook
-        # process, and importing difflib is the cost.
+        # own), said only where the nearest engine key is a zone key
+        # (excluded_paths clears the cutoff against protected_paths, but it is
+        # nearer exclude_paths, as the loader says), and only where say_once
+        # would speak: this runs in every hook process, and importing difflib
+        # is the cost.
         wanted = [key for key, _ in ADOPTER_ZONE_KEYS]
         for present in table:
             name = str(present)
@@ -1163,8 +1167,8 @@ def adopter_protected_prefixes(root: Path) -> tuple[tuple[str, str], ...]:
                 continue
             import difflib
 
-            near = difflib.get_close_matches(name, wanted, n=1, cutoff=0.6)
-            if near:
+            near = difflib.get_close_matches(name, sorted(ENGINE_CONFIG_KEYS), n=1, cutoff=0.6)
+            if near and near[0] in wanted:
                 say_once(
                     root, f"zone-typo-{name}", "write_guard", "config_zone_ignored",
                     f"espalier.toml: `{name}` is not a key the guard reads "
