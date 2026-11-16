@@ -19,7 +19,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypeVar
 
@@ -2252,6 +2252,162 @@ def is_fail_open_event(event_type: object) -> bool:
     return FAIL_OPEN_EVENT_MARKER in event_type or event_type.startswith(FAIL_OPEN_EVENT_PREFIXES)
 
 
+#: The voice-only family (DEF-1152): a record that is a hook's ONLY voice. The
+#: event that wrote it has no channel to Claude, and an exit-0 hook's stderr
+#: reaches the debug log alone, so the record is the one trace of what happened.
+#: It is the fail-open family above (a predicate), plus the types named here.
+#: Both readers select it through ``is_voice_only_event``: ``/status --log``
+#: counts it on its own line, and SessionStart names what was written since the
+#: previous start in its Warnings block (``voice_only_since``). A type that
+#: joins the family joins both readers; neither keeps a roster of its own.
+VOICE_ONLY_EVENT_TYPES = frozenset({
+    # config_guard: a kill switch in managed policy settings, which ConfigChange
+    # cannot block and has no channel to say -- the change that silences every
+    # other hook.
+    "configchange_policy_settings_kill_switch_detected",
+})
+
+
+def is_voice_only_event(event_type: object) -> bool:
+    """Is ``event_type`` a voice-only record (see above)?"""
+    if is_fail_open_event(event_type):
+        return True
+    return isinstance(event_type, str) and event_type in VOICE_ONLY_EVENT_TYPES
+
+
+def _voice_only_tokens() -> tuple[str, ...]:
+    """Substrings one of which every voice-only record's line holds, its event
+    type written unescaped (the types are ASCII identifiers): a pre-filter
+    that spares the JSON parse of every other line. The predicate decides."""
+    return (FAIL_OPEN_EVENT_MARKER, *FAIL_OPEN_EVENT_PREFIXES, *sorted(VOICE_ONLY_EVENT_TYPES))
+
+
+#: SessionStart's read of the voice-only records since the previous start runs
+#: inside the hook's 13 s wall, so it is bounded twice: at most this many UTC
+#: days of logs (one stat each), and at most this many bytes read in all, the
+#: newest log first and each from its end, where the newest records are. A
+#: start after a month away, or a log a wedged hook filled (a test root on the
+#: Windows box wrote 50 MB in one day), costs a bounded read, and the reader
+#: names the bound that stopped it. Measured 2026-11-16 on the Windows box:
+#: this repository's busiest day in November was 1.2 MB, read and parsed in
+#: 12 ms.
+VOICE_READ_MAX_DAYS = 7
+VOICE_READ_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _bytes_phrase(n: int) -> str:
+    """``4 MB`` for a whole number of MiB, else ``<n> bytes``. ASCII."""
+    return f"{n >> 20} MB" if n and n % (1 << 20) == 0 else f"{n} bytes"
+
+
+def _record_time(rec: dict) -> float | None:
+    """A record's ``timestamp`` as a unix float; None when it does not parse
+    (a naive one is read as UTC, the zone every writer stamps)."""
+    ts = rec.get("timestamp")
+    if not isinstance(ts, str):
+        return None
+    try:
+        when = datetime.fromisoformat(ts)
+    except ValueError:  # fail-open: ok text-fallback -- a record whose time does not parse cannot be placed after a start
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.timestamp()
+
+
+def voice_only_since(
+    repo_root: Path,
+    since: datetime,
+    *,
+    now: datetime | None = None,
+    max_days: int = VOICE_READ_MAX_DAYS,
+    max_bytes: int = VOICE_READ_MAX_BYTES,
+) -> tuple[list[dict], str]:
+    """The voice-only records THIS root wrote after ``since`` (an aware
+    datetime), oldest first, and ``''`` or the bound that stopped the read
+    before it reached ``since`` (``7 days``, ``4 MB``).
+
+    Selected by the family's predicate and the record's own timestamp, never
+    by a log's date alone: the logs read are the UTC days from ``since``'s to
+    ``now``'s, newest first, at most ``max_days`` of them, and at most
+    ``max_bytes`` in all, each read from its end. A record before ``since``,
+    another checkout's (``tail_audit``'s ``repo_path`` rule), or one whose
+    timestamp does not parse is left out. A byte bound is named only when the
+    oldest line read is still after ``since`` (the unread head may hold one).
+    A log that exists and cannot be read is skipped, and the bound names it
+    (``an unreadable log``), so one bad file costs its own records, never the
+    window's."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    floor = since.timestamp()
+    first_day = since.astimezone(timezone.utc).date()
+    oldest_day = (now - timedelta(days=max(max_days, 1) - 1)).date()
+    this_repo = os.path.normcase(str(Path(repo_root).resolve()))
+    tokens = _voice_only_tokens()
+    budget = max_bytes
+    found: list[dict] = []
+    unreadable = False
+    for back in range(max(max_days, 1)):
+        day = now - timedelta(days=back)
+        if day.date() < first_day:
+            break
+        path = audit_path(repo_root, day)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:  # fail-open: ok deliberate -- a day with no log holds no record
+            continue
+        except OSError:  # fail-open: ok deliberate -- the bound names the unreadable log; the other days are still read
+            unreadable = True
+            continue
+        if budget <= 0:
+            return found, _bytes_phrase(max_bytes)
+        start = max(0, size - budget)
+        try:
+            with path.open("rb") as fh:
+                fh.seek(start)
+                data = fh.read(budget)
+        except OSError:  # fail-open: ok deliberate -- the bound names the unreadable log; the other days are still read
+            unreadable = True
+            continue
+        budget -= len(data)
+        # After a seek the first line may be a fragment: a suffix of a record
+        # line never parses as a JSON object, so the parse below drops it.
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        day_found: list[dict] = []
+        for ln in lines:
+            if not any(token in ln for token in tokens):
+                continue
+            try:
+                rec = json.loads(ln)
+            except ValueError:  # JSONDecodeError subclass -- skip corrupt line
+                continue
+            if not isinstance(rec, dict) or not is_voice_only_event(rec.get("event_type")):
+                continue
+            if os.path.normcase(str(rec.get("repo_path", ""))) != this_repo:
+                continue
+            when = _record_time(rec)
+            if when is not None and when > floor:
+                day_found.append(rec)
+        found[:0] = day_found
+        if start:
+            # Stopped inside this log: the unread head is older than every
+            # line read, so it can hold a record after `since` only while the
+            # oldest line read is still after it.
+            head = next((t for t in map(_line_time, lines) if t is not None), None)
+            return found, (_bytes_phrase(max_bytes) if head is None or head > floor else "")
+    if unreadable:
+        return found, "an unreadable log"
+    return found, (f"{max(max_days, 1)} days" if first_day < oldest_day else "")
+
+
+def _line_time(line: str) -> float | None:
+    """The timestamp of an audit line that parses as a record, else None."""
+    try:
+        rec = json.loads(line)
+    except ValueError:  # fail-open: ok text-fallback -- a fragment or corrupt line has no time
+        return None
+    return _record_time(rec) if isinstance(rec, dict) else None
+
+
 def maintenance_bypass_recorded(repo_root: Path, hook: str) -> bool:
     """Has ``hook`` already recorded its maintenance bypass this session?"""
     flag = Path(repo_root) / _hook_utils.STATE_DIR / f"{MAINTENANCE_BYPASS_FLAG_PREFIX}{hook}"
@@ -2270,16 +2426,27 @@ def mark_maintenance_bypass_recorded(repo_root: Path, hook: str) -> None:
         pass
 
 
+#: How many UTC days of logs ``/status --log`` reads: today's and yesterday's,
+#: so a record does not leave the view the moment the UTC date turns (DEF-1152:
+#: two hook calls a test made seconds apart straddled 00:00Z on a CI cell, and
+#: a read of today's log alone counted one of the two).
+STATUS_LOG_DAYS = 2
+
+
 def tail_audit(
     repo_root: Path,
     n: "int | None" = 20,
     event_types: "frozenset[str] | set[str] | None" = None,
+    *,
+    days: int = 1,
+    now: datetime | None = None,
 ) -> list[str]:
-    """Return the last ``n`` records of THIS repo's audit log for today
-    (``[]`` if none); ``n=None`` returns every matching record. Read-only
-    companion to ``append_audit`` — reuses ``audit_path`` so the resolution
-    (``ESPALIER_AUDIT_DIR`` override, repo slug, date) can never drift from
-    the writer's.
+    """Return the last ``n`` records of THIS repo's audit logs for the last
+    ``days`` UTC days (``1``: today's alone), oldest first, so the last ``n``
+    are the newest (``[]`` if none); ``n=None`` returns every matching
+    record. Read-only companion to ``append_audit`` — reuses ``audit_path``
+    so the resolution (``ESPALIER_AUDIT_DIR`` override, repo slug, date) can
+    never drift from the writer's.
 
     The log file is keyed by the repo's BASENAME, so two checkouts named
     ``myrepo`` (a worktree, a scratch clone) share one file. Every record
@@ -2301,11 +2468,12 @@ def tail_audit(
     and dropping the whole tail; such a line then fails the JSON parse and is
     dropped like any other unattributable line."""
     try:
-        path = audit_path(repo_root)
-        if not path.exists():
-            return []
+        # One clock for every read a caller makes (``now``), so two reads
+        # either side of 00:00Z cannot open two different windows.
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        paths = [audit_path(repo_root, now - timedelta(days=back)) for back in range(max(days, 1) - 1, -1, -1)]
         this_repo = os.path.normcase(str(Path(repo_root).resolve()))
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in paths if p.exists())
         kept: list[str] = []
         for ln in text.splitlines():
             if not ln.strip():

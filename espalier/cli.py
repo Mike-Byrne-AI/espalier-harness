@@ -972,6 +972,27 @@ _BELOW_FLOOR_REFUSING = False
 _VENV_FALLBACK_OUTSIDE: "tuple[tuple[str, str, str | None], tuple[str, str] | None] | None" = None
 
 
+class _VenvOnlyName(NamedTuple):
+    """A bare interpreter name that runs the harness only inside a virtualenv
+    (:func:`_venv_only_name`): the name, the virtualenv it resolves into (None
+    where none can be named), and what it resolves to once that virtualenv is
+    off PATH (None: nothing)."""
+
+    name: str
+    venv: "Path | None"
+    outside: "str | None"
+
+
+#: The writers' gate's verdict on the name its command writes, kept for the
+#: process and keyed on PATH: a :class:`_VenvOnlyName` where the gate said the
+#: venv-only warning, None where it asked and had nothing to say. A key here
+#: means a writing command's gate asked under that PATH, so
+#: :func:`_venv_only_name` keeps ruling 20e1d4's silence for a name with
+#: nothing outside the virtualenv (DEF-3088). Cleared between tests with the
+#: other verdict memos.
+_WRITERS_GATE_VERDICTS: "dict[str, _VenvOnlyName | None]" = {}
+
+
 def _refuse_below_floor_wiring(verb: str) -> "int | None":
     """Exit status 1, after one sentence on stderr, when the interpreter
     ``verb`` would wire into a tree is a Python 3 below the floor; else None.
@@ -1001,8 +1022,15 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     finally:
         _BELOW_FLOOR_REFUSING = False
     if _BELOW_FLOOR_ANSWER is None:
+        kept: "_VenvOnlyName | None" = None
         if _VENV_FALLBACK_OUTSIDE is not None:
+            (name, outside, _said), _mute = _VENV_FALLBACK_OUTSIDE
+            kept = _VenvOnlyName(name, wired_venv_root(name), outside)
             _warn_venv_fallback_outside(verb, *_VENV_FALLBACK_OUTSIDE)
+        # Kept whether or not the warning was said this time (``fuse`` asks,
+        # then ``init`` asks again): the claims and hand-edit sentences this
+        # command prints later read it (DEF-3088, DEF-3089).
+        _WRITERS_GATE_VERDICTS[os.environ.get("PATH", "")] = kept
         return None
     (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
     # No candidate cleared the floor, so a newer Python on PATH under one of
@@ -1016,6 +1044,14 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
         file=sys.stderr,
     )
     return 1
+
+
+def rewire_with_that_interpreter(quote: str = "`") -> str:
+    """The re-wire a venv-only name's remedy ends with, spelled once for the
+    gate's warning, the claims, the retired-rule hold and the hand-edit phrase
+    (DEF-3088, DEF-3089): typed with the Python the operator puts on PATH
+    outside the virtualenv, never the written name."""
+    return f"{quote}<that interpreter> -m espalier init . --rewire-interpreter{quote}"
 
 
 def _warn_venv_fallback_outside(
@@ -1073,9 +1109,8 @@ def _warn_venv_fallback_outside(
         f"app), so their guards fail OPEN."
         + _unheard_beside(mute)
         + f" Put a Python {floor}+ on PATH outside the virtualenv, then "
-        f"re-wire: `<that interpreter> -m espalier init . "
-        f"--rewire-interpreter`; launching Claude Code from the virtualenv is "
-        f"no fix.",
+        f"re-wire: " + rewire_with_that_interpreter() + "; launching Claude "
+        "Code from the virtualenv is no fix.",
         file=sys.stderr,
     )
 
@@ -1624,6 +1659,52 @@ def _remedy_py(*, persisted: bool = False) -> str:
     return _remedy_interpreter(persisted=persisted)[0]
 
 
+def _venv_only_name(name: str) -> "_VenvOnlyName | None":
+    """Whether ``name``, a bare interpreter name this process writes, finds
+    wired, or tells the operator to write, runs the harness only inside a
+    virtualenv: the one reader every sentence that spells such a name reads
+    (DEF-3088, DEF-3089), else None.
+
+    Doctor's reading of the name itself (:func:`_venv_only_reading_of`), in
+    every process, so each name is read on its own: a wired ``python`` stays
+    venv-only after the operator puts a ``py -3`` on PATH and the resolver
+    answers that instead (the failure-mode review, driven). Where a writing
+    command's gate asked under this PATH (:data:`_WRITERS_GATE_VERDICTS`), a
+    reading with nothing outside the virtualenv is dropped: air's ruling
+    20e1d4 keeps that host told nothing by the writing commands, and doctor
+    names it. No new spawn: doctor's reading asks only banners the resolver or
+    doctor's own check already kept for the names they wire.
+    """
+    found = _venv_only_reading_of(name)
+    if found is not None and found.outside is None and os.environ.get("PATH", "") in _WRITERS_GATE_VERDICTS:
+        return None
+    return found
+
+
+def _venv_only_reading_of(name: str) -> "_VenvOnlyName | None":
+    """Doctor's reading of a bare name (:func:`espalier._venv.resolves_only_inside`),
+    whichever process asks: venv-only with nothing outside included. The
+    retired-rule hold reads it in every process (air's ruling db4749: the
+    rule is the guard left outside the virtualenv on that host too)."""
+    if len(interpreter_argv(name)) != 1 or not resolves_only_inside(name):
+        return None
+    # The root doctor's finding names (`doctor._check_python_resolver`).
+    root = wired_venv_root(name)
+    return _VenvOnlyName(name, root, outside_reading(name, root)[1] if root is not None else None)
+
+
+def venv_only_first_step(found: _VenvOnlyName, quote: str = "`") -> str:
+    """The interpreter remedy, to say before a venv-only name's hand edit or
+    command (DEF-3089): ``first put a Python 3.11 or newer on PATH outside the
+    virtualenv at `<venv>`, where `python` runs the harness only inside it``.
+    The one home of that sentence for the hand-edit phrase and doctor's
+    statusLine note; the polite update of calls 4ae182 and 9b8073, never a
+    reduced mode."""
+    at = f" at {quote}{found.venv}{quote}" if found.venv is not None else ""
+    return (f"first put a Python {floor_text()} or newer on PATH outside the virtualenv"
+            f"{at}, where {quote}{found.name}{quote} runs the harness only inside it")
+
+
 def hand_wiring_phrase(written: str, quote: str = "`") -> str:
     """The hand edit that wires a hook to ``written``, the value init WRITES.
 
@@ -1632,12 +1713,29 @@ def hand_wiring_phrase(written: str, quote: str = "`") -> str:
     ``command`` value names no executable -- exec form spawns ``command`` as
     given -- so a sentence that spelled it there handed the operator a hand
     edit that cannot run.
+
+    Where ``written`` runs the harness only inside a virtualenv
+    (:func:`_venv_only_name`), the phrase opens with the interpreter remedy
+    and spells the interpreter to be put on PATH (DEF-3089): the same report
+    or command has just said an entry wired with ``written`` fails open from
+    any other shell, so spelling it here told the operator to wire a dead
+    gate. The rewire it names rewrites a hand-added entry too.
     """
     head, *flags = interpreter_argv(written)
     if flags:
         return (f"command {quote}{head}{quote}, args "
                 f"{quote}{' '.join(flags)}{quote} then the script path")
-    return f"command {quote}{head}{quote}, script path in args"
+    found = _venv_only_name(written)
+    if found is None:
+        return f"command {quote}{head}{quote}, script path in args"
+    # The rewire is typed with the interpreter put on PATH, never the written
+    # name (the portability pin's pairing, DEF-758). A launcher's flag leads
+    # the args: `py -3` as one command value names no executable (above).
+    return (f"{venv_only_first_step(found, quote)}, so every entry wired with "
+            f"{quote}{head}{quote} fails open from any shell without that virtualenv, "
+            "and run " + rewire_with_that_interpreter(quote)
+            + f"; then command {quote}<that interpreter>{quote} (a launcher's flag, such as "
+            f"{quote}-3{quote}, leads the args), script path in args")
 
 
 def _profile_allow_list(
@@ -2144,6 +2242,24 @@ def _retired_rules_to_name(
             "deployed), and the rule is the guard left; "
             f"`{_remedy_py()} -m espalier merge-settings . --repair` re-wires it, and "
             "the run after names the rule"
+        ))
+    # A wired name that runs the harness only inside a virtualenv: the
+    # blockers read empty in its shell, and from any other shell write_guard
+    # fails open, so the rule is the guard left there (DEF-3088's sibling,
+    # air's ruling db4749). Doctor's reading in every process, so doctor and
+    # the writers hold the rule alike, the host with nothing outside the
+    # virtualenv included, where the gate is silent: the reason stands alone.
+    venv_only = _venv_only_claim(Path(settings_path), reader=_venv_only_reading_of)
+    if venv_only is not None:
+        at = f" at {venv_only.venv}" if venv_only.venv is not None else ""
+        there = (f"resolves to {venv_only.outside}, which runs no Python {floor_text()}+"
+                 if venv_only.outside else "resolves to nothing")
+        return RetiredRules(held=(
+            f"write_guard runs only in a session started from the virtualenv{at}: from "
+            f"any other shell `{venv_only.name}` {there}, so every guard wired with it "
+            f"fails open and the rule is the guard left; put a Python {floor_text()} or "
+            "newer on PATH outside the virtualenv, re-wire with "
+            + rewire_with_that_interpreter() + ", and the run after names the rule"
         ))
     return RetiredRules(stale)
 
@@ -4496,7 +4612,8 @@ def _wire_hooks_into_existing(
                 repo_root, prefix="--wire-hooks", wrote_settings=bool(merge_result.event_count),
             ), file=sys.stderr)
         else:
-            print(wired_line + _merge_claim(merge_result), file=sys.stderr)
+            print(wired_line + _merge_claim(merge_result, held=_venv_only_claim(settings_path)),
+                  file=sys.stderr)
             reporters_line = _dead_reporters_line(repo_root, _remedy_py())
             if reporters_line:
                 print("--wire-hooks: " + reporters_line, file=sys.stderr)
@@ -8232,8 +8349,15 @@ def _print_init_summary(
     # Default FALSE: an absent key means nobody established the claim, and a
     # governance tool must not assert enforcement from a missing measurement.
     if result.get("settings_hooks_wired", False):
-        print("  - Hooks now intercept Claude Code tool calls "
-              "(write_guard, plan_guard, stop_gate, ...).")
+        # The blockers read empty in the virtualenv's shell; where a wired
+        # entry's name runs the harness only there, say so (DEF-3088).
+        held = _venv_only_claim(repo_root / ".claude" / "settings.json")
+        if held is None:
+            print("  - Hooks now intercept Claude Code tool calls "
+                  "(write_guard, plan_guard, stop_gate, ...).")
+        else:
+            print("  - Hooks intercept Claude Code tool calls "
+                  "(write_guard, plan_guard, stop_gate, ...) " + _venv_only_hold(held))
         print("  - " + _stop_gate_summary_line(fp))
         # DEF-619: that sentence is about the blocking gates, and it used to
         # be the whole story -- a reporter (SubagentStart, PostToolUseFailure,
@@ -8980,15 +9104,67 @@ def _merge_did_phrase(
     return ", ".join(did[:-1]) + " and " + did[-1]
 
 
-def _merge_claim(result: MergeResult, *, repaired: bool = False) -> str:
+def _merge_claim(
+    result: MergeResult, *, repaired: bool = False, held: "_VenvOnlyName | None" = None,
+) -> str:
     """The enforcement sentence every narrator of an armed merge appends.
     "now" claims a transition; a run that wired no hook event -- an allow-only
     or statusline-only top-up on a wired file -- made none, unless a repair
     rewrote entries (its rewrite is the transition). One helper for
     ``--wire-hooks`` and ``merge-settings``: the first shipped the shared
-    did-phrase and kept an unconditional "now" (both reviewers, 2026-09-15)."""
-    return (" Enforcement is now active." if (result.event_count or repaired)
-            else " Enforcement was already active.")
+    did-phrase and kept an unconditional "now" (both reviewers, 2026-09-15).
+    ``held`` is the venv-only name a wired entry runs
+    (:func:`_venv_only_claim`): the sentence then says where it holds
+    (DEF-3088)."""
+    verb = "is now active" if (result.event_count or repaired) else "was already active"
+    if held is not None:
+        return f" Enforcement {verb} " + _venv_only_hold(held)
+    return f" Enforcement {verb}."
+
+
+def _venv_only_claim(
+    settings_path: Path, *, reader: "Callable[[str], _VenvOnlyName | None] | None" = None,
+) -> "_VenvOnlyName | None":
+    """The venv-only name a wired Espalier entry in ``settings_path`` runs
+    under (:func:`_venv_only_name`), or None: what qualifies an enforcement
+    claim (DEF-3088). The blockers' interpreter arm asks each wired word in
+    the writing command's own shell, where the venv's shim answers as a
+    Python 3, so the claim read empty blockers after the gate had just said
+    that name fails open from any other shell. Only a wired entry counts: a
+    settings file that names another interpreter keeps it (the gate's own
+    words), and its claim stands. The settings walk spawns nothing; the reader
+    asks a banner only for a wired name no earlier check in the process asked,
+    once, kept. ``reader`` is :func:`_venv_only_name` unless a caller names
+    doctor's reading (the retired-rule hold)."""
+    read = reader or _venv_only_name
+    entries = _wired_espalier_entries(settings_path)
+    if not entries:
+        return None
+    heads = sorted({(entry.argv or (entry.spelling or "",))[0] for entry in entries})
+    for head in heads:
+        if not _is_python_interpreter_site(head):
+            continue
+        found = read(head)
+        if found is not None:
+            return found
+    return None
+
+
+def _venv_only_hold(found: _VenvOnlyName) -> str:
+    """Where an enforcement claim holds over a venv-only wired name, and the
+    remedy, completing "Hooks intercept ..." or "Enforcement is now active"
+    (DEF-3088): the hooks run in a session started from the virtualenv, and
+    from any other shell they hit what the gate's warning named."""
+    floor = floor_text()
+    at = f" at {found.venv}" if found.venv is not None else ""
+    there = (f"`{found.name}` resolves to {found.outside}, which runs no Python {floor}+"
+             if found.outside else f"`{found.name}` resolves to nothing")
+    return (f"only in a session started from the virtualenv{at}: from any other shell "
+            f"(another terminal, an IDE, the desktop app) {there}, so every hook wired "
+            f"with it exits outside the blocking range and its guard fails open, and "
+            f"launching Claude Code from the virtualenv is no fix. Put a Python {floor} "
+            "or newer on PATH outside the virtualenv, then re-wire: "
+            + rewire_with_that_interpreter() + ".")
 
 
 # Stable MergeResult.status codes. Shared by both callers so the merge logic
@@ -11267,7 +11443,7 @@ def _unwired_gate_diagnosis(
             + (" is" if len(inert) == 1 else " are")
             + " wired but the entry runs no interpreter; --repair rewrites "
             "espalier's own entry to canonical (backup first), or set it "
-            f"back to {wiring} by hand."
+            f"back by hand: {wiring}."
         )
     if miswired:
         remedies.append(
@@ -11774,6 +11950,9 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     # every gate wired to `echo`, which this command used to report as active.
     missing = _enforcement_claim_blockers(repo_root, settings_path)
     unverified = missing is None
+    # Where the claim would stand, the venv-only name a wired entry runs says
+    # where it holds (DEF-3088); read only then, since it is the claim's.
+    held = _venv_only_claim(settings_path) if missing == [] else None
     # Judged against the profile the file was rendered from, never --profile:
     # the flag names the rules to compare and append, and the record says
     # which rules an older init wrote here (DEF-1155).
@@ -11807,7 +11986,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         if result.missing_allows:
             tail = " Hook events are current; the allow rules below are not."
         elif (repaired or named_stale or named_stale.held or missing != [] or result.allow_note
-              or superseded):
+              or superseded or held is not None):
             tail = ""
         else:
             tail = " Nothing to do."
@@ -11819,6 +11998,8 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
             print(_disarmed_hook_tree_warning(
                 repo_root, prefix="merge-settings", wrote_settings=False,
             ), file=sys.stderr)
+        elif held is not None:
+            print(head + " -- enforcement is active " + _venv_only_hold(held) + tail)
         else:
             print(head + " -- enforcement is active." + tail)
         if repaired:  # the repair rewrote the file
@@ -11835,7 +12016,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     )
     # "now" claims a transition; an allow-only or statusline-only run on a
     # wired file made none -- unless the repair above made one.
-    claim = _merge_claim(result, repaired=repaired)
+    claim = _merge_claim(result, repaired=repaired, held=held)
     if repaired and repair is not None:
         # Two writes this run, two backups: say which is the pre-run file, since
         # the line the operator reads last names the later one.
@@ -12590,6 +12771,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # was told "nothing to do". The enforcement claim decides; the
             # disarmed narration names --repair.
             disarmed = False
+            venv_held: "_VenvOnlyName | None" = None
             settings_path = repo_root / ".claude" / "settings.json"
             if os.path.isfile(settings_path):
                 blockers = vc_blockers
@@ -12598,6 +12780,13 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     print(_disarmed_hook_tree_warning(
                         repo_root, prefix="[upgrade]", wrote_settings=False,
                     ), file=sys.stderr)
+                else:
+                    # Armed in this shell only, where a wired name runs the
+                    # harness only inside the virtualenv: said, and never
+                    # "nothing to do" under it (DEF-3088, air's ruling db4749).
+                    venv_held = _venv_only_claim(settings_path)
+                    if venv_held is not None:
+                        print("[upgrade] the hooks run " + _venv_only_hold(venv_held))
             # "Nothing to do" is said only when it is whole. The states that
             # keep the sentence true without being drift are counted beside
             # it: a kept file (the surface is not at packaged bytes), a
@@ -12606,6 +12795,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # not qualify: the surface IS at packaged bytes, and no run of
             # this command could ever change that line.
             qualifiers: list[str] = []
+            if venv_held is not None:
+                qualifiers.append("the hooks run only in a session started from the "
+                                  "virtualenv (the line above)")
             # DEF-3003's reach: every tree the row names is version-current
             # (0.8.0b2 since 2026-09-27). A stale onboarding probe is repaired
             # here in place, as the repairs above are, never as drift: drift
@@ -13083,7 +13275,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 # so only when the enforcement claim holds, else narrate the
                 # disarmed tree the way init does (it names --repair).
                 exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
-                if exec_blockers == []:
+                held = _venv_only_claim(settings_path) if exec_blockers == [] else None
+                if held is not None:
+                    print("[upgrade] settings.json hooks already current; they run "
+                          + _venv_only_hold(held))
+                elif exec_blockers == []:
                     print("[upgrade] settings.json hooks already current.")
                 else:
                     print(_disarmed_hook_tree_warning(

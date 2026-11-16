@@ -83,6 +83,19 @@ line cannot push the others out; an `[INFO]` line (which worktree the
 session's directory sits in) reads under a `--- NOTES ---` header after it. Each line also goes to stderr, which
 for a hook that exits 0 reaches Claude Code's debug log only, never Claude or
 your terminal.
+One of those lines names the voice-only audit records this checkout wrote since
+the previous start (the `session_started` stamp, read before this start
+rewrites it), by type and count: the records a hook writes when it has no
+other channel -- a fault a guard allowed through, said once a session, or a
+kill switch in managed policy settings -- whatever UTC day they were written
+on ("Governance audit log" below). It names two types, the policy kill switch
+and then the rarest first, and counts the rest. The read is bounded at seven
+UTC days and 4 MB, newest first, and the line says when it stopped there or
+skipped a log it could not read; with no stamp (a first start in the
+checkout) it reads from the start of yesterday, UTC. The stamp moves at every
+start whatever the read found, so a start whose banner reached no one (a
+nested headless session) has named its records to no one; `/status --log`
+keeps the last two UTC days.
 A `bypassPermissions` default is not a kill-switch -- the hooks still run and
 still deny in bypass mode -- so it gets its own `Permissions:` line naming the
 settings file.
@@ -1336,7 +1349,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    (a `.` step, or a trailing dot or space Windows strips, names it too),
    this project's checkout or the home directory under it, a link that
    resolves onto one, a glob and a `..` step stay the wall, pinned by
-   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
+   `test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
    and so does a variable with no literal binding, the coverage contract's
    declared PowerShell exception (below).
    The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
@@ -1465,9 +1478,16 @@ first; the dangerous-command catch is a secondary slip-catcher):
    a `del /s` with a narrowing pattern (`*.pyc`) is the zone check's
    alone, as a narrowed `find` is
    (`tests/test_write_guard.py::TestTheCmdDeleteReaderReadsEachBranch::test_the_bash_launch`),
-   and a bare path longer than 256 characters before the native binary's
+   a bare path longer than 256 characters before the native binary's
    name is read by no reader
-   (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`).
+   (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`),
+   and a word before cmd's switch that is not one, or a word the switch
+   is glued to (`cmd foo /c rd /s /q .`, `cmd x/c rd /s /q .`), which cmd
+   skips to run the program after it, leaves these readers an interactive
+   cmd with no program, and a glued or quoted one leaves the PowerShell
+   secret-path check none either (`cmd x/c type .env`,
+   `cmd "a b" /c type .env`)
+   (`tests/test_write_guard.py::TestAWordBeforeCmdsSwitchIsADeclaredLimit::test_a_word_before_cmds_switch_is_a_declared_limit`).
    Every form the readers declare is crossed with the hard-tier texts'
    target claims by one test class.
 
@@ -1962,7 +1982,9 @@ outer command, judged from the payload's directory and not the `cd`'s
 nudges, and so is each kind of program above the outer scan does not read in
 place, one row per kind), are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
-`cmd /c` is a third grammar the hook has no extractor for
+`cmd /c`'s program is read with cmd's own grammar for a delete, a secret
+read and a harness variable it sets, while a zone write its program
+redirects to is refused by the outer scan's reading, not by that grammar
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).
 
 Two more declared limits sit on this reading, each pinned as the exact verdict
@@ -2167,7 +2189,9 @@ body at all.
 The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
-PowerShell) is read with that shell's roster. A program a carrier runs out
+PowerShell) is read with that shell's roster, and a program handed to cmd
+from either tool (`cmd //c type .env` on Bash) is read as cmd receives it,
+with the PowerShell roster, whose `type` and `more` are cmd's reads. A program a carrier runs out
 of a string is read as a program too: Bash `eval` (behind `builtin` and
 `command` too, each quoted or followed by `--`), `watch`, `script -c` and
 `su -c` (su's `--session-command` too, either long switch under any prefix
@@ -2185,7 +2209,14 @@ first word that is no parameter, a parameter led by `-`, `/` or a Unicode
 dash and quoted or not; which parameters take a value is not read, so each
 word after a switch is read as a program too),
 `cmd /c`, `/k` or `/r` (which cmd runs as `/c`; glued to the program or to
-a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`),
+a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`; the program read
+both as PowerShell reads it and as cmd receives it, so a read behind a
+separator word PowerShell hands cmd bare, `cmd /c echo a '&' type .env`,
+or behind the stop-parsing token after the switch, `cmd /c --% type .env`,
+is refused, and so is a file an input redirection hands cmd's program,
+`cmd /c --% more < .env`; a word the switch is glued to, `cmd x/c type .env`,
+or a quoted word before it is among cmd's limits under the recursive
+deletes above),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
 an expandable string) and an `@(...)` array subexpression outside every
 string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
@@ -2200,7 +2231,9 @@ the program, here-strings and expandable strings included, so a quoted
 argument of the command before the pipe is read too, a reading that
 refuses nothing a plain word does). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
-argument list and the words after a quoted program (`cmd /c "type" .env`).
+argument list and the words after a quoted program (`pwsh -c "gc" .env`;
+cmd's are read, since PowerShell hands cmd a quoted word without a blank
+bare, so `cmd /c "type" .env` is refused).
 A PowerShell statement that opens with a quoted string is read as the
 command its first word names, unless nothing in the command can run the string: the right-hand
 side of a last-statement assignment to a variable the command names
@@ -2549,7 +2582,8 @@ the change is blocked. If found in managed `policy_settings` (which the
 hook protocol says cannot be blocked), the hook writes an audit record
 (`configchange_policy_settings_kill_switch_detected`); its `[WARN]` line goes
 to stderr, which reaches only the debug log -- ConfigChange has no channel to
-Claude or to your terminal. A `bypassPermissions` default is not judged here: it is
+Claude or to your terminal -- so the record is voice-only: `/status --log`
+counts it and the next SessionStart names it in its Warnings block. A `bypassPermissions` default is not judged here: it is
 not a kill-switch, a ConfigChange block is shown to no one and does not revert
 the file, and the mode is chosen at launch. What stops a session writing one is
 `write_guard`'s protected-zone deny on the writes it reads to both settings
@@ -3576,12 +3610,16 @@ include a truncated command string, and the maintenance-bypass records --
 `stop_bypassed_maintenance_mode` from `stop_gate` -- one per hook per session
 when the flag switches a check off; `/status --log` filters those out of the
 tail and shows the refusal tier of the table below by default, counting the
-bypasses on their own line, per hook. The fail-open family -- `<hook>_failed_open_<what>`,
+bypasses on their own line, per hook. The voice-only family is counted on a
+line of its own too: the fail-open records -- `<hook>_failed_open_<what>`,
 written once a session by `say_once` when a check fails open, a reporter hook
 crashes, or a reporter's finding has no other channel (PostCompact, Stop,
-SubagentStop, ConfigChange) -- is counted on a line of its own too: a hook
-that exits 0 has its stderr routed to the debug log, so for those the record
-is the voice.)
+SubagentStop, ConfigChange) -- and `config_guard`'s
+`configchange_policy_settings_kill_switch_detected`. A hook that exits 0 has
+its stderr routed to the debug log, so for those the record is the voice; the
+family is declared once (`_integrity.is_voice_only_event`), and the next
+SessionStart names what was written since the previous start, past the UTC
+day.)
 
 The records come in two tiers. A **refusal** is a call that did not run. A
 **pause** is once-then-continue: a speed-bump fire lets the re-issued command
@@ -3616,7 +3654,7 @@ Watch it live (all records), or read the current repo's tail:
 
 ```bash
 tail -f ~/.espalier/audit/*.log                    # all records, live
-python tools/cc/session_resume.py --log            # last 20 refusals, this repo, today
+python tools/cc/session_resume.py --log            # last 20 refusals, this repo, today and yesterday (UTC)
 python tools/cc/session_resume.py --log 50         # last 50 refusals
 python tools/cc/session_resume.py --log 50 --all   # last 50 blocks, pauses included
 python tools/cc/session_resume.py --log <repo>     # another checkout's tail
@@ -3624,9 +3662,10 @@ python tools/cc/session_resume.py --log <repo>     # another checkout's tail
 
 The tail is scoped to the checkout it is asked about: the file is keyed by the
 repo's basename, so two checkouts named alike share one, and the reader keeps
-only the records whose `repo_path` is that root. A per-type count for the whole
-day prints above the tail, and the day's pauses are counted on a line of their
-own, so a window of 20 cannot silently hide what it left out — a busy day of
+only the records whose `repo_path` is that root. It reads today's and
+yesterday's logs (UTC), so a record does not leave the view the moment the date
+turns. A per-type count for those two days prints above the tail, and their
+pauses are counted on a line of their own, so a window of 20 cannot silently hide what it left out — a busy day of
 speed-bump fires or Stop-gate blocks does not bury a protected-zone denial
 without a trace, and `--all` widens the tail to the pauses when you want them.
 

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3091",
+ "subject": "tools/cc/session_resume.py",
+ "cmd": "python -c \"import subprocess,sys;r=subprocess.run([sys.executable,'tools/cc/session_resume.py','--log','--days','7','.'],capture_output=True);print('rc=%d'%r.returncode)\"",
+ "open_value": "rc=2",
+ "why_not": null,
+ "row_sha": "1fb32bcdb886",
+ "text_sha": "221bcdd70b16",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD 51ccd0d76a6d)"
+}
