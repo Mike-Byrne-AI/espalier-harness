@@ -5,7 +5,9 @@
 and reports zero-firing candidates.
 
 For each pattern-matching rule in:
-  - tools/cc/hooks/_bash_patterns.py (compiled regex extractors named `_*_RE`)
+  - tools/cc/hooks/_bash_patterns.py (regex extractors named `_*_RE`, compiled
+    or first-use objects, and every zero-argument cached accessor that returns
+    a pattern; the count line says how many each source gave)
   - tools/cc/hooks/_protected_zones.py (PROTECTED_PREFIXES, PROTECTED_FILES)
 
 walk bench/corpus/BC-*.json canonical_attempts and count which rules fire.
@@ -36,6 +38,7 @@ Usage:
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
@@ -52,15 +55,55 @@ import _bash_patterns  # noqa: E402
 import _protected_zones  # noqa: E402
 
 
-def collect_regex_rules() -> list[tuple[str, re.Pattern]]:
+def _compiled(obj: object) -> re.Pattern | None:
+    """``obj`` as the pattern it stands for: itself, or the pattern a
+    first-use object (`_bash_patterns._FirstUse`, DEF-2084) compiles on its
+    first read; else None."""
+    if isinstance(obj, re.Pattern):
+        return obj
+    if type(obj) is getattr(_bash_patterns, "_FirstUse", None):
+        return obj.search.__self__  # type: ignore[attr-defined]
+    return None
+
+
+def collect_named_rules() -> list[tuple[str, re.Pattern]]:
+    """The module-level extractors named `_*_RE`: compiled patterns, or since
+    DEF-2084 first-use objects, which ``isinstance(obj, re.Pattern)`` reads as
+    none."""
     rules: list[tuple[str, re.Pattern]] = []
     for name in sorted(dir(_bash_patterns)):
         if not name.endswith("_RE"):
             continue
-        obj = getattr(_bash_patterns, name)
-        if isinstance(obj, re.Pattern):
-            rules.append((name, obj))
+        pattern = _compiled(getattr(_bash_patterns, name))
+        if pattern is not None:
+            rules.append((name, pattern))
     return rules
+
+
+def collect_accessor_rules() -> list[tuple[str, re.Pattern]]:
+    """Each zero-argument cached function `_bash_patterns` defines that returns
+    a pattern, whatever it is named, as its call (``_powershell_head_re()``):
+    a pattern compiled on first use behind a cache (DEF-5116)."""
+    rules: list[tuple[str, re.Pattern]] = []
+    for name, obj in sorted(vars(_bash_patterns).items()):
+        wrapped = getattr(obj, "__wrapped__", None)
+        if not hasattr(obj, "cache_info") or getattr(wrapped, "__module__", None) != _bash_patterns.__name__:
+            continue
+        try:
+            takes = inspect.signature(wrapped).parameters
+        except (TypeError, ValueError):
+            continue
+        if takes:
+            continue
+        value = obj()
+        if isinstance(value, re.Pattern):
+            rules.append((f"{name}()", value))
+    return rules
+
+
+def collect_regex_rules() -> list[tuple[str, re.Pattern]]:
+    """Every regex rule the audit walks: the named extractors, then the accessors."""
+    return [*collect_named_rules(), *collect_accessor_rules()]
 
 
 def collect_path_rules() -> list[tuple[str, str, str]]:
@@ -122,7 +165,9 @@ def _path_matches_file(candidate: str, target: str) -> bool:
 
 
 def main() -> int:
-    regex_rules = collect_regex_rules()
+    named_rules = collect_named_rules()
+    accessor_rules = collect_accessor_rules()
+    regex_rules = [*named_rules, *accessor_rules]
     path_rules = collect_path_rules()
     corpus = load_corpus()
 
@@ -155,7 +200,9 @@ def main() -> int:
     print(f"Dead-rule audit -- bench/corpus/ ({CORPUS_DIR.relative_to(REPO_ROOT)})")
     print("=" * 70)
     print(f"Corpus  : {len(bc_classes)} bypass classes, {len(corpus)} canonical attempts")
-    print(f"Rules   : {len(regex_rules)} regex extractors + {len(path_rules)} protected-path entries = {len(all_rule_names)} total")
+    print(f"Rules   : {len(regex_rules)} regex extractors ({len(named_rules)} named _RE, "
+          f"{len(accessor_rules)} first-use accessors) + {len(path_rules)} protected-path entries "
+          f"= {len(all_rule_names)} total")
     print()
     header = f"{'Rule':<48} {'Fires':>6}  Classes"
     print(header)

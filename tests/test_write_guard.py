@@ -19,7 +19,7 @@ from types import ModuleType
 
 import pytest
 
-from tests._first_use_patterns import first_use_patterns
+from tests._first_use_patterns import compiled, first_use_patterns
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
@@ -798,7 +798,6 @@ class TestQuotedVerbTailIsUniform:
         tests/test_speedbump_irreversible.py: the pattern holds either tool's
         command-position fragment anywhere, so a group-wrapped or prefixed arm
         counts); a record is any `DANGEROUS_*` list's, by object."""
-        import re
         import sys
         sys.path.insert(0, str(HOOKS_DIR))
         import write_guard as wg
@@ -806,16 +805,18 @@ class TestQuotedVerbTailIsUniform:
         # load, so the walk below loads it first, by name; the floor keeps an
         # unloaded walk (10 patterns bound at import, 36 after) from passing.
         wg._load_the_pattern_path()
-        walked = sum(isinstance(v, re.Pattern) for v in vars(wg).values())
-        assert walked >= 30, f"{walked} patterns in write_guard's namespace: the pattern path did not load"
         bp = wg._bash_patterns   # the module object write_guard reads, not a second copy
-        shared = {id(v) for v in vars(bp).values() if isinstance(v, re.Pattern)}
+        # `_bash_patterns`' patterns are first-use objects (DEF-2084): read
+        # through `compiled`, which `isinstance(v, re.Pattern)` alone is not
+        walked = sum(compiled(bp, v) is not None for v in vars(wg).values())
+        assert walked >= 30, f"{walked} patterns in write_guard's namespace: the pattern path did not load"
+        shared = {id(v) for v in vars(bp).values() if compiled(bp, v) is not None}
         for name, registry in vars(wg).items():
             if name.startswith("DANGEROUS_") and isinstance(registry, (tuple, list)):
                 shared |= {id(e.pattern) for e in registry}
         own = sorted(
             name for name, value in vars(wg).items()
-            if isinstance(value, re.Pattern) and id(value) not in shared
+            if compiled(bp, value) is not None and id(value) not in shared
             and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS_SEP in value.pattern)
         )
         assert own == [], (
@@ -4349,11 +4350,11 @@ class TestCatastrophicLoopCarrier:
         a fifth head missing from either reds here, where before a head
         missing from the zone reader was the silent half-fix."""
         import ast
-        import re as _re
         bp = self._bp()
+        # first-use objects since DEF-2084, read through `compiled`
         derived = {name for name, v in vars(bp).items()
-                   if isinstance(v, _re.Pattern) and bp._DO_BODY in v.pattern}
-        by_id = {id(v): name for name, v in vars(bp).items() if isinstance(v, _re.Pattern)}
+                   if compiled(bp, v) is not None and bp._DO_BODY in v.pattern}
+        by_id = {id(v): name for name, v in vars(bp).items() if compiled(bp, v) is not None}
         table = {by_id[id(rx)] for rx, _shape in bp._LOOP_OPENERS}
         assert table == derived, (table, derived)
         assert set(bp._LOOP_OPENER_SHAPE.values()) == {"enumerator", "words"}

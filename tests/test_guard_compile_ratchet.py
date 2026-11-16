@@ -18,8 +18,8 @@ compiled characters or the shared command-position fragment
 figure: past the ceiling a growth owes its per-call figure, and under the floor
 the change that lowered it (a lever, or a reader that stopped counting the
 imports) owes the band moved down. It also reds where the reader read no
-pattern at all; where the loader compiled none of its own, since the imports
-compile about 96% of the figure and a loader that loads nothing would sit
+pattern at all; where the loader compiled none of its own, since at b3eefcf the
+imports compiled about 96% of the figure and a loader that loads nothing sat
 inside the band; and where no pattern read embeds the fragment. The check is a
 pure function, tested on fixed figures: a mutated tree would drift with every
 guard lane. The live row reads through the same helper as three synthetic
@@ -33,20 +33,26 @@ pattern compiled on first use behind a cache, which the census calls and sums
 (``summed_chars``): a pattern moved behind an accessor is still compiled by
 every call that opens its check, so it counts against the same ceiling
 (DEF-4122, under the dispatcher's 0b0d58; ruled in-lane by 176a91). The floor
-reads the import figure alone, PINNED being an import reading. The accessors
+reads the import figure alone. The accessors
 are still pinned by name below, so a new one owes the per-call figure of the
 kind that reaches it. A pattern compiled inside a check at call time stays
 outside (the reader never judges a call). The fragment ceiling reads
 ``_CMD_POS_NO_VERB`` alone, so a growth in ``_CMD_POS_VERB_PREFIX`` meets only
 the character ceiling.
 
-What the +10% line catches (ruling 2b), at b3eefcf's figures: a #516-sized
-jump, and any growth of 21,306 compiled characters or of the fragment past
+DEF-2084 moved `_bash_patterns`' 218 module-level patterns to first use (each
+a ``_FirstUse`` object the census reads by type), so the import figure fell
+from 214,992 characters to 50,799 while the summed figure stayed 222,141. The
+band was re-pinned whole by RULE (air d18db5): PINNED carries both figures
+since, the ceiling cut from the summed one and the floor from the import one.
+
+What the +10% line catches (ruling 2b), at the pinned figures: a #516-sized
+jump, and any growth of 22,860 compiled characters or of the fragment past
 1,750. It does not catch one 100-character alternation added to the fragment
-(1,680 characters; 65 copies across the 61 patterns that embed it, so +6,500
-compiled characters, +3.1%), though a second one reds on the fragment. Nor does
-it catch a second copy of the fragment in one pattern (+1,580, +0.8%): thirteen
-such copies pass and the fourteenth reds.
+(1,680 characters; 67 copies across the 63 patterns that embed it, so +6,700
+compiled characters, +3.0%), though a second one reds on the fragment. Nor does
+it catch a second copy of the fragment in one pattern (+1,580, +0.7%): fourteen
+such copies pass and the fifteenth reds.
 """
 # slow-exempt: five census children, each a fresh interpreter compiling the hooks' patterns (under two seconds on the Air), one of them judging six calls
 from __future__ import annotations
@@ -68,17 +74,21 @@ HOOKS = REPO_ROOT / "tools" / "cc" / "hooks"
 #: The reading the band is cut from (ruling 2b), with where and how it was
 #: read. A re-pin replaces it whole (RULE); the limits below follow from it.
 PINNED = {
-    "at": "b3eefcf",
-    "date": "2026-11-12",
-    "python": "3.14.7, the checkout's venv (3.11 reads up to 516 more: the standard library's compiles a "
-              "hook frame reaches move by interpreter and by what its startup imported first)",
-    "hooks_patterns": 308,
-    "hooks_chars": 206_695,
+    "at": "caa8024 with DEF-2084's first-use move (lane/the-pattern-module-starts-cheaper)",
+    "date": "2026-11-16",
+    "python": "3.11.9, the Windows box's .venv (an interpreter reads a few hundred more or fewer: the "
+              "standard library's compiles a hook frame reaches move by interpreter and by what its startup "
+              "imported first)",
+    "hooks_patterns": 113,
+    "hooks_chars": 50_799,
+    "summed_patterns": 334,
+    "summed_chars": 222_141,
     "loader_patterns": 8,
     "fragment_len": 1_580,
-    "embedding_patterns": 61,
-    "fragment_copies": 65,
-    "per_call": "Task 0's --calls 30 on the Air at b3eefcf (TP-707 Landing)",
+    "embedding_patterns": 63,
+    "fragment_copies": 67,
+    "per_call": "air d18db5 (re-pinned whole by RULE) and 5d0b3e (c): --calls 30 at the lane's head and "
+                "--at origin/main on the Windows box, in DEF-2084's pull request",
 }
 
 
@@ -86,17 +96,18 @@ def _ceil_to(n: int, step: int) -> int:
     return -(-n // step) * step
 
 
-#: Plus 10%, rounded up to a thousand characters (the fragment: to fifty).
-CEILING_COMPILED_CHARS = _ceil_to(-(-PINNED["hooks_chars"] * 11 // 10), 1_000)
+#: Plus 10% of the summed figure, rounded up to a thousand characters (the
+#: fragment: to fifty).
+CEILING_COMPILED_CHARS = _ceil_to(-(-PINNED["summed_chars"] * 11 // 10), 1_000)
 CEILING_FRAGMENT_LEN = _ceil_to(-(-PINNED["fragment_len"] * 11 // 10), 50)
-#: Less 10%, rounded down the same way.
+#: Less 10% of the import figure, rounded down the same way.
 FLOOR_COMPILED_CHARS = PINNED["hooks_chars"] * 9 // 10 // 1_000 * 1_000
 FLOOR_FRAGMENT_LEN = PINNED["fragment_len"] * 9 // 10 // 50 * 50
 
 #: The figures the check reads, at the pinned reading.
 BASE = {"loader_ran": True, "fragment_found": True,
-        **{k: PINNED[k] for k in ("hooks_patterns", "hooks_chars", "loader_patterns", "fragment_len",
-                                  "embedding_patterns")}}
+        **{k: PINNED[k] for k in ("hooks_patterns", "hooks_chars", "summed_chars", "loader_patterns",
+                                  "fragment_len", "embedding_patterns")}}
 #: caae022's figures as the census's ``--at`` read them on 2026-11-12, held as
 #: data, since CI has no ref to it (the pack's prototype read 387,144 on an
 #: interpreter whose startup had not imported glob and fnmatch first). It
@@ -247,13 +258,15 @@ def first_use_compiles(hooks: Path) -> dict[str, set[str]]:
 
 
 def _grown(*, chars: int = 0, fragment: int = 0) -> dict:
-    return {**BASE, "hooks_chars": BASE["hooks_chars"] + chars, "fragment_len": BASE["fragment_len"] + fragment}
+    """The pinned reading grown at import: the import figure and the sum both."""
+    return {**BASE, "hooks_chars": BASE["hooks_chars"] + chars, "summed_chars": BASE["summed_chars"] + chars,
+            "fragment_len": BASE["fragment_len"] + fragment}
 
 
 class TestTheBand:
     def test_the_limits_are_the_pinned_figure_plus_and_less_ten_percent(self):
-        assert (CEILING_COMPILED_CHARS, CEILING_FRAGMENT_LEN) == (228_000, 1_750)
-        assert (FLOOR_COMPILED_CHARS, FLOOR_FRAGMENT_LEN) == (186_000, 1_400)
+        assert (CEILING_COMPILED_CHARS, CEILING_FRAGMENT_LEN) == (245_000, 1_750)
+        assert (FLOOR_COMPILED_CHARS, FLOOR_FRAGMENT_LEN) == (45_000, 1_400)
 
     def test_the_pinned_reading_names_where_and_how_it_was_read(self):
         for key in ("at", "date", "python", "per_call"):
@@ -266,7 +279,7 @@ class TestTheCeilingCheck:
 
     def test_the_compiled_characters_red_one_past_the_ceiling(self):
         got = breaches({**BASE, "hooks_chars": CEILING_COMPILED_CHARS + 1})
-        assert got == ["the pattern path compiles 228,001 characters, past the ceiling of 228,000"]
+        assert got == ["the pattern path compiles 245,001 characters, past the ceiling of 245,000"]
 
     def test_the_compiled_characters_hold_at_the_ceiling_and_one_under(self):
         assert breaches({**BASE, "hooks_chars": CEILING_COMPILED_CHARS}) == []
@@ -292,7 +305,7 @@ class TestTheCeilingCheck:
         assert len(got) == 4, got
         assert "compiled no pattern of its own" in got[0], got
         assert got[1] == "the census read no pattern compiled from the hooks folder", got
-        assert "embeds _CMD_POS_NO_VERB" in got[2] and "under the floor of 186,000" in got[3], got
+        assert "embeds _CMD_POS_NO_VERB" in got[2] and "under the floor of 45,000" in got[3], got
 
     def test_a_reading_without_the_loader_or_the_fragment_reds(self):
         got = breaches({**BASE, "loader_ran": False, "fragment_found": False, "fragment_len": None})
@@ -306,7 +319,7 @@ class TestTheFloorCheck:
         assert breaches({**BASE, "hooks_chars": FLOOR_COMPILED_CHARS}) == []
         got = breaches({**BASE, "hooks_chars": FLOOR_COMPILED_CHARS - 1})
         assert len(got) == 1 and got[0].startswith(
-            "the pattern path compiles 185,999 characters, under the floor of 186,000"), got
+            "the pattern path compiles 44,999 characters, under the floor of 45,000"), got
 
     def test_the_fragment_reds_one_under_the_floor_and_holds_at_it(self):
         assert breaches({**BASE, "fragment_len": FLOOR_FRAGMENT_LEN}) == []
@@ -318,11 +331,14 @@ class TestTheFloorCheck:
         # The census's recorder installed after the two pattern-module imports,
         # driven on a copy of b3eefcf's tree on 3.13: 51 patterns, 10,770.
         got = breaches({**BASE, "hooks_patterns": 51, "hooks_chars": 10_770, "embedding_patterns": 3})
-        assert len(got) == 1 and "under the floor of 186,000" in got[0], got
+        assert len(got) == 1 and "under the floor of 45,000" in got[0], got
 
     def test_a_loader_that_compiles_nothing_reds_though_the_figure_sits_in_the_band(self):
-        # b3eefcf with the loader stubbed: the imports' 300 patterns, 95.6%.
-        got = breaches({**BASE, "hooks_patterns": 300, "hooks_chars": 197_698, "loader_patterns": 0})
+        # The pinned figure with no loader compile of its own. At b3eefcf a
+        # stubbed loader left 95.6% of the figure, in the band; since DEF-2084
+        # the loader's 9,109 characters are 18% of it, so a stubbed loader
+        # reads under the floor as well, and this row holds the loader check alone.
+        got = breaches({**BASE, "loader_patterns": 0})
         assert got == ["write_guard._load_the_pattern_path compiled no pattern of its own, so its compiles "
                        "moved to import or were dropped; read the per-call figure either way"]
 
@@ -336,8 +352,8 @@ class TestWhatTheLineCatches:
     re-read of what it catches."""
 
     def test_the_smallest_growths_past_either_ceiling_red(self):
-        headroom = CEILING_COMPILED_CHARS - BASE["hooks_chars"]
-        assert headroom == 21_305
+        headroom = CEILING_COMPILED_CHARS - BASE["summed_chars"]
+        assert headroom == 22_859
         assert breaches(_grown(chars=headroom)) == []
         assert len(breaches(_grown(chars=headroom + 1))) == 1
         assert len(breaches(_grown(fragment=170))) == 0
@@ -345,7 +361,7 @@ class TestWhatTheLineCatches:
 
     def test_one_hundred_character_alternation_passes_and_a_second_reds(self):
         one = _grown(chars=100 * PINNED["fragment_copies"], fragment=100)
-        assert one["hooks_chars"] == 213_195 and breaches(one) == []
+        assert one["summed_chars"] == 228_841 and breaches(one) == []
         two = _grown(chars=200 * PINNED["fragment_copies"], fragment=200)
         assert breaches(two) == ["_CMD_POS_NO_VERB is 1,780 characters, past the ceiling of 1,750"]
 
@@ -354,17 +370,18 @@ class TestWhatTheLineCatches:
         the sum reds one past the ceiling and holds at it."""
         assert breaches({**BASE, "summed_chars": CEILING_COMPILED_CHARS}) == []
         assert breaches({**BASE, "summed_chars": CEILING_COMPILED_CHARS + 1}) == [
-            "the pattern path compiles 206,695 characters at import and load and 228,001 with its first-use "
-            "patterns, past the ceiling of 228,000"]
+            "the pattern path compiles 50,799 characters at import and load and 245,001 with its first-use "
+            "patterns, past the ceiling of 245,000"]
         # the floor stays on the import figure: first-use weight cannot lift a low one
-        low = {**BASE, "hooks_chars": FLOOR_COMPILED_CHARS - 1, "summed_chars": BASE["hooks_chars"]}
-        assert len(breaches(low)) == 1 and "under the floor of 186,000" in breaches(low)[0]
+        low = {**BASE, "hooks_chars": FLOOR_COMPILED_CHARS - 1}
+        assert len(breaches(low)) == 1 and "under the floor of 45,000" in breaches(low)[0]
 
-    def test_thirteen_more_copies_of_the_fragment_pass_and_the_fourteenth_reds(self):
+    def test_fourteen_more_copies_of_the_fragment_pass_and_the_fifteenth_reds(self):
         frag = BASE["fragment_len"]
-        assert breaches(_grown(chars=13 * frag)) == []
-        assert breaches(_grown(chars=14 * frag)) == [
-            "the pattern path compiles 228,815 characters, past the ceiling of 228,000"]
+        assert breaches(_grown(chars=14 * frag)) == []
+        assert breaches(_grown(chars=15 * frag)) == [
+            "the pattern path compiles 74,499 characters at import and load and 245,841 with its first-use "
+            "patterns, past the ceiling of 245,000"]
 
 
 class RatchetBreach(AssertionError):
@@ -410,16 +427,16 @@ class TestTheLiveFigure:
         _assert_holds(REPO_ROOT, tmp_path)
 
     def test_a_tree_grown_past_both_ceilings_reds_through_the_live_rows_reader(self, tmp_path):
-        # A fragment one past its ceiling (3 + 1,747 + 1 characters): 130 copies
-        # of it compiled at import and one by the loader, 229,381 characters.
-        scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_751) + "_BULK = re.compile(_CMD_POS_NO_VERB * 130)\n",
+        # A fragment one past its ceiling (3 + 1,747 + 1 characters): 140 copies
+        # of it compiled at import and one by the loader, 246,891 characters.
+        scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_751) + "_BULK = re.compile(_CMD_POS_NO_VERB * 140)\n",
                               loader_body="re.compile(_bash_patterns._CMD_POS_NO_VERB)")
         with pytest.raises(RatchetBreach) as caught:
             _assert_holds(tmp_path, scratch)
         got = caught.value
         assert (got.figures["loader_patterns"], got.figures["loader_chars"], got.figures["hooks_chars"],
-                got.figures["fragment_len"]) == (1, 1_751, 229_381, 1_751), got.figures
-        assert got.problems == ["the pattern path compiles 229,381 characters, past the ceiling of 228,000",
+                got.figures["fragment_len"]) == (1, 1_751, 246_891, 1_751), got.figures
+        assert got.problems == ["the pattern path compiles 246,891 characters, past the ceiling of 245,000",
                                 "_CMD_POS_NO_VERB is 1,751 characters, past the ceiling of 1,750"], got.problems
         assert RULE in str(got) and "read on python " in str(got)
 
@@ -438,18 +455,18 @@ class TestTheLiveFigure:
 
     def test_a_grown_first_use_pattern_reds_though_the_imports_sit_in_the_band(self, tmp_path):
         # The pinned fragment, 130 copies at import and one by the loader
-        # (206,980 characters, in the band), and an accessor compiling 25,000
-        # more on first use: 231,980 summed, past the ceiling.
-        accessor = ("import functools\n_GROWN = 'g' * 25_000\n\n\n"
+        # (206,980 characters, in the band), and an accessor compiling 40,000
+        # more on first use: 246,980 summed, past the ceiling.
+        accessor = ("import functools\n_GROWN = 'g' * 40_000\n\n\n"
                     "@functools.lru_cache(maxsize=1)\ndef _grown_re():\n    return re.compile(_GROWN)\n")
         scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_580) + "_BULK = re.compile(_CMD_POS_NO_VERB * 130)\n"
                               + accessor, loader_body="re.compile(_bash_patterns._CMD_POS_NO_VERB)")
         with pytest.raises(RatchetBreach) as caught:
             _assert_holds(tmp_path, scratch)
         got = caught.value
-        assert (got.figures["hooks_chars"], got.figures["summed_chars"]) == (206_980, 231_980), got.figures
-        assert got.problems == ["the pattern path compiles 206,980 characters at import and load and 231,980 with "
-                                "its first-use patterns, past the ceiling of 228,000"], got.problems
+        assert (got.figures["hooks_chars"], got.figures["summed_chars"]) == (206_980, 246_980), got.figures
+        assert got.problems == ["the pattern path compiles 206,980 characters at import and load and 246,980 with "
+                                "its first-use patterns, past the ceiling of 245,000"], got.problems
 
     def test_a_tree_that_compiles_nothing_is_read_as_no_pattern_and_reds(self, tmp_path):
         scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_580), loader_body="pass")
@@ -496,6 +513,12 @@ class TestEachFirstUseCompileWaitsForItsGate:
             "each name in FIRST_USE_COMPILES owes a row in OPENING_CALLS: the call its gate lets through, "
             "so the gate itself is pinned beside the sum")
 
+    def test_the_census_times_each_call_a_first_use_compile_exists_for(self):
+        """DEF-5115: each opening call is a census kind's command, so the call
+        that pays a first-use compile has a per-call figure of its own."""
+        untimed = sorted(set(OPENING_CALLS.values()) - set(census.COMMANDS.values()))
+        assert not untimed, f"opening calls no census kind times (scripts/guard_cost_census.py::COMMANDS): {untimed}"
+
     def test_a_gated_call_compiles_none_and_each_opening_call_compiles_its_own(self, tmp_path):
         rows = [*GATED_CALLS, *OPENING_CALLS.values()]
         got = census._child(f"ROWS = {json.dumps(rows)}\n" + GATE_CHILD, HOOKS, tmp_path, "-I", "-B")
@@ -512,3 +535,87 @@ class TestEachFirstUseCompileWaitsForItsGate:
                 "takes calls the accessor")
         for (name, (tool, command)), row in zip(OPENING_CALLS.items(), got[len(GATED_CALLS):]):
             assert name in row["missed"], f"{tool} {command!r} did not compile {name}: the row opens no gate"
+
+
+def _bash_patterns_copy() -> types.ModuleType:
+    """A fresh copy of the hooks' `_bash_patterns`, under a name of its own, so
+    its first-use patterns are read cold whatever another test compiled."""
+    spec = importlib.util.spec_from_file_location("_bash_patterns_under_first_use_check",
+                                                  HOOKS / "_bash_patterns.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestEveryFirstUsePatternCompiles:
+    """DEF-2084's condition (b) (air 5d0b3e): `_bash_patterns`' module-level
+    patterns compile on their first use, so a source that no longer compiles
+    would raise inside a user's judgment, never at import. Each one is forced
+    here, read from the module, and the walk's count is held to the source's
+    own `_first_use` calls, so one it cannot reach reds too."""
+
+    def test_every_first_use_pattern_compiles(self):
+        module = _bash_patterns_copy()
+        first_use = {name: obj for name, obj in vars(module).items() if type(obj) is module._FirstUse}
+        failed = {}
+        for name, obj in first_use.items():
+            try:
+                obj.flags  # the first read of a compiled attribute compiles it
+            except (Exception, module.FirstUseCompileError) as exc:  # noqa: BLE001 -- any raise is the defect this row exists to catch
+                failed[name] = f"{type(exc).__name__}: {exc}"
+        assert first_use, "the walk found no first-use pattern in _bash_patterns"
+        assert not failed, f"first-use patterns that do not compile: {failed}"
+
+    @staticmethod
+    def _import_time_compiles(source: str) -> list[int]:
+        """The lines of every ``re.compile(...)`` call the module body runs
+        at import: outside any function, class or lambda body."""
+        lines: list[int] = []
+
+        def visit(node: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                    continue
+                if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                        and child.func.attr == "compile" and isinstance(child.func.value, ast.Name)
+                        and child.func.value.id == "re"):
+                    lines.append(child.lineno)
+                visit(child)
+        visit(ast.parse(source))
+        return lines
+
+    def test_no_pattern_compiles_at_import(self):
+        """A revert to an eager compile, or a new module-level pattern written
+        the old way, puts its cost back on every call's import, which the
+        summed ceiling cannot see (the failure-mode review's F2): it reds here."""
+        lines = self._import_time_compiles((HOOKS / "_bash_patterns.py").read_text(encoding="utf-8"))
+        assert lines == [], f"_bash_patterns compiles at import on lines {lines}: write `_first_use(...)` instead"
+
+    def test_the_import_reader_finds_a_module_level_compile_and_skips_a_deferred_one(self):
+        source = ("import re\n_A = re.compile('a')\n_B = (re.compile('b'), 1)\n"
+                  "def f():\n    return re.compile('c')\nclass K:\n    def g(self):\n        re.compile('d')\n"
+                  "_C = lambda: re.compile('e')\n")
+        assert self._import_time_compiles(source) == [2, 3]
+
+    def test_every_first_use_call_is_a_module_global_the_walk_reaches(self):
+        tree = ast.parse((HOOKS / "_bash_patterns.py").read_text(encoding="utf-8"))
+        calls = sum(1 for node in ast.walk(tree)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_first_use")
+        module = _bash_patterns_copy()
+        reached = sum(1 for obj in vars(module).values() if type(obj) is module._FirstUse)
+        assert calls == reached > 0, (
+            f"the source makes {calls} first-use patterns and the module's globals hold {reached}: one made "
+            "anywhere but a module-level name is never forced by the row above")
+
+    def test_a_first_use_pattern_answers_as_the_compiled_one(self):
+        module = _bash_patterns_copy()
+        lazy = module._first_use(r"(?P<verb>rm|mv)\b[ \t]+(\S+)", re.IGNORECASE)
+        assert lazy.pattern == r"(?P<verb>rm|mv)\b[ \t]+(\S+)"  # read without compiling
+        real = re.compile(lazy.pattern, re.IGNORECASE)
+        for text in ("ls -la", "RM -rf build", "x; mv a b"):
+            got, want = lazy.search(text), real.search(text)
+            assert (got and got.span(), got and got.groupdict()) == (want and want.span(), want and want.groupdict())
+        assert lazy.flags == real.flags and lazy.groups == real.groups and lazy.groupindex == real.groupindex
+        assert lazy.sub("X", "mv a b") == real.sub("X", "mv a b")
+        assert [m.span() for m in lazy.finditer("rm a; mv b c")] == [m.span() for m in real.finditer("rm a; mv b c")]

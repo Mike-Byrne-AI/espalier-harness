@@ -597,11 +597,64 @@ def _bound_the_judging_child() -> None:
 def _say_judging_began() -> None:
     """The child, as it begins judging: ``_BEGUN_MARK`` and its clock on
     stderr, one unbuffered write, for the parent's deadline to read (DEF-2091);
-    the parent takes the line out of what it relays."""
+    the parent takes the line out of what it relays. The same reading is kept
+    for the child's own budget (``_JUDGING_BEGAN_AT``), set before the write so
+    a stderr that cannot be written leaves the child's account true."""
+    global _JUDGING_BEGAN_AT
+    began_at = time.monotonic()
+    _JUDGING_BEGAN_AT = began_at
     try:
-        os.write(2, _BEGUN_MARK + b"%.6f\n" % time.monotonic())
+        os.write(2, _BEGUN_MARK + b"%.6f\n" % began_at)
     except OSError:  # fail-open: ok deliberate -- no stderr to write: a refusal at the parent's deadline then reads this child as still starting up
         pass
+
+
+#: Set by the judging child alone (the ``__main__`` block at the end), so
+#: `_judge` writes the begun mark once the payload is read and, where the call
+#: loads them, the two pattern modules are imported (`_begin_judging`). An
+#: importer (the tests) and the hook process judging in place write none.
+_MARK_THE_JUDGING = False
+#: The judging child's clock as it wrote its begun mark (`_say_judging_began`),
+#: ``None`` until then: its own budget's refusal reads it, as the parent reads
+#: the mark, so the pattern import a call loads before the mark is start-up at
+#: both bounds (`_how_the_judgment_spent_it`).
+_JUDGING_BEGAN_AT: float | None = None
+
+
+def _loads_the_pattern_path(data: dict) -> bool:
+    """Whether `_run_main` loads the pattern path for this payload: a call
+    carrying a string ``command`` (the secret read parses it, the PowerShell
+    fold before it) and every mutation or MCP call (past the read-only
+    return). A tool name that is not a string loads only through the secret
+    read, and only where it hashes (the read's membership test raises on a
+    list first); without a command the read-only check raises on it. Pinned
+    against `_run_main`'s own loads by
+    tests/test_write_guard_time_budget.py::TestTheMarkFollowsThePatternImport,
+    so a new early load reds there instead of reading as judging."""
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
+        try:
+            hash(tool_name)
+        except TypeError:  # fail-open: ok deliberate -- an unhashable tool name raises in _run_main's secret read before any pattern load, so the mark goes out without the import and _judge's crash guard answers
+            return False
+        return True
+    return isinstance(tool_name, str) and (tool_name in MUTATION_TOOLS or tool_name.startswith("mcp__"))
+
+
+def _begin_judging(data: dict) -> None:
+    """The judging child, once it has read the payload: import the two
+    pattern modules where this call loads them, then write the begun mark
+    (air 594461, DEF-2091's residual). The import is start-up a busy machine
+    spends on any command, never the command's length, and no judgment has
+    run before it, so a refusal at the parent's deadline while it is still
+    going asks for the re-issue, not the split. A module that cannot import
+    raises here, inside `_judge`'s crash guard, which names its file and line
+    as the load in `_run_main` would; no mark is written then, and the deny
+    is the child's answer."""
+    if _loads_the_pattern_path(data):
+        _load_the_pattern_path()
+    _say_judging_began()
 
 
 # The hard bound: the hook process answers through a judging child (or, where
@@ -5231,6 +5284,30 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
         _set_judgment_deadline(None)
 
 
+def _how_the_judgment_spent_it(
+    begun: float | None, clock: float | None, deadline: float,
+) -> tuple[bool, float | None, float | None]:
+    """At the thread budget's deadline: whether judging had begun, then the
+    seconds of the budget start-up and judging took (``None`` where a clock is
+    unread). In the judging child the begun mark says when judging began
+    (``_JUDGING_BEGAN_AT``), so the pattern import a call loads before the mark
+    is start-up here as at the parent's deadline. Unstalled, the child's own
+    budget refuses first (about 3.6 s from the parent's start, against the
+    parent's 4.0), and it read that import as judging and asked for the split
+    on every interpreter; a planted slow ``find_spec`` hid it, since it holds
+    the global import lock and stalled this refusal's first imports up to 3.13.
+    Anywhere else (the hook process judging in place, an importer) judging
+    began as `main` started its worker (``begun``)."""
+    if _MARK_THE_JUDGING:
+        mark = _JUDGING_BEGAN_AT
+        if mark is None:
+            return False, (deadline - clock if clock is not None else None), 0.0
+        begun = mark
+    start_up = begun - clock if begun is not None and clock is not None else None
+    judged = max(0.0, deadline - begun) if begun is not None else None
+    return True, start_up, judged
+
+
 def _verdict_for(
     verdict: _Verdict, streams: _HeldStreams, done: threading.Event, deadline: float,
     seen: list[dict], *, exit_on_budget: bool, begun: float | None = None, clock: float | None = None,
@@ -5238,9 +5315,11 @@ def _verdict_for(
     """Wait for the judgment until the deadline, claim, and emit the one
     verdict: the judgment's (replayed), or the refusal. ``begun`` and
     ``clock`` are when the judgment and the budget's clock started: the
-    refusal says how the budget split between start-up and judging (DEF-2091)
-    and always asks for the split, never the re-issue, since the judgment had
-    begun and may have spent a one-shot nudge (``_start_up_spent_it``)."""
+    refusal says how the budget split between start-up and judging (DEF-2091),
+    read by `_how_the_judgment_spent_it`, and asks for the split where judging
+    had begun, since it may have spent a one-shot nudge
+    (``_start_up_spent_it``), and for the re-issue where a judging child was
+    still before its begun mark."""
     try:
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment
@@ -5256,17 +5335,17 @@ def _verdict_for(
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
-        start_up = begun - clock if begun is not None and clock is not None else None
-        judged = deadline - begun if begun is not None else None
+        began, start_up, judged = _how_the_judgment_spent_it(begun, clock, deadline)
         split = ({"start_up_s": round(start_up, 2), "judged_s": round(judged, 2)}
                  if start_up is not None and judged is not None else {})
-        # Metadata only: the tool, the budget, the command's length and how
-        # the budget split, never the command's text.
+        # Metadata only: the tool, the budget, the command's length, whether
+        # judging had begun and how the budget split, never the command's text.
         rc = _audit_deny(
             _root_or_dot(), "pretooluse_blocked_time_budget",
-            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, True, start_up, judged),
+            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged),
             hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
-            budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, **split,
+            budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, began=began,
+            **split,
         )
         _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc
@@ -5296,6 +5375,8 @@ def _judge(seen: list[dict] | None = None) -> int:
         data = _hook_utils.read_stdin_safely()
         if seen is not None:
             seen.append(data)
+        if _MARK_THE_JUDGING:
+            _begin_judging(data)
         return _run_main(data)
     except BaseException as exc:  # noqa: BLE001 -- fail-closed crash guard
         # [broad-except] fail-closed: any unhandled error here would
@@ -5714,7 +5795,9 @@ if __name__ == "__main__":
     # The module body ends here: a raise past it is main's crash guard's.
     _start_refusal.body_done()
     if sys.argv[1:2] == [_JUDGE_FLAG]:
-        _say_judging_began()
+        # The mark is `_judge`'s to write, past the pattern import where the
+        # call loads it (`_begin_judging`).
+        _MARK_THE_JUDGING = True
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0
