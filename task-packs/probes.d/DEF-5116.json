@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5116",
+ "subject": "scripts/audit_dead_rules.py",
+ "cmd": "python3 -c \"import sys, re, inspect; sys.path.insert(0, 'scripts'); import audit_dead_rules as a; b = a._bash_patterns; got = {(p.pattern, p.flags) for _, p in a.collect_regex_rules()}; acc = [f for f in (getattr(b, n) for n in dir(b)) if callable(f) and hasattr(f, 'cache_info') and not inspect.signature(f).parameters]; pats = [r for r in (f() for f in acc) if isinstance(r, re.Pattern)]; print('accessor_missed=' + str(any((r.pattern, r.flags) not in got for r in pats)))\"",
+ "open_value": "accessor_missed=True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "125da594c587",
+ "text_sha": "191cd4348871",
+ "verified_2026_11_15": "STILL_OPEN (re-pinned value unchanged on 2026-11-15: review batch before the push: the probe finds accessors by signature, not by name, and compares pattern and flags; the collector's count corrected to 217 rules) [changed: probe, text]"
+}

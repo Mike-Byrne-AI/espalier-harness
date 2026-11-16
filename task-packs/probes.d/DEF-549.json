@@ -1,11 +1,15 @@
 {
  "id": "DEF-549",
  "subject": "tests/test_forced_copy_parity.py",
- "cmd": "python3 -c \"import pathlib; names=['LOCAL_LINK_RE','MAX_FRESHNESS_MANIFEST_BYTES','STATE_CACHE_MAX_AGE_HOURS','_AJ_PROSE_FIELDS','_ANCESTOR_WINDOW_COMMITS','_ATX_HEADING','_MD_LINK_TEXT','_SLUG_DROP']; blob=chr(10).join(p.read_text(encoding='utf-8',errors='replace') for p in pathlib.Path('tests').rglob('*.py')); print(sum(1 for n in names if n in blob))\"",
- "open_value": "0",
+ "cmd": "python3 -c \"import ast, pathlib, collections; import espalier.mirror_registry as m; R = pathlib.Path('.'); g = lambda n: [(t.id, n.value) for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)] if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None else []; f = lambda b: [(k, ast.unparse(v), p.as_posix()) for p in sorted(R.joinpath(b).rglob('*.py')) if '_vendor' not in p.parts for n in ast.parse(p.read_text(encoding='utf-8')).body for k, v in g(n) if not k.startswith('__')]; E = collections.defaultdict(list); any(E[(k, v)].append(y) for k, v, y in f('espalier')); mir = lambda x, y: any(m.counterpart(r, x) == y or m.counterpart(r, y) == x for r in m.MIRROR_ROWS); s = {k for k, v, x in f('tools/cc') for y in E.get((k, v), ()) if not mir(x, y)}; used = {x for p in R.joinpath('tests').rglob('*.py') for n in ast.walk(ast.parse(p.read_text(encoding='utf-8', errors='replace'))) for x in ([n.id] if isinstance(n, ast.Name) else [n.attr] if isinstance(n, ast.Attribute) else [n.value] if isinstance(n, ast.Constant) and isinstance(n.value, str) else [])}; print('unpinned_pair=' + str(any(k not in used for k in s)))\"",
+ "open_value": "unpinned_pair=True",
  "why_not": null,
  "verified_2026_08_20": "STILL_OPEN",
- "row_sha": "b4baf5bfc5d2",
- "text_sha": "daf67c51201a",
- "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+ "row_sha": "7a2ff2c7e981",
+ "text_sha": "3f95b7023e7b",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  "espalier/mirror_registry.py"
+ ],
+ "verified_2026_11_15": "STILL_OPEN (re-pinned value unchanged on 2026-11-15: review batch before the push: the probe reads the parsed tests, so a comment or docstring naming a constant no longer counts as a pin, and annotated assignments join the census (70 names, 60 outside a mirror row, the same eleven unused)) [changed: probe, open value, text, inputs]"
 }
