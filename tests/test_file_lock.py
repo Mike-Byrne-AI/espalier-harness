@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 from tests._live_tree import checkout_rglob
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -618,7 +619,7 @@ def test_after_warm_lock_the_lock_imports_nothing(tmp_path, warm):
     result = subprocess.run(
         [sys.executable, "-c", _LATE_LOCK_IMPORTS, str(TOOLS_CC), str(tmp_path / "f.log"),
          "warm" if warm else "cold"],
-        capture_output=True, text=True, encoding="utf-8", timeout=60)
+        capture_output=True, text=True, encoding="utf-8", timeout=scaled(_CHILD_DEADLINE_S))
     assert result.returncode == 0, result.stderr
     late = result.stdout.strip()
     if warm:
