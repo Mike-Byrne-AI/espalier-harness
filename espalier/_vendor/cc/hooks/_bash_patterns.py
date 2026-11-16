@@ -11453,7 +11453,10 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     under a target-directory flag -- `git mv`, `rename`, a `find -exec mv`,
     the interpreter rename literals), `archive` (a tar create's, append's or
     update's inputs, `zip`'s, `dd`'s input), `alias` (the target of `ln` and
-    `ln -s`) and `read` (an interpreter literal read). Nested programs -- a
+    `ln -s`) and `read` (an interpreter literal read); and `cmd-program`,
+    whose second item is no path but a program cmd runs, rendered for the
+    PowerShell roster (`_cmd_program_as_ps`), which the secret legs read and
+    every path consumer in the hooks passes over. Nested programs -- a
     POSIX shell's `-c` word, a PowerShell program, what a reader head hands
     to a shell -- are read by the grammar that runs them, one level down, to
     the same bound as the write extractor. Same prologue as
@@ -11481,6 +11484,16 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         for _at, targets in iter_cmd_recursive_removes(
                 command, scan, bash=True, recursive_only=False):
             out.extend(("delete", t) for t in targets)
+        # The program itself, for the secret leg (DEF-2081's sibling on this
+        # tool, the dispatcher's 9c8de3): cmd's own reading, a cmd it starts
+        # read as one of its statements, rendered for the PowerShell roster
+        # the PowerShell leg's cmd branch reads it with. Here, behind the
+        # opener search this memoised reading already makes, a call holding
+        # no cmd opener pays nothing for it.
+        for _at, program in iter_cmd_programs(command, scan, bash=True, to_statement_end=True):
+            text = _cmd_program_as_ps(program)
+            if text:
+                out.append(("cmd-program", text))
     for m in _CP_MV_RE.finditer(scan):
         if m.group("verb").lower() != "mv":
             continue
@@ -14093,9 +14106,10 @@ def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> li
 # `cmd /s/c"<program>"`) are read as the spaced forms (DEF-4061). Also not
 # read here: a string piped into a carrier (`'...' | iex`, read instead by
 # the piped reader, `ps_piped_ps_launches`, DEF-3080), one joined with
-# `+`, and the words after a quoted program (`cmd /c "type" .env` reads
-# `type` alone); the secret leg's old split refuses the joined one whenever
-# the statement opens with the string.
+# `+`, and the words after a quoted program of a PowerShell carrier (`pwsh
+# -c "gc" .env` reads `gc` alone; cmd's are read as cmd receives them, by
+# the cmd branch below, DEF-2081); the secret leg's old split refuses the
+# joined one whenever the statement opens with the string.
 _PS_CARRIER_RE = re.compile(
     r"(?:" + _PS_CMD_POS + _PS_EXE_PREFIX + r"(?P<head>" + _PS_REPARSE_OPENER_WORDS + r")"
     + _QUOTED_VERB_TAIL + r"(?=[ \t(]|$)|(?P<create>" + _PS_SCRIPTBLOCK_CREATE + r"))",
@@ -14302,6 +14316,7 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
     # with that program; reading it here too would re-read nested text once
     # per level it sits under.
     read_to = 0
+    cmd_to = 0                            # the text cmd's own reading has read so far
     spans: list[tuple[int, int]] = []
     for m in _PS_CARRIER_RE.finditer(scan):
         if m.start() < read_to:
@@ -14329,6 +14344,33 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
                     more, past = _ps_carrier_operand(command, scan, start, bare=True)
                     programs += more
                     end = max(end, past)
+                if head == "cmd":
+                    # cmd's own reading of its program beside PowerShell's
+                    # (DEF-2081): PowerShell hands cmd a quoted separator word
+                    # bare (`cmd /c echo a '&' type .env`) and the text behind
+                    # the stop-parsing token after the switch as typed (`cmd
+                    # /c --% type .env`), where the operand above holds one
+                    # string or opens with the token. Both are read, and a
+                    # read either finds is refused: the walk above steps over
+                    # a word before the switch and reads a run glued after a
+                    # `-`, where cmd's walk stops (`cmd foo /c type .env` and
+                    # `cmd -x/c type .env` stay refused, 5c1e1c). A reading
+                    # the operand already holds is not read twice, and an
+                    # opener inside text an earlier opener handed cmd is a
+                    # statement of that program, read there through cmd's
+                    # own grammar (`_cmd_program_as_ps`), so each character
+                    # is read once (a chain of cmds in one statement, or of
+                    # `cmd /c --% ...; ` statements, stays linear; the code
+                    # review measured the quadratic first cut).
+                    lines: list[tuple[int, str]] = []
+                    if m.start() >= cmd_to:
+                        lines, read_end, _typed = _cmd_opener_programs(
+                            command, m, len(command), bash=False, covered=False, whole=False)
+                        cmd_to = max(cmd_to, read_end)
+                    for _at, line in lines:
+                        text = _cmd_program_as_ps(line)
+                        if text and text not in programs:
+                            programs.append(text)
         if programs:
             read_to = end
             spans.append((m.start(), end))
@@ -16390,12 +16432,15 @@ def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tupl
     return words, min(i, stop)
 
 
-def _cmd_statements(program: str) -> list[list[str]]:
+def _cmd_statements(program: str, inputs: list[str] | None = None) -> list[list[str]]:
     """cmd's own statements in ``program`` (the text cmd receives): split on
     ``&``, ``&&``, ``|``, ``||`` and a parenthesis outside double quotes,
     ``^`` escaping the next character; each a list of words on cmd's
     delimiters (blank, ``,``, ``;``) with the quotes removed and every
-    redirection (``>nul``, ``2>&1``, ``< in``) dropped. Linear: one pass."""
+    redirection (``>nul``, ``2>&1``, ``< in``) dropped. ``inputs``, where
+    given, collects each input redirection's file (``< in``, its quotes
+    removed), which the program reads (the secret leg's reading,
+    `_cmd_program_as_ps`). Linear: one pass."""
     stmts: list[list[str]] = []
     words: list[str] = []
     cur: list[str] = []
@@ -16447,10 +16492,13 @@ def _cmd_statements(program: str) -> list[list[str]]:
             while i < n and program[i] in " \t":
                 i += 1
             quoted = False
+            target = i
             while i < n and (quoted or program[i] not in " \t&|()<>"):
                 if program[i] == '"':
                     quoted = not quoted
                 i += 1                    # the redirection's target
+            if inputs is not None and c == "<" and i > target:
+                inputs.append(program[target:i].replace('"', ""))
             continue
         cur.append(c)
         i += 1
@@ -16562,6 +16610,64 @@ def _cmd_statement_head(words: list[str]) -> int:
             continue
         break
     return k
+
+
+#: The characters that keep a word from reading bare as one plain argument
+#: to the PowerShell statement reader -- a quote (the typographic ones
+#: PowerShell pairs too, `PS_TYPOGRAPHIC_QUOTES`), an escape, an expansion,
+#: a separator, a group, an array comma, a redirect, a comment lead --
+#: beside a space-like one; and the parameter leads that do at a word's
+#: start (`_PS_PARAMETER_LEADS`' dashes; a `/` there is a path to this
+#: reader), the stop-parsing token's included.
+_PS_ARGUMENT_SPECIALS = frozenset("'\"`$@;&|(){},<>#=" + PS_TYPOGRAPHIC_QUOTES)
+_PS_PARAMETER_LEAD_CHARS = _PS_PARAMETER_LEADS.replace("/", "")
+
+
+def _ps_bare_argument(word: str) -> str:
+    """``word`` as the PowerShell statement reader takes it for one plain
+    argument: as typed where it holds none of `_PS_ARGUMENT_SPECIALS`, no
+    space-like character and no parameter lead at its start, else
+    single-quoted, each single quote inside doubled (a typographic one too:
+    PowerShell ends a single-quoted string at any of them)."""
+    if word and word[0] not in _PS_PARAMETER_LEAD_CHARS and not any(
+            c in _PS_ARGUMENT_SPECIALS or c.isspace() for c in word):
+        return word
+    return "'" + "".join(c + c if c == "'" or c in _PS_TYPOGRAPHIC_SINGLES else c
+                         for c in word) + "'"
+
+
+def _cmd_program_as_ps(program: str, depth: int = 0) -> str:
+    """cmd's own statements of ``program`` (the line cmd receives, split by
+    `_cmd_statements`, each from its verb on, `_cmd_statement_head`) as one
+    PowerShell program, a statement a line, for the PowerShell secret leg
+    to read with its roster: `type` and `more` are PowerShell's names for
+    cmd's reads, and a native reader cmd starts is the one PowerShell would
+    (DEF-2081). A word that reader would not take bare as one plain argument
+    is single-quoted, so a separator, a group or a parameter lead cmd hands
+    on as text stays text. A cmd a statement starts is read through cmd's
+    grammar too (`_cmd_nested_program`, to `_CMD_NEST_MAX` levels, its
+    switch glued to a quoted program included) rather than handed back
+    to PowerShell's, which reads one past that depth or behind a glued
+    run of switches (`cmd /s/c`). An input redirection's file is a read whatever the verb
+    (`more < .env`), as the Bash leg reads one: a `type` line of its own.
+    Linear: one pass a level."""
+    lines: list[str] = []
+    inputs: list[str] = []
+    for words in _cmd_statements(program, inputs):
+        k = _cmd_statement_head(words)
+        if k >= len(words):
+            continue
+        head = words[k].lstrip("@")
+        if re.split(r"[/\\]", head.lower())[-1] in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
+            nested = _cmd_nested_program(words[k + 1:])
+            if nested is not None:
+                text = _cmd_program_as_ps(nested, depth + 1)
+                if text:
+                    lines.append(text)
+                continue
+        lines.append(" ".join(_ps_bare_argument(w) for w in [head, *words[k + 1:]]))
+    lines.extend("type " + _ps_bare_argument(path) for path in inputs if path)
+    return "\n".join(lines)
 
 
 #: The words that open a nested cmd's program: each program switch letter
@@ -16700,76 +16806,92 @@ def iter_cmd_programs(
     for k, m in enumerate(openers):
         if m.start() < read_to:
             continue                      # inside a program already read whole
-        covered = m.start() < typed_to
-        start = _cmd_program_at(raw, m.end(), "\\" if bash else "`")
-        if start is None and not bash:
+        bound = len(raw) if to_statement_end or k + 1 == len(openers) else openers[k + 1].start()
+        programs, end, typed = _cmd_opener_programs(
+            raw, m, bound, bash=bash, covered=m.start() < typed_to,
+            whole=not to_statement_end)
+        if typed:
+            typed_to = end
+        if to_statement_end and end >= 0:
+            read_to = end
+        yield from programs
+
+
+def _cmd_opener_programs(
+    raw: str, m: "re.Match[str]", bound: int, *, bash: bool, covered: bool, whole: bool,
+) -> tuple[list[tuple[int, str]], int, bool]:
+    """The programs one cmd opener ``m`` (its head word ending at
+    ``m.end()``) hands cmd, as `iter_cmd_programs` reads them: ``(offset,
+    program)`` pairs, the offset where the read of the outer statement
+    stopped (-1 where no statement was read: no program switch, a
+    Start-Process line, or as-typed text ``covered`` by an earlier opener's,
+    which is that text's), and whether the program runs to as-typed text.
+    ``bound`` caps the statement's read (the next opener, so a flood of
+    openers is read in one pass); ``whole`` adds the quoted-whole second
+    reading the delete reader judges beside cmd's own. The one reading of a
+    cmd opener: `iter_cmd_programs` walks the openers with it, and the
+    PowerShell carrier reader reads its cmd head's program with it
+    (`_ps_carrier_program_bodies`, DEF-2081)."""
+    start = _cmd_program_at(raw, m.end(), "\\" if bash else "`")
+    if start is None:
+        if not bash:
             # Start-Process hands cmd its program as an argument list, not in
             # the statement's own words (DEF-1071 (e)): read that line
             got = start_process_cmd_line(raw, m)
             if got is not None:
-                yield got[0], _cmd_line_unquoted(got[1])
-            continue
-        if start is None:
-            continue
-        if to_statement_end or k + 1 == len(openers):
-            stop = len(raw)
-        else:
-            stop = max(start, openers[k + 1].start())
-        if not bash and _ps_stop_parsing_among(raw, m.end(), start):
-            # behind the stop-parsing token PowerShell hands cmd the rest of
-            # the line as typed, its `;` and `&&` included, up to a line
-            # break or a pipe outside double quotes, past a later opener (the
-            # code review: a tail cut at it left the statements after its
-            # own to no reader); an opener with its own token inside text
-            # already read so is that text's, and one without is still read
-            # on its own, so a chain past the nested reader's depth is read
-            # (the failure-mode re-review); each character once
-            if covered:
-                continue
-            end = _ps_verbatim_end(raw, start)
-            typed_to = end
-            if to_statement_end:
-                read_to = end
-            yield start, _cmd_line_unquoted(raw[start:end])
-            continue
-        words, end = _cmd_outer_words_to(raw, start, stop, bash=bash)
-        verbatim = ""
-        token = 0 if bash else _ps_stop_parsing_len(raw, end)
-        if token:
-            # the stop-parsing token after the switch or a later word (`cmd
-            # /c --% ...`): PowerShell hands cmd the rest of the line as
-            # typed, as it does before the switch (the failure-mode review,
-            # driven echo only), read as that branch reads it
-            if covered:
-                continue
-            at = end + token
-            end = _ps_verbatim_end(raw, at)
-            typed_to = end
-            verbatim = raw[at:end].strip(" \t")
-        if to_statement_end:
-            read_to = end
-        if not words and not verbatim:
-            continue
-        # what the outer shell hands cmd, rejoined as its command line: the
-        # first word is the program cmd strips its quotes from, and a later
-        # word holding a blank is one quoted argument. Any other later word
-        # goes bare: Git Bash and Windows PowerShell 5.1 hand cmd a word
-        # without a blank as typed, so cmd splits a separator word and
-        # `R&D` alike at the `&` (driven on both, echo only, DEF-2080's
-        # oracle). For the delete reader a word holding one of cmd's
-        # metacharacters is read a second time, quoted whole, and a delete is
-        # judged on both readings: a root named `R&D` stays one root (the
-        # coverage contract; the quoted-operand cut, driven 2026-10-07), the
-        # friction direction where cmd splits it. A second reading that
-        # rejoins to the first (the word also holds a blank) is not yielded.
-        # The harness-variable check (``to_statement_end``) reads cmd's own
-        # reading alone.
-        bare = _cmd_rejoined(words, verbatim, " \t")
-        yield start, bare
-        if not to_statement_end:
-            whole = _cmd_rejoined(words, verbatim, " \t" + _CMD_META)
-            if whole != bare:
-                yield start, whole
+                return [(got[0], _cmd_line_unquoted(got[1]))], -1, False
+        return [], -1, False
+    if not bash and _ps_stop_parsing_among(raw, m.end(), start):
+        # behind the stop-parsing token PowerShell hands cmd the rest of
+        # the line as typed, its `;` and `&&` included, up to a line
+        # break or a pipe outside double quotes, past a later opener (the
+        # code review: a tail cut at it left the statements after its
+        # own to no reader); an opener with its own token inside text
+        # already read so is that text's, and one without is still read
+        # on its own, so a chain past the nested reader's depth is read
+        # (the failure-mode re-review); each character once
+        if covered:
+            return [], -1, False
+        end = _ps_verbatim_end(raw, start)
+        return [(start, _cmd_line_unquoted(raw[start:end]))], end, True
+    words, end = _cmd_outer_words_to(raw, start, max(start, bound), bash=bash)
+    verbatim = ""
+    typed = False
+    token = 0 if bash else _ps_stop_parsing_len(raw, end)
+    if token:
+        # the stop-parsing token after the switch or a later word (`cmd
+        # /c --% ...`): PowerShell hands cmd the rest of the line as
+        # typed, as it does before the switch (the failure-mode review,
+        # driven echo only), read as that branch reads it
+        if covered:
+            return [], -1, False
+        at = end + token
+        end = _ps_verbatim_end(raw, at)
+        typed = True
+        verbatim = raw[at:end].strip(" \t")
+    if not words and not verbatim:
+        return [], end, typed
+    # what the outer shell hands cmd, rejoined as its command line: the
+    # first word is the program cmd strips its quotes from, and a later
+    # word holding a blank is one quoted argument. Any other later word
+    # goes bare: Git Bash and Windows PowerShell 5.1 hand cmd a word
+    # without a blank as typed, so cmd splits a separator word and
+    # `R&D` alike at the `&` (driven on both, echo only, DEF-2080's
+    # oracle). For the delete reader (``whole``) a word holding one of
+    # cmd's metacharacters is read a second time, quoted whole, and a
+    # delete is judged on both readings: a root named `R&D` stays one root
+    # (the coverage contract; the quoted-operand cut, driven 2026-10-07),
+    # the friction direction where cmd splits it. A second reading that
+    # rejoins to the first (the word also holds a blank) is not yielded.
+    # The harness-variable check and the secret leg read cmd's own reading
+    # alone.
+    bare = _cmd_rejoined(words, verbatim, " \t")
+    programs = [(start, bare)]
+    if whole:
+        quoted = _cmd_rejoined(words, verbatim, " \t" + _CMD_META)
+        if quoted != bare:
+            programs.append((start, quoted))
+    return programs, end, typed
 
 
 def _cmd_rejoined(words: list[str], verbatim: str, quote_for: str) -> str:

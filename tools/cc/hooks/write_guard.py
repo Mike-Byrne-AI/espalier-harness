@@ -2478,6 +2478,11 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         for effect, path in _bash_patterns.iter_removed_or_relocated_operands(command):
             if effect in _SECRET_EFFECTS:
                 out.append(path)
+            elif effect == "cmd-program":
+                # a program cmd runs (`cmd //c type .env`), as cmd receives
+                # it, read with the PowerShell roster as the PowerShell
+                # leg's cmd branch reads it (DEF-2081's sibling, 9c8de3)
+                out.extend(_ps_secret_read_targets(path, _depth + 1))
     return out
 
 
@@ -2797,6 +2802,11 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         for effect, path in _bash_patterns.iter_ps_removed_or_relocated_operands(command):
             if effect in _SECRET_EFFECTS:
                 out.append(path)
+            elif effect == "cmd-program":
+                # a program cmd runs inside a Bash program this command
+                # hands a POSIX shell (`bash -c 'cmd //c type .env'`), as the
+                # Bash leg reads it (the second code review)
+                out.extend(_ps_secret_read_targets(path, _depth + 1))
     return out
 
 
