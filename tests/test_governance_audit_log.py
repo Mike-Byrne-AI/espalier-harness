@@ -2225,8 +2225,8 @@ class TestVoiceOnlyRecordsOutliveTheirDay:
         # The operator's session variables stripped (the audit dir kept), so
         # the hook reads this scratch root alone.
         overrides: dict[str, str | None] = {
-            k: None for k in os.environ
-            if k.startswith(("CLAUDE_", "ESPALIER_")) and k not in ("ESPALIER_AUDIT_DIR", "ESPALIER_SESSION_CATCH_UP")}
+            k: None for k in os.environ if k.startswith(("CLAUDE_", "ESPALIER_")) and k != "ESPALIER_SESSION_CATCH_UP"}
+        overrides["ESPALIER_AUDIT_DIR"] = os.environ["ESPALIER_AUDIT_DIR"]
         overrides["CLAUDE_PROJECT_DIR"] = str(tmp_path)
 
         def start() -> list[str]:
