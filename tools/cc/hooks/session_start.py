@@ -2932,7 +2932,7 @@ def _report_voice_only_records(root: Path) -> None:
     # fault said once is the news, and a type that recurs at every start (a
     # settings read caught mid-write, 77 records in November on the Windows
     # box) is the one folded into the count. An unnamed type goes last.
-    declared = getattr(_integrity, "VOICE_ONLY_EVENT_TYPES", frozenset())
+    declared: frozenset[str] = getattr(_integrity, "VOICE_ONLY_EVENT_TYPES", frozenset())
     ranked = sorted(counts.items(),
                     key=lambda kv: (kv[0] not in declared, kv[0] == "(unnamed type)", kv[1], kv[0]))
     named = ", ".join(f"{kind} {n}" for kind, n in ranked[:_VOICE_LINE_TYPES])
