@@ -360,10 +360,10 @@ class TestALocalHookListIsNoKillSwitch:
         assert data.get("decision") == "block"
 
     def test_the_project_file_reached_through_a_symlink_keeps_its_arms(self, tmp_path, monkeypatch):
-        """config_guard resolves the payload's path before it labels the file,
-        so a project file that is a symlink is read under its target's path. It
-        still takes the project label and its arms are read, with the
-        inventory fallback stubbed to find nothing."""
+        """config_guard's one rule labels the payload's path before the read
+        (DEF-5117), so a project file that is a symlink takes the project label
+        and is read through the link at that label's path: its arms are read,
+        with the inventory fallback stubbed to find nothing."""
         import importlib.util
         root = tmp_path.resolve()
         real = _write_settings(root, _HOOK_LIST_ARMS["empty-list"], name="real-settings.json")
@@ -376,7 +376,9 @@ class TestALocalHookListIsNoKillSwitch:
         cg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cg)
         monkeypatch.setattr(cg._integrity, "scan_for_kill_switches", lambda _root, **_kw: [])
-        assert cg._scan_payload(".claude/settings.json", root) == [
+        label = cg._settings_label(".claude/settings.json", "project_settings", root)
+        assert label == ".claude/settings.json"
+        assert cg._scan_payload(".claude/settings.json", root, "project_settings", label=label) == [
             ".claude/settings.json: hooks.PreToolUse is an empty list"]
 
     def test_disable_all_hooks_in_the_local_file_is_still_refused(self, tmp_path):
