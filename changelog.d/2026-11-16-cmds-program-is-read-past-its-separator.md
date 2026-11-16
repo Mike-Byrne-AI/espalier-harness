@@ -5,7 +5,9 @@
   it, so a dotenv read behind a quoted separator word PowerShell hands cmd
   bare (`cmd /c echo a '&' type .env`, `'&&'`, `'|'`, `"&"`), behind the
   stop-parsing token after the switch (`cmd /c --% type .env`, `--%,`), or
-  behind a quoted program word (`cmd /c "type" .env`) was allowed while
+  behind a quoted program word (`cmd /c "type" .env`), through an input
+  redirection (`cmd /c "more < .env"`) or in a cmd that cmd starts with its
+  switch glued to a quoted program was allowed while
   `cmd /c type .env` was refused. The check now also reads the line cmd
   receives, through the same reading the recursive-delete wall uses, and
   refuses a read either reading finds; every form it refused before is still

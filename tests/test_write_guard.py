@@ -13021,7 +13021,10 @@ _CMD_WORD_ORACLE_BASH = [
 _CMD_WORD_ORACLE_PS = [
     ("separator-word", "cmd /c echo a '&' echo RAN", "RAN", None),
     # DEF-2081's spellings of the separator word and the token, predicted
-    # from the rows beside them and driven by this table on a Windows host
+    # from the rows beside them and driven by this table on a Windows host;
+    # the secret leg's refusals of the same spellings rest on them
+    # (TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt's '&&', '|' and
+    # `--%,` rows): a row corrected here moves its refusal row with it
     ("and-word", "cmd /c echo a '&&' echo RAN", "RAN", None),
     ("pipe-word", "cmd /c echo a '|' echo RAN", "RAN", None),
     ("token-glued-to-comma-after-switch", "cmd /c --%, echo RAN", "RAN", None),
@@ -13430,7 +13433,9 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         "cmd.exe /c --% type .env",
         "& cmd /c --% type .env",
         "iex 'cmd /c --% type .env'",
-        # a separator word PowerShell hands cmd bare, in either quote
+        # a separator word PowerShell hands cmd bare, in either quote (the
+        # '&&', '|' and `--%,` spellings rest on _CMD_WORD_ORACLE_PS's
+        # predicted rows, driven on a Windows host: correct both together)
         "cmd /c echo a '&' type .env",
         "cmd /c echo a '&' more .env",
         'cmd /c echo a "&" type .env',
@@ -13438,10 +13443,15 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         "cmd /c echo a '|' type .env",
         "cmd /c echo a '&' copy .env con",
         "cmd /c echo a '&' type .env 2>$null",
-        # a cmd the as-typed text starts, and a quoted program word
-        # PowerShell hands cmd without its quotes
+        # a cmd the as-typed text starts, its switch glued to a quoted
+        # program too, and a quoted program word PowerShell hands cmd
+        # without its quotes
         "cmd /c --% cmd /c type .env",
+        'cmd /c --% cmd /c"type .env"',
         'cmd /c "type" .env',
+        # an input redirection's file, which the program reads
+        "cmd /c --% more < .env",
+        'cmd /c "more < .env"',
     ])
     def test_a_read_cmd_runs_past_a_separator_word_or_the_token_is_refused(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
@@ -13467,6 +13477,7 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         "cmd /c echo a '&' type .env.sample",
         "cmd /c echo a '&' type README.md",
         "cmd /c echo 'type .env'",
+        "cmd /c --% more < README.md",
     ])
     def test_a_template_or_a_mention_stays_allowed(self, command, tmp_path):
         """A dotenv template is no secret on either reading, and a word
@@ -13487,20 +13498,38 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         raw, scan = bp.powershell_scan_pair(command)
         assert list(bp._ps_carrier_program_bodies(raw, scan)) == want
 
+    @pytest.mark.parametrize("unit", ["cmd /c 'x' = ", "cmd /c 'x'; return ", "cmd /c 'x' iex "],
+                             ids=["assignment", "return", "carrier-word"])
+    def test_a_chain_of_cmds_in_one_statement_is_read_once(self, unit):
+        """An opener inside text an earlier opener handed cmd is read there,
+        never again to the same end: the yield stays linear in the command
+        (the code review drove the first cut's quadratic one: 16 K yielded
+        characters for 50 units, 1.04 M for 400, and a 3.9 KB command the
+        time budget refused)."""
+        bp = _bash_patterns_module()
+        command = unit * 200 + "cmd /c 'x'"
+        raw, scan = bp.powershell_scan_pair(command)
+        assert sum(len(p) for p in bp._ps_carrier_program_bodies(raw, scan)) <= 3 * len(command)
+
     @pytest.mark.parametrize("program, want", [
         ('echo a & type "my .env"', "echo a\ntype 'my .env'"),
         ("if exist .env type .env", "type .env"),
         (", type .env", "type .env"),
         ("type --%x it's", "type '--%x' 'it''s'"),
+        ("type a" + chr(0x2019) + "b", "type 'a" + chr(0x2019) * 2 + "b'"),
         ("echo a=b;c", "echo 'a=b' c"),
-        ("cmd /c type .env", "cmd /c type .env"),
+        ("cmd /c type .env", "type .env"),
+        ('cmd /c"type .env"', "type .env"),
+        ("more < .env", "more\ntype .env"),
     ], ids=["statements", "if-prefix", "leading-delimiter", "parameter-lead-and-quote",
-            "assignment-word", "nested-cmd-bare"])
+            "typographic-quote", "assignment-word", "nested-cmd", "nested-cmd-glued-quoted",
+            "input-redirect"])
     def test_cmds_statements_are_rendered_as_plain_powershell_words(self, program, want):
         """`_cmd_program_as_ps`: one statement a line, from its verb on; a
         word PowerShell would not take as one plain argument is
-        single-quoted, and a nested cmd keeps its switch bare for the
-        reader one level down."""
+        single-quoted, each single quote doubled; a cmd a statement starts
+        is read through cmd's grammar; an input redirection's file is a
+        read of its own."""
         assert _bash_patterns_module()._cmd_program_as_ps(program) == want
 
 
@@ -13517,10 +13546,12 @@ _CMD_WORD_BEFORE_SWITCH_LIMITS = [
     ("Bash", "cmd foo //c rd /s /q ."),
     ("PowerShell", "cmd x/c rd /s /q ."),
     ("Bash", "cmd x/c rd /s /q ."),
-    # the secret leg's walk steps over a word before the switch (refused,
-    # TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt) but not into one
-    # the switch is glued to
+    ("PowerShell", 'cmd "a b" /c rd /s /q .'),
+    # the secret leg's walk steps over a plain word before the switch
+    # (refused, TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt) but not
+    # into one the switch is glued to, nor past a quoted one
     ("PowerShell", "cmd x/c type .env"),
+    ("PowerShell", 'cmd "a b" /c type .env'),
 ]
 _CMD_WORD_BEFORE_SWITCH_CONTROLS = [
     ("PowerShell", "cmd /c rd /s /q ."),

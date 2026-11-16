@@ -1330,9 +1330,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    unforced remove reads the same path the same way. The temp root itself
    (a `.` step, or a trailing dot or space Windows strips, names it too),
    this project's checkout or the home directory under it, a link that
-   resolves onto one, a glob and a `..` step stay the wall, pinned in the
-   write guard's tests by
-   `TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
+   resolves onto one, a glob and a `..` step stay the wall, pinned by
+   `test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
    and so does a variable with no literal binding, the coverage contract's
    declared PowerShell exception (below).
    The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
@@ -1467,8 +1466,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    and a word before cmd's switch that is not one, or a word the switch
    is glued to (`cmd foo /c rd /s /q .`, `cmd x/c rd /s /q .`), which cmd
    skips to run the program after it, leaves these readers an interactive
-   cmd with no program, and a glued one leaves the PowerShell secret-path
-   check none either (`cmd x/c type .env`)
+   cmd with no program, and a glued or quoted one leaves the PowerShell
+   secret-path check none either (`cmd x/c type .env`,
+   `cmd "a b" /c type .env`)
    (`tests/test_write_guard.py::TestAWordBeforeCmdsSwitchIsADeclaredLimit::test_a_word_before_cmds_switch_is_a_declared_limit`).
    Every form the readers declare is crossed with the hard-tier texts'
    target claims by one test class.
@@ -2191,8 +2191,10 @@ a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`; the program read
 both as PowerShell reads it and as cmd receives it, so a read behind a
 separator word PowerShell hands cmd bare, `cmd /c echo a '&' type .env`,
 or behind the stop-parsing token after the switch, `cmd /c --% type .env`,
-is refused; a word the switch is glued to, `cmd x/c type .env`, is among
-cmd's limits under the recursive deletes above),
+is refused, and so is a file an input redirection hands cmd's program,
+`cmd /c --% more < .env`; a word the switch is glued to, `cmd x/c type .env`,
+or a quoted word before it is among cmd's limits under the recursive
+deletes above),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
 an expandable string) and an `@(...)` array subexpression outside every
 string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is

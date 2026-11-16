@@ -14093,9 +14093,10 @@ def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> li
 # `cmd /s/c"<program>"`) are read as the spaced forms (DEF-4061). Also not
 # read here: a string piped into a carrier (`'...' | iex`, read instead by
 # the piped reader, `ps_piped_ps_launches`, DEF-3080), one joined with
-# `+`, and the words after a quoted program (`cmd /c "type" .env` reads
-# `type` alone); the secret leg's old split refuses the joined one whenever
-# the statement opens with the string.
+# `+`, and the words after a quoted program of a PowerShell carrier (`pwsh
+# -c "gc" .env` reads `gc` alone; cmd's are read as cmd receives them, by
+# the cmd branch below, DEF-2081); the secret leg's old split refuses the
+# joined one whenever the statement opens with the string.
 _PS_CARRIER_RE = re.compile(
     r"(?:" + _PS_CMD_POS + _PS_EXE_PREFIX + r"(?P<head>" + _PS_REPARSE_OPENER_WORDS + r")"
     + _QUOTED_VERB_TAIL + r"(?=[ \t(]|$)|(?P<create>" + _PS_SCRIPTBLOCK_CREATE + r"))",
@@ -14302,7 +14303,7 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
     # with that program; reading it here too would re-read nested text once
     # per level it sits under.
     read_to = 0
-    typed_to = 0                          # cmd's as-typed text read so far
+    cmd_to = 0                            # the text cmd's own reading has read so far
     spans: list[tuple[int, int]] = []
     for m in _PS_CARRIER_RE.finditer(scan):
         if m.start() < read_to:
@@ -14342,14 +14343,17 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
                     # `-`, where cmd's walk stops (`cmd foo /c type .env` and
                     # `cmd -x/c type .env` stay refused, 5c1e1c). A reading
                     # the operand already holds is not read twice, and an
-                    # opener inside as-typed text an earlier one handed cmd
-                    # is that text's, as `iter_cmd_programs` reads it (a
-                    # flood of `cmd /c --% ...; ` statements stays linear).
-                    lines, typed_end, typed = _cmd_opener_programs(
-                        command, m, len(command), bash=False,
-                        covered=m.start() < typed_to, whole=False)
-                    if typed:
-                        typed_to = typed_end
+                    # opener inside text an earlier opener handed cmd is a
+                    # statement of that program, read there through cmd's
+                    # own grammar (`_cmd_program_as_ps`), so each character
+                    # is read once (a chain of cmds in one statement, or of
+                    # `cmd /c --% ...; ` statements, stays linear; the code
+                    # review measured the quadratic first cut).
+                    lines: list[tuple[int, str]] = []
+                    if m.start() >= cmd_to:
+                        lines, read_end, _typed = _cmd_opener_programs(
+                            command, m, len(command), bash=False, covered=False, whole=False)
+                        cmd_to = max(cmd_to, read_end)
                     for _at, line in lines:
                         text = _cmd_program_as_ps(line)
                         if text and text not in programs:
@@ -16415,12 +16419,15 @@ def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tupl
     return words, min(i, stop)
 
 
-def _cmd_statements(program: str) -> list[list[str]]:
+def _cmd_statements(program: str, inputs: list[str] | None = None) -> list[list[str]]:
     """cmd's own statements in ``program`` (the text cmd receives): split on
     ``&``, ``&&``, ``|``, ``||`` and a parenthesis outside double quotes,
     ``^`` escaping the next character; each a list of words on cmd's
     delimiters (blank, ``,``, ``;``) with the quotes removed and every
-    redirection (``>nul``, ``2>&1``, ``< in``) dropped. Linear: one pass."""
+    redirection (``>nul``, ``2>&1``, ``< in``) dropped. ``inputs``, where
+    given, collects each input redirection's file (``< in``, its quotes
+    removed), which the program reads (the secret leg's reading,
+    `_cmd_program_as_ps`). Linear: one pass."""
     stmts: list[list[str]] = []
     words: list[str] = []
     cur: list[str] = []
@@ -16472,10 +16479,13 @@ def _cmd_statements(program: str) -> list[list[str]]:
             while i < n and program[i] in " \t":
                 i += 1
             quoted = False
+            target = i
             while i < n and (quoted or program[i] not in " \t&|()<>"):
                 if program[i] == '"':
                     quoted = not quoted
                 i += 1                    # the redirection's target
+            if inputs is not None and c == "<" and i > target:
+                inputs.append(program[target:i].replace('"', ""))
             continue
         cur.append(c)
         i += 1
@@ -16591,27 +16601,29 @@ def _cmd_statement_head(words: list[str]) -> int:
 
 #: The characters that keep a word from reading bare as one plain argument
 #: to the PowerShell statement reader -- a quote (the typographic ones
-#: PowerShell pairs too), an escape, an expansion, a separator, a group, an
-#: array comma, a redirect, a comment lead -- beside a space-like one; and
-#: the parameter leads (a dash, the Unicode ones PowerShell reads as one)
-#: that do at a word's start, the stop-parsing token's included.
-_PS_ARGUMENT_SPECIALS = frozenset(
-    "'\"`$@;&|(){},<>#=‘’‚‛“”„")
-_PS_PARAMETER_LEAD_CHARS = "-–—―"
+#: PowerShell pairs too, `PS_TYPOGRAPHIC_QUOTES`), an escape, an expansion,
+#: a separator, a group, an array comma, a redirect, a comment lead --
+#: beside a space-like one; and the parameter leads that do at a word's
+#: start (`_PS_PARAMETER_LEADS`' dashes; a `/` there is a path to this
+#: reader), the stop-parsing token's included.
+_PS_ARGUMENT_SPECIALS = frozenset("'\"`$@;&|(){},<>#=" + PS_TYPOGRAPHIC_QUOTES)
+_PS_PARAMETER_LEAD_CHARS = _PS_PARAMETER_LEADS.replace("/", "")
 
 
 def _ps_bare_argument(word: str) -> str:
     """``word`` as the PowerShell statement reader takes it for one plain
     argument: as typed where it holds none of `_PS_ARGUMENT_SPECIALS`, no
     space-like character and no parameter lead at its start, else
-    single-quoted, a quote inside doubled."""
+    single-quoted, each single quote inside doubled (a typographic one too:
+    PowerShell ends a single-quoted string at any of them)."""
     if word and word[0] not in _PS_PARAMETER_LEAD_CHARS and not any(
             c in _PS_ARGUMENT_SPECIALS or c.isspace() for c in word):
         return word
-    return "'" + word.replace("'", "''") + "'"
+    return "'" + "".join(c + c if c == "'" or c in _PS_TYPOGRAPHIC_SINGLES else c
+                         for c in word) + "'"
 
 
-def _cmd_program_as_ps(program: str) -> str:
+def _cmd_program_as_ps(program: str, depth: int = 0) -> str:
     """cmd's own statements of ``program`` (the line cmd receives, split by
     `_cmd_statements`, each from its verb on, `_cmd_statement_head`) as one
     PowerShell program, a statement a line, for the PowerShell secret leg
@@ -16619,14 +16631,28 @@ def _cmd_program_as_ps(program: str) -> str:
     cmd's reads, and a native reader cmd starts is the one PowerShell would
     (DEF-2081). A word that reader would not take bare as one plain argument
     is single-quoted, so a separator, a group or a parameter lead cmd hands
-    on as text stays text; a nested `cmd /c` keeps its words bare and is
-    read again one level down. Linear: one pass."""
+    on as text stays text. A cmd a statement starts is read through cmd's
+    grammar too (`_cmd_nested_program`, to `_CMD_NEST_MAX` levels, its
+    switch glued to a quoted program included), never handed back to
+    PowerShell's. An input redirection's file is a read whatever the verb
+    (`more < .env`), as the Bash leg reads one: a `type` line of its own.
+    Linear: one pass a level."""
     lines: list[str] = []
-    for words in _cmd_statements(program):
+    inputs: list[str] = []
+    for words in _cmd_statements(program, inputs):
         k = _cmd_statement_head(words)
         if k >= len(words):
             continue
-        lines.append(" ".join(_ps_bare_argument(w) for w in [words[k].lstrip("@"), *words[k + 1:]]))
+        head = words[k].lstrip("@")
+        if re.split(r"[/\\]", head.lower())[-1] in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
+            nested = _cmd_nested_program(words[k + 1:])
+            if nested is not None:
+                text = _cmd_program_as_ps(nested, depth + 1)
+                if text:
+                    lines.append(text)
+                continue
+        lines.append(" ".join(_ps_bare_argument(w) for w in [head, *words[k + 1:]]))
+    lines.extend("type " + _ps_bare_argument(path) for path in inputs if path)
     return "\n".join(lines)
 
 
