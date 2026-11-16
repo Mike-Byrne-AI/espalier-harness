@@ -83,6 +83,19 @@ line cannot push the others out; an `[INFO]` line (which worktree the
 session's directory sits in) reads under a `--- NOTES ---` header after it. Each line also goes to stderr, which
 for a hook that exits 0 reaches Claude Code's debug log only, never Claude or
 your terminal.
+One of those lines names the voice-only audit records this checkout wrote since
+the previous start (the `session_started` stamp, read before this start
+rewrites it), by type and count: the records a hook writes when it has no
+other channel -- a fault a guard allowed through, said once a session, or a
+kill switch in managed policy settings -- whatever UTC day they were written
+on ("Governance audit log" below). It names two types, the policy kill switch
+and then the rarest first, and counts the rest. The read is bounded at seven
+UTC days and 4 MB, newest first, and the line says when it stopped there or
+skipped a log it could not read; with no stamp (a first start in the
+checkout) it reads from the start of yesterday, UTC. The stamp moves at every
+start whatever the read found, so a start whose banner reached no one (a
+nested headless session) has named its records to no one; `/status --log`
+keeps the last two UTC days.
 A `bypassPermissions` default is not a kill-switch -- the hooks still run and
 still deny in bypass mode -- so it gets its own `Permissions:` line naming the
 settings file.
@@ -2544,7 +2557,8 @@ the change is blocked. If found in managed `policy_settings` (which the
 hook protocol says cannot be blocked), the hook writes an audit record
 (`configchange_policy_settings_kill_switch_detected`); its `[WARN]` line goes
 to stderr, which reaches only the debug log -- ConfigChange has no channel to
-Claude or to your terminal. A `bypassPermissions` default is not judged here: it is
+Claude or to your terminal -- so the record is voice-only: `/status --log`
+counts it and the next SessionStart names it in its Warnings block. A `bypassPermissions` default is not judged here: it is
 not a kill-switch, a ConfigChange block is shown to no one and does not revert
 the file, and the mode is chosen at launch. What stops a session writing one is
 `write_guard`'s protected-zone deny on the writes it reads to both settings
@@ -3571,12 +3585,16 @@ include a truncated command string, and the maintenance-bypass records --
 `stop_bypassed_maintenance_mode` from `stop_gate` -- one per hook per session
 when the flag switches a check off; `/status --log` filters those out of the
 tail and shows the refusal tier of the table below by default, counting the
-bypasses on their own line, per hook. The fail-open family -- `<hook>_failed_open_<what>`,
+bypasses on their own line, per hook. The voice-only family is counted on a
+line of its own too: the fail-open records -- `<hook>_failed_open_<what>`,
 written once a session by `say_once` when a check fails open, a reporter hook
 crashes, or a reporter's finding has no other channel (PostCompact, Stop,
-SubagentStop, ConfigChange) -- is counted on a line of its own too: a hook
-that exits 0 has its stderr routed to the debug log, so for those the record
-is the voice.)
+SubagentStop, ConfigChange) -- and `config_guard`'s
+`configchange_policy_settings_kill_switch_detected`. A hook that exits 0 has
+its stderr routed to the debug log, so for those the record is the voice; the
+family is declared once (`_integrity.is_voice_only_event`), and the next
+SessionStart names what was written since the previous start, past the UTC
+day.)
 
 The records come in two tiers. A **refusal** is a call that did not run. A
 **pause** is once-then-continue: a speed-bump fire lets the re-issued command
@@ -3611,7 +3629,7 @@ Watch it live (all records), or read the current repo's tail:
 
 ```bash
 tail -f ~/.espalier/audit/*.log                    # all records, live
-python tools/cc/session_resume.py --log            # last 20 refusals, this repo, today
+python tools/cc/session_resume.py --log            # last 20 refusals, this repo, today and yesterday (UTC)
 python tools/cc/session_resume.py --log 50         # last 50 refusals
 python tools/cc/session_resume.py --log 50 --all   # last 50 blocks, pauses included
 python tools/cc/session_resume.py --log <repo>     # another checkout's tail
@@ -3619,9 +3637,10 @@ python tools/cc/session_resume.py --log <repo>     # another checkout's tail
 
 The tail is scoped to the checkout it is asked about: the file is keyed by the
 repo's basename, so two checkouts named alike share one, and the reader keeps
-only the records whose `repo_path` is that root. A per-type count for the whole
-day prints above the tail, and the day's pauses are counted on a line of their
-own, so a window of 20 cannot silently hide what it left out — a busy day of
+only the records whose `repo_path` is that root. It reads today's and
+yesterday's logs (UTC), so a record does not leave the view the moment the date
+turns. A per-type count for those two days prints above the tail, and their
+pauses are counted on a line of their own, so a window of 20 cannot silently hide what it left out — a busy day of
 speed-bump fires or Stop-gate blocks does not bury a protected-zone denial
 without a trace, and `--all` widens the tail to the pauses when you want them.
 

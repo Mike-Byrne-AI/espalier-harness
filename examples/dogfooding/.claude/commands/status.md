@@ -17,11 +17,13 @@ Report what you see and what's next.
 ## `--log [N]` — governance audit tail
 
 Read-only: print the last N (default 20) enforcement-refusal records the
-harness logged for this repo today, newest last, with a per-type count for
-the whole day above them and the day's pause records (a speed-bump fire, a
-Stop-gate block — once-then-continue) counted on a line of their own;
+harness logged for this repo today and yesterday (UTC), newest last, with a
+per-type count for those two days above them and their pause records (a
+speed-bump fire, a Stop-gate block — once-then-continue) counted on a line of
+their own, and the voice-only records (a hook's only voice: a fault a guard
+allowed through, or a kill switch in managed policy settings) on another;
 `--all` widens the tail to the pauses (on a busy day that tail is mostly
-Stop-gate records; the day-wide by-type line above it still lists every
+Stop-gate records; the by-type line above it still lists every
 refusal). The event types and their tiers are
 the table under "Governance audit log" in `docs/HOOKS.md` — one enumerator,
 pinned to the code, not re-listed here. Reads the records from

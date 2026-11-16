@@ -38,7 +38,7 @@ import tempfile
 import textwrap
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
@@ -2872,6 +2872,82 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
             pass
     _seed_handoff_gate_flag(root, state_dir)
 
+
+# The voice-only records written since the previous start (DEF-1152): a
+# hook's only voice -- a fault a guard allowed through, said once a session to
+# a debug log no one reads, or a kill switch in managed policy settings -- is
+# named at the next start in the Warnings block. The line names at most this
+# many types, the most frequent first, so it stays one line under
+# `_WARNING_LINE_MAX_BYTES` with the longest types written today (about 290
+# bytes with two 50-character types and a stopped read; three overran the cap
+# by 40, measured) -- the banner had no room to give: 9,500 of its 10,000
+# characters at a start on 2026-11-16.
+_VOICE_LINE_TYPES = 2
+
+
+def _previous_start(root: Path, now: datetime) -> tuple[datetime, bool]:
+    """When the previous start in this checkout began: the ``session_started``
+    stamp, read BEFORE ``_clean_state_flags`` rewrites it, and True; with no
+    stamp to read (a first start here, a cleared state dir, a stamp that does
+    not parse), the start of the window ``/status --log`` reads
+    (``_integrity.STATUS_LOG_DAYS`` UTC days), and False."""
+    days = max(getattr(_integrity, "STATUS_LOG_DAYS", 1), 1)
+    fallback = datetime.combine((now - timedelta(days=days - 1)).date(), datetime.min.time(), tzinfo=timezone.utc)
+    stamp_file = root / _hook_utils.STATE_DIR / "session_started"
+    try:
+        text = stamp_file.read_text(encoding="utf-8", errors="replace").strip()
+    except FileNotFoundError:  # fail-open: ok deliberate -- no start recorded here yet: the fallback window is the reader's
+        return fallback, False
+    try:
+        stamp = datetime.fromisoformat(text)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.astimezone(timezone.utc)
+    except (ValueError, OverflowError):  # fail-open: ok text-fallback -- a stamp that does not parse dates nothing: the fallback window is the reader's
+        return fallback, False
+    return stamp, True
+
+
+def _report_voice_only_records(root: Path) -> None:
+    """One Warnings-block line naming the voice-only records this checkout
+    wrote since the previous start, selected by the family's predicate
+    (`_integrity.is_voice_only_event`), never by a log's date; silent when
+    the read found none. The read is bounded (`_integrity.voice_only_since`:
+    seven UTC days, 4 MB), and the line names a bound that stopped it. Runs
+    in the state-flag phase, before the stamp is rewritten; a hand-off child
+    skips it, since its parent's line rides the hand-off. ASCII."""
+    now = datetime.now(timezone.utc)
+    since, stamped = _previous_start(root, now)
+    records, cut = _integrity.voice_only_since(root, since, now=now)
+    if not records:
+        return
+    counts: dict[str, int] = {}
+    for rec in records:
+        kind = rec.get("event_type")
+        # A type is an identifier; anything else is named by count alone, so
+        # a record's text never writes into the banner.
+        kind = kind if isinstance(kind, str) and re.fullmatch(r"[a-z0-9_]{1,80}", kind) else "(unnamed type)"
+        counts[kind] = counts.get(kind, 0) + 1
+    # The declared types first (a policy kill switch), then the RAREST: a
+    # fault said once is the news, and a type that recurs at every start (a
+    # settings read caught mid-write, 77 records in November on the Windows
+    # box) is the one folded into the count. An unnamed type goes last.
+    declared: frozenset[str] = getattr(_integrity, "VOICE_ONLY_EVENT_TYPES", frozenset())
+    ranked = sorted(counts.items(),
+                    key=lambda kv: (kv[0] not in declared, kv[0] == "(unnamed type)", kv[1], kv[0]))
+    named = ", ".join(f"{kind} {n}" for kind, n in ranked[:_VOICE_LINE_TYPES])
+    if len(ranked) > _VOICE_LINE_TYPES:
+        named += f", {_hook_utils.plural(len(ranked) - _VOICE_LINE_TYPES, 'more type')}"
+    when = f"{since.astimezone(timezone.utc):%Y-%m-%d %H:%M}Z"
+    anchor = f"the last start ({when})" if stamped else f"{when} (no earlier start here)"
+    stopped = f" (the read stopped at {cut})" if cut else ""
+    days = max(getattr(_integrity, "STATUS_LOG_DAYS", 1), 1)
+    _hook_utils.advise_warn(
+        f"{_hook_utils.plural(len(records), 'voice-only record')} since {anchor}{stopped}: {named} "
+        f"-- perhaps said only to a debug log; /status --log reads {_hook_utils.plural(days, 'UTC day')}"
+    )
+
+
 def _report_freshness(root: Path) -> None:
     """A Warnings-block line when the per-install state cache shows
     critical>0 OR stale>=3. Silent when the cache is missing
@@ -5654,9 +5730,13 @@ def _run_main(wall_start: float | None = None) -> int:
         ):
             raise OSError("the session marker could not be written")
 
-    # The hand-off child skips them: its parent ran each once (DEF-2003).
+    # The hand-off child skips them: its parent ran each once (DEF-2003). The
+    # voice-only read goes first: it reads the previous start's stamp, which
+    # the cleanup rewrites, and its line rides a hand-off with the parent's
+    # other warnings (DEF-1152).
     _phase("state flags")
     for _flagjob, _flaglabel in (() if handoff is not None else (
+        (lambda: _report_voice_only_records(root), "session_start: voice-only record read failed"),
         (lambda: _clean_state_flags(root, source), "session_start: state-flag cleanup failed"),
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
         (_marker_job, "session_start: session marker write failed"),

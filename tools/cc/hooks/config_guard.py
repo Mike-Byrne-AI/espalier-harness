@@ -527,6 +527,9 @@ def _run_main() -> int:
             root,
             {"event_type": audit_event,
              "details": {
+                 # The voice-only line of `/status --log` groups by hook
+                 # (the policy type is that family's: DEF-1152).
+                 "hook": "config_guard",
                  "source": source,
                  # A gate switch can name the user file, whose payload path
                  # carries the home directory: its findings name each file by
@@ -541,11 +544,12 @@ def _run_main() -> int:
 
     if source in AUDIT_ONLY_SOURCES:
         # ConfigChange cannot block managed policy_settings. The audit record
-        # above carries the findings (in the raw log: `/status --log` counts no
-        # such type); this stderr line reaches the debug log only (exit 0), and
-        # ConfigChange has no channel to Claude at all. Exit 0 with no JSON so
-        # Claude Code does not read a structured block.
-        # voice: twin the configchange_policy_settings_kill_switch_detected record written above carries these findings in the raw audit log
+        # above carries the findings, and it is voice-only
+        # (`_integrity.VOICE_ONLY_EVENT_TYPES`): `/status --log` counts it and
+        # the next SessionStart names it. This stderr line reaches the debug
+        # log only (exit 0), and ConfigChange has no channel to Claude at all.
+        # Exit 0 with no JSON so Claude Code does not read a structured block.
+        # voice: twin the configchange_policy_settings_kill_switch_detected record written above carries these findings to /status --log and the next SessionStart banner
         print(
             f"[WARN] Espalier-Harness "
             f"{_hook_utils.plural(len(findings), 'kill-switch finding')} in policy_settings: "
