@@ -31,10 +31,16 @@ import pytest
 
 from _site_path import site_path
 from tests._live_tree import checkout_glob
+from tests._hook_runner import run_hook
 from tests._hook_spawn import not_a_budget_miss, run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
+
+# `/status --log`'s window, read from the line by its shape: the reader dates it
+# by its own clock, so a date the test computed would race it at 00:00Z, the
+# flake DEF-1152 names.
+_WINDOW = r"since \d{4}-\d{2}-\d{2} 00:00Z"
 
 
 def _run_hook(script: str, payload: dict, tmp_path: Path) -> subprocess.CompletedProcess:
@@ -344,6 +350,35 @@ class TestStatusLogTail:
         assert "pretooluse_blocked_dangerous_command 1" in by_type
         assert len(records) == 1, records
         assert result.stdout.isascii()
+
+    def test_a_record_in_yesterdays_log_and_one_in_todays_are_both_counted(self, tmp_path):
+        """DEF-1152's CI cell: two hook calls seconds apart straddled 00:00Z
+        on #512's `test (3.14)`, and a read of today's log alone counted one of
+        the two. One record in yesterday's log and one in today's drive it
+        without waiting for midnight. Dies to: a reader of today's log alone
+        (`last 1 of 1`)."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        # This test's own clock and the reader's must see one UTC date; a run
+        # across 00:00Z is cannot-tell, not a red (the race this row names).
+        crossed = lambda: (datetime.now(timezone.utc) - timedelta(days=1)).date() != yesterday.date()  # noqa: E731
+        integ.audit_path(tmp_path, yesterday).parent.mkdir(parents=True, exist_ok=True)
+        integ.audit_path(tmp_path, yesterday).write_text(json.dumps({
+            "timestamp": yesterday.isoformat(), "event_type": "pretooluse_blocked_no_active_plan",
+            "repo_path": str(tmp_path.resolve()), "details": {"tool": "Edit"},
+        }) + "\n", encoding="utf-8")
+        _run_hook("write_guard.py", {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}, tmp_path)
+        result = self._run_log(tmp_path, "1")
+        if crossed():
+            pytest.skip("the run crossed 00:00Z: yesterday's log left the reader's window")
+        assert result.returncode == 0, result.stderr
+        header, by_type, *records = [ln for ln in result.stdout.splitlines() if ln.strip()]
+        assert re.match(rf"# governance audit log -- last 1 of 2 denial records for this repo {_WINDOW}: ", header), header
+        assert "pretooluse_blocked_no_active_plan 1" in by_type and "pretooluse_blocked_dangerous_command 1" in by_type
+        # The tail is the newest: today's record, read after yesterday's.
+        assert len(records) == 1 and "pretooluse_blocked_dangerous_command" in records[0], records
 
 
 def _load_hook_module(name: str):
@@ -1658,7 +1693,7 @@ class TestStatusLogTiers:
         header, by_type, pauses, *records = [ln for ln in result.stdout.splitlines() if ln.strip()]
         assert header.startswith("# governance audit log -- last 1 of 1 denial record "), header
         assert "pretooluse_blocked_dangerous_command 1" in by_type, by_type
-        assert pauses.startswith("# pauses today: "), pauses
+        assert re.match(rf"# pauses {_WINDOW}: ", pauses), pauses
         assert "pretooluse_blocked_speed_bump 1" in pauses and "--all" in pauses, pauses
         assert len(records) == 1 and "speed_bump" not in records[0], records
         assert result.stdout.isascii()
@@ -1681,8 +1716,8 @@ class TestStatusLogTiers:
         )
         result = _run_status_log(tmp_path, "10")
         assert result.returncode == 0, result.stderr
-        assert result.stdout.startswith("(no governance denials recorded for this repo today"), result.stdout
-        assert "1 pause record today" in result.stdout and "--all" in result.stdout, result.stdout
+        assert re.match(rf"\(no governance denials recorded for this repo {_WINDOW}", result.stdout), result.stdout
+        assert re.search(rf"1 pause record {_WINDOW}", result.stdout) and "--all" in result.stdout, result.stdout
 
     def test_all_without_log_is_a_usage_error(self, tmp_path):
         env = os.environ.copy()
@@ -1823,7 +1858,7 @@ class TestMaintenanceBypassIsRecorded:
         self._run("plan_guard.py", {"tool_name": "Edit", "tool_input": {"file_path": "src/a.py", "old_string": "", "new_string": "x"}}, tmp_path, maintenance=True)
         plain = _run_status_log(tmp_path, "10")
         assert plain.returncode == 0, plain.stderr
-        assert "3 maintenance-bypass records today" in plain.stdout, plain.stdout
+        assert re.search(rf"3 maintenance-bypass records {_WINDOW}", plain.stdout), plain.stdout
         for phrase in ("write_guard (protected-zone check) 1", "plan_guard (plan requirement) 1", "stop_gate (Gates 2 and 3) 1"):
             assert phrase in plain.stdout, plain.stdout
         # Never a tail record: no type name is printed as a record line.
@@ -1937,7 +1972,7 @@ class TestFailOpenRecordsReachTheStatusLog:
                     "protected_paths must be a list")
         plain = _run_status_log(tmp_path, "10")
         assert plain.returncode == 0, plain.stderr
-        assert "2 fail-open records today" in plain.stdout, plain.stdout
+        assert re.search(rf"2 voice-only records {_WINDOW}", plain.stdout), plain.stdout
         assert "write_guard: config_zone_ignored 1, pretooluse_failed_open_integrity_scan 1" in plain.stdout, plain.stdout
         assert "a fault inside a guard that allowed" in plain.stdout
         # Never a tail record, never a denial count.
@@ -1963,3 +1998,300 @@ class TestFailOpenRecordsReachTheStatusLog:
                     # A reporter's crash guard: (hook, event_type, exc, consequence).
                     if len(node.args) >= 2 and isinstance(node.args[1], _ast.Constant):
                         assert integ.is_fail_open_event(node.args[1].value), (hook.name, node.lineno, node.args[1].value)
+
+
+# ---------------------------------------------------------------------------
+# Ledger row DEF-1152: a record that is a hook's only voice reaches the
+# operator past its UTC day -- the next SessionStart names what was written
+# since the previous start, and `/status --log` counts the family (the policy
+# kill switch included) over two UTC days.
+# ---------------------------------------------------------------------------
+
+_POLICY = "configchange_policy_settings_kill_switch_detected"
+
+
+def _voice_types_the_hooks_write() -> set[str]:
+    """Every event-type literal in the hooks the voice-only predicate admits
+    (a prefix token such as ``config_zone_`` left out by its trailing ``_``)."""
+    integ = _load_hook_module("_integrity")
+    found: set[str] = set()
+    for hook in checkout_glob(HOOKS_DIR, "*.py"):
+        if hook.name == "_integrity.py":
+            continue
+        for lit in re.findall(r'"([a-z][a-z0-9_]*[a-z0-9])"', hook.read_text(encoding="utf-8")):
+            if integ.is_voice_only_event(lit):
+                found.add(lit)
+    return found
+
+
+def _record(root: Path, when, event_type: str, **details) -> dict:
+    return {"timestamp": when.isoformat() if hasattr(when, "isoformat") else when,
+            "event_type": event_type, "repo_path": str(Path(root).resolve()), "details": details}
+
+
+def _write_log(integ, root: Path, day, records: list[dict], *, filler: int = 0, noise_at=None) -> Path:
+    """Write ``records`` into ``root``'s log for ``day``, after ``filler``
+    bytes of advisory lines stamped ``noise_at`` (default ``day``) when asked
+    (the shape a busy day's log has)."""
+    path = integ.audit_path(root, day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    noise = json.dumps(_record(root, noise_at or day, "action_justification_missing", tool="Bash"))
+    while sum(len(ln) + 1 for ln in lines) < filler:
+        lines.append(noise)
+    lines += [json.dumps(r) for r in records]
+    with path.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write("".join(ln + "\n" for ln in lines))
+    return path
+
+
+class TestVoiceOnlyRecordsOutliveTheirDay:
+    """DEF-1152. The family is declared once (``_integrity.is_voice_only_event``:
+    the fail-open predicate plus ``VOICE_ONLY_EVENT_TYPES``), and both readers
+    select by it. Each reader is fed the records it must leave out, not only
+    the ones it must name (docs/SHARP_EDGES.md, a property-pinning test that
+    feeds only conforming inputs)."""
+
+    def test_the_family_is_the_fail_open_predicate_plus_declared_types_a_hook_writes(self):
+        integ = _load_hook_module("_integrity")
+        assert integ.is_voice_only_event(_POLICY)
+        assert integ.is_voice_only_event("stop_failed_open_pytest_did_not_run")
+        assert integ.is_voice_only_event("config_zone_unreadable")
+        assert not integ.is_voice_only_event("pretooluse_blocked_protected_zone")
+        assert not integ.is_voice_only_event("pretooluse_bypassed_maintenance_mode")
+        assert not integ.is_voice_only_event("configchange_blocked_kill_switch")
+        assert not integ.is_voice_only_event(None)
+        declared = set(integ.VOICE_ONLY_EVENT_TYPES)
+        # A declared type is one the predicate would not already admit, in
+        # neither block tier, and written by a hook (no dead entry).
+        assert not any(integ.is_fail_open_event(t) for t in declared), sorted(declared)
+        assert not declared & set(integ.BLOCKED_EVENT_TYPES), sorted(declared)
+        assert declared <= _voice_types_the_hooks_write(), sorted(declared - _voice_types_the_hooks_write())
+
+    def test_status_log_names_a_policy_kill_switch_config_guard_recorded(self, tmp_path):
+        """Driven through config_guard itself, so the record's own shape is
+        read: the type `/status --log` showed in no line before, now counted
+        under the hook that wrote it. Dies to: a reader without the policy
+        type, or a record without its hook."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}), encoding="utf-8")
+        result = run_hook(
+            "config_guard.py",
+            {"hook_event_name": "ConfigChange", "source": "policy_settings", "file_path": ".claude/settings.json"},
+            {"ESPALIER_MAINTENANCE_MODE": None, "CLAUDE_PROJECT_DIR": str(tmp_path),
+             "HOME": str(home), "USERPROFILE": str(home)},
+        )
+        assert result.returncode == 0 and not result.stdout.strip(), (result.stdout, result.stderr)
+        assert [r["details"].get("hook") for r in _audit_records() if r["event_type"] == _POLICY] == ["config_guard"]
+        plain = _run_status_log(tmp_path, "10")
+        assert plain.returncode == 0, plain.stderr
+        assert re.search(rf"1 voice-only record {_WINDOW} -- config_guard: {_POLICY} 1", plain.stdout), plain.stdout
+        assert "kill switch in managed policy settings" in plain.stdout and plain.stdout.isascii()
+
+    def test_the_since_reader_selects_by_family_root_and_time_not_by_date(self, tmp_path):
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 1, 0, tzinfo=timezone.utc)
+        since = now - timedelta(hours=3)
+        yesterday = now - timedelta(days=1)
+        other = tmp_path / "elsewhere" / tmp_path.name
+        other.mkdir(parents=True)
+        kept_old = _record(tmp_path, since + timedelta(hours=1), "stop_failed_open_pytest_did_not_run")
+        _write_log(integ, tmp_path, yesterday, [
+            _record(tmp_path, since - timedelta(hours=1), "stop_failed_open_pytest_spawn"),  # before the start
+            kept_old,
+            _record(other, since + timedelta(hours=1, minutes=30), "stop_failed_open_counter"),  # another checkout
+            _record(tmp_path, since + timedelta(hours=1, minutes=40), "pretooluse_blocked_protected_zone"),  # a refusal
+            _record(tmp_path, "not-a-time", "stop_failed_open_counter"),  # cannot be placed
+        ])
+        kept_new = _record(tmp_path, now - timedelta(minutes=30), _POLICY)
+        _write_log(integ, tmp_path, now, [kept_new])
+        found, cut = integ.voice_only_since(tmp_path, since, now=now)
+        assert (found, cut) == ([kept_old, kept_new], ""), found
+
+    def test_the_read_stops_at_its_byte_bound_newest_first_and_says_so(self, tmp_path):
+        """A log a wedged hook filled is read from its end, so the newest
+        records survive the bound, and the reader names it. Dies to: an
+        unbounded read (both records come back, no bound named)."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        since = now - timedelta(days=2)
+        _write_log(integ, tmp_path, now - timedelta(days=1), [_record(tmp_path, now - timedelta(days=1), _POLICY)])
+        early = _record(tmp_path, now - timedelta(hours=5), "stop_failed_open_counter")
+        late = _record(tmp_path, now - timedelta(minutes=5), "stop_failed_open_pytest_did_not_run")
+        path = _write_log(integ, tmp_path, now, [early])
+        _write_log(integ, tmp_path, now, [late], filler=4096)
+        assert path.stat().st_size > 4096
+        found, cut = integ.voice_only_since(tmp_path, since, now=now, max_bytes=1024)
+        assert (found, cut) == ([late], "1024 bytes"), (found, cut)
+        whole, uncut = integ.voice_only_since(tmp_path, since, now=now)
+        assert uncut == "" and [r["event_type"] for r in whole] == [_POLICY, early["event_type"], late["event_type"]]
+
+    def test_the_read_stops_at_its_day_bound_and_says_so(self, tmp_path):
+        """At the edge: the seventh day back is read, the eighth is not.
+        Dies to: a bound one day off either way."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        assert integ.VOICE_READ_MAX_DAYS == 7
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        dropped = _record(tmp_path, now - timedelta(days=7) + timedelta(hours=1), _POLICY)
+        kept = _record(tmp_path, now - timedelta(days=6) + timedelta(hours=1), "stop_failed_open_counter")
+        _write_log(integ, tmp_path, now - timedelta(days=7), [dropped])
+        _write_log(integ, tmp_path, now - timedelta(days=6), [kept])
+        assert integ.voice_only_since(tmp_path, now - timedelta(days=10), now=now) == ([kept], "7 days")
+        # A start inside the bound reads it all and names nothing.
+        assert integ.voice_only_since(tmp_path, now - timedelta(days=6, hours=1), now=now) == ([kept], "")
+
+    def test_the_byte_bound_is_shared_across_the_days_it_reads(self, tmp_path):
+        """4 MB in all, never 4 MB a day: what today's log took is gone from
+        yesterday's share. Dies to: a budget that is not spent across logs
+        (yesterday's early record comes back)."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        yesterday = now - timedelta(days=1)
+        early = _record(tmp_path, yesterday - timedelta(hours=10), "stop_failed_open_counter")
+        late = _record(tmp_path, yesterday + timedelta(hours=10), "stop_failed_open_pytest_spawn")
+        today_rec = _record(tmp_path, now - timedelta(hours=1), _POLICY)
+        _write_log(integ, tmp_path, yesterday, [early])
+        _write_log(integ, tmp_path, yesterday, [late], filler=300)
+        today = _write_log(integ, tmp_path, now, [today_rec], filler=2000)
+        bound = today.stat().st_size + len(json.dumps(late)) + 50
+        assert integ.audit_path(tmp_path, yesterday).stat().st_size <= bound  # the whole log would fit a per-day budget
+        assert integ.voice_only_since(tmp_path, now - timedelta(days=2), now=now, max_bytes=bound) == (
+            [late, today_rec], f"{bound} bytes")
+
+    def test_a_byte_bound_past_the_start_is_not_named(self, tmp_path):
+        """The bound is named only where the unread head can hold a record
+        after the start: here the oldest line read already predates it.
+        Dies to: naming the bound whenever a log outgrows it (the line would
+        say so at every start on a wedged hook's day)."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        old = _record(tmp_path, now - timedelta(hours=5), "stop_failed_open_counter")
+        new = _record(tmp_path, now - timedelta(minutes=5), "stop_failed_open_pytest_did_not_run")
+        _write_log(integ, tmp_path, now, [old])
+        _write_log(integ, tmp_path, now, [new], filler=3000, noise_at=now - timedelta(hours=2))
+        assert integ.voice_only_since(tmp_path, now - timedelta(hours=1), now=now, max_bytes=1024) == ([new], "")
+
+    def test_an_unreadable_log_costs_its_own_records_and_is_named(self, tmp_path):
+        """A log that exists and cannot be opened (here a directory where the
+        day's file would be) is skipped, the other days still read. Dies to:
+        a raise that throws the window's records away."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        integ.audit_path(tmp_path, now - timedelta(days=1)).mkdir(parents=True)
+        kept = _record(tmp_path, now - timedelta(hours=1), _POLICY)
+        _write_log(integ, tmp_path, now, [kept])
+        assert integ.voice_only_since(tmp_path, now - timedelta(days=2), now=now) == ([kept], "an unreadable log")
+
+    def test_every_voice_type_a_hook_writes_passes_the_pre_filter(self, tmp_path):
+        """The substring pre-filter must admit everything the predicate does:
+        one record of every voice type the hooks write, and one of each
+        prefix shape. Dies to: a token dropped from the pre-filter (the
+        `config_zone_` shape, an adopter's bad zone setting, read as no
+        record)."""
+        from datetime import datetime, timedelta, timezone
+
+        integ = _load_hook_module("_integrity")
+        now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
+        kinds = sorted(_voice_types_the_hooks_write() | {"config_zone_x", "config_recall_x", "x_failed_open_y"})
+        assert len(kinds) > 20, kinds
+        records = [_record(tmp_path, now - timedelta(seconds=len(kinds) - i), k) for i, k in enumerate(kinds)]
+        _write_log(integ, tmp_path, now, records)
+        found, cut = integ.voice_only_since(tmp_path, now - timedelta(hours=2), now=now)
+        assert ([r["event_type"] for r in found], cut) == (kinds, "")
+
+    def test_a_start_names_what_was_written_since_the_previous_start_and_nothing_older(self, tmp_path):
+        """End to end, three starts: the first has no stamp and names the
+        record from the fallback window; the second names nothing (the record
+        predates the first start); a record written after it is named by the
+        third, "since the last start". Dies to: a read after the state-flag
+        cleanup rewrites the stamp (the third start reads its own, and names
+        nothing), and to a date-only selection (the second start names the
+        record again)."""
+        integ = _load_hook_module("_integrity")
+        # The operator's session variables stripped (the audit dir kept), so
+        # the hook reads this scratch root alone.
+        overrides: dict[str, str | None] = {
+            k: None for k in os.environ
+            if k.startswith(("CLAUDE_", "ESPALIER_")) and k not in ("ESPALIER_AUDIT_DIR", "ESPALIER_SESSION_CATCH_UP")}
+        overrides["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+
+        def start() -> list[str]:
+            result = run_hook(
+                "session_start.py", {"source": "startup", "hook_event_name": "SessionStart"}, overrides)
+            assert result.returncode == 0, result.stderr
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            return [ln for ln in context.splitlines() if "voice-only record" in ln]
+
+        integ.append_audit(tmp_path, {"event_type": "stop_failed_open_pytest_did_not_run", "details": {"hook": "stop_gate"}})
+        first = start()
+        assert len(first) == 1 and "(no earlier start here)" in first[0], first
+        assert "stop_failed_open_pytest_did_not_run 1" in first[0], first
+        assert start() == []
+        integ.append_audit(tmp_path, {"event_type": _POLICY, "details": {"hook": "config_guard"}})
+        third = start()
+        assert len(third) == 1 and third[0].startswith("[WARN] espalier: 1 voice-only record since the last start ("), third
+        assert f"{_POLICY} 1" in third[0] and "stop_failed_open" not in third[0], third
+
+    def test_the_banner_line_fits_one_warning_line_with_the_longest_types_the_hooks_write(self, tmp_path, monkeypatch):
+        """The banner has no room to give, so the line stays under the
+        per-line cap with the adversarial input: the two longest types any
+        hook writes, three-digit counts, more types than it names, and a
+        stopped read. Dies to: naming a third type (the line overran the cap
+        by 40 bytes, measured)."""
+        ss = _load_hook_module("session_start")
+        longest = sorted(_voice_types_the_hooks_write(), key=lambda t: (-len(t), t))[:4]
+        # The two longest are the rarest, so the ranking names them.
+        records = [{"event_type": t} for i, t in enumerate(longest) for _ in range(250 + 100 * i)]
+        monkeypatch.setattr(ss._integrity, "voice_only_since", lambda *_a, **_k: (records, "4 MB"))
+        ss._hook_utils.take_advisories()
+        ss._report_voice_only_records(tmp_path)
+        lines = ss._hook_utils.take_advisories()
+        assert len(lines) == 1, lines
+        line = lines[0]
+        assert len(line.encode("utf-8")) <= ss._WARNING_LINE_MAX_BYTES, (len(line.encode("utf-8")), line)
+        assert line.isascii(), line
+        assert f"{longest[0]} 250" in line and f"{longest[1]} 350" in line, line
+        assert "2 more types" in line and "(the read stopped at 4 MB)" in line, line
+
+    def test_the_line_names_the_policy_type_then_the_rarest_and_folds_the_recurring(self, tmp_path, monkeypatch):
+        """The Windows box's November logs: one type recurs at nearly every
+        start, and the row's own victim is a single Stop-gate record. Dies
+        to: ranking by count descending (the recurring type is named and the
+        Stop record folds into the count)."""
+        ss = _load_hook_module("session_start")
+        mix = (["configchange_failed_open_settings_read"] * 22 + ["posttooluse_failed_open_zone_off"] * 3
+               + ["stop_failed_open_pytest_did_not_run", _POLICY, "x_failed_open_\nTEXT"])
+        monkeypatch.setattr(ss._integrity, "voice_only_since", lambda *_a, **_k: ([{"event_type": t} for t in mix], ""))
+        ss._hook_utils.take_advisories()
+        ss._report_voice_only_records(tmp_path)
+        (line,) = ss._hook_utils.take_advisories()
+        assert f": {_POLICY} 1, stop_failed_open_pytest_did_not_run 1, 3 more types --" in line, line
+        assert "TEXT" not in line and "\n" not in line and "configchange_failed_open" not in line, line
+
+    @pytest.mark.parametrize("stamp", ["garbage", "0001-01-01T00:00:00+05:00"], ids=["unparsed", "overflow"])
+    def test_a_stamp_that_does_not_date_falls_back_to_the_status_window(self, tmp_path, stamp):
+        """Dies to: a parse or overflow error escaping `_previous_start`
+        (the job's line is lost to a WARN about the read)."""
+        ss = _load_hook_module("session_start")
+        (tmp_path / ".espalier-state").mkdir()
+        (tmp_path / ".espalier-state" / "session_started").write_text(stamp, encoding="utf-8")
+        _load_hook_module("_integrity").append_audit(
+            tmp_path, {"event_type": "stop_failed_open_counter", "details": {"hook": "stop_gate"}})
+        ss._hook_utils.take_advisories()
+        ss._report_voice_only_records(tmp_path)
+        (line,) = ss._hook_utils.take_advisories()
+        assert "(no earlier start here)" in line and "stop_failed_open_counter 1" in line, line

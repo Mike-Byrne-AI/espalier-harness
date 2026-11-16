@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -699,21 +700,22 @@ def _bypass_summary(lines: list[str]) -> str:
     )
 
 
-def _fail_open_records(repo_root: Path, integrity, is_fail_open) -> list[str]:
-    """Today's fail-open records: every record, filtered by the predicate
-    (``tail_audit``'s ``event_types`` is a roster, and this family is a shape)."""
+def _voice_only_records(repo_root: Path, integrity, is_voice_only, span: dict) -> list[str]:
+    """The window's voice-only records: every record, filtered by the
+    predicate (``tail_audit``'s ``event_types`` is a roster, and this family
+    is a shape)."""
     out: list[str] = []
-    for line in integrity.tail_audit(repo_root, None):
+    for line in integrity.tail_audit(repo_root, None, **span):
         try:
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(rec, dict) and is_fail_open(rec.get("event_type")):
+        if isinstance(rec, dict) and is_voice_only(rec.get("event_type")):
             out.append(line)
     return out
 
 
-def _fail_open_summary(lines: list[str]) -> str:
+def _voice_only_summary(lines: list[str]) -> str:
     """``hook: type N, type N; hook: ...`` from the records' ``details.hook``
     and ``event_type``. 7-bit ASCII."""
     by_hook: dict[str, dict[str, int]] = {}
@@ -731,7 +733,9 @@ def _fail_open_summary(lines: list[str]) -> str:
 
 def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) -> int:
     """Print the last ``n`` governance audit-log records for ``repo_root``
-    today (read-only): the refusals, or every block under ``include_pauses``.
+    in the window ``_integrity.STATUS_LOG_DAYS`` names (today's and
+    yesterday's UTC logs; read-only): the refusals, or every block under
+    ``include_pauses``.
     Lazy-imports ``_integrity`` (the audit-log owner) inside
     the handler — a module-level import would drag the hook internals into
     session_resume's standalone graph and fire on every
@@ -774,13 +778,27 @@ def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) 
     blocked = getattr(_integrity, "BLOCKED_EVENT_TYPES", refusals)
     shown = blocked if include_pauses else refusals
     noun = "blocked" if include_pauses else "denial"
-    lines = _integrity.tail_audit(repo_root, n, event_types=shown)
-    # Every matching record for the DAY, counted by type, above the tail: a
+    # The window: today's and yesterday's UTC logs, so a record does not leave
+    # the view the moment the date turns (DEF-1152), read on ONE clock, so
+    # the reads below and the label cannot straddle 00:00Z apart. A
+    # half-upgraded tree's reader reads today's alone, and the lines say
+    # "today".
+    days = getattr(_integrity, "STATUS_LOG_DAYS", 1)
+    now = datetime.now(timezone.utc)
+    span: dict = {"days": days, "now": now} if isinstance(days, int) and days > 1 else {}
+    window = f"since {(now - timedelta(days=days - 1)):%Y-%m-%d} 00:00Z" if span else "today"
+    if span:
+        # Both logs by name, the shell's brace form: either may be absent.
+        stamps = ",".join(f"{now - timedelta(days=back):%Y%m%d}" for back in range(days - 1, -1, -1))
+        newest = _integrity.audit_path(repo_root, now)
+        path = newest.with_name(f"{newest.name.rsplit('-', 1)[0]}-{{{stamps}}}.log")
+    lines = _integrity.tail_audit(repo_root, n, event_types=shown, **span)
+    # Every matching record in the WINDOW, counted by type, above the tail: a
     # window of N cannot say what it left out. 7-bit ASCII (Windows stdout).
-    today = _integrity.tail_audit(repo_root, None, event_types=shown)
+    today = _integrity.tail_audit(repo_root, None, event_types=shown, **span)
     pauses_today = (
         [] if include_pauses or not pause_types
-        else _integrity.tail_audit(repo_root, None, event_types=pause_types)
+        else _integrity.tail_audit(repo_root, None, event_types=pause_types, **span)
     )
     pause_counts = _count_by_type(pauses_today)
     # The maintenance-bypass records are advisory (nothing was blocked) and in
@@ -791,67 +809,73 @@ def _print_audit_tail(repo_root: Path, n: int, *, include_pauses: bool = False) 
     # tree, and says so instead of reading as a clean day.
     bypass_types = getattr(_integrity, "MAINTENANCE_BYPASS_EVENT_TYPES", None)
     bypasses_today = (
-        _integrity.tail_audit(repo_root, None, event_types=bypass_types)
+        _integrity.tail_audit(repo_root, None, event_types=bypass_types, **span)
         if bypass_types else []
     )
     bypass_line = _bypass_summary(bypasses_today)
-    # The fail-open-with-voice family (a fault inside a guard that ALLOWED, said
-    # once a session): advisory, in neither tier, counted on its own line by
-    # hook and type. Read through the predicate, never a roster, so a new
-    # say_once site counts without an entry anywhere. Soft on a half-upgraded
-    # tree, like the bypass line.
-    is_fail_open = getattr(_integrity, "is_fail_open_event", None)
-    fail_open_today = _fail_open_records(repo_root, _integrity, is_fail_open) if is_fail_open else []
-    fail_open_line = _fail_open_summary(fail_open_today)
+    # The voice-only family (DEF-1152): a record that is a hook's only voice --
+    # a fault inside a guard that ALLOWED, said once a session, or a kill
+    # switch in managed policy settings, which ConfigChange cannot block.
+    # Advisory, in neither tier, counted on its own line by hook and type. Read
+    # through the family's predicate, never a roster, so a type that joins the
+    # family counts here without an entry. Soft on a half-upgraded tree, like
+    # the bypass line: the fail-open predicate alone where the family is not
+    # declared yet.
+    is_voice_only = getattr(_integrity, "is_voice_only_event", None) or getattr(
+        _integrity, "is_fail_open_event", None)
+    fail_open_today = (
+        _voice_only_records(repo_root, _integrity, is_voice_only, span) if is_voice_only else [])
+    fail_open_line = _voice_only_summary(fail_open_today)
     skew_note = (
         "# maintenance-bypass reporting unavailable: the deployed hooks predate it "
         "(redeploy the hook tree)"
         if bypass_types is None else ""
     )
+    voice_gloss = (
+        "a hook's only voice: a fault inside a guard that allowed, said once a session, "
+        "or a kill switch in managed policy settings, which ConfigChange cannot block"
+    )
     if not lines:
         suffix = ""
         if pauses_today:
             suffix = (
-                f"; {len(pauses_today)} pause record{'' if len(pauses_today) == 1 else 's'} today -- "
+                f"; {len(pauses_today)} pause record{'' if len(pauses_today) == 1 else 's'} {window} -- "
                 f"{_format_counts(pause_counts)} -- `--log N --all` shows them"
             )
         if bypasses_today:
             suffix += (
                 f"; {len(bypasses_today)} maintenance-bypass record"
-                f"{'' if len(bypasses_today) == 1 else 's'} today -- {bypass_line} "
+                f"{'' if len(bypasses_today) == 1 else 's'} {window} -- {bypass_line} "
                 "-- a check switched off under ESPALIER_MAINTENANCE_MODE"
             )
         if fail_open_today:
             suffix += (
-                f"; {len(fail_open_today)} fail-open record"
-                f"{'' if len(fail_open_today) == 1 else 's'} today -- {fail_open_line} "
-                "-- a fault inside a guard that allowed, said once a session"
+                f"; {len(fail_open_today)} voice-only record"
+                f"{'' if len(fail_open_today) == 1 else 's'} {window} -- {fail_open_line} "
+                f"-- {voice_gloss}"
             )
         kind = "blocks" if include_pauses else "denials"
-        print(f"(no governance {kind} recorded for this repo today: {path}{suffix})")
+        print(f"(no governance {kind} recorded for this repo {window}: {path}{suffix})")
         if skew_note:
             print(skew_note)
         return 0
     print(
         f"# governance audit log -- last {len(lines)} of {len(today)} {noun} "
-        f"record{'' if len(today) == 1 else 's'} for this repo today: {path}"
+        f"record{'' if len(today) == 1 else 's'} for this repo {window}: {path}"
     )
     print("# by type: " + _format_counts(_count_by_type(today)))
     if pauses_today:
         print(
-            f"# pauses today: {_format_counts(pause_counts)} (once-then-continue; "
+            f"# pauses {window}: {_format_counts(pause_counts)} (once-then-continue; "
             f"not in this tail -- `--log N --all` shows them)"
         )
     if bypasses_today:
         print(
-            f"# maintenance bypass today: {bypass_line} -- a check switched off under "
+            f"# maintenance bypass {window}: {bypass_line} -- a check switched off under "
             "ESPALIER_MAINTENANCE_MODE (advisory; not a block)"
         )
     if fail_open_today:
-        print(
-            f"# fail-open today: {fail_open_line} -- a fault inside a guard that allowed, "
-            "said once a session (advisory; not a block)"
-        )
+        print(f"# voice-only {window}: {fail_open_line} -- {voice_gloss} (advisory; not a block)")
     if skew_note:
         print(skew_note)
     for line in lines:
@@ -951,7 +975,7 @@ def main(argv: "list[str] | None" = None) -> int:
         default=None,
         metavar="N",
         help="Print the last N (default 20) governance audit-log records for "
-             "this repo today, then exit (read-only). An existing directory in "
+             "this repo today and yesterday (UTC), then exit (read-only). An existing directory in "
              "place of N is read as the repo_root positional "
              "(`--log path/to/repo`).",
     )
