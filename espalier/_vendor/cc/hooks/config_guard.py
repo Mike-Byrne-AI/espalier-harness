@@ -335,12 +335,36 @@ def _accept_gate_values(root: Path, record: dict) -> None:
         )
 
 
+def _settings_label_at(candidate: Path, root: Path) -> str | None:
+    """The label of the settings file at ``candidate`` -- the project or the
+    local file, matched as the same file, so a symlink's target or a case
+    variant takes its label -- or None for any other file. The project file is
+    tried first, so a local file that is the project file takes the project
+    label and its hook-list arms are read.
+
+    A ConfigChange names other files: a change to a command or a skill file
+    reaches this hook with ``source: skills`` and the markdown file's path
+    (driven on Claude Code 2.1.321, 2026-11-16: an append to, a replace of
+    and an add under ``.claude/commands/``, and an append to a ``SKILL.md``),
+    and such a file holds no settings to scan (DEF-3092)."""
+    for label in (_integrity.PROJECT_SETTINGS_REL, _integrity.LOCAL_SETTINGS_REL):
+        try:
+            if os.path.samefile(candidate, root / label):
+                return label
+        except OSError:  # fail-open: ok deliberate -- that settings file is absent or unstattable, so the candidate is not it; the inventory fallback still reads both files
+            continue
+    return None
+
+
 def _scan_payload(file_path: str | None, root: Path) -> list[str]:
     """Scan the candidate settings file for kill-switch findings.
 
     Falls back to scanning the active settings inventory if the payload's
-    `file_path` is missing, unreadable, or points outside the repo root.
-    We never crash — best-effort scan, silent on failure.
+    `file_path` is missing, unreadable, points outside the repo root, or
+    names a file that is not one of the two in-root settings files
+    (``_settings_label_at``: a ``skills`` change names a markdown file).
+    We never crash -- best-effort scan; a settings file that cannot be read
+    or parsed is said once a session for each file, by its label.
 
     Path-traversal guard: stdin-supplied ``file_path`` is bounded to
     ``root`` via ``relative_to``. A traversal payload (``../../etc/passwd``)
@@ -365,7 +389,8 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
             candidate = None
 
     findings: list[str] = []
-    if candidate is not None and candidate.exists():
+    label = _settings_label_at(candidate, root) if candidate is not None else None
+    if candidate is not None and label is not None:
         try:
             # decode_bom (UTF-8/16/32 BOM-tolerant) — runtime kill-switch
             # reader; a BOM'd settings.json (incl. PowerShell UTF-16) must not
@@ -373,30 +398,22 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
             data = json.loads(decode_bom(candidate.read_bytes()))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             # Fail open (a settings file mid-edit must stay editable), with
-            # voice: the scan of THIS file is skipped, and that is said once.
+            # voice: the scan of THIS file is skipped, and that is said once a
+            # session for each file, the record naming it by its label (a
+            # fixed constant, never the payload's text).
             data = None
             _hook_utils.say_once(
-                root, "settings-unreadable", "config_guard", "configchange_failed_open_settings_read",
-                f"{candidate.name} could not be read or parsed ({type(exc).__name__}); its kill-switch scan is skipped",
-                fault=type(exc).__name__,
+                root, f"settings-unreadable-{label}", "config_guard", "configchange_failed_open_settings_read",
+                f"{label} could not be read or parsed ({type(exc).__name__}); its kill-switch scan is skipped",
+                fault=type(exc).__name__, file=label,
             )
         if isinstance(data, dict):
-            # candidate is bounded above; relative_to() is now guaranteed
-            # to succeed without the ValueError fallback that previously
-            # leaked absolute paths into the audit log.
-            # Forward slashes on every OS: the rel labels each finding AND
-            # decides which arms apply, since `_find_kill_switches` reads the
-            # hook-list arms in the project file alone (hook lists merge, so a
-            # local file's emptied list unwires nothing, DEF-4121).
-            rel = str(candidate.relative_to(root)).replace("\\", "/")
-            # The project file under another spelling (a symlink's target, a
-            # case variant) still takes the project label, so its arms are read.
-            try:
-                if os.path.samefile(candidate, root / _integrity.PROJECT_SETTINGS_REL):
-                    rel = _integrity.PROJECT_SETTINGS_REL
-            except OSError:  # fail-open: ok no-project-file -- nothing to match; the inventory fallback below still reads both files
-                pass
-            findings.extend(_integrity._find_kill_switches(rel, data))
+            # The label names each finding AND decides which arms apply, since
+            # `_find_kill_switches` reads the hook-list arms in the project
+            # file alone (hook lists merge, so a local file's emptied list
+            # unwires nothing, DEF-4121); the project file under another
+            # spelling (a symlink's target, a case variant) takes its label.
+            findings.extend(_integrity._find_kill_switches(label, data))
 
     # Fall back to scanning the standard settings inventory so we still catch
     # findings even if the payload doesn't name a path or names a file we

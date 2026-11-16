@@ -415,3 +415,59 @@ class TestTheRestLeaveARecord:
         assert wg._run_main() == 0
         records = _records("pretooluse_failed_open_discard_snapshot")
         assert len(records) == 1 and records[0]["details"]["fault"] == "RuntimeError", records
+
+
+# ── config_guard: the settings-read record means a settings file, and names it ─
+
+
+class TestTheSettingsReadRecordNamesASettingsFile:
+    """DEF-3092: a change to a command or skill file reaches config_guard as a
+    ConfigChange with ``source: skills`` and the markdown file's path (driven
+    on Claude Code 2.1.321, 2026-11-16: an append to, a replace of and an add
+    under ``.claude/commands/`` and an append to a ``SKILL.md``, one payload
+    each). ``_scan_payload`` parsed whatever in-root file a payload named as
+    JSON, so each such change wrote ``configchange_failed_open_settings_read``
+    though no settings file went unread: the inventory scan ran after it. A
+    SessionStart catch-up that moves ``.claude/commands/`` wrote one seconds
+    into the session. The payload's file is read now only where it is the
+    local or the project settings file, and the record names that file by
+    its label, once a session for each."""
+
+    @pytest.mark.parametrize("rel", [".claude/commands/status.md", ".claude/skills/probe/SKILL.md"])
+    def test_a_skills_change_writes_no_settings_read_record(self, tmp_path, rel):
+        changed = tmp_path / rel
+        changed.parent.mkdir(parents=True)
+        changed.write_text("---\ndescription: probe\n---\n\nbody\n", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "skills",
+                                   "file_path": str(changed)}, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not r.stdout.strip(), r.stdout
+        assert not _records("configchange_failed_open_settings_read")
+
+    @pytest.mark.parametrize("label,source", [
+        (".claude/settings.json", "project_settings"),
+        (".claude/settings.local.json", "local_settings"),
+    ])
+    def test_an_unparseable_settings_file_is_named_in_the_record(self, tmp_path, label, source):
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / label).write_text("{ not json", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": source,
+                                   "file_path": str(tmp_path / label)}, tmp_path)
+        assert r.returncode == 0, r.stderr
+        records = _records("configchange_failed_open_settings_read")
+        assert [rec["details"].get("file") for rec in records] == [label], records
+
+    def test_each_settings_file_says_once_a_session(self, tmp_path):
+        """The once-key carries the label: the local file's fault is said
+        after the project file's, and the project file's again is not."""
+        (tmp_path / ".claude").mkdir()
+        for name in ("settings.json", "settings.local.json"):
+            (tmp_path / ".claude" / name).write_text("{ not json", encoding="utf-8")
+        for name, source in (("settings.json", "project_settings"),
+                             ("settings.local.json", "local_settings"),
+                             ("settings.json", "project_settings")):
+            r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": source,
+                                       "file_path": str(tmp_path / ".claude" / name)}, tmp_path)
+            assert r.returncode == 0, r.stderr
+        files = [rec["details"].get("file") for rec in _records("configchange_failed_open_settings_read")]
+        assert sorted(files) == [".claude/settings.json", ".claude/settings.local.json"], files
