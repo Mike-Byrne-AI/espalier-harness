@@ -318,7 +318,11 @@ class TestFreeTextKeepsItsRowWhole:
     def _member_cells(lr, text: str, rid: str) -> list[str]:
         found = lr._member_line(rid, text, struck_ok=True)
         assert found is not None, rid
-        return lr._cells(found[1])                     # raises RowShape on a split row
+        try:
+            return lr._cells(found[1])
+        except lr.RowShape as exc:
+            # The defect itself, said as a failure: a bare pipe split the row.
+            pytest.fail(f"{rid}'s row split at a bare pipe: {exc}")
 
     @staticmethod
     def _index_cells(lr, text: str, rid: str) -> list[str]:
