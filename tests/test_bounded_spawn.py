@@ -258,6 +258,55 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
         assert isinstance(caught.value, OSError)
         assert isinstance(caught.value.__cause__, OSError), caught.value.__cause__
 
+    def test_at_the_deadline_heard_takes_what_the_child_wrote_on_stderr(self, tmp_path):
+        """DEF-2091: ``write_guard``'s parent tells a child that had begun
+        judging from one still starting up by what the child wrote before the
+        kill, so the stderr drained at the deadline goes to ``heard``."""
+        js = _load_json_safe()
+        done = tmp_path / "sleeper.done"
+        body = (f"import os, time; os.write(2, b'began\\n'); time.sleep({HOLD_SECONDS}); "
+                f"open({str(done)!r}, 'w').write('done')")
+        heard: list[bytes] = []
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + CAP_SECONDS,
+                                         input=b"", heard=heard)
+        assert not done.exists(), "the call waited for the child's sleep"
+        assert answer is None, answer
+        assert heard == [b"began\n"], heard
+
+    def test_a_child_that_answers_before_ahead_never_starts_it(self):
+        """DEF-2092's callback costs a call answered in time nothing: a child
+        that answers before ``ahead``'s time never starts it (40ec7f)."""
+        js = _load_json_safe()
+        started: list[int] = []
+        answer = js.run_tree_to_deadline([sys.executable, "-c", "pass"], deadline=time.monotonic() + 60,
+                                         input=b"", ahead=(time.monotonic() + 50, lambda: started.append(1)))
+        assert answer is not None and answer[0] == 0, answer
+        assert started == [], started
+
+    def test_a_child_still_running_at_ahead_starts_it_once_on_a_thread_of_its_own(self):
+        """A child still running at ``ahead``'s time starts its callback once,
+        on a thread of its own, and the wait goes on to the deadline: DEF-2092's
+        refusal is built there while the parent still waits."""
+        import threading
+
+        js = _load_json_safe()
+        ran: list[tuple[float, threading.Thread]] = []
+        done = threading.Event()
+
+        def build() -> None:
+            ran.append((time.monotonic(), threading.current_thread()))
+            done.set()
+
+        at = time.monotonic() + 0.5
+        answer = js.run_tree_to_deadline([sys.executable, "-c", f"import time; time.sleep({HOLD_SECONDS})"],
+                                         deadline=time.monotonic() + CAP_SECONDS, input=b"", ahead=(at, build))
+        assert answer is None, answer
+        assert done.wait(scaled(10)), "the callback never ran"
+        assert len(ran) == 1, ran
+        when, thread = ran[0]
+        assert when >= at, (when, at)
+        assert thread is not threading.main_thread()
+
 
 class TestTheTreeBoundedRunEndsTheWholeTree:
     """``_json_safe.run_tree_bounded``: ``run_bounded`` whose timeout, and any

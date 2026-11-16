@@ -571,9 +571,10 @@ def invoke_real_integrity_verify(attempt: dict, tmp_project: Path) -> VerifierRe
     return VerifierResult(False, f"integrity verify exit={proc.returncode}", elapsed)
 
 
-#: The name of write_guard's time-budget refusal in a hook tree's
-#: ``_denial_reasons.py``.
-_BUDGET_TEMPLATE = "WRITE_GUARD_TIME_BUDGET"
+#: The names of write_guard's time-budget refusals in a hook tree's
+#: ``_denial_reasons.py``: where judging spent the time, and where start-up
+#: did (DEF-2091; a tree older than that holds the first alone).
+_BUDGET_TEMPLATES = ("WRITE_GUARD_TIME_BUDGET", "WRITE_GUARD_START_UP_BUDGET")
 
 
 class BudgetMiss(RuntimeError):
@@ -584,13 +585,14 @@ class BudgetMiss(RuntimeError):
 
 @functools.lru_cache(maxsize=None)
 def _budget_refusal(hooks_dir: str) -> re.Pattern[str] | None:
-    """write_guard's time-budget refusal as the hook tree at ``hooks_dir``
-    words it: ``_denial_reasons.py::WRITE_GUARD_TIME_BUDGET``, read out of the
-    source rather than imported (an import would run the tree's hook
-    helpers), each literal piece as written and each field any text. None for
-    a tree with no such template: one older than the budget, or a stand-in
-    hook. A template that cannot be read is no verdict either way: a read
-    that failed must not pass every refusal as a judged deny."""
+    """write_guard's time-budget refusals as the hook tree at ``hooks_dir``
+    words them: each of ``_BUDGET_TEMPLATES`` in ``_denial_reasons.py``, read
+    out of the source rather than imported (an import would run the tree's
+    hook helpers), each literal piece as written and each field any text, one
+    pattern matching any of them. None for a tree with none: one older than
+    the budget, or a stand-in hook. A template that cannot be read is no
+    verdict either way: a read that failed must not pass every refusal as a
+    judged deny."""
     source = Path(hooks_dir) / "_denial_reasons.py"
     try:
         tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -598,19 +600,21 @@ def _budget_refusal(hooks_dir: str) -> re.Pattern[str] | None:
         return None
     except (OSError, SyntaxError, ValueError) as exc:
         raise BudgetMiss(f"cannot read write_guard's budget template in {source}: {exc}") from exc
+    found: list[str] = []
     for node in tree.body:
         targets = node.targets if isinstance(node, ast.Assign) else (
             [node.target] if isinstance(node, ast.AnnAssign) and node.value is not None else [])
-        if any(isinstance(t, ast.Name) and t.id == _BUDGET_TEMPLATE for t in targets):
+        name = next((t.id for t in targets if isinstance(t, ast.Name) and t.id in _BUDGET_TEMPLATES), None)
+        if name is not None:
             try:
                 template = ast.literal_eval(node.value)
                 pieces = list(string.Formatter().parse(template))
             except (ValueError, TypeError) as exc:
-                raise BudgetMiss(f"{source}::{_BUDGET_TEMPLATE} is not a string literal: {exc}") from exc
-            return re.compile("".join(
+                raise BudgetMiss(f"{source}::{name} is not a string literal: {exc}") from exc
+            found.append("".join(
                 re.escape(literal) + (".*?" if field is not None else "")
-                for literal, field, _spec, _conversion in pieces), re.DOTALL)
-    return None
+                for literal, field, _spec, _conversion in pieces))
+    return re.compile("|".join(f"(?:{p})" for p in found), re.DOTALL) if found else None
 
 
 #: The write_guard function whose handler words the parent's own refusal at

@@ -399,6 +399,9 @@ _LOCK_PRIMITIVE_ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("tools/cc/_json_safe.py", "unlock_file"),
     ("tools/cc/_json_safe.py", "try_lock_file"),
     ("tools/cc/_json_safe.py", "_lock_byte"),
+    # The primitive's own warm-up: it imports the modules above and takes no
+    # lock, for write_guard's refusal record after its deny (DEF-2092).
+    ("tools/cc/_json_safe.py", "warm_lock"),
     ("espalier/_atomic_io.py", "lock_file"),
     ("espalier/_atomic_io.py", "unlock_file"),
     ("espalier/_atomic_io.py", "try_lock_file"),
@@ -581,3 +584,44 @@ class TestEveryLockSiteDegradesWhenTheLockIsRefused:
         with freshness._freshness_write_lock(tmp_path):
             runs += 1
         assert runs == 1
+
+
+#: A fresh interpreter takes and releases the primitive's lock on a file,
+#: after ``warm_lock`` or not, and prints the modules the lock imported.
+_LATE_LOCK_IMPORTS = textwrap.dedent('''
+    import sys
+    sys.path.insert(0, sys.argv[1])
+    import _json_safe
+    if sys.argv[3] == "warm":
+        _json_safe.warm_lock()
+    late = []
+
+    class _Watch:
+        def find_spec(self, name, *args, **kwargs):
+            late.append(name)
+            return None
+
+    sys.meta_path.insert(0, _Watch())
+    with open(sys.argv[2], "a", encoding="utf-8") as fh:
+        _json_safe.lock_file(fh)
+        _json_safe.unlock_file(fh)
+    print(",".join(late))
+''')
+
+
+@pytest.mark.parametrize("warm", [True, False], ids=["after warm_lock", "cold"])
+def test_after_warm_lock_the_lock_imports_nothing(tmp_path, warm):
+    """DEF-2092: write_guard's refusal writes its record after its deny, where
+    the lock's first-use imports (``ctypes`` on Windows) ran past the hook's
+    exit on a loaded box; ``warm_lock`` takes them while the parent waits. The
+    cold row proves the watch sees those imports at all."""
+    result = subprocess.run(
+        [sys.executable, "-c", _LATE_LOCK_IMPORTS, str(TOOLS_CC), str(tmp_path / "f.log"),
+         "warm" if warm else "cold"],
+        capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stderr
+    late = result.stdout.strip()
+    if warm:
+        assert late == "", late
+    else:
+        assert late, "the cold lock imported nothing, so the warm row proves nothing"
