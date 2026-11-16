@@ -45,8 +45,18 @@ def _load():
     return mod
 
 
+def _load_seat():
+    """The seat driver under an alias (``tests/CLAUDE.md``), for the cadence
+    it declares, never the census's own read of its source."""
+    spec = importlib.util.spec_from_file_location("seat_for_the_census", REPO_ROOT / "tools" / "cc" / "seat.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 census_mod = _load()
-DAY = datetime(2026, 10, 18, tzinfo=timezone.utc)
+DAY =datetime(2026, 10, 18, tzinfo=timezone.utc)
 NEXT = datetime(2026, 10, 19, tzinfo=timezone.utc)
 
 
@@ -634,10 +644,22 @@ class TestTheTicksASeatStoodUnderTwo:
 
     @staticmethod
     def _cadence() -> int:
-        """The dispatcher's loop interval, read from the brief's own line."""
-        import re
-        text = (REPO_ROOT / "tools" / "cc" / "seat.py").read_text(encoding="utf-8")
-        return int(re.search(r'DISPATCHER_TICK = "/loop (\d+)m ', text).group(1))
+        """The dispatcher's loop interval as the seat driver declares it
+        (``TICK_MINUTES``): the census's own regex here would check the census
+        against itself (the failure-mode review's 6)."""
+        return int(_load_seat().TICK_MINUTES)
+
+    def test_the_cadence_is_read_from_a_loop_line_that_names_its_command_by_a_constant(self, monkeypatch, tmp_path):
+        """The dispatcher's loop line became an f-string naming its command
+        (``f"/loop 15m {DISPATCHER_COMMAND}"``, job 20261116T105110Z-air-5154dc),
+        as the worker's had (DEF-5111). Dies to: the census reading only the
+        plain-string spelling, which raised on the day row for a line that
+        still carries its interval."""
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "seat.py").write_bytes(
+            b'DISPATCHER_COMMAND = "/dispatcher-tick"\nDISPATCHER_TICK = f"/loop 15m {DISPATCHER_COMMAND}"\n')
+        monkeypatch.setattr(census_mod, "ROOT", tmp_path)
+        assert census_mod.dispatcher_tick_minutes() == 15
 
     def test_the_ticks_are_counted_at_the_dispatchers_cadence_from_the_folds_assigns_and_closures(self):
         """The row's red. Dies to: a job's end read from anything but the

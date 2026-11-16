@@ -12,6 +12,7 @@
 .claude/commands/audit-accuracy.md
 .claude/commands/commit.md
 .claude/commands/context-load.md
+.claude/commands/dispatcher-tick.md
 .claude/commands/handoff.md
 .claude/commands/implement-pack.md
 .claude/commands/implement-task.md

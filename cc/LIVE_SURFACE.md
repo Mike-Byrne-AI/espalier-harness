@@ -43,10 +43,11 @@ SessionStart loads context and reports integrity state. ConfigChange and PreTool
 - `repo-analyst` -- Analyzes this repo to ground or re-ground the harness's understanding of it. Runs in two modes: first-run baseline (no saved fingerprint) and drift detection (fingerprint exists). Checks language, frameworks, architecture, test patterns, CI/CD, and workflow. The foundation for harness update decisions. Runs in its own context window.
 - `test-writer` -- Generates tests matching the host project's existing test style exactly. Pattern-discovery phase inspects the project's `tests/` tree to learn the fixture patterns, test file naming, function naming, and class-per-feature grouping in use; then writes tests that match. The agent body's audit shell uses Espalier-Harness's own structure as a reference example (`espalier/<module>.py` ↔ `tests/test_<module>.py`) — adapt the loop to your project's source tree. Runs in its own context.
 
-## Commands (19 commands)
+## Commands (20 commands)
 - `/audit-accuracy` -- Run the accuracy audit and walk through any failures.
 - `/commit` -- Review uncommitted changes, then stage and commit with a generated message.
 - `/context-load` -- Session resume and degraded-state recovery guidance.
+- `/dispatcher-tick` -- One tick of the dispatcher seat's board loop: have the seat driver print this seat's board tick, then carry it out as this message's instructions.
 - `/handoff` -- End the session cleanly and leave the next Claude Code session with usable continuity.
 - `/implement-pack` -- Execute one or more task packs (`TP-*.md`) end-to-end with the established single-atomic-commit-per-pack workflow. Auto-continues to the next pack unless a defined stop condition fires.
 - `/implement-task` -- Canonical repo-change command. Use for focused changes or coordinated multi-phase work.

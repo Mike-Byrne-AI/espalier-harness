@@ -246,8 +246,10 @@ def _source_int(rel: str, pattern: str) -> int:
 def dispatcher_tick_minutes() -> int:
     """The dispatcher's loop interval, from ``tools/cc/seat.py::DISPATCHER_TICK``'s
     own ``/loop <n>m`` (``TICK_MINUTES`` is read from that line there too), the
-    one figure the briefs quote and the under-two count samples at."""
-    return _source_int("tools/cc/seat.py", r'^DISPATCHER_TICK = "/loop (\d+)m ')
+    one figure the briefs quote and the under-two count samples at. The line
+    is an f-string since it names its command by a constant
+    (``DISPATCHER_COMMAND``), so either spelling is read."""
+    return _source_int("tools/cc/seat.py", r'^DISPATCHER_TICK = f?"/loop (\d+)m ')
 
 
 def quiet_days() -> int:
