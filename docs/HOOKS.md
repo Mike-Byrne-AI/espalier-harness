@@ -1330,8 +1330,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    unforced remove reads the same path the same way. The temp root itself
    (a `.` step, or a trailing dot or space Windows strips, names it too),
    this project's checkout or the home directory under it, a link that
-   resolves onto one, a glob and a `..` step stay the wall, pinned by
-   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
+   resolves onto one, a glob and a `..` step stay the wall, pinned in the
+   write guard's tests by
+   `TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
    and so does a variable with no literal binding, the coverage contract's
    declared PowerShell exception (below).
    The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
@@ -1460,9 +1461,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    a `del /s` with a narrowing pattern (`*.pyc`) is the zone check's
    alone, as a narrowed `find` is
    (`tests/test_write_guard.py::TestTheCmdDeleteReaderReadsEachBranch::test_the_bash_launch`),
-   and a bare path longer than 256 characters before the native binary's
+   a bare path longer than 256 characters before the native binary's
    name is read by no reader
-   (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`).
+   (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`),
+   and a word before cmd's switch that is not one, or a word the switch
+   is glued to (`cmd foo /c rd /s /q .`, `cmd x/c rd /s /q .`), which cmd
+   skips to run the program after it, leaves these readers an interactive
+   cmd with no program, and a glued one leaves the PowerShell secret-path
+   check none either (`cmd x/c type .env`)
+   (`tests/test_write_guard.py::TestAWordBeforeCmdsSwitchIsADeclaredLimit::test_a_word_before_cmds_switch_is_a_declared_limit`).
    Every form the readers declare is crossed with the hard-tier texts'
    target claims by one test class.
 
@@ -2180,7 +2187,12 @@ first word that is no parameter, a parameter led by `-`, `/` or a Unicode
 dash and quoted or not; which parameters take a value is not read, so each
 word after a switch is read as a program too),
 `cmd /c`, `/k` or `/r` (which cmd runs as `/c`; glued to the program or to
-a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`),
+a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`; the program read
+both as PowerShell reads it and as cmd receives it, so a read behind a
+separator word PowerShell hands cmd bare, `cmd /c echo a '&' type .env`,
+or behind the stop-parsing token after the switch, `cmd /c --% type .env`,
+is refused; a word the switch is glued to, `cmd x/c type .env`, is among
+cmd's limits under the recursive deletes above),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
 an expandable string) and an `@(...)` array subexpression outside every
 string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
@@ -2195,7 +2207,9 @@ the program, here-strings and expandable strings included, so a quoted
 argument of the command before the pipe is read too, a reading that
 refuses nothing a plain word does). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
-argument list and the words after a quoted program (`cmd /c "type" .env`).
+argument list and the words after a quoted program (`pwsh -c "gc" .env`;
+cmd's are read, since PowerShell hands cmd a quoted word without a blank
+bare, so `cmd /c "type" .env` is refused).
 A PowerShell statement that opens with a quoted string is read as the
 command its first word names, unless nothing in the command can run the string: the right-hand
 side of a last-statement assignment to a variable the command names
