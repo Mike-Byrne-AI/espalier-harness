@@ -2068,13 +2068,19 @@ class TestVoiceOnlyRecordsOutliveTheirDay:
         assert not declared & set(integ.BLOCKED_EVENT_TYPES), sorted(declared)
         assert declared <= _voice_types_the_hooks_write(), sorted(declared - _voice_types_the_hooks_write())
 
-    def test_status_log_names_a_policy_kill_switch_config_guard_recorded(self, tmp_path):
+    def test_status_log_names_a_policy_kill_switch_config_guard_recorded(self, tmp_path, monkeypatch):
         """Driven through config_guard itself, so the record's own shape is
         read: the type `/status --log` showed in no line before, now counted
         under the hook that wrote it. Dies to: a reader without the policy
         type, or a record without its hook."""
         home = tmp_path / "home"
         home.mkdir()
+        # The hook's HOME is this folder, and the audit store's override is
+        # accepted only under the home or (TMPDIR unset) the temp dir: where
+        # TMPDIR is set, as on CI, the suite's store fell outside both and the
+        # record went to this home's default store. One store under it serves
+        # the hook and every reader below.
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(home / ".espalier" / "audit"))
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}), encoding="utf-8")
         result = run_hook(
