@@ -1530,10 +1530,11 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # starts), or on PowerShell the stop-parsing token's line or a Start-Process
 # argument list -- and its statements are cmd's (`_bash_patterns._cmd_statements`: `^`
 # escapes, quotes keep a separator, a redirection's target is no word), each
-# verb found past `call`, `@`, a leading `=` and an `if` condition by the delete
-# reader's prefix walk (`_bash_patterns._cmd_statement_head`), the launch read
-# past the same `@` or `=` (`_bash_patterns._cmd_program_word`). A cmd a statement starts
-# is read the same way, to the delete reader's depth. The polarity is the
+# verb found past `call`, `@`, a leading `=` and an `if` condition by the
+# delete reader's prefix walk (`_bash_patterns._cmd_statement_head`), and the
+# launch read past the same `@` or `=` (`_bash_patterns._cmd_program_word`).
+# A cmd a statement starts is read the same way, to the delete reader's
+# depth. The polarity is the
 # `$env:` arm's: the variable reaches every later statement of the cmd process,
 # so each later statement is scanned for a launch, and a `set` followed by
 # anything else (`&& pytest -q`) is allowed. A launch the outer shell runs once
@@ -1611,19 +1612,23 @@ def _cmd_program_sets_then_launches(program: str, depth: int) -> bool:
     for line in program.splitlines():
         for words in _bash_patterns._cmd_statements(line):
             k = _bash_patterns._cmd_statement_head(words)
-            # the launch is read from the statement as cmd runs it, its
-            # program word past a leading `@` or `=`
-            # (`_bash_patterns._cmd_program_word`); the test-run relief keeps
-            # the words as typed, so it relieves no statement it did not
+            program = _bash_patterns._cmd_program_word(words[k]) if k < len(words) else ""
+            # The launch is read from the statement as cmd runs it, its
+            # program word past a leading `@` or `=`. The test-run relief
+            # reads the words as typed, so a test run behind one keeps the
+            # verdict it had before this read did: relieving it would drop
+            # a refusal, which this read's lane kept (a stated cost, pinned
+            # at this reader in the polarity tests beside its relieved plain
+            # twin; the Bash dispatch relieves such a test run before here).
             said = words
-            if k < len(words) and words[k][:1] in ("@", "="):
-                said = [*words[:k], _bash_patterns._cmd_program_word(words[k]), *words[k + 1:]]
+            if k < len(words) and program != words[k]:
+                said = [*words[:k], program, *words[k + 1:]]
             if (armed and _statement_launches_claude(" ".join(said))
                     and not _cmd_test_run_holds_no_launch(words[k:])):
                 return True
             if k >= len(words):
                 continue
-            low = _bash_patterns._cmd_program_word(words[k]).lower()
+            low = program.lower()
             if low == "set" and _CMD_HARNESS_SET_RE.match(" ".join(words[k + 1:])):
                 armed = True
                 continue

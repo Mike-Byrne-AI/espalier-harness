@@ -13579,12 +13579,12 @@ class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
     @pytest.mark.parametrize("tool, command", [
         ("PowerShell", "cmd /c echo a '&=' type .env"),
         ("PowerShell", "cmd /c echo a '&=type' .env"),
-        ("PowerShell", "cmd /c if 1==1 =type .env"),
-        ("PowerShell", "cmd /c call =type .env"),
         ("Bash", "cmd //c 'echo a &= type .env'"),
         ("Bash", "cmd //c '=type .env'"),
         ("Bash", "cmd //c 'if 1==1 =type .env'"),
         ("Bash", "cmd //c 'call =type .env'"),
+        # a cmd the statement starts, its program read the same way
+        ("Bash", "cmd //c '=cmd /c =type .env'"),
     ])
     def test_a_read_cmd_runs_behind_a_leading_equals_is_refused(self, tool, command, tmp_path):
         assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
@@ -13603,6 +13603,10 @@ class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
         ("Bash", "cmd //c ';type .env'"),
         ("Bash", "cmd //c 'if 1==1 ,type .env'"),
         ("Bash", "cmd //c 'call ,type .env'"),
+        # the if and call positions on PowerShell, refused before this lane
+        # by PowerShell's own reading of the program it hands cmd
+        ("PowerShell", "cmd /c if 1==1 =type .env"),
+        ("PowerShell", "cmd /c call =type .env"),
         # the do and else positions, refused before this lane
         ("PowerShell", "cmd /c for %i in (1) do =type .env"),
         ("PowerShell", "cmd /c if 1==2 (echo a) else =type .env"),
@@ -13616,7 +13620,6 @@ class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
     @pytest.mark.parametrize("tool, command", [
         ("PowerShell", "cmd /c echo a '&=' type README.md"),
         ("PowerShell", "cmd /c if 1==1 =type .env.example"),
-        ("PowerShell", "cmd /c set a=b"),
         ("Bash", "cmd //c '=type .env.example'"),
         ("Bash", "cmd //c 'echo =type .env'"),
     ])
@@ -13643,15 +13646,38 @@ class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
         ("call =type .env", "type .env"),
         ("=call type .env", "type .env"),
         ("@=type .env", "type .env"),
+        ("=cmd /c =type .env", "type .env"),
         ("echo =type .env", "echo '=type' .env"),
     ], ids=["line-start", "after-separator", "after-separator-glued", "after-if-condition",
             "after-if-comparison", "after-call", "before-call", "after-echo-off",
-            "argument-kept"])
+            "nested-cmd", "argument-kept"])
     def test_the_program_word_is_read_past_its_leading_equals(self, program, want):
         """`_cmd_program_as_ps`, the secret legs' reading of cmd's program:
         each statement from its program word on, the ``=`` before it
         skipped, and an argument's ``=`` kept."""
         assert _bash_patterns_module()._cmd_program_as_ps(program) == want
+
+    def test_every_reader_of_a_statement_head_reads_the_word_through_the_helper(self):
+        """Every function that takes a statement's head from
+        `_bash_patterns._cmd_statement_head` also calls
+        `_bash_patterns._cmd_program_word`, so a reader added later that
+        took ``words[k]`` raw would read ``=type`` as the program (the
+        failure-mode review). Derived from the two modules' syntax trees,
+        so a new reader is counted without a hand list."""
+        import ast
+        readers: dict[str, bool] = {}
+        for name in ("_bash_patterns.py", "write_guard.py"):
+            tree = ast.parse((HOOKS_DIR / name).read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, ast.FunctionDef) or fn.name == "_cmd_statement_head":
+                    continue
+                called = {node.func.attr if isinstance(node.func, ast.Attribute)
+                          else getattr(node.func, "id", None)
+                          for node in ast.walk(fn) if isinstance(node, ast.Call)}
+                if "_cmd_statement_head" in called:
+                    readers[f"{name}::{fn.name}"] = "_cmd_program_word" in called
+        assert len(readers) >= 3, readers
+        assert all(readers.values()), readers
 
     @pytest.mark.parametrize("program", ["=rd /s /q build", "call =rd /s /q build",
                                          "if exist build =rd /s /q build"],

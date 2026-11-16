@@ -16436,7 +16436,10 @@ def _cmd_statements(program: str, inputs: list[str] | None = None) -> list[list[
     """cmd's own statements in ``program`` (the text cmd receives): split on
     ``&``, ``&&``, ``|``, ``||`` and a parenthesis outside double quotes,
     ``^`` escaping the next character; each a list of words on cmd's
-    delimiters (blank, ``,``, ``;``) with the quotes removed and every
+    delimiters (blank, ``,``, ``;``; never ``=``, which cmd also skips
+    before a program word but which would split an ``if`` condition's
+    ``1==1`` and a ``set``'s ``VAR=1``: a reader of the program word skips
+    it there, `_cmd_program_word`) with the quotes removed and every
     redirection (``>nul``, ``2>&1``, ``< in``) dropped. ``inputs``, where
     given, collects each input redirection's file (``< in``, its quotes
     removed), which the program reads (the secret leg's reading,
@@ -16591,12 +16594,14 @@ def _cmd_program_word(word: str) -> str:
     (driven on cmd 10.0.26200 after a separator, at the line's start, after
     an ``if`` condition and after ``call``: win-2's e2c959, win's 556496),
     but ``=`` cannot join `_cmd_statements`' delimiters, where it would split
-    an ``if`` condition's ``1==1``; so the word is read here, by every reader
-    that takes a statement's program word: `_cmd_statement_head`'s walk,
+    an ``if`` condition's ``1==1`` and a ``set``'s ``VAR=1``; so the word is
+    read here, by every reader that takes a statement's program word from
+    `_cmd_statement_head` (pinned by a syntax-tree test): the walk itself,
     the delete reader (`_cmd_statement_targets`), the secret legs' rendering
-    (`_cmd_program_as_ps`) and the harness-variable check
-    (`write_guard._cmd_program_sets_then_launches`). The drives ran ``type``
-    alone; the same skip for every verb is inferred from them."""
+    (`_cmd_program_as_ps`) and the harness-variable check's set and launch
+    (`write_guard._cmd_program_sets_then_launches`, whose test-run relief
+    reads the words as typed, on purpose). The drives ran ``type`` alone;
+    the same skip for every verb is inferred from them."""
     return word.lstrip("@=")
 
 
@@ -16605,8 +16610,9 @@ def _cmd_statement_head(words: list[str]) -> int:
     conditions and a ``do``, ``else`` or ``call`` before it stepped over,
     each word read as cmd runs it (`_cmd_program_word`), so a ``=`` alone
     is stepped over too (``len(words)`` where none is left). The one prefix
-    walk of both cmd readers, the delete reader's and the harness-variable
-    check's (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1)."""
+    walk of every cmd reader: the delete reader's, the secret legs'
+    rendering (`_cmd_program_as_ps`) and the harness-variable check's
+    (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1)."""
     k = 0
     while k < len(words):
         low = _cmd_program_word(words[k]).lower()
