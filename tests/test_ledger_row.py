@@ -382,6 +382,7 @@ class TestFreeTextKeepsItsRowWhole:
         text = tree["ledger"].read_text(encoding="utf-8")
         assert self._member_cells(lr, text, "DEF-1")[1] == "g.py \\| h.py"
         assert self._index_cells(lr, text, "DEF-1") == ["`DEF-1`", "§C1", "g.py \\| h.py"]
+        self._repinned(lr, tree, text, "DEF-1")
 
     def test_a_repin_text_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
         (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject
@@ -390,6 +391,32 @@ class TestFreeTextKeepsItsRowWhole:
                              "--reason", "reworded", "--text-file", str(tree["body"]))) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         assert self._member_cells(lr, text, "DEF-1")[2:] == [self.ESCAPED, "major"]
+        self._repinned(lr, tree, text, "DEF-1")
+
+    def _repinned(self, lr, tree, text: str, rid: str) -> None:
+        """The probe's pin is the sha the checker recomputes from the row as
+        written (escaped), and the regions converge."""
+        line = lr._member_line(rid, text, struck_ok=False)[1]
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        pin = [p for p in data["probes"] if p["id"] == rid][0]
+        assert pin["row_sha"] == lr._load("check_ledger_probes").row_sha(line)
+        self._converged(lr, tree, text)
+
+    def test_a_strike_with_no_anchor_keeps_a_hand_escaped_site_cell_as_it_was(self, lr, tree):
+        rows = ("| `DEF-1` | a.py \\| b.py | what | major |", "| `DEF-2` | site | what | minor |")
+        tree["ledger"].write_text(_ledger(c1_rows=rows), encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "a.py \\| b.py"
+
+    def test_a_class_effort_with_a_pipe_keeps_the_index_row_whole(self, lr, tree):
+        assert lr.main(_args(tree, "class", "C7", "--title", "New", "--population", "HYGIENE",
+                             "--audience", "MAINTAINER", "--effort", "S | M")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        row = next(ln for ln in text.split("\n") if ln.startswith("| [§C7]"))
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip()[1:-1])]
+        assert cells[1:] == ["New", "HYGIENE", "MAINTAINER", "S \\| M"]
+        self._converged(lr, tree, text)
 
 
 class TestABaselinedIdRefusesTheStrike:

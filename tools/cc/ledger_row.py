@@ -2344,7 +2344,7 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     # does, the convergence below strips every stored total, this row's
     # neighbours' included.
     index_row = (f"| [{name}](#{_anchor_slug(heading)}) | {title} | {population} | "
-                 f"{audience} | {effort or _EM_DASH} |")
+                 f"{audience} | {_cell_line(effort or _EM_DASH)} |")
     if dry_run:
         print(index_row)
         print("\n".join(block))
