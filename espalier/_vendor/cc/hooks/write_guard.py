@@ -192,6 +192,11 @@ _BUILD_THE_REFUSAL_AT_S = 2.0
 #: two processes on the hosts measured (Windows 3.10, 3.11 and 3.13, 20 spawns
 #: each, 2026-11-16); a reading outside the parent's own is not used.
 _BEGUN_MARK = b"write_guard: judging began at "
+#: What the judging child writes on stderr, after its begun mark, as a
+#: speed-bump checkpoint is about to spend its one-shot state (DEF-2097): the
+#: parent reads it at its deadline, since the identical re-issue would pass
+#: that nudge unseen, and takes it out of what it relays.
+_SPENT_MARK = b"write_guard: a checkpoint spent its one-shot\n"
 #: The two bounds a refusal names (DEF-2091): the child's thread budget counts
 #: from the child's first line, the parent's deadline from the hook's.
 _CHILD_BOUND = "the judging child's budget, counted from its own start"
@@ -214,13 +219,24 @@ def _judge_in_this_process(payload: bytes, why: str) -> None:
 
 
 def _without_the_mark(err: bytes) -> bytes:
-    """A child's stderr without the line it began judging with
-    (``_BEGUN_MARK``): the parent's to read, never the relay's."""
+    """A child's stderr without the lines it wrote for the parent: the one it
+    began judging with (``_BEGUN_MARK``) and any spent mark (``_SPENT_MARK``,
+    DEF-2097), the parent's to read, never the relay's."""
     at = err.find(_BEGUN_MARK)
-    if at < 0:
-        return err
-    end = err.find(b"\n", at)
-    return err[:at] + (err[end + 1:] if end >= 0 else b"")
+    if at >= 0:
+        end = err.find(b"\n", at)
+        err = err[:at] + (err[end + 1:] if end >= 0 else b"")
+    return err.replace(_SPENT_MARK, b"")
+
+
+def _spent_a_one_shot(heard: list[bytes]) -> bool | None:
+    """At the parent's deadline, from the stderr drained from the killed
+    child: whether a checkpoint had begun spending its one-shot state
+    (``_SPENT_MARK``, DEF-2097), ``None`` where nothing was read. The child
+    writes the mark before the spend, so a spend the kill let land is read."""
+    if not heard:
+        return None
+    return _SPENT_MARK in heard[0]
 
 
 def _how_the_child_spent_it(heard: list[bytes]) -> tuple[bool | None, float | None, float | None]:
@@ -254,20 +270,26 @@ def _spent(began: bool | None, start_up: float | None, judged: float | None) -> 
     return f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging"
 
 
-def _start_up_spent_it(began: bool | None) -> bool:
-    """Whether start-up alone spent the time, so the refusal asks for the
-    re-issue (DEF-2091): the judging child had not begun judging, so no
-    judgment ran and nothing it keeps was spent. A judgment that began may have
-    fired a one-shot nudge whose flag the same command reads as its retry (the
-    discard and kill checkpoints key it on the command), and the re-issue
-    would pass that nudge unseen; so where the child had begun, the split is
-    asked, as before DEF-2091, and ``_spent`` still says how the time split.
-    Where it is unread it is the judging, as every refusal said before."""
-    return began is False
+def _start_up_spent_it(began: bool | None, spent: bool | None = None,
+                       start_up: float | None = None, judged: float | None = None) -> bool:
+    """Whether the refusal asks for the re-issue rather than the split
+    (DEF-2091, DEF-2097): the judging child had not begun judging, so no
+    judgment ran and nothing it keeps was spent; or it had begun, no
+    checkpoint spent its one-shot state (``spent`` False), and start-up took
+    more of the bound than judging, where a shorter command pays the same
+    start-up and the same first-use compiles in its own process. A checkpoint
+    that spent its one-shot keys it on the command (the discard and kill
+    checkpoints), and the identical re-issue would pass that nudge unseen; so
+    there, and where the spend or a share is unread or the split is even, the
+    split is asked, as before DEF-2097. ``_spent`` says how the time split."""
+    if began is False:
+        return True
+    return (began is True and spent is False and start_up is not None and judged is not None
+            and start_up > judged)
 
 
 def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool | None,  # noqa: N803
-                   start_up: float | None, judged: float | None) -> str:
+                   start_up: float | None, judged: float | None, spent: bool | None = None) -> str:
     """The time budget's refusal from its two templates: the re-issue where
     start-up alone spent the time, the split otherwise (DEF-2091). The
     reasons module comes in as a parameter (the parent builds it on a thread
@@ -276,7 +298,7 @@ def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool 
     that predates the start-up template gives the split, as before it, never a
     raise (in the judging child an exit 1, which lets the call through)."""
     template = _denial_reasons.WRITE_GUARD_TIME_BUDGET
-    if _start_up_spent_it(began):
+    if _start_up_spent_it(began, spent, start_up, judged):
         try:
             template = _denial_reasons.WRITE_GUARD_START_UP_BUDGET
         except AttributeError:  # fail-open: ok text-fallback -- a kept, older _denial_reasons: the split's text, the refusal it gave before DEF-2091
@@ -287,9 +309,10 @@ def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool 
     return rendered
 
 
-def _plain_remedy(began: bool | None) -> str:
+def _plain_remedy(began: bool | None, spent: bool | None = None,
+                  start_up: float | None = None, judged: float | None = None) -> str:
     """The parent's plain-words fallback's remedy, by the same rule."""
-    if _start_up_spent_it(began):
+    if _start_up_spent_it(began, spent, start_up, judged):
         return "Re-issue the same command once: the time went to starting the guard on a busy machine."
     return "Split it into shorter commands, each judged on its own."
 
@@ -349,12 +372,13 @@ class _DeadlineRefusal:
         finally:
             done.set()
 
-    def reason(self, began: bool | None, start_up: float | None, judged: float | None) -> str:
+    def reason(self, began: bool | None, start_up: float | None, judged: float | None,
+               spent: bool | None = None) -> str:
         """The deny's reason from the built reasons; raises where none were
         built in time, and the caller words it in plain words."""
         if self.reasons is None:
             raise LookupError("the refusal's reasons were not built before the deadline")
-        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged)
+        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged, spent)
 
     def record(self, details: dict, *, by: float, event: str = "pretooluse_blocked_time_budget") -> None:
         """Hand the record (``event``, ``details``) to the build once the deny
@@ -563,17 +587,18 @@ def _answer_from_a_judging_child() -> None:
     # The refusal says which bound it met and what spent the time (DEF-2091);
     # its reasons and its record were built while the parent waited (DEF-2092).
     began, start_up, judged = _how_the_child_spent_it(heard)
+    spent = _spent_a_one_shot(heard)
     try:
-        reason = refusal.reason(began, start_up, judged)
+        reason = refusal.reason(began, start_up, judged, spent)
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
         reason = (f"Command blocked: write_guard ran out of its {HARD_DEADLINE_S} s time budget before it had"
                   f" judged this command ({_spent(began, start_up, judged)}), so the call is refused rather"
-                  f" than let through unjudged. {_plain_remedy(began)}")
+                  f" than let through unjudged. {_plain_remedy(began, spent, start_up, judged)}")
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()
     details: dict[str, object] = {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child",
-                                  "bytes": len(payload), "began": began}
+                                  "bytes": len(payload), "began": began, "spent": spent}
     if start_up is not None and judged is not None:
         details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
     refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S)
@@ -614,6 +639,65 @@ def _say_judging_began() -> None:
 #: loads them, the two pattern modules are imported (`_begin_judging`). An
 #: importer (the tests) and the hook process judging in place write none.
 _MARK_THE_JUDGING = False
+#: Whether a speed-bump checkpoint began spending its one-shot state in this
+#: judging child (DEF-2097): ``None`` until `_begin_judging` watches the
+#: checkpoints (and anywhere else: the hook judging in place, an importer),
+#: then ``False``, then ``True`` from `_say_one_shot_spent`.
+_ONE_SHOT_SPENT: bool | None = None
+#: Held while a spend is said or the child's own budget refusal reads it, so no
+#: spend lands between that reading and the refusal (`_close_the_spends`).
+_SPEND_LOCK = threading.Lock()
+#: Set by `_close_the_spends`: the refusal has read the spends, and a spend
+#: after it waits on ``_SPENDS_HELD`` instead of landing.
+_SPENDS_CLOSED = False
+#: What a spend after the refusal waits on: never set in the hook, whose
+#: process ends first; a test sets it to let its thread go.
+_SPENDS_HELD = threading.Event()
+
+
+def _say_one_shot_spent() -> None:
+    """The judging child, as a checkpoint is about to spend its one-shot state
+    (``_speedbump.ON_SPEND``, DEF-2097): keep the reading for the child's own
+    budget, then ``_SPENT_MARK`` on stderr, one unbuffered write, for the
+    parent's deadline. Once the child's own refusal has read the spends
+    (``_SPENDS_CLOSED``) it waits until the process ends, so the checkpoint
+    never spends: the refusal said nothing was spent. Never raises: it runs
+    inside the speed-bump's check."""
+    global _ONE_SHOT_SPENT
+    with _SPEND_LOCK:
+        closed = _SPENDS_CLOSED
+        if not closed:
+            _ONE_SHOT_SPENT = True
+    if closed:
+        _SPENDS_HELD.wait()
+        return
+    try:
+        os.write(2, _SPENT_MARK)
+    except OSError:  # fail-open: ok deliberate -- no stderr to write: the parent has ended the tree, or a refusal at its deadline reads this child as still starting up, the begun mark being on the same stream
+        pass
+
+
+def _close_the_spends() -> bool | None:
+    """The judging child's own budget refusal: whether a checkpoint spent its
+    one-shot state, read once, after which no spend lands (DEF-2097)."""
+    global _SPENDS_CLOSED
+    with _SPEND_LOCK:
+        _SPENDS_CLOSED = True
+        return _ONE_SHOT_SPENT
+
+
+def _watch_the_one_shots() -> bool:
+    """The judging child, with the pattern path loaded: have the speed-bump
+    say when a checkpoint is about to spend its one-shot state (DEF-2097).
+    False where a kept, older ``_speedbump.py`` has no ``ON_SPEND``: the
+    spends are then unwatched, and `_begin_judging` says one was spent, so
+    both bounds keep the split as before DEF-2097."""
+    if not hasattr(_speedbump, "ON_SPEND"):
+        return False
+    _speedbump.ON_SPEND = _say_one_shot_spent
+    return True
+
+
 #: The judging child's clock as it wrote its begun mark (`_say_judging_began`),
 #: ``None`` until then: its own budget's refusal reads it, as the parent reads
 #: the mark, so the pattern import a call loads before the mark is start-up at
@@ -652,9 +736,15 @@ def _begin_judging(data: dict) -> None:
     raises here, inside `_judge`'s crash guard, which names its file and line
     as the load in `_run_main` would; no mark is written then, and the deny
     is the child's answer."""
+    global _ONE_SHOT_SPENT
+    watched = True
     if _loads_the_pattern_path(data):
         _load_the_pattern_path()
+        watched = _watch_the_one_shots()
+    _ONE_SHOT_SPENT = False
     _say_judging_began()
+    if not watched:
+        _say_one_shot_spent()
 
 
 # The hard bound: the hook process answers through a judging child (or, where
@@ -5349,16 +5439,17 @@ def _verdict_for(
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
         began, start_up, judged = _how_the_judgment_spent_it(begun, clock, deadline)
+        spent = _close_the_spends() if _MARK_THE_JUDGING else None
         split = ({"start_up_s": round(start_up, 2), "judged_s": round(judged, 2)}
                  if start_up is not None and judged is not None else {})
         # Metadata only: the tool, the budget, the command's length, whether
         # judging had begun and how the budget split, never the command's text.
         rc = _audit_deny(
             _root_or_dot(), "pretooluse_blocked_time_budget",
-            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged),
+            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged, spent),
             hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
             budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, began=began,
-            **split,
+            spent=spent, **split,
         )
         _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc

@@ -96,6 +96,25 @@ def test_flag_key_namespaces(tmp_path):
     assert a2 is None  # x.py already fired -> distinct flag key from y.py
 
 
+def test_on_spend_is_said_before_the_slot_and_the_flag_and_only_on_a_fire(tmp_path, monkeypatch):
+    """DEF-2097: write_guard's judging child learns through ``ON_SPEND`` that
+    a checkpoint is about to spend its one-shot state, before the session
+    cap's slot and the flag are written, so its refusal at a time bound never
+    asks for the identical re-issue past a spent nudge; a call that fires
+    nothing, or whose flag already stands, says nothing."""
+    state = tmp_path / _speedbump.STATE_DIR
+    seen: list[list[str]] = []
+    monkeypatch.setattr(_speedbump, "ON_SPEND", lambda: seen.append(
+        sorted(p.name for p in state.iterdir()) if state.is_dir() else []))
+    bumps = (_bump("CP-CANARY"),)
+    assert _speedbump.check("Bash", {"command": "x"}, tmp_path, bumps=bumps) is not None
+    assert seen == [[]], seen
+    assert _speedbump.check("Bash", {"command": "x"}, tmp_path, bumps=bumps) is None
+    never = (_bump("CP-NEVER", predicate=lambda *_a: False),)
+    assert _speedbump.check("Bash", {"command": "x"}, tmp_path, bumps=never) is None
+    assert seen == [[]], seen
+
+
 def test_reason_template_shape(tmp_path):
     bumps = (_bump("CP-SHAPE", body="do the thing"),)
     reason = _speedbump.check("Bash", {"command": "x"}, tmp_path, bumps=bumps)

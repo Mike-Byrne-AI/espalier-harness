@@ -2277,9 +2277,13 @@ judging, and asks for the command split into shorter ones (batches of a
 hundred or two paths). Where the judging child had not begun judging at the
 parent's deadline (below), it asks instead for the same command once more,
 since a busy machine's start-up, not the command, spent the time and no
-judgment ran; a child that had begun keeps the split, since its judgment may
-have spent a one-shot nudge keyed on the command, which the identical
-re-issue would pass unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
+judgment ran. It asks the same where the child had begun but start-up took
+more of the bound than judging and no speed-bump checkpoint had spent its
+one-shot: a shorter command would pay the same start-up, and the same
+first-use compiles of the patterns it reads, in its own process. Where a
+checkpoint had spent its one-shot, the split is even, or either is unread, it
+keeps the split, since that nudge is keyed on the command and the identical
+re-issue would pass it unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
 and `WRITE_GUARD_START_UP_BUDGET`; before the start-up was read, 10 ordinary
 calls in a week on a loaded Windows box were refused and each told to
 split). It writes one `pretooluse_blocked_time_budget` record that
@@ -2301,7 +2305,13 @@ start-up a busy machine spends on any command and no judgment has run
 before it; the patterns a judgment reads compile on their first use, after
 the line. The parent takes the line out of what it relays and, at its
 deadline, reads it for whether the child had begun and when, so its refusal
-says which of start-up and judging spent the time.
+says which of start-up and judging spent the time. The child writes a second
+line as a checkpoint is about to spend its one-shot, before the spend
+(`_speedbump.py`'s `ON_SPEND`), and the parent reads that too; the child's
+own budget refusal reads the same two facts in its own process, after which
+a spend waits for the exit instead of landing. A kept, older `_speedbump.py`
+without `ON_SPEND` leaves the spends unwatched, and the child says one was
+spent, so the split stands as before.
 A child still running 2.0 s after the hook's start (`_BUILD_THE_REFUSAL_AT_S`)
 has the parent build its refusal while it waits: the reasons, the audit
 helpers, the project root, the log's path and the lock's first-use imports,

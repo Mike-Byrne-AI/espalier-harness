@@ -3158,6 +3158,15 @@ def snapshot_discard(
         return None
 
 
+#: Called once a checkpoint is about to spend its one-shot state, before the
+#: session cap's slot and the flag (DEF-2097): write_guard's judging child sets
+#: it, so a refusal at a time bound knows whether the identical re-issue would
+#: pass a nudge unseen. ``None``, the default and every other importer's, calls
+#: nothing. The callee must not raise: a raise leaves this check, and
+#: write_guard reads it as the speed-bump's fault (fail-open, said once).
+ON_SPEND: Callable[[], None] | None = None
+
+
 def check_fired(
     tool_name: str,
     tool_input: dict,
@@ -3189,6 +3198,9 @@ def check_fired(
         if flag.exists():
             continue  # already fired this (checkpoint[, key], session) -> allow
 
+        spend = ON_SPEND
+        if spend is not None:
+            spend()
         if not bump.cap_exempt:
             counter = SPEEDBUMP_COUNTER if bump.budget_for is None else bump.budget_for(tool_name, tool_input)
             if not _locked_check_and_increment(state_dir, SPEEDBUMP_SESSION_CAP, counter):
