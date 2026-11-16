@@ -439,7 +439,7 @@ class TestASlowJudgmentIsRefused:
         assert details.pop("judged_s") == pytest.approx(_TINY_BUDGET_S, abs=0.01), records
         assert details == {
             "hook": "write_guard", "tool": tool, "budget_s": _TINY_BUDGET_S,
-            "chars": len(command) if command else 0, "start_up_s": 0.0,
+            "chars": len(command) if command else 0, "start_up_s": 0.0, "began": True,
         }
 
     def test_maintenance_mode_does_not_lift_the_budget(self, monkeypatch, slow):
@@ -1038,15 +1038,29 @@ _STALL_AFTER_THE_MARK_SITE = textwrap.dedent(f'''
 #: A ``sitecustomize`` that holds the judging child in the import of the
 #: pattern module past the parent's deadline, the rest of its start-up as it
 #: is: the cost a busy machine spends on any command, which air 594461 moved
-#: ahead of the begun mark (DEF-2091's residual).
+#: ahead of the begun mark (DEF-2091's residual). The time goes to the
+#: module's exec, where a loaded box's compiles spend it. A sleep in
+#: ``find_spec`` runs under the global import lock, which held the child's own
+#: refusal at its first import (driven on Windows 3.11 and 3.13), so the parent
+#: refused in its place and this row passed while the child's reader was wrong;
+#: CI's 3.14 cell refused through it (#691).
 _SLOW_PATTERN_IMPORT_SITE = textwrap.dedent('''
-    import sys, time
+    import importlib.machinery, sys, time
     if sys.argv[1:2] == ["--judge"]:
         class _SlowPatternImport:
-            def find_spec(self, name, *args, **kwargs):
-                if name == "_bash_patterns":
-                    time.sleep(60)
-                return None
+            def find_spec(self, name, path=None, target=None):
+                if name != "_bash_patterns":
+                    return None
+                spec = importlib.machinery.PathFinder.find_spec(name, path, target)
+                real = spec.loader
+
+                class _SlowExec(type(real)):
+                    def exec_module(self, module):
+                        time.sleep(60)
+                        return real.exec_module(module)
+
+                spec.loader = _SlowExec(real.name, real.path)
+                return spec
         sys.meta_path.insert(0, _SlowPatternImport())
 ''')
 
@@ -1137,8 +1151,43 @@ class TestTheMarkFollowsThePatternImport:
         assert "re-issue the same command once" in reason, reason
         assert "Do: split" not in reason, reason
         assert "had not begun judging" in reason, reason
+        # Unstalled, the child's own budget refuses first (its record names no
+        # bound); on a box loaded past the parent's deadline the parent refuses
+        # (``bound`` child). Either way judging had not begun.
         refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
+        assert refusals, err
+        assert all(d.get("bound") in (None, "child") and d.get("began") is False for d in refusals), (refusals, err)
+
+    @pytest.mark.parametrize(("marking", "mark_after_s", "began", "start_up_s"), [
+        (True, None, False, 3.5),
+        (True, 1.0, True, 1.0),
+        (False, None, True, 0.25),
+    ], ids=["child-before-the-mark", "child-past-the-mark", "in-place"])
+    def test_the_child_budget_reads_the_begun_mark(self, monkeypatch, guard_root, capsys,
+                                                   marking, mark_after_s, began, start_up_s):
+        """The child's own budget refusal, driven on `_verdict_for` with no
+        process and no race: a judging child before its mark asks for the
+        re-issue, start-up all of the budget; one past it splits the budget at
+        the mark; the hook judging in place splits it where `main` began."""
+        clock = time.monotonic() - 10.0  # the deadline is past, so the wait returns at once
+        monkeypatch.setattr(write_guard, "_MARK_THE_JUDGING", marking)
+        monkeypatch.setattr(write_guard, "_JUDGING_BEGAN_AT",
+                            None if mark_after_s is None else clock + mark_after_s, raising=False)
+        rc = write_guard._verdict_for(
+            write_guard._Verdict(), write_guard._HeldStreams(), threading.Event(),
+            clock + write_guard.JUDGMENT_BUDGET_S, [_payload("Bash", {"command": "git status"})],
+            exit_on_budget=False, begun=clock + 0.25, clock=clock)
+        assert int(rc) == 0
+        decisions = _decisions(capsys.readouterr().out)
+        assert len(decisions) == 1, decisions
+        reason = decisions[0]["hookSpecificOutput"]["permissionDecisionReason"]
+        if began:
+            assert "split it into shorter commands" in reason and f"{start_up_s:.1f} s went to start-up" in reason, reason
+        else:
+            assert "re-issue the same command once" in reason and "had not begun judging" in reason, reason
+        records = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("began"), d.get("start_up_s"), d.get("judged_s")) for d in records] == [
+            (began, round(start_up_s, 2), round(write_guard.JUDGMENT_BUDGET_S - start_up_s, 2))], records
 
     def test_a_read_only_call_never_imports_the_pattern_modules(self, tmp_path):
         """The planted import failure is the seam's proof both ways: the
