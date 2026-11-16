@@ -982,29 +982,22 @@ _SLOW_START_UP_SITE = textwrap.dedent('''
         time.sleep(60)
 ''')
 
-#: The hook process's parent path, run under this interpreter with the real
-#: ``_json_safe``, whose ``run_tree_to_deadline`` is a stand-in that starts no
-#: child: it keeps the real one's contract for ``ahead`` (the callback starts
-#: on a thread of its own at its time, the wait going on), waits out the
-#: deadline with no answer (a child that never answered), then makes every
-#: import cost a second, as a cold import on a loaded box does (DEF-2092's
-#: probe, as a row).
-_NO_ANSWER_THEN_SLOW_IMPORTS = textwrap.dedent('''
-    import runpy, sys, threading, time, types
-    sys.path.insert(0, sys.argv[1])
-    import _json_safe
-
-    def _no_answer(*args, deadline, ahead=None, **kwargs):
-        if ahead is not None:
-            time.sleep(max(0.0, ahead[0] - time.monotonic()))
-            threading.Thread(target=ahead[1], daemon=True).start()
-        time.sleep(max(0.0, deadline - time.monotonic()))
-        sys.meta_path.insert(0, types.SimpleNamespace(find_spec=lambda *a, **k: time.sleep(1.0)))
-        return None
-
-    _json_safe.run_tree_to_deadline = _no_answer
-    sys.argv = [sys.argv[2]]
-    runpy.run_path(sys.argv[0], run_name="__main__")
+#: The real hook, nothing of it stood in for: the judging child is held in its
+#: start-up past the deadline (a child that never answers), and in the hook
+#: process every import from 4 s after its start costs a second, as a cold
+#: import on a loaded box does (DEF-2092's probe, as a row).
+_SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE = textwrap.dedent('''
+    import sys, time
+    _started = time.monotonic()
+    if sys.argv[1:2] == ["--judge"]:
+        time.sleep(60)
+    else:
+        class _ColdAfterTheDeadline:
+            def find_spec(self, *args, **kwargs):
+                if time.monotonic() - _started > 4.0:
+                    time.sleep(1.0)
+                return None
+        sys.meta_path.insert(0, _ColdAfterTheDeadline())
 ''')
 
 
@@ -1039,20 +1032,17 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], refusals
 
     def test_a_record_lands_when_imports_after_the_deadline_are_slow(self, tmp_path):
-        script = tmp_path / "no_answer.py"
-        script.write_text(_NO_ANSWER_THEN_SLOW_IMPORTS, encoding="utf-8")
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        site = _site(tmp_path, _SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE)
         started = time.monotonic()
-        result = subprocess.run(
-            [sys.executable, str(script), str(HOOKS_DIR.parent), str(HOOKS_DIR / "write_guard.py")],
-            input=json.dumps(_payload("Bash", {"command": "git status"})).encode("utf-8"),
-            capture_output=True, timeout=30, env=env)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
         elapsed = time.monotonic() - started
-        assert result.returncode == 0, (result.returncode, result.stderr)
-        self._refused(result.stdout)
+        assert code == 0, (code, err)
+        self._refused(out)
+        # The deny itself waited on no cold import: before the build it landed
+        # at 6.1 s under this model, past the wired timeout.
         assert elapsed < write_guard.EXIT_BY_S + _OVERRUN_CEILING_MS / 1000, elapsed
         refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [d.get("bound") for d in refusals] == ["child"], (refusals, result.stderr)
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
 
 
 class TestTheRefusalReadsWhatSpentTheTime:

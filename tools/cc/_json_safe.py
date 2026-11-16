@@ -927,6 +927,19 @@ def run_tree_to_deadline(
     job = None
     # The feeder owns the input; `communicate` sees no stdin and only reads.
     stdin, proc.stdin = proc.stdin, None
+    # Where ``heard`` is asked on Windows, stderr is read chunk by chunk on a
+    # thread of this function's own (in place of the one `communicate` starts
+    # there), so what the child wrote before the deadline is there however
+    # the drain ends: `communicate` reads a Windows pipe whole, and the tree
+    # walk outlasted the drain in 7 of 12 refusals driven on the Windows seat
+    # (2026-11-16). On POSIX the session kill ends every holder at once.
+    chunks: "list[bytes] | None" = None
+    reader = None
+    if heard is not None and os.name == "nt" and proc.stderr is not None:
+        chunks = []
+        errpipe, proc.stderr = proc.stderr, None
+        reader = threading.Thread(target=_read_chunks, args=(errpipe, chunks), daemon=True)
+        reader.start()
     try:
         if os.name == "nt":
             job = _kill_on_close_job(proc)
@@ -938,7 +951,7 @@ def run_tree_to_deadline(
             except subprocess.TimeoutExpired:
                 threading.Thread(target=ahead[1], daemon=True).start()
             else:
-                return proc.returncode, out, err
+                return proc.returncode, out, _stderr_of(err, reader, chunks, deadline)
         out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
     except subprocess.TimeoutExpired:
         end = time.monotonic() + TREE_DRAIN_SECONDS
@@ -947,16 +960,47 @@ def run_tree_to_deadline(
         try:
             out, err = proc.communicate(timeout=max(0.0, end - time.monotonic()))  # spawn: ok the drain after the kill
         except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a pipe the kill could not close; the deadline still holds and the call is answered as unfinished
+            if heard is not None and chunks is not None:
+                heard.append(b"".join(chunks))
             return None
         if ended_alone:
-            return proc.returncode, out, err
+            return proc.returncode, out, _stderr_of(err, reader, chunks, end)
         if heard is not None:
-            heard.append(err or b"")
+            heard.append(b"".join(chunks) if chunks is not None else (err or b""))
         return None
     except BaseException:  # noqa: BLE001 -- Ctrl-C or a read error mid-call: the tree ends, then the error goes on
         _end_the_tree_now(proc, job, time.monotonic() + TREE_DRAIN_SECONDS)
         raise
-    return proc.returncode, out, err
+    return proc.returncode, out, _stderr_of(err, reader, chunks, deadline)
+
+
+def _read_chunks(pipe: "IO[bytes]", chunks: "list[bytes]") -> None:
+    """Read ``pipe`` into ``chunks`` as its bytes arrive, until its end or an
+    error, then close it: what a killed child wrote stays readable whatever
+    still holds the pipe (:func:`run_tree_to_deadline`'s ``heard``)."""
+    try:
+        while True:
+            data = os.read(pipe.fileno(), 65536)
+            if not data:
+                break
+            chunks.append(data)
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a pipe broken by the kill: what was read stays in chunks
+        pass
+    finally:
+        try:
+            pipe.close()
+        except (OSError, ValueError):  # fail-open: ok deliberate -- a pipe already closed has nothing left to read
+            pass
+
+
+def _stderr_of(err: "bytes | None", reader: "Any", chunks: "list[bytes] | None", until: float) -> bytes:
+    """A child's stderr: ``err`` as ``communicate`` read it, or, where
+    :func:`_read_chunks` read it on its own thread, what that thread read by
+    ``until``."""
+    if reader is None or chunks is None:
+        return err or b""
+    reader.join(max(0.0, until - time.monotonic()))
+    return b"".join(chunks)
 
 
 def _feed(pipe: "IO[bytes] | None", data: bytes) -> None:
