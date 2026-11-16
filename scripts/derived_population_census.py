@@ -193,14 +193,43 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension
     "tests/test_guard_cost_census.py": (
-        3, "c1c859cd360fbd8305ecbb63066d46b9f7b946398c54a2d3f7ed7c8d82f3e628",
+        4, "3b8d77a04a93429509e184cf8822acc00dfdd93b921307b7a83d524787b42051",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
         "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
         "hand literal at tests/test_guard_cost_census.py:304 (set(helper) == keys) before the carried "
         "rule is compared, so a population that shrinks reds there; the third, the live tree's, is "
         "floored at tests/test_guard_cost_census.py:346 and held equal to the census child's own names, "
-        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST.",
+        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST. Kept 2026-11-16 "
+        "(DEF-5115): the fourth row parametrizes the census's call kinds (census.KINDS[1:]), each "
+        "held to its decision, everything present safe; the kinds that must be there, the calls each "
+        "first-use accessor exists for, are pinned present by tests/test_guard_compile_ratchet.py's "
+        "test_the_census_times_each_call_a_first_use_compile_exists_for against OPENING_CALLS, which "
+        "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_audit_dead_rules.py": (
+        1, "338df94f8ff7300917ea2b8490702b4207e54851de63bf01de42d9924464f029",
+        "CORRECT_BY_SHAPE",
+        "NEW 2026-11-16 (DEF-5116): the one row is the set of (pattern, flags) the collector under "
+        "test returns (audit.collect_regex_rules()), the side checked, never the required side: a "
+        "collector that narrows leaves a required pattern missing and the row reds. The required "
+        "populations are derived from the module by signature (the zero-argument cached accessors) "
+        "and by type (the first-use objects named _RE), each floored non-empty, and the type "
+        "predicate's population is held to an AST count of the source's _first_use calls by "
+        "tests/test_guard_compile_ratchet.py's test_every_first_use_call_is_a_module_global_the_walk_reaches.",
+    ),
+    # 2 row(s), shapes: comprehension
+    "tests/test_guard_compile_ratchet.py": (
+        2, "850e845805ae4baf2c74d1607347d9472eabae579784880a26116aad1d851247",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084): two comprehensions over a fresh copy of _bash_patterns' globals "
+        "read by type (type(obj) is module._FirstUse). The first forces each and asserts none raises, "
+        "everything present safe; the second counts them and is the remedy for both: it is held "
+        "equal to an AST count of the source's _first_use( calls at "
+        "tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so a "
+        "first-use pattern made anywhere the walk cannot reach, or a predicate that narrows, reds "
+        "there.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_harness_config.py": (
@@ -1276,7 +1305,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        4, "9397a001d23c296f864d3dfff657bdcc9c9cb043e7683f6b4904729db39ebcfd",
+        6, "21d2e4b2c3d2fc95d418532b40f1e413a741b1f6f3baf7e03e2f42089027f236",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
@@ -1289,7 +1318,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_reinject_pins.py binds both ways to the anchoring contract's own walk, "
         "and the enrolment it feeds is held equal to an AST read of the same modules' "
         "source, so a module dropped from the roster leaves its accessors compiled and "
-        "unenrolled, which reds there",
+        "unenrolled, which reds there. Kept 2026-11-16 (DEF-2084): the fifth row forces "
+        "each first-use object before any timed search (_FORCED_FLAGS), no check, and a "
+        "missed one times its compile too, failing toward red; the sixth holds every "
+        "first-use object named _RE inside the derivation (everything required present), "
+        "and its type-read population is held to an AST count of the source's _first_use "
+        "calls by tests/test_guard_compile_ratchet.py's "
+        "test_every_first_use_call_is_a_module_global_the_walk_reaches, so a narrowing reds there",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
@@ -2048,9 +2083,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "`endswith('-prefix')`) killed with 6 red, allow-arm rows among them. On its own this "
         "row is weak; it is kept because it names the intent at the definition site.",
     ),
-    # 8 row(s), shapes: for-assert, parametrize
+    # 10 row(s), shapes: comprehension, for-assert, parametrize
     "tests/test_write_guard_env_prefix_polarity.py": (
-        9, "c4ef72844d62959d8ed673b85bd9960052f30bc90940065f62e98cbf2b9bba0f",
+        10, "081a30e3932cc5b216c38f6c9c79947505a8095e39e9ca11204a99318f7ce5a7",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-13 (the floor-roster lane): eight rows run this file's hand-written Bash, "
         "PowerShell and cmd populations once per name in `write_guard._HARNESS_ENV_NAMES`, so a "
@@ -2059,7 +2094,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "literals in write_guard.py) and this file's :543 (the three names held by hand). "
         "2026-11-13, same lane: a ninth row compares the guard's literal alternation with the "
         "roster's names; a name the roster gains or drops without the literal reds it, and one "
-        "both drop reds this file's :543 as above.",
+        "both drop reds this file's :543 as above. 2026-11-16 (the cmd leading-= lane): a tenth "
+        "row runs the cmd reader's test-run relief pin "
+        "(`test_cmd_s_test_run_relief_reads_the_words_as_typed`) once per roster name, the same "
+        "remedy as the eight; its held row reds a name the check stops reading.",
     ),
     "tests/test_write_guard_pattern_message_coupling.py": (
         6, "def930a6139b4dfa0f7b9d283d6415c07158b9eb7ed525d13943325fd73b87d5",
@@ -2140,6 +2178,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "not read: the first is pinned by the reach assertion over eleven named deployed files in the "
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_write_guard_time_budget.py": (
+        1, "90e8e94308a20286c43703509f2aea6bde3a5474e556aea6888718f7b0d54136",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084, the review fix F1): one comprehension over _bash_patterns' globals "
+        "read by type (type(value) is bp._FirstUse) names every first-use pattern, and each is broken in "
+        "turn to assert none lets a protected write through a relative chain. Worth having: the "
+        "population is the defect, since any one broken pattern a directory walk swallows was the fail-"
+        "open. Blind to an empty or narrowed walk, and the remedy is both sides: a floor of 200 names in "
+        "the same test, and one file over the same type predicate is held equal to an AST count of the "
+        "source's _first_use( calls at tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so "
+        "a pattern the walk cannot reach reds there.",
     ),
     "tests/test_zone_watch.py": (
         6, "6d5ef563128ca626a097dada93fbe939fa4f1fa177fb760238d85042b32150a9",

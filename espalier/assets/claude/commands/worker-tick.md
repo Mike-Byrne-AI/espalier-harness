@@ -23,7 +23,7 @@ read) and `/inbox board`, and act only on this seat's own open pull request
 driver's `catch-up`). That covers a checkout with no seat name of its own or
 one git could not read, a base branch git did not name, and a driver that
 predates the verb (it answers `invalid choice`). Only a dispatcher seat, whose
-loop is `/inbox board`, says the refusal and does nothing else.
+loop is `/dispatcher-tick`, says the refusal and does nothing else.
 
 > Cross-platform note: command bodies show `python` for brevity; try `python3`
 > first, then `python`, then `py -3`, keeping the first that prints a Python 3

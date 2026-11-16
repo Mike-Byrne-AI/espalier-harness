@@ -176,6 +176,15 @@ class TestGuardPatternClassify:
         assert "test_every_pattern_is_anchored_or_classified" in out
         assert "_UNANCHORED_BY_DESIGN" in out and "_CMD_POS" in out
 
+    def test_a_first_use_binding_fires_too(self, tmp_path):
+        # DEF-2084: `_bash_patterns` writes its module-level patterns as
+        # `_first_use(...)`, compiled on first use; the reader saw only
+        # `re.compile(` and went blind to them (both reviewers of that lane).
+        root = self._root(tmp_path, "_bash_patterns.py")
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/_bash_patterns.py",
+                             "new_string": '_NEW_RE = _first_use(r"x")\n'}, root)
+        assert "_UNANCHORED_BY_DESIGN" in out and "_CMD_POS" in out
+
     def test_an_annotated_binding_fires_too(self, tmp_path):
         root = self._root(tmp_path, "write_guard.py")
         out = _fire("Write", {"file_path": "tools/cc/hooks/write_guard.py",

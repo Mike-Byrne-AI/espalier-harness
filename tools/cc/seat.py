@@ -45,9 +45,11 @@ session) and every channel fact from ``mail.py``'s local refs:
   a worker's (its dispatcher, the reads to start with, its jobs, the worker
   loop) or the dispatcher's (its duties, the board loop), as the ``dispatcher``
   line of ``espalier.toml`` decides, so no operator pastes it.
-* ``tick [<seat>]`` -- print a worker seat's tick, which the worker loop's
-  command has this verb print at each tick: the seat this checkout answers
-  when none is named, composed from the checkout as ``brief`` composes it.
+* ``tick [<seat>] [--role worker|dispatcher]`` -- print a seat's tick, which
+  its loop's command has this verb print at each tick (a worker's tick, the
+  default, or with ``--role dispatcher`` the board tick), refused for a seat
+  of the other role: the seat this checkout answers when none is named,
+  composed from the checkout as ``brief`` composes it.
 * ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
   removal first (``checkout_sync``'s rules for that one worktree: clean,
   merged, no plan in progress, nothing ignored it would lose), so a seat that
@@ -778,9 +780,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: from ``DISPATCHER_TICK``, never typed. A change to the tick changes what
 #: every worker seat does, which is the operator's decision.
 #:
-#: The worker's loop line names a command (``WORKER_TICK``, as the
-#: dispatcher's names ``/inbox board``), and the command's body has this
-#: driver print the tick (the ``tick`` verb), composed from the seat's own
+#: The worker's loop line names a command (``WORKER_TICK``; the dispatcher's,
+#: ``DISPATCHER_TICK``, names its own since job 5154dc), and the command's body
+#: has this driver print the tick (the ``tick`` verb), composed from the seat's own
 #: checkout at each tick: since the operator's ruling of 2026-11-15 no loop
 #: line, first message or re-created loop carries the tick's text, so no window
 #: copies it by hand, and a change to the tick reaches a looping seat at its
@@ -941,7 +943,16 @@ DISPATCHER_BRIEF = (
     "with no "
     "further message from the operator."
 )
-DISPATCHER_TICK = "/loop 15m /inbox board"
+#: The command the dispatcher's loop runs, its body ``.claude/commands/`` under
+#: the same name, as :data:`WORKER_COMMAND` is the worker's: since job
+#: 20261116T105110Z-air-5154dc (item (1) of the operator's note
+#: 20261116T063413Z-air-1ea850) the board loop no longer names ``/inbox board``,
+#: whose whole body went in at every fire (13,114 tokens a tick, the median of
+#: 34 ticks in the dispatcher's windows). ``scripts/seat_day_census.py`` reads
+#: the interval from the loop line's own source text, the f-string spelling
+#: included.
+DISPATCHER_COMMAND = "/dispatcher-tick"
+DISPATCHER_TICK = f"/loop 15m {DISPATCHER_COMMAND}"
 #: The dispatcher's interval in minutes, read from its loop line: the one
 #: figure both briefs quote, so a changed loop re-renders every mention.
 TICK_MINUTES = DISPATCHER_TICK.split()[1].rstrip("m")
@@ -1002,6 +1013,37 @@ SELF_HOST_FIGURES = (
 #: adopter's /handoff writes the row, so its briefs say that alone.
 SELF_HOST_HANDOFF_SHIP = " and ships it on your open lane or parks it"
 SELF_HOST_ROW_SOURCE = ", derived from the mail and the merges"
+#: The dispatcher's tick, what its loop's command (:data:`DISPATCHER_COMMAND`)
+#: has the ``tick`` verb print, rendered for the seat's tree by
+#: :func:`compose_brief` (:attr:`Brief.tick`). It names the board driver and
+#: never ``/inbox board``, so a tick costs the board's output and a few lines of
+#: text, where the inbox body ran to about thirteen thousand tokens; the duties
+#: are the brief's, said short (the brief holds them whole), and the board
+#: section's reference is read only for a line the reader cannot read. It is the
+#: prompt the dispatcher's loop ran by hand from 2026-11-16 (after the
+#: operator's note 1ea850), in the house's interpreter spelling (``python``,
+#: with the command body's rule for a host that answers to another name);
+#: ``tests/test_seat.py::_OPERATOR_BOARD_TICK`` pins this repository's render.
+#: ``/handoff`` step 5b does not match a loop that ran this prompt by hand; its
+#: self-host note says how the dispatcher re-creates one from
+#: :data:`DISPATCHER_TICK` (air's ruling 20261116T170600Z-air-204f5b).
+DISPATCHER_TICK_PROMPT = (
+    "Board tick (dispatcher seat {seat}). Run `python tools/cc/board.py` and act on what it shows under your "
+    "dispatcher duties: {duties}. Read .claude/commands/inbox.md Step 2c only for a board line you cannot read. "
+    "Reply in a few lines; where nothing needs action, say so in one line."
+)
+#: The duties the board tick says, by tree, as the brief's assign and red-base
+#: slots differ: this repository's dispatcher keeps each worker at two live
+#: jobs (the board's under-two line) and reverts a red base first on its own
+#: authority, ruling a fix-forward by run id where no revert clears it (Core
+#: Rule 15's order, air's ack 20261116T183249Z-air-2eeb69), and sends the
+#: operator's decisions as OPERATOR CALL: requests; an adopter's proposes
+#: assigns, releases and the revert.
+SELF_HOST_BOARD_DUTIES = ("answer worker asks within the hour, keep each worker at two live jobs, revert a red "
+                          "{base} first, or where no revert clears it, rule a fix-forward by run id, and send "
+                          "OPERATOR CALL: requests for the operator's decisions")
+ADOPTER_BOARD_DUTIES = ("answer worker asks within the hour, and propose assigns, releases and the revert of a red "
+                        "{base} to the operator, sending each on a yes")
 #: Flags after which claude is not starting a fresh session from a first
 #: message (a one-shot, a resumed or a continued conversation, a session
 #: brought over): the brief is refused beside them, never passed.
@@ -1043,8 +1085,8 @@ def mod_args(mod_dir: Path = MOD_DIR) -> list[str]:
 
 @dataclass
 class Brief:
-    """A seat's first message: its role, the whole text, and the loop line;
-    for a worker, also the tick its loop's command prints (``tick`` verb)."""
+    """A seat's first message: its role, the whole text, the loop line, and
+    the tick its loop's command prints (``tick`` verb, :data:`TICK_ROLES`)."""
     role: str
     text: str
     loop: str
@@ -1079,7 +1121,9 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
                                        figures=figures, gridlock=SELF_HOST_GRIDLOCK if self_host else "",
                                        every=TICK_MINUTES,
                                        row_source=SELF_HOST_ROW_SOURCE if self_host else "")
-        return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
+        duties = (SELF_HOST_BOARD_DUTIES if self_host else ADOPTER_BOARD_DUTIES).format(base=base)
+        board_tick = DISPATCHER_TICK_PROMPT.format(seat=seat, duties=duties)
+        return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK, board_tick)
     has_tier_script = (where / TIER_SCRIPT).is_file()
     tier = (f"the tier the diff earns with --base origin/{base}" if has_tier_script
             else "the proof the change earns per /implement-task step 7")
@@ -1165,13 +1209,26 @@ def cmd_brief(root: Path, seat: str) -> int:
     return 0
 
 
-def cmd_tick(root: Path, seat: str | None) -> int:
-    """Print a worker seat's tick, the text its loop's command
-    (:data:`WORKER_COMMAND`) acts on: ``seat``'s, composed from its own
-    checkout as ``brief`` composes it, or, with no seat named, the seat this
-    checkout answers, composed from this checkout. Refused for the dispatcher
-    (its loop is :data:`DISPATCHER_TICK`, which has no worker tick) and for a
-    checkout whose seat name is not set or could not be read."""
+#: The roles the ``tick`` verb renders, each with the command whose body asks
+#: for it and the tick's name in a refusal. The dispatcher's body asks for its
+#: role and the worker's takes the verb's default, the worker's (a driver older
+#: than ``--role`` answers that line too); the verb refuses a seat whose role
+#: differs, so ``/worker-tick`` in a window answering the dispatcher's name
+#: never takes dispatcher actions, nor the reverse (air's ruling
+#: 20261116T170600Z-air-204f5b on the job's shape).
+TICK_ROLES = {"worker": (WORKER_COMMAND, "worker tick"), "dispatcher": (DISPATCHER_COMMAND, "board tick")}
+
+
+def cmd_tick(root: Path, seat: str | None, role: str = "worker") -> int:
+    """Print a seat's tick for ``role``, the text its loop's command acts on:
+    a worker's (:data:`WORKER_COMMAND`, the default) or the dispatcher's board
+    tick (:data:`DISPATCHER_COMMAND`, since job 20261116T105110Z-air-5154dc).
+    It is composed for ``seat`` from that seat's own checkout, as ``brief``
+    composes it, or, with no seat named, for the seat this checkout answers,
+    from this checkout. Refused for a seat whose role is not ``role`` (each
+    body runs the verb for its own role, :data:`TICK_ROLES`, so neither loop
+    runs the other's tick) and for a checkout whose seat name is not set or
+    could not be read."""
     if seat is None:
         top = _git(Path.cwd(), "rev-parse", "--show-toplevel")
         if not top:
@@ -1179,8 +1236,9 @@ def cmd_tick(root: Path, seat: str | None) -> int:
         checkout = Path(top)
         if checkout.resolve() != root.resolve():
             # A linked worktree with no name of its own answers its clone's,
-            # which can be the dispatcher's: refused as nameless, so the
-            # command's reduced tick still runs (a dispatcher's refusal ends it).
+            # which can be the dispatcher's: refused as nameless, where
+            # /dispatcher-tick's body keeps its tick to the board and
+            # /worker-tick's says the refusal.
             own, state, why = _own_name(checkout)
             if state == "unread":
                 raise Refused(f"the tick is composed for this checkout's seat, and {why}; {mail.RETRY_HINT}")
@@ -1199,8 +1257,10 @@ def cmd_tick(root: Path, seat: str | None) -> int:
     else:
         target = resolve(root, seat)
         brief = compose_brief(root, seat, target.path if target.exists else None)
-    if brief.role != "worker":
-        raise Refused(f"{seat} is the dispatcher seat: its loop is {DISPATCHER_TICK}, which has no worker tick")
+    if brief.role != role:
+        _, tick_name = TICK_ROLES[role]
+        what = "the dispatcher seat" if brief.role == "dispatcher" else "a worker seat"
+        raise Refused(f"{seat} is {what}: its loop is {brief.loop}, which has no {tick_name}")
     print(brief.tick)
     return 0
 
@@ -1506,8 +1566,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start the session with no own-clear log (the mod then records on its marker alone)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
-    p = sub.add_parser("tick", help=f"print a worker seat's tick, what its loop's {WORKER_COMMAND} acts on")
+    p = sub.add_parser("tick", help=f"print a seat's tick, what its loop's {WORKER_COMMAND} or {DISPATCHER_COMMAND} "
+                                    "acts on")
     p.add_argument("seat", nargs="?", help="the seat (default: the one this checkout answers)")
+    p.add_argument("--role", choices=tuple(TICK_ROLES), default="worker",
+                   help="the tick to print, refused for a seat of the other role (default: worker)")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
     p.add_argument("seat")
     p.add_argument("--dry-run", action="store_true")
@@ -1545,7 +1608,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
         if args.verb == "tick":
-            return cmd_tick(root, args.seat)
+            return cmd_tick(root, args.seat, args.role)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,
                           return_jobs=args.return_jobs, unchecked=args.unchecked)
     except (Refused, mail.Unresolvable) as exc:

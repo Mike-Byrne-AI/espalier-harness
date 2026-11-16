@@ -407,6 +407,17 @@ _CMD_SET_STATEMENTS = [
     ("ps", "cmd /c set {var}=1 `& {run}"),
     # cmd in cmd in cmd: the nesting cap's row, which allows with the cap at 1
     ("bash", "cmd //c 'cmd /c \"cmd /c set {var}=1 ^& {run}\"'"),
+    # cmd skips a leading `=` before a statement's program word, at the
+    # line's start, after a separator and after `call` (drives e2c959 and
+    # 556496; `_bash_patterns._cmd_program_word`): on the set and on the
+    # run, and the run behind the `@` that turns its echo off, which the
+    # launch read as part of the word too
+    ("bash", "cmd //c '=set {var}=1 & {run}'"),
+    ("ps", "cmd /c \"echo a &=set {var}=1 & {run}\""),
+    ("bash", "cmd //c 'set {var}=1 &={run}'"),
+    ("ps", "cmd /c \"set {var}=1 & ={run}\""),
+    ("ps", "cmd /c \"call =set {var}=1 & ={run}\""),
+    ("ps", "cmd /c \"set {var}=1 & @{run}\""),
 ]
 _CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
                    for shell, t in _CMD_SET_STATEMENTS]
@@ -478,6 +489,23 @@ def test_cmd_exe_set_then_claude_denies(name, shell, command):
 @pytest.mark.parametrize("name", ROSTER)
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(name, shell, command):
     assert not _denies(_dispatch(shell), _as(name, command))
+
+
+@pytest.mark.parametrize("name", ROSTER)
+def test_cmd_s_test_run_relief_reads_the_words_as_typed(name):
+    """The harness-variable check's reader of cmd's program
+    (`write_guard._cmd_program_sets_then_launches`) reads a launch past a
+    leading `@` or `=` on the program word (`_bash_patterns._cmd_program_word`),
+    but its test-run relief reads the words as typed, so a test run behind
+    one whose quoted operand crosses a `Claude` folder keeps the verdict it
+    had before: a stated cost, since relieving it would drop a refusal. Its
+    plain twin is relieved (DEF-1044's relief). Pinned at the reader: on the
+    Bash tool the dispatch relieves this test run before the reader is
+    asked, so no call is refused for it today."""
+    held = f'set {ENV_VAR}=1 & =pytest "work/Claude Code/tests"'
+    plain = f'set {ENV_VAR}=1 & pytest "work/Claude Code/tests"'
+    assert wg._cmd_program_sets_then_launches(_as(name, held), 0)
+    assert not wg._cmd_program_sets_then_launches(_as(name, plain), 0)
 
 
 @pytest.mark.parametrize("suffix", ["first'", "; then pytest'"])

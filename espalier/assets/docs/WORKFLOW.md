@@ -261,7 +261,7 @@ This is mechanical — it checks structure, not meaning. No external
 tools needed; run it after any harness configuration change to make
 sure nothing is dangling.
 
-For doc-accuracy checking — "CLAUDE.md says 19 commands, is that true?"
+For doc-accuracy checking — "CLAUDE.md says 20 commands, is that true?"
 — use the deeper variant:
 
 ```

@@ -330,6 +330,7 @@ pack workflows; see the table below for the full list.
 | `/ship` | Push the lane as a pull request with auto-merge armed and the approval marker bound to its final head; `--release vX.Y.Z` tags the merge commit and creates the release |
 | `/inbox` | Read the mail the other machines left on origin (the bodies; the banner's `Mail:` line shows the headlines), list the live claims and the dispatcher's assignments, read the board (`/inbox board`: the one live read before stating state, Core Rule 15), or send a claim, release, note, request, ack or (the dispatcher) assign -- on where `git config espalier.machine` names this clone |
 | `/worker-tick` | One tick of a worker seat's loop (`/loop 10m /worker-tick`, the last line of `tools/cc/seat.py brief <seat>`): the seat driver prints the seat's tick, composed from its checkout at every tick, and the session carries it out |
+| `/dispatcher-tick` | One tick of the dispatcher seat's board loop (`/loop 15m /dispatcher-tick`, the last line of its brief): the seat driver prints the board tick, a few lines naming `tools/cc/board.py` and the duties in place of `/inbox`'s whole body, and the session carries it out |
 | `/status` | Harness state in 10 lines |
 | `/handoff` | End-of-session: capture reasoning, finalize blueprint, write the Session Log row, then the lane's one push through the ship driver |
 | `/test-this` | Generate tests for a file matching project patterns |

@@ -711,7 +711,7 @@ class TestBrief:
         _holds(clone, "memory/parallel-work-protocol.md")
         brief = seat.compose_brief(clone, "box", clone)
         first, loop = brief.text.split("\n")
-        assert brief.role == "dispatcher" and loop == brief.loop == "/loop 15m /inbox board"
+        assert brief.role == "dispatcher" and loop == brief.loop == "/loop 15m /dispatcher-tick"
         assert first.startswith("You are the dispatcher seat box (Core Rule 15, memory/parallel-work-protocol.md). "
                                 "Orient from the banner, then run /inbox (mark read) and /inbox board.")
         assert "revert first on a red main" in first and "Decisions stay the operator's." in first
@@ -984,7 +984,8 @@ class TestBrief:
             assert not set(brief.text) & set(seat._PS_DOUBLE)
             # The tick the loop's command prints keeps the same alphabet: it once rode this argument whole.
             assert brief.tick.isascii() and '"' not in brief.tick and "%" not in brief.tick, brief.tick
-            assert (brief.role == "worker") == bool(brief.tick), brief.role
+            # Every seat's loop runs a command whose verb prints a tick (the dispatcher's since job 5154dc).
+            assert brief.tick, brief.role
             # Both --print forms quote it whole, so it reaches claude as one argument.
             assert seat.command_line(target, [brief.text], maintenance=False, shell="powershell")
             line = seat.command_line(target, [brief.text], maintenance=False, shell="posix")
@@ -1320,6 +1321,9 @@ class TestTheWorkerTickCommand:
 
     def test_the_tick_verb_refuses_the_dispatcher_and_a_checkout_with_no_seat_name(self, seat, clone, monkeypatch,
                                                                                 capsys):
+        """The worker tick is refused on the dispatcher seat, so /worker-tick in
+        a window answering the dispatcher's name takes no dispatcher actions
+        (the role guard air's ruling 20261116T170600Z-air-204f5b kept)."""
         _dispatcher(clone, '"box"')
         monkeypatch.chdir(clone)
         assert seat.main(["tick"]) == 1
@@ -1358,6 +1362,131 @@ class TestTheWorkerTickCommand:
         assert seat.compose_brief(clone, "box-feat", feat).tick.startswith(head)   # the seeded form
         _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
         assert seat.compose_brief(clone, "box-feat", feat).tick.startswith(head)   # this repository's
+
+
+# -- the dispatcher tick command -----------------------------------------------------
+
+#: The board tick the dispatcher's loop has run since 2026-11-16 (cron 3ec21fd2,
+#: in place of the /inbox board loop after the operator's context review, note
+#: 20261116T063413Z-air-1ea850 (1)), read verbatim from air's ack
+#: 20261116T164900Z-air-09d526, with the house's interpreter spelling (python,
+#: where the cron's read python3; air's ruling 20261116T170600Z-air-204f5b). The
+#: dispatcher's loop line is /loop 15m /dispatcher-tick since job
+#: 20261116T105110Z-air-5154dc, and this is what the command has seat.py tick
+#: --role dispatcher print on this repository for the seat air on the base main.
+#: A change to it is the operator's decision.
+_OPERATOR_BOARD_TICK = (
+    "Board tick (dispatcher seat air). Run `python tools/cc/board.py` and act on what it shows under your "
+    "dispatcher duties: answer worker asks within the hour, keep each worker at two live jobs, revert a red main "
+    "first, or where no revert clears it, rule a fix-forward by run id, and send OPERATOR CALL: requests for the "
+    "operator's decisions. Read .claude/commands/inbox.md Step 2c "
+    "only for a board line you cannot read. Reply in a few lines; where nothing needs action, say so in one line."
+)
+
+
+class TestTheDispatcherTickCommand:
+    """The dispatcher's loop line names a command too, whose body has the
+    driver print the board tick, composed from the checkout at each tick (job
+    20261116T105110Z-air-5154dc, item (1) of the operator's note
+    20261116T063413Z-air-1ea850): the loop named /inbox board, whose whole
+    body went in at every fire (13,114 tokens a tick, the median of 34), and
+    the lean prompt that replaced it lived in one session's cron alone. Dies
+    to: a loop line naming a command no body holds or one that is not the
+    dispatcher's own, a tick verb that refuses the dispatcher, or one board
+    tick for this repository and an adopter's tree."""
+
+    @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
+    def test_the_board_loop_line_names_the_dispatchers_own_command_the_tree_holds(self, seat):
+        loop = seat.DISPATCHER_TICK
+        assert loop.startswith("/loop 15m "), loop[:40]
+        command = loop.split(" ", 2)[2]
+        assert command == getattr(seat, "DISPATCHER_COMMAND", None), (
+            f"the board loop line runs {command!r}, not the dispatcher's own command")
+        body = REPO_ROOT / ".claude" / "commands" / f"{command[1:]}.md"
+        assert body.is_file(), body
+        assert "python tools/cc/seat.py tick --role dispatcher" in body.read_text(encoding="utf-8")
+
+    @pytest.mark.contract   # it reads shipped command bodies (tests/test_marker_taxonomy.py)
+    @pytest.mark.parametrize("role", ["worker", "dispatcher"])
+    def test_each_roles_command_body_runs_the_tick_verb_for_its_role_alone(self, seat, role):
+        """The whole line each body runs, per role from ``TICK_ROLES``: a
+        substring pin on the worker's body was met by the dispatcher's line
+        too (the failure-mode review's 5). The worker's body names no
+        ``--role`` and takes the verb's default, which a driver older than the
+        flag also answers (the code review's 1). Dies to: either body running
+        the other's tick, or a default that is not the worker's."""
+        command, _ = seat.TICK_ROLES[role]
+        body = (REPO_ROOT / ".claude" / "commands" / f"{command[1:]}.md").read_text(encoding="utf-8")
+        runs = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("python tools/cc/seat.py tick")]
+        assert runs == ["python tools/cc/seat.py tick" + ("" if role == "worker" else f" --role {role}")], runs
+        assert seat.build_parser().parse_args(["tick"]).role == "worker"
+
+    @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
+    def test_the_board_ticks_inbox_step_is_a_heading_the_body_holds(self, seat):
+        """The board tick sends a reader who cannot read a board line to one
+        step of the inbox body. Dies to: that body renumbered or retitled
+        under the tick, leaving its pointer at nothing (the failure-mode
+        review's 2)."""
+        import re
+        step = re.search(r"\.claude/commands/inbox\.md (Step \w+)", seat.DISPATCHER_TICK_PROMPT)
+        assert step, seat.DISPATCHER_TICK_PROMPT
+        body = (REPO_ROOT / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
+        assert f"\n## {step.group(1)}: Board\n" in body, step.group(1)
+
+    def test_the_tick_verb_prints_the_dispatchers_board_tick(self, seat, clone, monkeypatch, capsys):
+        """Asked for the dispatcher's role, the verb prints the board tick,
+        which renders on this repository to the prompt the operator approved
+        (note 1ea850), the house's interpreter spelling apart."""
+        _dispatcher(clone, '"air"')
+        _git(clone, "config", "espalier.machine", "air")
+        _holds(clone, "memory/parallel-work-protocol.md")
+        monkeypatch.chdir(clone)
+        code = seat.main(["tick", "--role", "dispatcher"])
+        out, err = capsys.readouterr()
+        assert code == 0, err
+        assert out == seat.compose_brief(clone, "air", clone).tick + "\n" == _OPERATOR_BOARD_TICK + "\n"
+        assert seat.main(["tick", "air", "--role", "dispatcher"]) == 0   # a seat named: its checkout composes it
+        assert capsys.readouterr().out == out
+
+    def test_the_board_tick_is_refused_on_a_worker_seat(self, seat, clone, monkeypatch, capsys):
+        """The role guard's other side: /dispatcher-tick in a worker's window
+        takes no dispatcher actions. Dies to: a verb that prints whatever tick
+        the seat's role has, whichever command asked."""
+        _dispatcher(clone, '"air"')
+        monkeypatch.chdir(clone)   # the clone answers box, a worker under air
+        assert seat.main(["tick", "--role", "dispatcher"]) == 1
+        err = capsys.readouterr().err
+        assert "box is a worker seat" in err and seat.WORKER_TICK in err and "no board tick" in err, err
+
+    def test_a_worktree_with_no_name_of_its_own_gets_no_board_tick(self, seat, clone, monkeypatch, capsys):
+        """A linked worktree with no name of its own answers its clone's,
+        which here is the dispatcher's: asked for the dispatcher's role, it is
+        refused as nameless, so /dispatcher-tick's body keeps the tick to the
+        board under the window's own first message and the worktree never
+        prints the dispatcher's tick as its own (the code review's nit). Dies
+        to: the role read from the clone's name before the worktree's."""
+        _dispatcher(clone, '"box"')
+        feat = _worktree(clone, "feat")   # no name of its own; the clone's is box, the dispatcher
+        monkeypatch.chdir(feat)
+        assert seat.main(["tick", "--role", "dispatcher"]) == 1
+        out, err = capsys.readouterr()
+        assert out == "" and "answers no seat name" in err and "no name of its own" in err, (out, err)
+
+    def test_an_adopters_board_tick_proposes_what_this_repositorys_dispatcher_does_itself(self, seat, clone):
+        """This repository's dispatcher keeps each worker at two jobs and
+        reverts a red base first on its own authority; an adopter's proposes
+        assigns, releases and the revert to the operator (ADOPTER_ASSIGN,
+        ADOPTER_RED), so its tick says that. Dies to: one board tick for both."""
+        _dispatcher(clone, '"box"')
+        adopter = seat.compose_brief(clone, "box", clone).tick
+        assert adopter.startswith("Board tick (dispatcher seat box). Run `python tools/cc/board.py` "), adopter
+        assert "propose" in adopter and "the revert of a red main to the operator" in adopter, adopter
+        assert "two live jobs" not in adopter and "OPERATOR CALL:" not in adopter, adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).tick
+        assert "keep each worker at two live jobs, revert a red main first" in own, own
+        for tick in (adopter, own):
+            assert tick.isascii() and '"' not in tick and "%" not in tick and "{" not in tick, tick
 
 
 # -- retire --------------------------------------------------------------------------

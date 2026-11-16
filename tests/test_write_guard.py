@@ -19,7 +19,7 @@ from types import ModuleType
 
 import pytest
 
-from tests._first_use_patterns import first_use_patterns
+from tests._first_use_patterns import compiled, first_use_patterns
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
@@ -798,7 +798,6 @@ class TestQuotedVerbTailIsUniform:
         tests/test_speedbump_irreversible.py: the pattern holds either tool's
         command-position fragment anywhere, so a group-wrapped or prefixed arm
         counts); a record is any `DANGEROUS_*` list's, by object."""
-        import re
         import sys
         sys.path.insert(0, str(HOOKS_DIR))
         import write_guard as wg
@@ -806,16 +805,18 @@ class TestQuotedVerbTailIsUniform:
         # load, so the walk below loads it first, by name; the floor keeps an
         # unloaded walk (10 patterns bound at import, 36 after) from passing.
         wg._load_the_pattern_path()
-        walked = sum(isinstance(v, re.Pattern) for v in vars(wg).values())
-        assert walked >= 30, f"{walked} patterns in write_guard's namespace: the pattern path did not load"
         bp = wg._bash_patterns   # the module object write_guard reads, not a second copy
-        shared = {id(v) for v in vars(bp).values() if isinstance(v, re.Pattern)}
+        # `_bash_patterns`' patterns are first-use objects (DEF-2084): read
+        # through `compiled`, which `isinstance(v, re.Pattern)` alone is not
+        walked = sum(compiled(bp, v) is not None for v in vars(wg).values())
+        assert walked >= 30, f"{walked} patterns in write_guard's namespace: the pattern path did not load"
+        shared = {id(v) for v in vars(bp).values() if compiled(bp, v) is not None}
         for name, registry in vars(wg).items():
             if name.startswith("DANGEROUS_") and isinstance(registry, (tuple, list)):
                 shared |= {id(e.pattern) for e in registry}
         own = sorted(
             name for name, value in vars(wg).items()
-            if isinstance(value, re.Pattern) and id(value) not in shared
+            if compiled(bp, value) is not None and id(value) not in shared
             and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS_SEP in value.pattern)
         )
         assert own == [], (
@@ -4349,11 +4350,11 @@ class TestCatastrophicLoopCarrier:
         a fifth head missing from either reds here, where before a head
         missing from the zone reader was the silent half-fix."""
         import ast
-        import re as _re
         bp = self._bp()
+        # first-use objects since DEF-2084, read through `compiled`
         derived = {name for name, v in vars(bp).items()
-                   if isinstance(v, _re.Pattern) and bp._DO_BODY in v.pattern}
-        by_id = {id(v): name for name, v in vars(bp).items() if isinstance(v, _re.Pattern)}
+                   if compiled(bp, v) is not None and bp._DO_BODY in v.pattern}
+        by_id = {id(v): name for name, v in vars(bp).items() if compiled(bp, v) is not None}
         table = {by_id[id(rx)] for rx, _shape in bp._LOOP_OPENERS}
         assert table == derived, (table, derived)
         assert set(bp._LOOP_OPENER_SHAPE.values()) == {"enumerator", "words"}
@@ -13557,6 +13558,135 @@ class TestTheSecretLegReadsCmdsProgramAsCmdReceivesIt:
         is read through cmd's grammar; an input redirection's file is a
         read of its own."""
         assert _bash_patterns_module()._cmd_program_as_ps(program) == want
+
+
+class TestCmdSkipsALeadingEqualsBeforeTheProgramWord:
+    """cmd skips a leading ``=`` before a statement's program word, as it
+    skips the ``,`` and ``;`` the statement splitter already drops: after a
+    separator, at the line's start, after an ``if`` condition and after
+    ``call`` (win-2's drive e2c959 and win's 556496, cmd 10.0.26200, each
+    printing the probe file's marker). The cmd reader read the ``=`` as part
+    of the program word, so a read or a delete cmd runs behind one met no
+    verb on either tool, while its ``,`` twin was refused. Ruled in the
+    coverage contract (the dispatcher's 4a42dd and 3cf94f): the ``=`` sits
+    inside the text cmd runs, the slot note 5c1e1c put there. ``=`` cannot
+    join the splitter's delimiters, since it would split an ``if``
+    condition's ``1==1``, so the reader strips it from the program word
+    (`_bash_patterns._cmd_program_word`), at every reader of that word.
+    The drives ran ``type`` alone; that the skip is the same for every verb
+    is an inference from them. Each command is a fixture handed to the
+    guard as text, never run."""
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c echo a '&=' type .env"),
+        ("PowerShell", "cmd /c echo a '&=type' .env"),
+        ("Bash", "cmd //c 'echo a &= type .env'"),
+        ("Bash", "cmd //c '=type .env'"),
+        ("Bash", "cmd //c 'if 1==1 =type .env'"),
+        ("Bash", "cmd //c 'call =type .env'"),
+        # a cmd the statement starts, its program read the same way
+        ("Bash", "cmd //c '=cmd /c =type .env'"),
+    ])
+    def test_a_read_cmd_runs_behind_a_leading_equals_is_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # the separator twins, which the splitter drops as cmd's delimiters
+        ("PowerShell", "cmd /c echo a '&,' type .env"),
+        ("PowerShell", "cmd /c echo a '&,type' .env"),
+        ("PowerShell", "cmd /c echo a '&;' type .env"),
+        ("PowerShell", "cmd /c echo a '&;type' .env"),
+        ("PowerShell", "cmd /c if 1==1 ,type .env"),
+        ("PowerShell", "cmd /c call ,type .env"),
+        ("Bash", "cmd //c 'echo a &, type .env'"),
+        ("Bash", "cmd //c ',type .env'"),
+        ("Bash", "cmd //c ';type .env'"),
+        ("Bash", "cmd //c 'if 1==1 ,type .env'"),
+        ("Bash", "cmd //c 'call ,type .env'"),
+        # the if and call positions on PowerShell, refused before this lane
+        # by PowerShell's own reading of the program it hands cmd
+        ("PowerShell", "cmd /c if 1==1 =type .env"),
+        ("PowerShell", "cmd /c call =type .env"),
+        # the do and else positions, refused before this lane
+        ("PowerShell", "cmd /c for %i in (1) do =type .env"),
+        ("PowerShell", "cmd /c if 1==2 (echo a) else =type .env"),
+        ("Bash", "cmd //c 'for %i in (1) do =type .env'"),
+        ("Bash", "cmd //c 'if 1==2 (echo a) else =type .env'"),
+    ])
+    def test_every_refusal_the_reader_made_stands(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c echo a '&=' type README.md"),
+        ("PowerShell", "cmd /c if 1==1 =type .env.example"),
+        ("Bash", "cmd //c '=type .env.example'"),
+        ("Bash", "cmd //c 'echo =type .env'"),
+    ])
+    def test_a_template_an_assignment_or_a_mention_stays_allowed(self, tool, command, tmp_path):
+        """A dotenv template is no secret, a ``=`` inside a word is not at
+        its start, and a word after the program word is its argument."""
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        ("PowerShell", "cmd /c =rd /s /q ."),
+        ("PowerShell", "cmd /c call =rd /s /q ."),
+        ("Bash", "cmd //c '=rd /s /q .'"),
+        ("Bash", "cmd //c 'echo a &= rd /s /q .'"),
+    ])
+    def test_a_recursive_delete_cmd_runs_behind_a_leading_equals_walls(self, tool, command, tmp_path):
+        assert _delete_verdict(run_guard_from(tool, command, tmp_path, None)) == "wall", command
+
+    @pytest.mark.parametrize("program, want", [
+        ("=type .env", "type .env"),
+        ("echo a &= type .env", "echo a\ntype .env"),
+        ("echo a &=type .env", "echo a\ntype .env"),
+        ("if 1==1 =type .env", "type .env"),
+        ("if 1 == 1 =type .env", "type .env"),
+        ("call =type .env", "type .env"),
+        ("=call type .env", "type .env"),
+        ("@=type .env", "type .env"),
+        ("=cmd /c =type .env", "type .env"),
+        ("echo =type .env", "echo '=type' .env"),
+    ], ids=["line-start", "after-separator", "after-separator-glued", "after-if-condition",
+            "after-if-comparison", "after-call", "before-call", "after-echo-off",
+            "nested-cmd", "argument-kept"])
+    def test_the_program_word_is_read_past_its_leading_equals(self, program, want):
+        """`_cmd_program_as_ps`, the secret legs' reading of cmd's program:
+        each statement from its program word on, the ``=`` before it
+        skipped, and an argument's ``=`` kept."""
+        assert _bash_patterns_module()._cmd_program_as_ps(program) == want
+
+    def test_every_reader_of_a_statement_head_reads_the_word_through_the_helper(self):
+        """Every function that takes a statement's head from
+        `_bash_patterns._cmd_statement_head` also calls
+        `_bash_patterns._cmd_program_word`, so a reader added later that
+        took ``words[k]`` raw would read ``=type`` as the program (the
+        failure-mode review). Derived from the two modules' syntax trees,
+        so a new reader is counted without a hand list."""
+        import ast
+        readers: dict[str, bool] = {}
+        for name in ("_bash_patterns.py", "write_guard.py"):
+            tree = ast.parse((HOOKS_DIR / name).read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, ast.FunctionDef) or fn.name == "_cmd_statement_head":
+                    continue
+                called = {node.func.attr if isinstance(node.func, ast.Attribute)
+                          else getattr(node.func, "id", None)
+                          for node in ast.walk(fn) if isinstance(node, ast.Call)}
+                if "_cmd_statement_head" in called:
+                    readers[f"{name}::{fn.name}"] = "_cmd_program_word" in called
+        assert len(readers) >= 3, readers
+        assert all(readers.values()), readers
+
+    @pytest.mark.parametrize("program", ["=rd /s /q build", "call =rd /s /q build",
+                                         "if exist build =rd /s /q build"],
+                             ids=["line-start", "after-call", "after-if-condition"])
+    def test_the_delete_reader_reads_past_a_leading_equals(self, program):
+        """`iter_cmd_remove_targets`, the delete reader on the Bash tool."""
+        command = "cmd //c " + program
+        assert list(_bash_patterns_module().iter_cmd_remove_targets(command)) == [["build"]]
 
 
 #: DEF-2082's forms, each beside its control one step inside the contract:

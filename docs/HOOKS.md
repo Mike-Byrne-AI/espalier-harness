@@ -2294,9 +2294,14 @@ that kills on close ends what is left in it), writes the deny, and is gone
 by 4.6 s from the hook's start (`EXIT_BY_S`, the deny's own write of a few
 milliseconds aside), whatever its own `pretooluse_blocked_time_budget`
 record, written after the deny, is still doing. The child writes one line on
-stderr as it begins judging, with its clock, which the parent takes out of
-what it relays and, at its deadline, reads for whether the child had begun
-and when, so its refusal says which of start-up and judging spent the time.
+stderr as it begins judging, with its clock: once it has read the payload
+and, for a call that loads the two pattern modules (one carrying a command,
+and every mutation or MCP call), imported them, since that import is
+start-up a busy machine spends on any command and no judgment has run
+before it; the patterns a judgment reads compile on their first use, after
+the line. The parent takes the line out of what it relays and, at its
+deadline, reads it for whether the child had begun and when, so its refusal
+says which of start-up and judging spent the time.
 A child still running 2.0 s after the hook's start (`_BUILD_THE_REFUSAL_AT_S`)
 has the parent build its refusal while it waits: the reasons, the audit
 helpers, the project root, the log's path and the lock's first-use imports,
