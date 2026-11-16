@@ -1488,7 +1488,7 @@ class TestAdopterZoneReadingEdges:
         )
         r = subprocess.run(
             [sys.executable, "-c", script, str(HOOKS_DIR), str(tmp_path), *trees],
-            capture_output=True, text=True, timeout=scaled(30),
+            capture_output=True, text=True, encoding="utf-8", timeout=scaled(30),
         )
         assert r.returncode == 0, r.stderr
         seen = dict(line.rsplit(" ", 1) for line in r.stdout.splitlines())
