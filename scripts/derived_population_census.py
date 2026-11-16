@@ -788,7 +788,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "passing vacuously. ",
     ),
     "tests/test_documented_claims.py": (
-        3, "1500b796e2e38387b2019914d8ba703cb1bae4876d754ed6a952ce21887b72b9",
+        5, "76c81a8b04261343033eb429aa166107bd14d6e39858c419174948432eedb030",
         "MIXED",
         "derives the EXPECTATION and compares it against an independently obtained actual -- the corre..."
         " The second and third rows (2026-10-08) walk `dataclasses.fields(HarnessConfig)` and "
@@ -796,7 +796,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "population-side, so a field deleted from HarnessConfig drops its row silently (inert: a "
         "stale commented line is not a key), while a new field with no line is loud; the sibling "
         "row in the same class holds examples/espalier.toml byte-equal to the render, which reds "
-        "on any change of the render.",
+        "on any change of the render."
+        " GROWTH 3->5 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): the "
+        "plain-key-above-the-first-table test walks the same two populations as that roster and "
+        "asserts each key rendered as a plain line sits above the first commented table header, a "
+        "property any subset keeps (CORRECT_BY_PROPERTY); a key dropped from the roster leaves the "
+        "render and reds on the byte-equal snapshot row, and an empty roster reds on its own "
+        "non-empty assert.",
     ),
     "tests/test_exemplar_parity.py": (
         4, "18964e09c44373cac01ebc7b9c51bc5ac6e292bd6b2de57657bb3cf149f8d89f",
@@ -827,9 +833,24 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_forced_copy_parity.py": (
-        2, "5152aa6464d07a0aa5b3a7984b22f04af2b16a52341d4799c1ccf13fccb3b619",
-        "CORRECT_BY_SHAPE",
-        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
+        6, "8f86890276972d55afedafe22b6feb918213e06119abc2d3a211ff66fb1b7b8f",
+        "MIXED",
+        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre..."
+        " GROWTH 2->4 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): "
+        "TestEngineConfigKeysParity derives the engine's key set from `dataclasses.fields(HarnessConfig)` "
+        "and `config.FOREIGN_KEYS` and holds it equal, both ways, to the hand-written literal "
+        "`_hook_utils.ENGINE_CONFIG_KEYS` (CORRECT_BY_SHAPE: a field dropped from the engine leaves the "
+        "literal holding it, and the copy-minus-engine test reds by name). The fourth row, the zone keys of "
+        "`hook_utils.ADOPTER_ZONE_KEYS` held a subset of that copy, is a property any subset keeps "
+        "(CORRECT_BY_PROPERTY); a zone key renamed or dropped from the roster reds one file over, in "
+        "tests/test_config_fields_consumed.py::TestEveryConfigFieldIsConsumed, whose map names that roster as "
+        "both zone fields' reader."
+        " GROWTH 4->6 adjudicated 2026-11-16, same lane: test_every_key_a_hook_names_is_an_engine_key "
+        "walks `hook_utils.ADOPTER_ZONE_KEYS` and `hook_utils.RELIEF_AGENT_KEYS` beside the constants it "
+        "reads by name and asserts each key is in the hook copy, a property any subset keeps "
+        "(CORRECT_BY_PROPERTY); a dropped zone key reds at TestEveryConfigFieldIsConsumed as above, the "
+        "relief keys are held equal to their two names in this file's relief-shape test, and a renamed "
+        "constant reds on the test's own 'assigns no module-level' read.",
     ),
     # 4 row(s), shapes: comprehension, for-assert
     "tests/test_freshness_semantic_fragments.py": (
@@ -904,9 +925,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     "tests/test_hook_utils.py": (
-        1, "37bedf36f74335da3a86c0ce499d39612e7a8c2100962ebe36678a23a23acbf9",
-        "PRIOR_PASS_UNRECORDED",
-        "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
+        2, "42bbced7206573ce017f8ec9d1594e330ee00d607a11e87bb4bbff2e5c5f2c04",
+        "MIXED_WITH_PRIOR_PASS",
+        "adjudicated in the parametrize/for-assert pass; per-row reason not preserved"
+        " GROWTH 1->2 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): "
+        "test_the_quick_bound_never_turns_away_a_key_difflib_would_match takes its zone keys from "
+        "`hu.ADOPTER_ZONE_KEYS` and drives `_may_be_close` against difflib over each; its claim, that the "
+        "bound never turns away a pair the match takes, holds for any subset (CORRECT_BY_PROPERTY), its "
+        "`taken > 50` floor reds a drained roster, and a zone key renamed or dropped from the roster reds "
+        "in tests/test_config_fields_consumed.py::TestEveryConfigFieldIsConsumed. The prior row stays unrecorded.",
     ),
     "tests/test_hooks.py": (
         6, "89b9ab9e0c4c4254a79726f501528b9b6aefa2b5f81b305f0e8e557f50053a05",

@@ -21,6 +21,10 @@ CONFIG_NAME = "espalier.toml"
 # outside the engine reads from the same file must be declared here or every load
 # of that tree warns -- and the obvious response, deleting the key, removes the
 # refusal it carries. Value: the reader, for the message and the census.
+# These keys and HarnessConfig's fields have a pinned copy on the hook side,
+# ``tools/cc/hooks/_hook_utils.py::ENGINE_CONFIG_KEYS`` (the hooks cannot import
+# the engine; tests/test_forced_copy_parity.py pins the two equal): add a key to
+# both.
 FOREIGN_KEYS: dict[str, str] = {
     "record_requires_exclusions": "scripts/record_snapshot.py",
     "record_remote_required": "scripts/record_snapshot.py",
@@ -30,6 +34,7 @@ FOREIGN_KEYS: dict[str, str] = {
     "id_blocks": "tools/cc/ledger_row.py",
     "changelog_fragments": "tools/cc/_record_fragments.py",
     "ledger_fragments": "tools/cc/_record_fragments.py",
+    "session_catch_up": "tools/cc/hooks/session_start.py",
 }
 
 

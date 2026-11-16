@@ -906,6 +906,37 @@ class TestDeployTemplateSnapshots:
             (scratch / "espalier.toml").unlink(missing_ok=True)
             scratch.rmdir()
 
+    def test_toml_template_puts_every_plain_key_above_the_first_table(self):
+        """TOML reads every key below a ``[table]`` header as that table's,
+        so a plain key commented out below one lands in the table the day an
+        adopter uncomments both: ``ledger_fragments`` rendered under
+        ``[id_blocks]`` until 2026-11-16, beside that block's own "keep it
+        below every plain key". Derived over the same roster as the test
+        above: each key rendered as a plain ``# key =`` line comes before the
+        first commented table header."""
+        import dataclasses
+        import re
+
+        from espalier.cli import render_canonical_template
+        from espalier.config import FOREIGN_KEYS
+        from espalier.models import HarnessConfig
+
+        text = render_canonical_template("toml")
+        roster = [f.name for f in dataclasses.fields(HarnessConfig)] + [
+            k for k, reader in FOREIGN_KEYS.items() if reader.startswith("tools/cc/")
+        ]
+        plain = {}
+        for key in roster:
+            found = re.search(rf"(?m)^# {re.escape(key)}\s*=", text)
+            if found:
+                plain[key] = found.start()
+        first_table = re.search(r"(?m)^# \[[A-Za-z0-9_-]+\]\s*$", text)
+        assert first_table, "the render has no commented table header -- the pin is vacuous"
+        # Every key having a line is the test above's pin; this one needs some.
+        assert plain, "no plain key line found -- the pin is vacuous"
+        below = sorted(k for k, at in plain.items() if at > first_table.start())
+        assert not below, f"plain keys rendered below {first_table.group(0)!r}: {below}"
+
     def test_changelog_template_snapshot_matches_generator(self):
         from espalier.cli import render_canonical_template
         snapshot = _read(REPO_ROOT / "examples" / "CHANGELOG.template.md")

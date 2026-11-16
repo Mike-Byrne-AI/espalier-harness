@@ -1191,8 +1191,13 @@ first; the dangerous-command catch is a secondary slip-catcher):
      off for the session. An entry that is not a list of strings, is absolute,
      or would cover the whole tree protects nothing and SAYS so, once a
      session (a stderr line and a `config_zone_ignored` audit record); so
-     does a key name one letter off. `/status --explain <path>` reports both
-     zones.
+     does a top-level key whose nearest key the engine reads is one of the
+     two (the engine loader's close-match at its cutoff, which reaches past
+     one letter: `protect_paths`, `generated_path`), whether or not the other
+     zone is set. A key the engine itself reads, such as `exclude_paths`, is
+     never taken for a misspelled zone, and neither is one nearer another key
+     the engine reads (`excluded_paths`, which the loader names as a near
+     miss of `exclude_paths`). `/status --explain <path>` reports both zones.
 
    The prefixes are read relative to the checkout that contains the path.
    Inside a registered git worktree of the repository — the checkout a
