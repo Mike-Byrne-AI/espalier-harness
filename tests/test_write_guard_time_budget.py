@@ -1045,6 +1045,13 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
 
 
+#: Stands for the guard's begun mark in the parametrize rows below, which
+#: resolve it in the test: a name the guard gained in this lane, read at
+#: collection, would stop the whole module collecting on a tree without it,
+#: and a strike's guard row runs this module at its base.
+_THE_MARK = b"<the begun mark>"
+
+
 class TestTheRefusalReadsWhatSpentTheTime:
     """DEF-2091's reading and rule, on their own: what the parent drains from
     a killed child, and which remedy each reading earns."""
@@ -1062,12 +1069,13 @@ class TestTheRefusalReadsWhatSpentTheTime:
         ([], (None, None, None)),
         ([b""], (False, write_guard.HARD_DEADLINE_S, 0.0)),
         ([b"a traceback, and no mark\n"], (False, write_guard.HARD_DEADLINE_S, 0.0)),
-        ([write_guard._BEGUN_MARK], (True, None, None)),
-        ([write_guard._BEGUN_MARK + b"not a time\n"], (True, None, None)),
-        ([write_guard._BEGUN_MARK + b"-5.0\n"], (True, None, None)),
+        ([_THE_MARK], (True, None, None)),
+        ([_THE_MARK + b"not a time\n"], (True, None, None)),
+        ([_THE_MARK + b"-5.0\n"], (True, None, None)),
     ], ids=["nothing read", "nothing written", "no mark", "a mark cut short", "a mark that is no time",
             "a time outside the hook's clock"])
     def test_a_reading_without_a_usable_time(self, heard, expected):
+        heard = [part.replace(_THE_MARK, write_guard._BEGUN_MARK) for part in heard]
         assert write_guard._how_the_child_spent_it(heard) == expected
 
     def test_a_mark_inside_the_hooks_clock_splits_the_deadline(self):
