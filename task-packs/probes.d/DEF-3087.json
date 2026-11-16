@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3087",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c 'import contextlib, io, os, subprocess, sys, tempfile, pathlib; sys.path.insert(0, \"tools/cc/hooks\"); import session_start as s; t = tempfile.TemporaryDirectory(); d = pathlib.Path(t.name).resolve(); r = d / \"before\"; r.mkdir(); g = lambda *a: subprocess.run([\"git\", \"-C\", str(r), *a], capture_output=True, check=True); g(\"init\", \"-q\"); g(\"config\", \"core.excludesFile\", \"\"); g(\"-c\", \"user.name=p\", \"-c\", \"user.email=p@p\", \"-c\", \"commit.gpgsign=false\", \"commit\", \"-q\", \"--allow-empty\", \"-m\", \"i\"); g(\"worktree\", \"add\", \"-q\", \"-b\", \"seat\", str(r / \".claude\" / \"worktrees\" / \"2\")); m = d / \"after\"; os.rename(r, m); o = io.StringIO(); c = contextlib.redirect_stdout(o); e = contextlib.redirect_stderr(o); c.__enter__(); e.__enter__(); s._warn_if_nested_repo_litter(m, cwd=m); e.__exit__(None, None, None); c.__exit__(None, None, None); print(\"git worktree repair\" not in o.getvalue())'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "970a3ced5abe",
+ "text_sha": "89313e442da5",
+ "verified_2026_11_15": "OPEN (filed 2026-11-15; probe driven at filing here and in the export of HEAD 3242e22fdb31)"
+}

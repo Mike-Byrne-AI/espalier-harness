@@ -3589,8 +3589,9 @@ def _find_nested_repo_litter(
       exited (``checkout_sync.lock_holder_dead``: seven such stale locks hid
       seven leftovers on 2026-10-08). Claude Code holds a ``git worktree lock`` on a
       running agent's or backgrounded session's worktree, and git refuses
-      ``worktree remove`` on a locked tree, so the remedy this reporter
-      prescribes cannot apply. Claude Code's lock can outlive its session (a
+      ``worktree remove`` on a locked tree, so the removal this reporter
+      prescribes outside ``.claude/worktrees/`` cannot apply (a tree inside it
+      is sent to the reaper's dry run, DEF-3086). Claude Code's lock can outlive its session (a
       killed background session, a ``-p`` run) until the stale-lock sweep
       releases it, and a lock you set yourself is never swept: for that
       window, or until you unlock it, the worktree goes unreported rather
@@ -3600,7 +3601,8 @@ def _find_nested_repo_litter(
 
     The ``locked`` set comes from the worktree list, so when that command
     fails or times out the lock skip is lost and the untracked descent may
-    report a locked worktree (with the remedy git refuses); the ``cwd`` skip
+    report a locked worktree (outside ``.claude/worktrees/``, with the removal
+    git refuses; inside it, with the reaper's dry run); the ``cwd`` skip
     does not depend on it. That degradation errs toward noise, the right bias
     for a reporter, and is pinned by test.
 
@@ -4236,7 +4238,7 @@ def _sync_checkout(
     if sync is None:
         if asked:
             _hook_utils.advise(f"[WARN] {CATCH_UP_KEY} is on but tools/cc/checkout_sync.py is not deployed "
-                               "beside the hooks -- `espalier upgrade` deploys it.")
+                               "beside the hooks -- `espalier upgrade --execute` deploys it.")
         return "", "", []
     sessions = sync.live_sessions()
     unreadable = ""
@@ -4324,6 +4326,35 @@ def _detached_head(worktree: Path) -> bool:
         return False
 
 
+#: The reaper's home, repo-relative: the folder ``checkout_sync.reap_worktrees``
+#: judges (its ``WORKTREES_REL``), where Claude Code puts a ``--worktree``
+#: session's tree and an agent's. The copy is for a deploy set without that
+#: module, where nothing else names it.
+_REAPER_HOME = (".claude", "worktrees")
+
+
+def _marker_held(root: Path, litter: list[str], sync: Any) -> set[str]:
+    """The entries of ``litter`` a session marker touched within the live
+    window places a session in: one in the tree's own state directory, or one
+    of the root's whose recorded cwd is inside the tree (a session that
+    entered it) -- the reaper's two marker reads (``_sync_checkout``'s
+    ``marker_live`` and its marker rows), by the same reader, so the line
+    leaves out what the reaper keeps for a live session (DEF-3086). The root's
+    markers are placed by ``checkout_sync.within``, so they are read only
+    where that module is deployed. File reads alone, no spawn."""
+    found = getattr(sync, "within", None) if sync is not None else None
+    place: Any = found if callable(found) else None
+    cwds = ([str(row.get("cwd") or "") for row in _hook_utils.other_live_sessions(root, "")]
+            if place is not None else [])
+    held: set[str] = set()
+    for rel in litter:
+        tree = root / rel
+        if _hook_utils.other_live_sessions(tree, "") or (
+                place is not None and any(cwd and place(cwd, tree) for cwd in cwds)):
+            held.add(rel)
+    return held
+
+
 def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered: list[str] | None = None) -> None:
     """Surface untracked nested-repo litter at boot (defense-in-depth).
 
@@ -4348,19 +4379,35 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     A scan that did not finish says so: a git read killed at its cap is a
     WARN beside the litter it did find, and the descent's node cap an INFO
     naming the folder to ignore, since it repeats on every start.
-    The litter it names gets one WARN per kind, each leading with a remedy
-    git guards and ending with the paths, so the banner's per-line cut costs
-    paths first (DEF-5109): a registered worktree of this repository the
-    plain ``git worktree remove``, which git refuses while the tree holds
-    uncommitted changes or untracked files (a detached HEAD's own commits it
-    does not guard, so a detached tree adds the branch step); any other
-    nested repo a move out of the working tree or a ``.gitignore`` entry,
-    since a removal from here cannot take it and deleting it drops what only
-    it holds. Declared limits, each named on the line or here: ignored files
-    go with a removed tree; a tree stopped mid-rebase, or one a live session
-    of another seat holds without a lock, reads as a leftover; and a
-    registry the helper cannot read (a moved repository folder, entries past
-    its cap) sorts a worktree as a nested repo, whose remedy names no removal.
+    A tree a session marker touched within the live window places a session
+    in (``_marker_held``: the reaper's own marker reads) is in use too, and
+    goes unnamed (DEF-3086).
+    The litter it names gets one WARN per kind, each leading with its remedy
+    and ending with the paths, so the banner's per-line cut costs paths first
+    (DEF-5109): a registered worktree under ``.claude/worktrees/``, the
+    reaper's home, the reaper's dry run (``tools/cc/checkout_sync.py``, no
+    flag, run from this session's shell: from another terminal it reads this
+    session as one more in the checkout and judges no tree), which judges the
+    session registry, a lock, an operation in
+    progress, commits not in main and ignored files -- reached only when no
+    reaper judged that tree at this start (a resume or compact start, catch-up
+    off, a tree it deferred for time), and never a removal, which git carries
+    out on a live session's clean tree (DEF-3086); any other registered
+    worktree of this repository the plain ``git worktree remove``, which git
+    refuses while the tree holds uncommitted changes or untracked files (a
+    detached HEAD's own commits it does not guard, so a detached tree adds the
+    branch step); any other nested repo a move out of the working tree or a
+    ``.gitignore`` entry, since a removal from here cannot take it and
+    deleting it drops what only it holds. Declared limits, each named on the
+    line or here: outside the reaper's home, ignored files go with a removed
+    tree, and a tree stopped mid-rebase, or one a session holds with no lock
+    and no live marker, reads as a leftover; a registry the helper cannot read
+    in full (entries past its cap) sorts a worktree as a nested repo, whose
+    remedy names no removal; and after the repository folder moves, a
+    worktree under it, whose links now dangle, is named not at all (git status
+    is blind to a dangling gitlink, and the worktree list names the old path)
+    or, beside other untracked content, as a nested repo, never with
+    ``git worktree repair`` (DEF-3087).
     Spoken through ``_hook_utils.advise``, so each line joins the banner's
     Warnings block (stderr keeps the debug copy). Silent when the tree is clean.
     """
@@ -4407,6 +4454,22 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         named = {str(Path(p).resolve()).replace("\\", "/").casefold() for p in covered}
         litter = [rel for rel in litter
                   if str((root / rel).resolve()).replace("\\", "/").casefold() not in named]
+    # Loaded only with litter to sort: the reaper's marker reads and its home.
+    # A copy that raises at import (a half-upgrade) costs its rules here, said
+    # once, never the lines below; the line then names the upgrade.
+    sync: Any = None
+    if litter:
+        try:
+            sync = _hook_utils.load_checkout_sync()
+        except Exception as e:  # noqa: BLE001 -- a broken reaper costs its rules, never the litter lines
+            _hook_utils.advise_exc("session_start: tools/cc/checkout_sync.py did not import", e)
+            sync = None
+    if litter:
+        # A tree a live session's marker places a session in is in use, as a
+        # locked one is: the reaper keeps it, and a removal or a move would
+        # pull it from under that session (DEF-3086).
+        held = _marker_held(root, litter, sync)
+        litter = [rel for rel in litter if rel not in held]
     killed = [u for u in unread if "did not answer" in u]
     capped = [u for u in unread if u not in killed]
     if killed:
@@ -4439,6 +4502,38 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     # and a long list must cost paths, never the remedy or its caveats.
     trees = [rel for rel in litter if _is_registered_worktree(root, rel)]
     clones = [rel for rel in litter if rel not in trees]
+    # A worktree in the reaper's home that no reaper judged at this start (a
+    # resume or compact start, catch-up off, a tree it deferred for time) is
+    # sent to the reaper's dry run, never to a removal: git takes a clean
+    # tree, a live session's included, and that dry run reads what this line
+    # cannot under the wall -- the session registry, a lock when the worktree
+    # list is lost, an operation in progress, commits not in main, ignored
+    # files (DEF-3086; leads 1, 2 and 4 of note e72e1b). Placed by the reaper's
+    # own rule where it is deployed.
+    home = root.joinpath(*getattr(sync, "WORKTREES_REL", _REAPER_HOME))
+    place_in_home = getattr(sync, "within", None)
+    unjudged = [rel for rel in trees
+                if (place_in_home(root / rel, home) if callable(place_in_home)
+                    else (rel.casefold() + "/").startswith("/".join(_REAPER_HOME) + "/"))]
+    trees = [rel for rel in trees if rel not in unjudged]
+    if unjudged:
+        py = _hook_utils.python_command_hint()
+        script = f"{py} tools/cc/checkout_sync.py" if py else "tools/cc/checkout_sync.py"
+        # DEF-2062: a quoted word's PowerShell note, by getattr (a kept older helper lacks it).
+        note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
+        run = (f"`{script}`{note}" if sync is not None
+               else f"`espalier upgrade --execute`, then `{script}`{note}")
+        # The dry run judges from the shell of the session it is run in: from
+        # another terminal it reads that session as one more in the checkout
+        # and holds every tree unjudged. The caveat and the remedy lead, so the
+        # banner's cut costs the paths, then the reasons, then the PowerShell
+        # note of the longest interpreter spelling, never either of them.
+        _hook_utils.advise(
+            f"[WARN] {_hook_utils.plural(len(unjudged), 'worktree')} under {'/'.join(_REAPER_HOME)}/ not judged "
+            "at this start, and a removal by hand would take a live session's clean tree: from this session's "
+            f"shell, {run} judges each (it reads a live session, a lock, an operation in progress, work not in "
+            f"main): {_shown(unjudged)}",
+        )
     if trees:
         # The plain removal: git refuses a worktree that holds uncommitted
         # changes or untracked files, so its refusal guards the uncommitted

@@ -224,12 +224,24 @@ and leaves the worktree in place when it holds an untracked file, a modified
 tracked file or a staged change (`contains modified or untracked files`), and
 when it is locked, clean or not; it removes a clean worktree, and one holding
 only ignored files, ignored files included. The reporter leans on that refusal
-(DEF-5109): the line for a registered worktree prescribes the plain removal and
-never the flag the upstream sentence above adds, so a leftover agent worktree
-holding uncommitted work is refused by git rather than removed with it; a
-locked worktree is refused as well, so the line names the unlock first. The
-refusal does not guard a detached HEAD's own commits (a clean detached tree is
-removed, and no branch keeps them), so the line adds a branch step for one.
+(DEF-5109): the line for a registered worktree outside `.claude/worktrees/`
+prescribes the plain removal and never the flag the upstream sentence above
+adds, so a leftover worktree holding uncommitted work is refused by git rather
+than removed with it; a locked worktree is refused as well, so the line names
+the unlock first. The refusal does not guard a detached HEAD's own commits (a
+clean detached tree is removed, and no branch keeps them), so the line adds a
+branch step for one. Nor does it guard a tree stopped mid-rebase: a rebase
+halted by a failing `--exec` leaves the tree clean, and the plain removal takes
+it, rebase and all (same git, same day: exit 0, folder gone).
+
+**Observed, not quoted** (Windows box, 2026-11-15): Claude Code holds no lock
+on the worktree of a running, foreground `claude --worktree` session --
+`git worktree list --porcelain` printed no `locked` line for the second seat's
+`.claude/worktrees/2` while that session ran -- so a clean one is a tree the
+plain removal takes. A registered worktree under `.claude/worktrees/` is
+therefore never sent to that removal (DEF-3086): the line names the catch-up
+reaper's dry run, `tools/cc/checkout_sync.py` with no flag, which reads
+Claude Code's session registry and the session markers, besides the lock.
 
 **Not asserted:** the page also says Claude Code "writes a marker into the git
 metadata of every worktree it creates with git" and that the sweep keeps any
@@ -315,17 +327,26 @@ cover them; only the `cwd` rule does, for the session inside one.
   the root and this pin is not their verification target.
 - `tools/cc/hooks/session_start.py::_warn_if_nested_repo_litter` names the
   litter in one WARN per kind, sorted by the same registry read
-  (`::_is_registered_worktree`, no spawn): a registered worktree gets the plain
-  `git worktree remove <path>` the observation above shows git refusing on a
-  tree that holds uncommitted work, and never the upstream sentence's flag,
-  with a branch step when a named tree's HEAD is detached; any other nested
-  repo gets a move out of the working tree (another repository's worktree
-  with that repository's `git worktree move`) or a `.gitignore` entry. Each
-  line leads with its remedy and ends with the paths, so the banner's
-  per-line cut costs paths first.
+  (`::_is_registered_worktree`, no spawn): a registered worktree under
+  `.claude/worktrees/` that no reaper judged at this start gets the reaper's
+  dry run (`tools/cc/checkout_sync.py`, no flag, run from the session's own
+  shell, since from another terminal it judges no tree; `espalier upgrade --execute`
+  first where it is not deployed), never a removal (DEF-3086); any other registered
+  worktree gets the plain `git worktree remove <path>` the observation above
+  shows git refusing on a tree that holds uncommitted work, and never the
+  upstream sentence's flag, with a branch step when a named tree's HEAD is
+  detached; any other nested repo gets a move out of the working tree
+  (another repository's worktree with that repository's `git worktree move`)
+  or a `.gitignore` entry. A tree a session marker touched within the live
+  window places a session in (`::_marker_held`, the reaper's own two marker
+  reads) is not named at all. Each line leads with its remedy and ends with
+  the paths, so the banner's per-line cut costs paths first.
   `tests/test_nested_repo_litter.py::TestEachKindGetsItsOwnRemedy` runs the
   prescribed removal against a dirty worktree and a clean one, and renders
-  seven entries through the banner's cut.
+  seven entries of each kind through the banner's cut;
+  `::TestATreeNoReaperJudgedGetsItsDryRun` pins the dry run for a clean,
+  unlocked tree, for a lost worktree list and for an undeployed reaper, and
+  the marker skip.
 - `tests/test_nested_repo_litter.py::TestWorktreeInUseIsNotLitter` — the
   function-level cases for both candidate sources (the excluded shape only the
   worktree list sees, and the untracked shape the descent sees), the payload
