@@ -551,3 +551,38 @@ class TestKnobShapeParity:
         assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
         assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
         assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}
+
+
+class TestEngineConfigKeysParity:
+    """``_hook_utils.ENGINE_CONFIG_KEYS`` is the hooks' copy of every top-level
+    espalier.toml key the engine knows (``HarnessConfig``'s fields and
+    ``config.FOREIGN_KEYS``), which the zone-key close-match passes over
+    (``exclude_paths`` was read as a misspelled ``protected_paths``). Pinned
+    equal both ways: a key the copy lacks is a false "did you mean" on every
+    tree that sets it, and a key the copy invents hides a real misspelling of a
+    zone key behind a name the engine does not read."""
+
+    def _sets(self):
+        import dataclasses
+
+        from espalier import config
+        from espalier.models import HarnessConfig
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_engine_keys_twin")
+        engine = {f.name for f in dataclasses.fields(HarnessConfig)} | set(config.FOREIGN_KEYS)
+        return hook_utils, engine, set(hook_utils.ENGINE_CONFIG_KEYS)
+
+    def test_the_hook_copy_holds_every_engine_key(self):
+        _, engine, copy = self._sets()
+        assert not engine - copy, f"add to _hook_utils.ENGINE_CONFIG_KEYS: {sorted(engine - copy)}"
+
+    def test_the_hook_copy_holds_no_key_the_engine_lacks(self):
+        _, engine, copy = self._sets()
+        assert not copy - engine, f"remove from _hook_utils.ENGINE_CONFIG_KEYS: {sorted(copy - engine)}"
+
+    def test_the_zone_keys_are_engine_keys(self):
+        """The close-match passes over the engine keys, and that is what keeps
+        a correctly spelled zone key out of it: a zone key missing from the set
+        would match itself at 1.0 and be told "did you mean" its own name."""
+        hook_utils, _, copy = self._sets()
+        assert {key for key, _ in hook_utils.ADOPTER_ZONE_KEYS} <= copy

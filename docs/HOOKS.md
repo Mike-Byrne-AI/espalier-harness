@@ -1178,7 +1178,11 @@ first; the dangerous-command catch is a secondary slip-catcher):
      off for the session. An entry that is not a list of strings, is absolute,
      or would cover the whole tree protects nothing and SAYS so, once a
      session (a stderr line and a `config_zone_ignored` audit record); so
-     does a key name one letter off. `/status --explain <path>` reports both
+     does a top-level key whose name is close to one of the two (the engine
+     loader's own close-match, which reaches past one letter:
+     `protect_paths`, `generated_path`), whether or not the other zone is
+     set. A key the engine itself reads, such as `exclude_paths`, is never
+     taken for a misspelled zone. `/status --explain <path>` reports both
      zones.
 
    The prefixes are read relative to the checkout that contains the path.

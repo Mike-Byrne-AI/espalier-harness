@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -713,6 +714,28 @@ _SAID_THIS_PROCESS: set[str] = set()
 ONCE_FLAG_PREFIX = "once_"   # session_start._clean_state_flags globs the family
 
 
+def _once_key(key: str) -> str:
+    """The flag-safe spelling of a :func:`say_once` key, shared with
+    :func:`said_once` so the two never read different flags."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(key)) or "unnamed"
+
+
+def said_once(root: Path, key: str) -> bool:
+    """Whether :func:`say_once` has already spoken under ``key`` this session:
+    in this process, or its flag under STATE_DIR is there. A caller whose
+    message costs something to work out asks first and skips the work where
+    nothing would be said. Never raises: a root or state dir that cannot be
+    read answers False, the reading say_once itself acts on (it speaks)."""
+    key = _once_key(key)
+    if key in _SAID_THIS_PROCESS:
+        return True
+    try:
+        return ((root if isinstance(root, Path) else Path(str(root))) / STATE_DIR / (ONCE_FLAG_PREFIX + key)).exists()
+    # fail-open: ok deliberate -- an unreadable flag answers not said, so the caller does the work and say_once decides
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **details: object) -> bool:
     """Speak about a fail-open once per session: a stderr line every time it
     would fire is noise, silence is the defect this exists to end. Writes one
@@ -727,7 +750,7 @@ def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **d
     dir), the in-process set keeps it to once per hook process. ``details``
     are metadata only -- a fault's class name, a key, a count -- never a
     payload's text."""
-    key = re.sub(r"[^A-Za-z0-9._-]", "_", str(key)) or "unnamed"
+    key = _once_key(key)
     if key in _SAID_THIS_PROCESS:
         return False
     _SAID_THIS_PROCESS.add(key)
@@ -1013,6 +1036,43 @@ ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Every top-level espalier.toml key the engine knows: the fields of
+#: ``espalier/models.py::HarnessConfig`` and the keys of
+#: ``espalier/config.py::FOREIGN_KEYS`` (the keys a script outside the engine
+#: reads). The hooks cannot import the engine, so this is a pinned copy, equal
+#: both ways (``tests/test_forced_copy_parity.py::TestEngineConfigKeysParity``).
+#: The zone-key close-match in :func:`adopter_protected_prefixes` passes over
+#: them: ``exclude_paths`` scores 0.64 against ``protected_paths`` and is a key
+#: of its own, not a misspelling of one.
+ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({
+    # HarnessConfig's fields
+    "preferred_profiles", "suppress_profiles", "extra_actions", "suppress_actions",
+    "include_paths", "exclude_paths", "protected_paths", "generated_paths",
+    "lane_count", "surface_mode", "default_profile", "plan_exempt_prefixes",
+    "source_extensions", "dependency_dirs", "code_review_agents", "docs_refresh_agents",
+    "goal_snapshot", "gitignore_declined", "recall_sources", "recall_records",
+    # FOREIGN_KEYS
+    "record_requires_exclusions", "record_remote_required", "handoff_push",
+    "handoff_context_tokens", "dispatcher", "id_blocks", "changelog_fragments",
+    "ledger_fragments",
+})
+
+
+def _may_be_close(word: str, possibility: str, cutoff: float) -> bool:
+    """Whether ``difflib.get_close_matches`` could take ``word`` for
+    ``possibility`` at ``cutoff``: SequenceMatcher's ``quick_ratio`` bound (the
+    characters the two share, counted with repeats, over their joint length),
+    worked out without importing difflib. The ratio never exceeds it, so a
+    False here is a pair the match rejects too; it keeps difflib (1.2 to 2.3
+    ms cold, measured 2026-11-16 on Windows) out of a hook process whose
+    unknown keys look nothing like a zone key."""
+    length = len(word) + len(possibility)
+    if not length:
+        return True
+    shared = sum((Counter(word) & Counter(possibility)).values())
+    return 2.0 * shared / length >= cutoff
+
+
 _ADOPTER_ZONES_MEMO: dict[str, tuple[tuple[int, int], tuple[tuple[str, str], ...]]] = {}
 
 
@@ -1084,21 +1144,30 @@ def adopter_protected_prefixes(root: Path) -> tuple[tuple[str, str], ...]:
                 )
                 continue
             out.append((spelled + "/", kind))
-    if not out and table is not None:
+    if table is not None:
         # A mistyped key NAME is the pack's own thesis unenforced at the hook:
         # the engine warns only when a CLI command runs. Same cutoff as
-        # config.load_config.
-        import difflib
-
+        # config.load_config. Read beside a valid zone too (a misspelled
+        # protect_paths next to a correct generated_paths protects nothing),
+        # over the keys the engine does not know (exclude_paths is a key of its
+        # own), and only where say_once would speak: this runs in every hook
+        # process, and importing difflib is the cost.
         wanted = [key for key, _ in ADOPTER_ZONE_KEYS]
         for present in table:
-            if present in wanted:
+            name = str(present)
+            if name in ENGINE_CONFIG_KEYS:
                 continue
-            near = difflib.get_close_matches(str(present), wanted, n=1, cutoff=0.6)
+            if not any(_may_be_close(name, key, 0.6) for key in wanted):
+                continue
+            if said_once(root, f"zone-typo-{name}"):
+                continue
+            import difflib
+
+            near = difflib.get_close_matches(name, wanted, n=1, cutoff=0.6)
             if near:
                 say_once(
-                    root, f"zone-typo-{present}", "write_guard", "config_zone_ignored",
-                    f"espalier.toml: `{present}` is not a key the guard reads "
+                    root, f"zone-typo-{name}", "write_guard", "config_zone_ignored",
+                    f"espalier.toml: `{name}` is not a key the guard reads "
                     f"(did you mean `{near[0]}`?); it protects nothing",
                 )
     result = tuple(out)
