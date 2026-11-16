@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 from tests._live_tree import checkout_rglob
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -399,6 +400,9 @@ _LOCK_PRIMITIVE_ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("tools/cc/_json_safe.py", "unlock_file"),
     ("tools/cc/_json_safe.py", "try_lock_file"),
     ("tools/cc/_json_safe.py", "_lock_byte"),
+    # The primitive's own warm-up: it imports the modules above and takes no
+    # lock, for write_guard's refusal record after its deny (DEF-2092).
+    ("tools/cc/_json_safe.py", "warm_lock"),
     ("espalier/_atomic_io.py", "lock_file"),
     ("espalier/_atomic_io.py", "unlock_file"),
     ("espalier/_atomic_io.py", "try_lock_file"),
@@ -581,3 +585,54 @@ class TestEveryLockSiteDegradesWhenTheLockIsRefused:
         with freshness._freshness_write_lock(tmp_path):
             runs += 1
         assert runs == 1
+
+
+#: A fresh interpreter takes and releases the primitive's lock on a file,
+#: after ``warm_lock`` or not, and prints as JSON the modules the lock
+#: imported (``late``), and which of the modules its first use imports this
+#: interpreter had loaded before ``warm_lock`` ran (``preloaded``).
+_LATE_LOCK_IMPORTS = textwrap.dedent('''
+    import json, sys
+    sys.path.insert(0, sys.argv[1])
+    import _json_safe
+    first_use = ["ctypes", "msvcrt", "ctypes.wintypes"] if sys.platform == "win32" else ["fcntl"]
+    preloaded = [m for m in first_use if m in sys.modules]
+    if sys.argv[3] == "warm":
+        _json_safe.warm_lock()
+    late = []
+
+    class _Watch:
+        def find_spec(self, name, *args, **kwargs):
+            late.append(name)
+            return None
+
+    sys.meta_path.insert(0, _Watch())
+    with open(sys.argv[2], "a", encoding="utf-8") as fh:
+        _json_safe.lock_file(fh)
+        _json_safe.unlock_file(fh)
+    print(json.dumps({"late": late, "first_use": first_use, "preloaded": preloaded}))
+''')
+
+
+@pytest.mark.parametrize("warm", [True, False], ids=["after warm_lock", "cold"])
+def test_after_warm_lock_the_lock_imports_nothing(tmp_path, warm):
+    """DEF-2092: write_guard's refusal writes its record after its deny, where
+    the lock's first-use imports (``ctypes`` on Windows) ran past the hook's
+    exit on a loaded box; ``warm_lock`` takes them while the parent waits. The
+    cold row proves the watch sees those imports at all. Where the interpreter
+    had loaded every one of them before the lock (the ``test (3.14)`` cell on
+    #685, 2026-11-16, read the cold lock importing nothing), a cold lock has
+    nothing to import and no row proves anything: both skip, naming them."""
+    result = subprocess.run(
+        [sys.executable, "-c", _LATE_LOCK_IMPORTS, str(TOOLS_CC), str(tmp_path / "f.log"),
+         "warm" if warm else "cold"],
+        capture_output=True, text=True, encoding="utf-8", timeout=scaled(_CHILD_DEADLINE_S))
+    assert result.returncode == 0, result.stderr
+    got = json.loads(result.stdout.strip().splitlines()[-1])
+    if got["preloaded"] == got["first_use"]:
+        pytest.skip(f"this interpreter loaded {got['preloaded']} before the lock: a cold lock imports nothing")
+    if warm:
+        assert got["late"] == [], got
+    else:
+        assert got["late"], (f"the cold lock imported nothing, so the warm row proves nothing (loaded before "
+                             f"the lock: {got['preloaded']} of {got['first_use']})")

@@ -258,6 +258,201 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
         assert isinstance(caught.value, OSError)
         assert isinstance(caught.value.__cause__, OSError), caught.value.__cause__
 
+    def test_at_the_deadline_heard_takes_what_the_child_wrote_on_stderr(self, tmp_path):
+        """DEF-2091: ``write_guard``'s parent tells a child that had begun
+        judging from one still starting up by what the child wrote before the
+        kill, so the stderr drained at the deadline goes to ``heard``."""
+        js = _load_json_safe()
+        done = tmp_path / "sleeper.done"
+        began = tmp_path / "sleeper.began"
+        # The child marks its first line before it writes, so a red tells a
+        # child the cap's load kept from starting from a drain that lost what
+        # it wrote.
+        # The sleep outlasts the cap however far a ceiling scales it.
+        body = (f"import os, time; open({str(began)!r}, 'w').close(); os.write(2, b'began\\n'); "
+                f"time.sleep({scaled(CAP_SECONDS) + HOLD_SECONDS}); open({str(done)!r}, 'w').write('done')")
+        heard: list[bytes] = []
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body],
+                                         deadline=time.monotonic() + scaled(CAP_SECONDS), input=b"", heard=heard)
+        assert not done.exists(), "the call waited for the child's sleep"
+        assert answer is None, answer
+        assert began.exists(), ("the child never reached its first line inside the cap: the box's load, not"
+                                " the drain", heard)
+        assert heard == [b"began\n"], heard
+
+    def test_a_reader_thread_that_cannot_start_leaves_stderr_to_the_drain(self, monkeypatch):
+        """Where ``heard`` is asked on Windows, stderr is read on a thread of
+        its own; one that cannot start leaves it to ``communicate``, as on
+        POSIX, never a raise before the tree's guard that loses the answer
+        and leaves the child running (DEF-2094's review)."""
+        import threading
+
+        js = _load_json_safe()
+        start = threading.Thread.start
+        refused: list[int] = []
+
+        def refuse_the_reader(self: threading.Thread) -> None:
+            if getattr(self, "_target", None) is js._read_chunks:
+                refused.append(1)
+                raise RuntimeError("can't start new thread")
+            start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", refuse_the_reader)
+        body = "import sys; sys.stdout.write('out'); sys.stderr.write('err')"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + scaled(30),
+                                         input=b"", heard=[])
+        assert answer == (0, b"out", b"err"), answer
+        # The reader thread is Windows' alone: elsewhere this row proves only the answer.
+        assert refused == ([1] if os.name == "nt" else []), refused
+
+    def test_an_ahead_thread_that_cannot_start_leaves_the_wait_to_answer(self, monkeypatch):
+        """``ahead``'s callback starts on a thread of its own; one that cannot
+        start is skipped and the wait goes on, never a raise that loses the
+        child's answer (DEF-2094's review)."""
+        import threading
+
+        js = _load_json_safe()
+        start = threading.Thread.start
+        ran: list[int] = []
+
+        def build() -> None:
+            ran.append(1)
+
+        refused: list[int] = []
+
+        def refuse_the_build(self: threading.Thread) -> None:
+            if getattr(self, "_target", None) is build:
+                refused.append(1)
+                raise RuntimeError("can't start new thread")
+            start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", refuse_the_build)
+        body = "import sys, time; time.sleep(0.5); sys.stdout.write('late')"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + scaled(30),
+                                         input=b"", ahead=(time.monotonic() + 0.05, build))
+        assert answer is not None and answer[:2] == (0, b"late"), answer
+        assert ran == [], ran
+        # The child sleeps past ``ahead``'s time, so the refusal was met.
+        assert refused == [1], refused
+
+    def test_a_feeder_that_cannot_start_ends_the_child_and_says_none_ran(self, monkeypatch):
+        """The input goes in from a thread of its own; one that cannot start
+        leaves the child without its input, so it did nothing with it: the
+        tree is ended and the caller is told no child ran (``TreeStartError``),
+        so ``write_guard`` judges the call itself rather than refusing it as a
+        fault inside a run (F5 of DEF-2094's review)."""
+        import threading
+
+        js = _load_json_safe()
+        start = threading.Thread.start
+        made: list[subprocess.Popen] = []
+        popen = subprocess.Popen
+
+        def recording(*args, **kwargs):
+            proc = popen(*args, **kwargs)
+            if not made:  # the child; the tree kill's own spawns (Windows' taskkill) go unrecorded
+                made.append(proc)
+            return proc
+
+        def refuse_the_feeder(self: threading.Thread) -> None:
+            if getattr(self, "_target", None) is js._feed:
+                raise RuntimeError("can't start new thread")
+            start(self)
+
+        monkeypatch.setattr(subprocess, "Popen", recording)
+        monkeypatch.setattr(threading.Thread, "start", refuse_the_feeder)
+        sleeps = f"import time; time.sleep({scaled(10) + HOLD_SECONDS})"
+        try:
+            with pytest.raises(js.TreeStartError) as caught:
+                js.run_tree_to_deadline([sys.executable, "-c", sleeps], deadline=time.monotonic() + scaled(30),
+                                        input=b"x")
+            assert isinstance(caught.value.__cause__, RuntimeError), caught.value.__cause__
+            assert len(made) == 1, made
+            try:
+                made[0].wait(timeout=scaled(10))
+            except subprocess.TimeoutExpired:
+                pytest.fail("the child outlived the raise: nothing ended the tree")
+        finally:
+            for proc in made:
+                proc.kill()
+
+    def test_a_raise_in_the_deadlines_read_still_ends_the_tree(self, monkeypatch):
+        """At the deadline the runner reads whether the child ended on its own
+        before it ends the tree; a raise in that read (an interrupt) still ends
+        it, since the handler it sits in is outside the guard that ends the
+        tree on a raise, and on POSIX the child's own session keeps it out of
+        any kill of the caller (F6 of DEF-2094's review)."""
+        js = _load_json_safe()
+        made: list[subprocess.Popen] = []
+        popen = subprocess.Popen
+
+        def recording(*args, **kwargs):
+            proc = popen(*args, **kwargs)
+            if made:  # the tree kill's own spawns (Windows' taskkill) read as they are
+                return proc
+            read = proc.poll
+            calls: list[int] = []
+
+            def raise_first() -> int | None:
+                calls.append(1)
+                if len(calls) == 1:
+                    raise RuntimeError("an interrupt in the read")
+                return read()
+
+            proc.poll = raise_first  # type: ignore[method-assign]
+            made.append(proc)
+            return proc
+
+        monkeypatch.setattr(subprocess, "Popen", recording)
+        # The sleep outlasts the wait below however far a ceiling scales both.
+        sleeps = f"import time; time.sleep({scaled(10) + HOLD_SECONDS})"
+        try:
+            with pytest.raises(RuntimeError, match="an interrupt in the read"):
+                js.run_tree_to_deadline([sys.executable, "-c", sleeps], deadline=time.monotonic() + 0.5, input=b"")
+            assert len(made) == 1, made
+            try:
+                made[0].wait(timeout=scaled(10))
+            except subprocess.TimeoutExpired:
+                pytest.fail("the child outlived the raise: nothing ended the tree")
+        finally:
+            for proc in made:
+                proc.kill()
+
+    def test_a_child_that_answers_before_ahead_never_starts_it(self):
+        """DEF-2092's callback costs a call answered in time nothing: a child
+        that answers before ``ahead``'s time never starts it (40ec7f)."""
+        js = _load_json_safe()
+        started: list[int] = []
+        answer = js.run_tree_to_deadline([sys.executable, "-c", "pass"], deadline=time.monotonic() + 60,
+                                         input=b"", ahead=(time.monotonic() + 50, lambda: started.append(1)))
+        assert answer is not None and answer[0] == 0, answer
+        assert started == [], started
+
+    def test_a_child_still_running_at_ahead_starts_it_once_on_a_thread_of_its_own(self):
+        """A child still running at ``ahead``'s time starts its callback once,
+        on a thread of its own, and the wait goes on to the deadline: DEF-2092's
+        refusal is built there while the parent still waits."""
+        import threading
+
+        js = _load_json_safe()
+        ran: list[threading.Thread] = []
+        done = threading.Event()
+
+        def build() -> None:
+            ran.append(threading.current_thread())
+            done.set()
+
+        at = time.monotonic() + 0.5
+        answer = js.run_tree_to_deadline([sys.executable, "-c", f"import time; time.sleep({HOLD_SECONDS})"],
+                                         deadline=time.monotonic() + CAP_SECONDS, input=b"", ahead=(at, build))
+        assert answer is None, answer
+        assert done.wait(scaled(10)), "the callback never ran"
+        # The order, never a clock: this module asserts no wall-clock bound,
+        # and a callback started before ``ahead`` is the answered-in-time
+        # row's red (it starts none there).
+        assert len(ran) == 1, ran
+        assert ran[0] is not threading.main_thread()
+
 
 class TestTheTreeBoundedRunEndsTheWholeTree:
     """``_json_safe.run_tree_bounded``: ``run_bounded`` whose timeout, and any

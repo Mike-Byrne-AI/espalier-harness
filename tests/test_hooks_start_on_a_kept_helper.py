@@ -1059,6 +1059,101 @@ class TestAWedgedGuardNamesWhatRaised:
                 assert "run from a terminal" in _reason(c), (c.hook, _reason(c))
 
 
+#: DEF-2094's two runner plants, appended to ``tools/cc/_json_safe.py``: a
+#: runner that raises when it is called (an edit in progress), and a kept,
+#: older one whose signature predates ``heard`` and ``ahead``.
+_JSON_SAFE = "tools/cc/_json_safe.py"
+_RAISING_RUNNER = "\ndef run_tree_to_deadline(*args, **kwargs):\n    raise KeyError(4)\n"
+_KEPT_RUNNER = ("\n_newer_runner = run_tree_to_deadline\n"
+                "def run_tree_to_deadline(args, *, deadline, input, env=None):\n"
+                "    open(__file__ + '.called', 'a').close()\n"
+                "    return _newer_runner(args, deadline=deadline, input=input, env=env)\n")
+
+
+def _denies(run: subprocess.CompletedProcess) -> list[str]:
+    """The deny reasons among the JSON lines a hook printed."""
+    found = []
+    for line in run.stdout.splitlines():
+        try:
+            out = json.loads(line)["hookSpecificOutput"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if out.get("permissionDecision") == "deny":
+            found.append(out.get("permissionDecisionReason", ""))
+    return found
+
+
+@pytest.mark.timeout(_CELLS_CEILING_S)
+class TestAFaultInTheJudgingChildsRunner:
+    """DEF-2094: write_guard's parent read any raise from its runner as the
+    deadline's lost answer and refused with the time budget's split. A
+    ``_json_safe.py`` under edit refused every call so, the restore that would
+    repair it included (seat win, 2026-11-16, 02:50 to 03:29Z), and a kept,
+    older one whose runner predates ``heard`` and ``ahead`` did the same. A
+    raise inside the runner is the crash guard's named refusal and its one
+    restore, worded for a runner every call goes through; a kept runner is
+    called with the keywords it takes, so its child judges under the hard
+    bound (the failure-mode review's F1: it had been left for the in-process
+    judgment, which no deadline bounds)."""
+
+    def test_a_runner_that_raises_is_named_and_its_restore_passes(self, tmp_path):
+        root = tmp_path / "raising-runner"
+        _copy_cc(root)
+        _append(root, _JSON_SAFE, _RAISING_RUNNER)
+        audit = root / "audit"
+        refused = _run_payload(root, "write_guard.py", _bash("git status"), audit)
+        reasons = _denies(refused)
+        assert refused.returncode == 0 and len(reasons) == 1, (refused.stdout, refused.stderr[-300:])
+        assert reasons[0].startswith(f"write_guard internal error (KeyError at {_JSON_SAFE}:"), reasons
+        assert f"`git restore --source=HEAD -- {_JSON_SAFE}`" in reasons[0], reasons
+        assert "is the one call this hook lets through" in reasons[0], reasons
+        # Every call goes through the runner, so none passes (F3).
+        assert "a read-only one included" in reasons[0] and "may still pass" not in reasons[0], reasons
+        restore = _run_payload(root, "write_guard.py", _bash(f"git restore --source=HEAD -- {_JSON_SAFE}"), audit)
+        passed = json.loads(restore.stdout)["hookSpecificOutput"]
+        assert "permissionDecision" not in passed, passed
+        assert f"This call restores {_JSON_SAFE}, so it was let through." in passed["additionalContext"], passed
+        assert [name.split("-")[0] for name in _wedge_copies(root)] == ["_json_safe"], _wedge_copies(root)
+        text = _audit_text(audit)
+        assert '"pretooluse_blocked_internal_error"' in text, text[-600:]
+        assert '"pretooluse_failed_open_wedge_restore"' in text and '"where": "parent"' in text, text[-600:]
+        other = _run_payload(root, "write_guard.py", _bash(f"git restore {_UNRELATED}"), audit)
+        assert len(_denies(other)) == 1, other.stdout
+
+    def test_a_kept_runner_that_predates_the_deadline_readings_keeps_the_hard_bound(self, tmp_path):
+        root = tmp_path / "kept-runner"
+        _copy_cc(root)
+        _append(root, _JSON_SAFE, _KEPT_RUNNER)
+        audit = root / "audit"
+        allowed = _run_payload(root, "write_guard.py", _bash("git status"), audit)
+        assert allowed.returncode == 0 and not _denies(allowed), (allowed.stdout, allowed.stderr[-300:])
+        assert Path(f"{root / _JSON_SAFE}.called").exists(), ("the kept runner was never called, so no"
+                                                              " deadline bounds the judgment", allowed.stderr[-300:])
+        assert "judging child could not start" not in allowed.stderr, allowed.stderr[-300:]
+        said = allowed.stderr
+        assert f"{_JSON_SAFE} predates this hook" in said and "`espalier upgrade --execute .`" in said, said[-400:]
+        assert '"pretooluse_failed_open_kept_runner"' in _audit_text(audit), _audit_text(audit)[-600:]
+        zone = {"tool_name": "Write",
+                "tool_input": {"file_path": str(root / ".claude" / "settings.json"), "content": "x"}}
+        denied = _denies(_run_payload(root, "write_guard.py", zone, audit))
+        assert len(denied) == 1 and "protected harness zone" in denied[0], denied
+        read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        assert read.returncode == 0 and not _denies(read), (read.stdout, read.stderr[-300:])
+
+    def test_a_kept_json_safe_with_no_runner_names_itself_and_its_repair(self, tmp_path):
+        """Every release before the hard bound shipped a ``_json_safe.py`` with
+        no runner at all: the hook judges in its own process, as it did then,
+        and says which file and which repair (the failure-mode re-review)."""
+        root = tmp_path / "no-runner"
+        _copy_cc(root)
+        _append(root, _JSON_SAFE, "\ndel run_tree_to_deadline\n")
+        allowed = _run_payload(root, "write_guard.py", _bash("git status"), root / "audit")
+        assert allowed.returncode == 0 and not _denies(allowed), (allowed.stdout, allowed.stderr[-300:])
+        said = allowed.stderr
+        assert "judging child could not start (ImportError)" in said, said[-400:]
+        assert f"{_JSON_SAFE} predates this hook" in said and "`espalier upgrade --execute .`" in said, said[-400:]
+
+
 @pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAFloorThatRaisesIsRefused:
     """DEF-3008: the floor of the guard -- the helper, with

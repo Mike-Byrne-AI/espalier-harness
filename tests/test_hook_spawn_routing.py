@@ -432,6 +432,8 @@ def test_the_budget_refusal_phrase_is_write_guards_and_only_its():
     finally:
         sys.path.remove(str(HOOKS))
     assert hs.BUDGET_REFUSAL in _denial_reasons.WRITE_GUARD_TIME_BUDGET
+    # Its start-up twin (DEF-2091) is a miss to retry as well.
+    assert hs.BUDGET_REFUSAL in _denial_reasons.WRITE_GUARD_START_UP_BUDGET
     holders = [p.name for p in sorted(checkout_glob(HOOKS, "*.py"))
                if hs.BUDGET_REFUSAL in p.read_text(encoding="utf-8")]
     assert holders == ["_denial_reasons.py"], holders

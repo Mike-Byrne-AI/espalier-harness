@@ -370,6 +370,24 @@ def unlock_file(fh: IO[Any]) -> None:
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
+def warm_lock() -> None:
+    """Import what :func:`lock_file` imports on its first use (``ctypes`` and
+    ``msvcrt`` on Windows, ``fcntl`` elsewhere), for a caller that takes the
+    lock later under a deadline: ``write_guard``'s refusal writes its audit
+    record after its deny, where a cold import on a loaded box ran past the
+    hook's exit (DEF-2092). Takes no lock and never raises: a module that
+    cannot import fails at the lock, as before."""
+    try:
+        if sys.platform == "win32":
+            import ctypes  # noqa: F401
+            import msvcrt  # noqa: F401
+            from ctypes import wintypes  # noqa: F401
+        else:
+            import fcntl  # noqa: F401
+    except ImportError:  # fail-open: ok deliberate -- the lock itself reports a module it cannot import, as before
+        pass
+
+
 def try_lock_file(fh: IO[Any], *, shared: bool = False) -> bool:
     """:func:`lock_file` without the wait: True when the lock is now held,
     False when another process holds it. Raises where ``lock_file`` would.
@@ -844,18 +862,37 @@ TREE_DRAIN_SECONDS = 0.25
 
 
 class TreeStartError(OSError):
-    """:func:`run_tree_to_deadline` could not start its child at all. Nothing
-    after the start raises it, so a caller can tell a child that never ran
-    from one that ran and whose answer was lost."""
+    """:func:`run_tree_to_deadline` could not start its child at all, or could
+    not start the thread that hands it its input (the tree is ended first).
+    Either way the child never had its input, so a child that reads its input
+    before it acts, as ``write_guard``'s judging child does, did nothing with
+    it: a caller can tell such a child from one that ran and whose answer was
+    lost. Nothing else raises it."""
 
 
 def run_tree_to_deadline(
     args: "list[str]", *, deadline: float, input: bytes, env: "dict[str, str] | None" = None,
+    heard: "list[bytes] | None" = None, ahead: "tuple[float, Callable[[], object]] | None" = None,
 ) -> "tuple[int, bytes, bytes] | None":
     """Run ``args`` until ``deadline`` (a ``time.monotonic()`` value) and return
     its ``(returncode, stdout, stderr)``; at the deadline end the child and
     every process below it and return ``None``. A child that cannot start at
-    all raises :class:`TreeStartError`.
+    all, or cannot be handed its input, raises :class:`TreeStartError`.
+
+    ``heard``, where given, takes the stderr the child wrote before its tree
+    was ended, when the deadline answers ``None``: on Windows what the reader
+    thread had read by then, however the drain ended; on POSIX (or on Windows
+    where no reader thread could start) what the drain read, and nothing where
+    the drain could not read it, so an empty list is "not read", never "wrote
+    nothing". ``write_guard``'s parent reads there whether its judging child
+    had begun judging (DEF-2091). ``ahead``, where given, is a time before the
+    deadline and a callback: a child still running at that time starts the
+    callback on a daemon thread of its own and the wait goes on to the
+    deadline, so the caller can build what the deadline needs while it waits
+    (``write_guard``'s refusal and its record, DEF-2092); a child that answers
+    first never starts it, and a call answered in time pays nothing for it.
+    A thread that cannot start is skipped (the build runs after the deadline,
+    as before ``ahead``), never a raise that loses the child's answer.
 
     For a parent that must answer by a fixed time whatever its child is doing:
     ``write_guard``'s judgment runs in such a child, because a compiled
@@ -897,24 +934,106 @@ def run_tree_to_deadline(
     job = None
     # The feeder owns the input; `communicate` sees no stdin and only reads.
     stdin, proc.stdin = proc.stdin, None
+    # Where ``heard`` is asked on Windows, stderr is read chunk by chunk on a
+    # thread of this function's own (in place of the one `communicate` starts
+    # there), so what the child wrote before the deadline is there however
+    # the drain ends: `communicate` reads a Windows pipe whole, and the tree
+    # walk outlasted the drain in 7 of 12 refusals driven on the Windows seat
+    # (2026-11-16). On POSIX the session kill ends every holder at once.
+    # A thread that cannot start leaves stderr to `communicate`, which reads a
+    # Windows pipe whole, so ``heard`` can then come back empty where the
+    # tree walk outlasts the drain: the refusal reads that as "not read". It
+    # is never a raise: this sits before the `try` that ends the tree, so a
+    # raise here would leave the child running (DEF-2094's review).
+    chunks: "list[bytes] | None" = None
+    reader = None
+    if heard is not None and os.name == "nt" and proc.stderr is not None:
+        pending: "list[bytes]" = []
+        reading = threading.Thread(target=_read_chunks, args=(proc.stderr, pending), daemon=True)
+        try:
+            reading.start()
+        except RuntimeError:  # fail-open: ok deliberate -- no thread to read on: communicate reads stderr whole, and heard may come back unread
+            pass
+        else:
+            chunks, reader, proc.stderr = pending, reading, None
     try:
         if os.name == "nt":
             job = _kill_on_close_job(proc)
-        threading.Thread(target=_feed, args=(stdin, input), daemon=True).start()
+        feeder = threading.Thread(target=_feed, args=(stdin, input), daemon=True)
+        try:
+            feeder.start()
+        except RuntimeError as exc:
+            # No input reached the child, so it did nothing with it: the
+            # handler below ends the tree, and the caller is told no child
+            # ran (F5 of DEF-2094's review: it read as a fault inside a run).
+            raise TreeStartError(type(exc).__name__) from exc
+        if ahead is not None and ahead[0] < deadline:
+            try:
+                # A retried communicate loses no output (the subprocess docs).
+                out, err = proc.communicate(timeout=max(0.0, ahead[0] - time.monotonic()))  # spawn: ok its own deadline
+            except subprocess.TimeoutExpired:
+                try:
+                    threading.Thread(target=ahead[1], daemon=True).start()
+                except RuntimeError:  # fail-open: ok deliberate -- no thread to build on: the wait goes on, and the caller builds after the deadline, as before ahead
+                    pass
+            else:
+                return proc.returncode, out, _stderr_of(err, reader, chunks, deadline)
         out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
     except subprocess.TimeoutExpired:
         end = time.monotonic() + TREE_DRAIN_SECONDS
-        ended_alone = proc.poll() is not None
-        _end_the_tree_now(proc, job, end)
+        ended_alone = False
+        try:
+            ended_alone = proc.poll() is not None
+        finally:
+            # A raise in the read (an interrupt) still ends the tree: the
+            # handler above does not cover this one, and on POSIX the child's
+            # own session keeps it out of any kill of this process (F6).
+            _end_the_tree_now(proc, job, end)
         try:
             out, err = proc.communicate(timeout=max(0.0, end - time.monotonic()))  # spawn: ok the drain after the kill
         except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a pipe the kill could not close; the deadline still holds and the call is answered as unfinished
+            if heard is not None and chunks is not None:
+                heard.append(b"".join(chunks))
             return None
-        return (proc.returncode, out, err) if ended_alone else None
+        if ended_alone:
+            return proc.returncode, out, _stderr_of(err, reader, chunks, end)
+        if heard is not None:
+            heard.append(b"".join(chunks) if chunks is not None else (err or b""))
+        return None
     except BaseException:  # noqa: BLE001 -- Ctrl-C or a read error mid-call: the tree ends, then the error goes on
         _end_the_tree_now(proc, job, time.monotonic() + TREE_DRAIN_SECONDS)
         raise
-    return proc.returncode, out, err
+    return proc.returncode, out, _stderr_of(err, reader, chunks, deadline)
+
+
+def _read_chunks(pipe: "IO[bytes]", chunks: "list[bytes]") -> None:
+    """Read ``pipe`` into ``chunks`` as its bytes arrive, until its end or an
+    error, then close it: what a killed child wrote stays readable whatever
+    still holds the pipe (:func:`run_tree_to_deadline`'s ``heard``)."""
+    try:
+        while True:
+            data = os.read(pipe.fileno(), 65536)
+            if not data:
+                break
+            chunks.append(data)
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a pipe broken by the kill: what was read stays in chunks
+        pass
+    finally:
+        try:
+            pipe.close()
+        except (OSError, ValueError):  # fail-open: ok deliberate -- a pipe already closed has nothing left to read
+            pass
+
+
+def _stderr_of(err: "bytes | None", reader: "Any", chunks: "list[bytes] | None", until: float) -> bytes:
+    """A child's stderr: ``err`` as ``communicate`` read it, or, where
+    :func:`_read_chunks` read it on its own thread, what that thread read by
+    ``until``. Never raises: ``reader`` is set only once its thread started,
+    so the join cannot meet a thread never started."""
+    if reader is None or chunks is None:
+        return err or b""
+    reader.join(max(0.0, until - time.monotonic()))
+    return b"".join(chunks)
 
 
 def _feed(pipe: "IO[bytes] | None", data: bytes) -> None:
