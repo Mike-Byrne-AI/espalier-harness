@@ -1177,6 +1177,63 @@ class TestTheRefusalReadsWhatSpentTheTime:
         assert "Do: split it into shorter commands" in reason, reason
 
 
+class TestTheParentReadsItsRunnerAndItsFault:
+    """DEF-2094's failure-mode review, on the parent's own pieces: it calls a
+    kept, older runner with the keywords it takes, so the hard bound holds
+    (F1); a fault in the runner is refused without the crash guard's
+    read-only clause, since every call goes through the runner (F3); and a
+    record with no thread to write on loses the record, never the deny (F5)."""
+
+    def test_the_runner_is_called_with_the_keywords_it_takes(self):
+        wanted: dict[str, object] = {"heard": [], "ahead": (0.0, print)}
+
+        def newer(args, *, deadline, env=None, heard=None, ahead=None):
+            return None
+
+        def kept(args, *, deadline, env=None):
+            return None
+
+        def open_ended(args, **kwargs):
+            return None
+
+        takes = write_guard._the_keywords_it_takes
+        assert takes(newer, wanted) == wanted
+        assert takes(kept, wanted) == {}
+        assert takes(open_ended, wanted) == wanted
+        # A runner whose code cannot be read is given them all: a wrong guess
+        # raises before any child starts, which the parent judges itself.
+        assert takes(object(), wanted) == wanted
+
+    @pytest.mark.parametrize("placed", [False, True], ids=["unplaced", "placed"])
+    @pytest.mark.parametrize("module", ["built", "kept"])
+    def test_a_runner_fault_never_says_a_read_only_call_may_pass(self, placed, module):
+        restore = "`git restore --source=HEAD -- tools/cc/_json_safe.py` is the one call this hook lets through"
+        fields = {"error": "KeyError", "file": "tools/cc/_json_safe.py", "line": 7, "restore": restore}
+        refusal = write_guard._DeadlineRefusal()
+        # A kept, older reasons module has the crash guard's texts and no runner text.
+        refusal.reasons = _denial_reasons if module == "built" else types.SimpleNamespace(
+            WRITE_GUARD_CRASHED_AT=_denial_reasons.WRITE_GUARD_CRASHED_AT,
+            WRITE_GUARD_INTERNAL_ERROR=_denial_reasons.WRITE_GUARD_INTERNAL_ERROR)
+        reason = write_guard._runner_fault_reason(refusal, (fields, {}) if placed else None)
+        assert reason.startswith("write_guard internal error"), reason
+        assert "may still pass" not in reason, reason
+        assert "a read-only one included" in reason, reason
+        assert reason.isascii(), reason
+        if placed:
+            assert "(KeyError at tools/cc/_json_safe.py:7)" in reason and restore in reason, reason
+
+    def test_a_record_with_no_thread_to_write_on_returns(self, monkeypatch):
+        refusal = write_guard._DeadlineRefusal()
+
+        def refuse(self: threading.Thread) -> None:
+            raise RuntimeError("can't start new thread")
+
+        monkeypatch.setattr(threading.Thread, "start", refuse)
+        began = time.monotonic()
+        refusal.record({"hook": "write_guard"}, by=time.monotonic() + 30)
+        assert time.monotonic() - began < 5, "the record waited on a build that never started"
+
+
 def _modules_the_guard_reaches() -> list[Path]:
     """The ``tools/cc`` and ``tools/cc/hooks`` modules loaded once write_guard
     has imported and judged a call of each tool family -- derived in a fresh

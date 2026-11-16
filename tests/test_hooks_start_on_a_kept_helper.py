@@ -1066,6 +1066,7 @@ _JSON_SAFE = "tools/cc/_json_safe.py"
 _RAISING_RUNNER = "\ndef run_tree_to_deadline(*args, **kwargs):\n    raise KeyError(4)\n"
 _KEPT_RUNNER = ("\n_newer_runner = run_tree_to_deadline\n"
                 "def run_tree_to_deadline(args, *, deadline, input, env=None):\n"
+                "    open(__file__ + '.called', 'a').close()\n"
                 "    return _newer_runner(args, deadline=deadline, input=input, env=env)\n")
 
 
@@ -1090,8 +1091,10 @@ class TestAFaultInTheJudgingChildsRunner:
     repair it included (seat win, 2026-11-16, 02:50 to 03:29Z), and a kept,
     older one whose runner predates ``heard`` and ``ahead`` did the same. A
     raise inside the runner is the crash guard's named refusal and its one
-    restore; a raise the runner never saw started no child, so the hook
-    judges the call itself."""
+    restore, worded for a runner every call goes through; a kept runner is
+    called with the keywords it takes, so its child judges under the hard
+    bound (the failure-mode review's F1: it had been left for the in-process
+    judgment, which no deadline bounds)."""
 
     def test_a_runner_that_raises_is_named_and_its_restore_passes(self, tmp_path):
         root = tmp_path / "raising-runner"
@@ -1104,6 +1107,8 @@ class TestAFaultInTheJudgingChildsRunner:
         assert reasons[0].startswith(f"write_guard internal error (KeyError at {_JSON_SAFE}:"), reasons
         assert f"`git restore --source=HEAD -- {_JSON_SAFE}`" in reasons[0], reasons
         assert "is the one call this hook lets through" in reasons[0], reasons
+        # Every call goes through the runner, so none passes (F3).
+        assert "a read-only one included" in reasons[0] and "may still pass" not in reasons[0], reasons
         restore = _run_payload(root, "write_guard.py", _bash(f"git restore --source=HEAD -- {_JSON_SAFE}"), audit)
         passed = json.loads(restore.stdout)["hookSpecificOutput"]
         assert "permissionDecision" not in passed, passed
@@ -1115,14 +1120,19 @@ class TestAFaultInTheJudgingChildsRunner:
         other = _run_payload(root, "write_guard.py", _bash(f"git restore {_UNRELATED}"), audit)
         assert len(_denies(other)) == 1, other.stdout
 
-    def test_a_kept_runner_that_predates_the_deadline_readings_judges_in_process(self, tmp_path):
+    def test_a_kept_runner_that_predates_the_deadline_readings_keeps_the_hard_bound(self, tmp_path):
         root = tmp_path / "kept-runner"
         _copy_cc(root)
         _append(root, _JSON_SAFE, _KEPT_RUNNER)
         audit = root / "audit"
         allowed = _run_payload(root, "write_guard.py", _bash("git status"), audit)
         assert allowed.returncode == 0 and not _denies(allowed), (allowed.stdout, allowed.stderr[-300:])
-        assert "judging child could not start (TypeError)" in allowed.stderr, allowed.stderr[-300:]
+        assert Path(f"{root / _JSON_SAFE}.called").exists(), ("the kept runner was never called, so no"
+                                                              " deadline bounds the judgment", allowed.stderr[-300:])
+        assert "judging child could not start" not in allowed.stderr, allowed.stderr[-300:]
+        said = allowed.stderr
+        assert f"{_JSON_SAFE} predates this hook" in said and "`espalier upgrade --execute .`" in said, said[-400:]
+        assert '"pretooluse_failed_open_kept_runner"' in _audit_text(audit), _audit_text(audit)[-600:]
         zone = {"tool_name": "Write",
                 "tool_input": {"file_path": str(root / ".claude" / "settings.json"), "content": "x"}}
         denied = _denies(_run_payload(root, "write_guard.py", zone, audit))

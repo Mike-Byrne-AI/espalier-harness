@@ -1169,6 +1169,17 @@ WRITE_GUARD_CRASHED_ON_A_KEPT_FILE = (
     " HEAD: {restore}. A read-only call may still pass, so the file can be read; every"
     " mutation is refused until then."
 )
+#: The same crash raised where write_guard's parent runs its judging child
+#: (DEF-2094): every call goes through that runner, a read-only one included,
+#: so this text never says a read-only call may pass (the failure-mode review's
+#: F3: the crash guard's text above said so, and the parent refuses them all).
+WRITE_GUARD_RUNNER_FAULT = (
+    "write_guard internal error ({error} at {file}:{line}) while it ran its judging"
+    " child; failing closed. Re-issue once. Refused the same way again, the guard is"
+    " wedged and refuses every call, a read-only one included: if {file} is being"
+    " edited, restore it to HEAD: {restore}. Otherwise `/status --log` counts it and"
+    " the repair is made from a terminal outside this session."
+)
 
 #: Reasons whose deny/block is FAIL-CLOSED because the hook could not read or
 #: verify its payload, so no governance rule matched and there is no denial to

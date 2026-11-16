@@ -862,9 +862,11 @@ TREE_DRAIN_SECONDS = 0.25
 
 
 class TreeStartError(OSError):
-    """:func:`run_tree_to_deadline` could not start its child at all. Nothing
-    after the start raises it, so a caller can tell a child that never ran
-    from one that ran and whose answer was lost."""
+    """:func:`run_tree_to_deadline` could not start its child at all, or could
+    not start the thread that hands it its input (the tree is ended first).
+    Either way the child never read its input, so it did nothing with it: a
+    caller can tell such a child from one that ran and whose answer was lost.
+    Nothing else raises it."""
 
 
 def run_tree_to_deadline(
@@ -874,7 +876,7 @@ def run_tree_to_deadline(
     """Run ``args`` until ``deadline`` (a ``time.monotonic()`` value) and return
     its ``(returncode, stdout, stderr)``; at the deadline end the child and
     every process below it and return ``None``. A child that cannot start at
-    all raises :class:`TreeStartError`.
+    all, or cannot be handed its input, raises :class:`TreeStartError`.
 
     ``heard``, where given, takes the stderr the child wrote before its tree
     was ended, when the deadline answers ``None``: on Windows what the reader
@@ -937,9 +939,11 @@ def run_tree_to_deadline(
     # the drain ends: `communicate` reads a Windows pipe whole, and the tree
     # walk outlasted the drain in 7 of 12 refusals driven on the Windows seat
     # (2026-11-16). On POSIX the session kill ends every holder at once.
-    # A thread that cannot start leaves stderr to `communicate`, as on POSIX:
-    # this sits before the `try` that ends the tree, so a raise here would
-    # leave the child running and lose its answer (DEF-2094's review).
+    # A thread that cannot start leaves stderr to `communicate`, which reads a
+    # Windows pipe whole, so ``heard`` can then come back empty where the
+    # tree walk outlasts the drain: the refusal reads that as "not read". It
+    # is never a raise: this sits before the `try` that ends the tree, so a
+    # raise here would leave the child running (DEF-2094's review).
     chunks: "list[bytes] | None" = None
     reader = None
     if heard is not None and os.name == "nt" and proc.stderr is not None:
@@ -947,14 +951,21 @@ def run_tree_to_deadline(
         reading = threading.Thread(target=_read_chunks, args=(proc.stderr, pending), daemon=True)
         try:
             reading.start()
-        except RuntimeError:  # fail-open: ok deliberate -- no thread to read on: communicate reads stderr whole, as on POSIX
+        except RuntimeError:  # fail-open: ok deliberate -- no thread to read on: communicate reads stderr whole, and heard may come back unread
             pass
         else:
             chunks, reader, proc.stderr = pending, reading, None
     try:
         if os.name == "nt":
             job = _kill_on_close_job(proc)
-        threading.Thread(target=_feed, args=(stdin, input), daemon=True).start()
+        feeder = threading.Thread(target=_feed, args=(stdin, input), daemon=True)
+        try:
+            feeder.start()
+        except RuntimeError as exc:
+            # No input reached the child, so it did nothing with it: the
+            # handler below ends the tree, and the caller is told no child
+            # ran (F5 of DEF-2094's review: it read as a fault inside a run).
+            raise TreeStartError(type(exc).__name__) from exc
         if ahead is not None and ahead[0] < deadline:
             try:
                 # A retried communicate loses no output (the subprocess docs).
@@ -969,8 +980,14 @@ def run_tree_to_deadline(
         out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
     except subprocess.TimeoutExpired:
         end = time.monotonic() + TREE_DRAIN_SECONDS
-        ended_alone = proc.poll() is not None
-        _end_the_tree_now(proc, job, end)
+        ended_alone = False
+        try:
+            ended_alone = proc.poll() is not None
+        finally:
+            # A raise in the read (an interrupt) still ends the tree: the
+            # handler above does not cover this one, and on POSIX the child's
+            # own session keeps it out of any kill of this process (F6).
+            _end_the_tree_now(proc, job, end)
         try:
             out, err = proc.communicate(timeout=max(0.0, end - time.monotonic()))  # spawn: ok the drain after the kill
         except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a pipe the kill could not close; the deadline still holds and the call is answered as unfinished

@@ -80,7 +80,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, NoReturn, TypeVar
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -358,7 +358,10 @@ class _DeadlineRefusal:
         with self._lock:
             idle = not self._building
         if idle:
-            threading.Thread(target=self.build, daemon=True).start()
+            try:
+                threading.Thread(target=self.build, daemon=True).start()
+            except RuntimeError:  # fail-open: ok deliberate -- no thread to write on: the deny is out and the record is lost, as before the build (F5 of DEF-2094's review)
+                return
         deny_out.set()
         done.wait(max(0.0, by - time.monotonic()))
 
@@ -367,9 +370,9 @@ def _the_runner_ran(exc: BaseException, runner: object) -> bool:
     """Whether ``exc`` was raised inside ``runner`` (its code is on the
     traceback), so a judging child may have started (DEF-2094). A raise that
     never entered it started none: a ``TypeError`` binding the call's
-    arguments, which a kept, older ``_json_safe.py`` without ``heard`` and
-    ``ahead`` raises (no frame of the callee: driven on CPython 3.10, 3.11 and
-    3.13), or an argument that could not be built. A runner whose code cannot
+    arguments (no frame of the callee: driven on CPython 3.10, 3.11 and 3.13),
+    which a runner whose parameters ``_the_keywords_it_takes`` misread would
+    raise, or an argument that could not be built. A runner whose code cannot
     be read reads as one that ran: the refusal, never a second judgment."""
     code = getattr(runner, "__code__", None)
     if code is None:
@@ -383,40 +386,84 @@ def _the_runner_ran(exc: BaseException, runner: object) -> bool:
 
 
 def _runner_fault_reason(refusal: _DeadlineRefusal, named: tuple[dict, dict] | None) -> str:
-    """The refusal of a runner fault (DEF-2094): the crash guard's placed text
-    (``_denial_reasons.WRITE_GUARD_CRASHED_AT``, the file, its line and the
+    """The refusal of a runner fault (DEF-2094):
+    ``_denial_reasons.WRITE_GUARD_RUNNER_FAULT`` (the file, its line and the
     restore) from the reasons the build made, or imported here while the
-    deadline is still ahead; past it, the same facts in plain words, since a
-    cold import there can hold the deny past the wired timeout (DEF-2092)."""
+    deadline is still ahead; past it, unplaced, or from a kept, older reasons
+    module without it, the same facts in plain words, since a cold import
+    there can hold the deny past the wired timeout (DEF-2092). Never the crash
+    guard's texts, which say a read-only call may still pass: every call goes
+    through this runner (the failure-mode review's F3)."""
     reasons: Any = refusal.reasons
     if reasons is None and time.monotonic() < _HOOK_STARTED + HARD_DEADLINE_S:
         try:
-            import _denial_reasons  # type: ignore[import-not-found]
-            reasons = _denial_reasons
+            import _denial_reasons as imported  # type: ignore[import-not-found]
+            reasons = imported
         # fail-open: ok text-fallback -- a reasons module that cannot import: the plain words below
         except Exception:  # noqa: BLE001
             reasons = None
+    # Named as the module it is, so the template census reads the use below.
+    _denial_reasons = reasons
     fields = named[0] if named is not None else None
-    if reasons is not None:
+    if _denial_reasons is not None and fields is not None:
         try:
-            if fields is None:
-                return str(reasons.WRITE_GUARD_INTERNAL_ERROR)
-            if "kept" in fields and hasattr(reasons, "WRITE_GUARD_CRASHED_ON_A_KEPT_FILE"):
-                return str(reasons.WRITE_GUARD_CRASHED_ON_A_KEPT_FILE.format(**fields))
-            return str(reasons.WRITE_GUARD_CRASHED_AT.format(**fields))
+            return str(_denial_reasons.WRITE_GUARD_RUNNER_FAULT.format(**fields))
         # fail-open: ok text-fallback -- a kept, older reasons module: the plain words below
         except Exception:  # noqa: BLE001, S110
             pass
+    wedged = ("failing closed. Re-issue once. Refused the same way again, the guard is wedged and refuses"
+              " every call, a read-only one included")
     if fields is None:
-        return ("write_guard internal error while it ran its judging child; failing closed. Re-issue once; if"
-                " the call is refused the same way the guard is wedged, and the repair is made from a terminal"
-                " outside this session.")
+        return (f"write_guard internal error while it ran its judging child; {wedged}: the repair is made"
+                " from a terminal outside this session.")
     return (f"write_guard internal error ({fields['error']} at {fields['file']}:{fields['line']}) while it ran"
-            f" its judging child; failing closed. Re-issue once; if the call is refused the same way the guard"
-            f" is wedged, and if {fields['file']} is being edited, restore it to HEAD: {fields['restore']}.")
+            f" its judging child; {wedged}: if {fields['file']} is being edited, restore it to HEAD:"
+            f" {fields['restore']}. Otherwise the repair is made from a terminal outside this session.")
 
 
-def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _DeadlineRefusal) -> None:
+#: ``inspect.CO_VARKEYWORDS``, the code flag of a function that takes
+#: ``**kwargs`` (the same bit on every CPython), named here so the parent never
+#: imports ``inspect`` for one bit.
+_CO_VARKEYWORDS = 0x08
+
+
+def _the_keywords_it_takes(runner: object, wanted: dict[str, object]) -> dict[str, object]:
+    """Of ``wanted``, the keyword arguments ``runner`` takes, read from its
+    code without a call: all of them where it takes ``**kwargs`` or its code
+    cannot be read. A kept, older ``tools/cc/_json_safe.py`` (every copy
+    deployed before DEF-2091) has a ``run_tree_to_deadline`` without ``heard``
+    and ``ahead``, and it is still the hard bound, so it is called with what
+    it takes; before this its ``TypeError`` sent the call to the in-process
+    judgment, which no deadline bounds (DEF-3048), said only as a child that
+    could not start (F1 of DEF-2094's review)."""
+    code = getattr(runner, "__code__", None)
+    if code is None or code.co_flags & _CO_VARKEYWORDS:
+        return wanted
+    names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    return {name: value for name, value in wanted.items() if name in names}
+
+
+def _say_the_runner_is_kept() -> None:
+    """Say once a session that ``tools/cc/_json_safe.py`` predates this hook's
+    deadline readings (``_the_keywords_it_takes``): the hard bound holds, and
+    what a refusal at it names and records does not. The helpers import here,
+    on this path alone, so a call on a level tree pays nothing for them."""
+    try:
+        import _hook_utils  # type: ignore[import-not-found]
+
+        _hook_utils.say_once(
+            _hook_utils.resolve_project_root(), "kept-runner", "write_guard", "pretooluse_failed_open_kept_runner",
+            "tools/cc/_json_safe.py predates this hook (its run_tree_to_deadline takes no heard or ahead): the"
+            " hard bound still holds, but a refusal at it cannot say what spent the time and its record can be"
+            " lost on a busy machine; `espalier upgrade --execute .` brings it level",
+            fault="kept_runner",
+        )
+    # fail-open: ok deliberate -- a helper that cannot load: the call is still judged under the hard bound, unsaid
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _DeadlineRefusal) -> NoReturn:
     """The runner raised inside it (``_the_runner_ran``), so a judging child
     may have started (DEF-2094): refuse the call naming the file that raised
     and its line, as the crash guard names a fault in a judgment, and let
@@ -484,11 +531,14 @@ def _answer_from_a_judging_child() -> None:
     fault: Exception | None = None
     refusal = _DeadlineRefusal()
     heard: list[bytes] = []
+    wanted: dict[str, object] = {"heard": heard, "ahead": (_HOOK_STARTED + _BUILD_THE_REFUSAL_AT_S, refusal.build)}
+    readings = _the_keywords_it_takes(run_tree_to_deadline, wanted)
+    if readings.keys() != wanted.keys():
+        _say_the_runner_is_kept()
     try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
             [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG],
-            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload,
-            heard=heard, ahead=(_HOOK_STARTED + _BUILD_THE_REFUSAL_AT_S, refusal.build),
+            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload, **readings,
         )
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
         _judge_in_this_process(payload, type(exc.__cause__ or exc).__name__)
@@ -5168,8 +5218,9 @@ def _verdict_for(
     """Wait for the judgment until the deadline, claim, and emit the one
     verdict: the judgment's (replayed), or the refusal. ``begun`` and
     ``clock`` are when the judgment and the budget's clock started: the
-    refusal says how the budget split between start-up and judging, and asks
-    for the re-issue where start-up took more of it (DEF-2091)."""
+    refusal says how the budget split between start-up and judging (DEF-2091)
+    and always asks for the split, never the re-issue, since the judgment had
+    begun and may have spent a one-shot nudge (``_start_up_spent_it``)."""
     try:
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment

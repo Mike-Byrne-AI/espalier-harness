@@ -243,16 +243,18 @@ BENCH = REPO_ROOT / "bench"
 def _refusal(monkeypatch, *, start_up_spent: bool = False) -> str:
     """write_guard's time-budget refusal as the hook prints it: its own
     ``deny`` over the live templates at the live budget, worded as judging
-    spent the time, or (``start_up_spent``) as start-up did (DEF-2091)."""
+    spent the time, or (``start_up_spent``) as start-up did (DEF-2091): a
+    child that had not begun judging, which the re-issue answers."""
     monkeypatch.syspath_prepend(str(HOOKS))
     import _denial_reasons
     import write_guard
 
-    start_up, judged = (3.2, 0.3) if start_up_spent else (0.3, 3.2)
+    began = not start_up_spent
+    start_up, judged = (write_guard.JUDGMENT_BUDGET_S, 0.0) if start_up_spent else (0.3, 3.2)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         write_guard.deny(write_guard._budget_reason(
-            _denial_reasons, write_guard.JUDGMENT_BUDGET_S, write_guard._CHILD_BOUND, True, start_up, judged))
+            _denial_reasons, write_guard.JUDGMENT_BUDGET_S, write_guard._CHILD_BOUND, began, start_up, judged))
     return out.getvalue()
 
 
@@ -288,7 +290,9 @@ class TestTheBudgetsRefusalIsNoVerdict:
             write_guard.deny("Command blocked: a judged deny, whatever its reason.")
         assert rb.budget_refused(refusal, HOOKS) is True
         # Its start-up twin is the same miss, never a scored block (DEF-2091).
-        assert rb.budget_refused(_refusal(monkeypatch, start_up_spent=True), HOOKS) is True
+        twin = _refusal(monkeypatch, start_up_spent=True)
+        assert "re-issue the same command once" in twin, twin
+        assert rb.budget_refused(twin, HOOKS) is True
         assert rb.budget_refused(judged.getvalue(), HOOKS) is False
         assert rb.budget_refused("", HOOKS) is False
         assert rb.budget_refused("not json", HOOKS) is False
