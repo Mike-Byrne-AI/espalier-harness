@@ -11,4 +11,9 @@
   in none of the worktrees (run it from that session's shell, or once the
   session ends). A worktree the main checkout's session moved into, where
   that session's marker records the move, is kept as one a live session is
-  in, the same rule the session catch-up keeps it by.
+  in, the same rule the session catch-up keeps it by. Run from the
+  session's own shell, the run leaves that session's own marker out, so
+  a worktree it has since left is judged like any other; and
+  its last line offers `--apply` only where the apply would act: not when
+  the session registry could not be read and no worktree was judged,
+  unless the checkout itself would catch up.

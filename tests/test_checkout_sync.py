@@ -3062,3 +3062,55 @@ class TestTheDryRunJudgesPastTheHold:
             assert trees["would_remove"] == ["fresh"], (registry, trees)
             assert trees["kept"] == [["entered", "a live Claude session is in it"]], (registry, trees)
         assert fresh.is_dir() and entered.is_dir()
+
+    def test_the_cli_leaves_out_the_callers_own_marker(self, cs, repos, monkeypatch, capsys):
+        """Run from the session's own shell, its own marker in the root may
+        record a worktree it has since left; its own cwd answers for it, as
+        SessionStart leaves its own marker out. Dies to: the CLI reading the
+        root's markers with no session id, which keeps that tree as a live
+        session's. The control, the same marker under another id, keeps it."""
+        work = repos["work"]
+        fresh = _worktree(repos, "fresh")
+        left = _worktree(repos, "left")
+        monkeypatch.chdir(work)
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([4242], True))
+        monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: [_row(work, pid=4242, sid="own")])
+        for sid, pid, would, kept in (
+                ("own", 4242, ["fresh", "left"], []),
+                ("other", 5151, ["fresh"], [["left", "a live Claude session is in it"]])):
+            marks = {cs._norm(work): [{"session_id": sid, "cwd": str(left), "pid": pid, "alive": None}]}
+            reader = SimpleNamespace(other_live_sessions=lambda tree, own, marks=marks: [
+                m for m in marks.get(cs._norm(tree), []) if not own or m["session_id"] != own])
+            monkeypatch.setattr(cs, "_hook_utils_by_path", lambda reader=reader: reader)
+            assert cs.main(["--root", str(work), "--json"]) == 0
+            trees = json.loads(capsys.readouterr().out)["worktrees"]
+            assert sorted(trees["would_remove"]) == would, (sid, trees)
+            assert trees["kept"] == kept and trees["apply_held"] == "", (sid, trees)
+        assert fresh.is_dir() and left.is_dir()
+
+    def test_the_footer_offers_the_apply_only_where_it_would_act(self, cs, repos, monkeypatch, capsys):
+        """An unread registry judges no tree, so the footer offers no --apply
+        for the trees; a checkout that would catch up is still the apply's to
+        do. Dies to: the footer offering --apply wherever no session holds it,
+        and to one gated on the registry alone, which drops the catch-up."""
+        work = repos["work"]
+        _worktree(repos, "fresh")
+        monkeypatch.chdir(work)
+        held = [_row(work, pid=4242, sid="root-session")]
+
+        def run(registry) -> list[str]:
+            self._outside(cs, monkeypatch, registry, {})
+            assert cs.main(["--root", str(work)]) == 0
+            return capsys.readouterr().out.splitlines()
+
+        assert run([])[-1] == "(dry run; --apply does it)"
+        unread = run(None)
+        assert unread[0] == "Checkout:  current" and unread[-1] == "(dry run)", unread
+        assert "session registry could not be read, so no worktree was removed" in unread[1], unread
+        assert run(held)[-1] == "(dry run)"
+        _advance(repos["seed"])
+        behind = run(None)
+        assert behind[0].startswith("Checkout:  would catch up 1 commit"), behind
+        assert behind[-1] == "(dry run; --apply does it)", behind
+        assert run(held)[-1] == "(dry run)", "the other session holds the catch-up too"

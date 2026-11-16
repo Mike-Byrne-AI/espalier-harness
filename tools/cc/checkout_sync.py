@@ -2401,7 +2401,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Checkout:  {checkout_line(result) or 'current'}")
     print(f"Worktrees: {worktrees_line(reap) or 'none left over'}")
     if not args.apply:
-        print("(dry run)" if reap.apply_held else "(dry run; --apply does it)")
+        # --apply is offered only where it acts on what was judged: a registry
+        # read with no other session holding the apply, or a checkout that
+        # would catch up. An unread registry judged no tree (DEF-3090).
+        acts = (reap_sessions is not None and not reap.apply_held) or result.state == "would_catch_up"
+        print("(dry run; --apply does it)" if acts else "(dry run)")
     return 0
 
 
