@@ -471,3 +471,44 @@ class TestTheSettingsReadRecordNamesASettingsFile:
             assert r.returncode == 0, r.stderr
         files = [rec["details"].get("file") for rec in _records("configchange_failed_open_settings_read")]
         assert sorted(files) == [".claude/settings.json", ".claude/settings.local.json"], files
+
+    def test_a_kill_switch_beside_a_skills_change_is_still_refused(self, tmp_path):
+        """The skills read is the one judgment moved: the inventory scan
+        still reads both settings files on such a change."""
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+        changed = tmp_path / ".claude" / "commands" / "x.md"
+        changed.write_text("body\n", encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "skills",
+                                   "file_path": str(changed)}, tmp_path)
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+
+    def test_an_unknown_sources_in_root_file_is_still_judged(self, tmp_path):
+        """A source this hook does not know is judged, never waved through:
+        its in-root file is read whatever it is (the failure-mode review drove
+        a block on main and an allow on the first cut of this fix)."""
+        (tmp_path / "ci-settings.json").write_text('{"disableAllHooks": true}', encoding="utf-8")
+        r = _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "flag_settings",
+                                   "file_path": str(tmp_path / "ci-settings.json")}, tmp_path)
+        assert json.loads(r.stdout).get("decision") == "block", (r.stdout, r.stderr)
+
+    def test_an_unreadable_other_file_is_named_by_a_fixed_word(self, tmp_path):
+        (tmp_path / "ci-settings.json").write_text("{ not json", encoding="utf-8")
+        _hook("config_guard", {"hook_event_name": "ConfigChange", "source": "flag_settings",
+                               "file_path": str(tmp_path / "ci-settings.json")}, tmp_path)
+        records = _records("configchange_failed_open_settings_read")
+        assert [rec["details"].get("file") for rec in records] == ["another-in-root-file"], records
+
+    def test_a_settings_file_it_cannot_locate_writes_its_own_type(self, tmp_path, monkeypatch):
+        """The gate-switch site's fault is a file it could not locate, not one
+        it read and could not parse: its own type, so the read type's count
+        means the second alone."""
+        cg = _load("config_guard")
+
+        def _lost(*_a):
+            raise OSError("simulated")
+
+        monkeypatch.setattr(cg, "_changed_settings_label", _lost)
+        assert cg._judge_gate_switch(".claude/settings.json", "project_settings", tmp_path) == ([], None, None)
+        assert len(_records("configchange_failed_open_settings_locate")) == 1
+        assert not _records("configchange_failed_open_settings_read")

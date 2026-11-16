@@ -6,7 +6,9 @@
   and the settings guard parsed it as JSON, so each such change (a
   SessionStart catch-up that moves the commands folder, a lane editing a
   command) wrote a `configchange_failed_open_settings_read` record saying a
-  scan was skipped when none was. The guard now reads the named file only
-  where it is the project or the local settings file, and the record, kept
-  for a settings file it cannot read or parse, names that file by its label,
-  once a session for each file.
+  scan was skipped when none was. The guard no longer reads the file a
+  command or skill change names, and reads any other named file as before;
+  the record, kept for a file it cannot read or parse, names the settings
+  file by its label, once a session for each file. A settings file the guard
+  cannot locate now writes its own type,
+  `configchange_failed_open_settings_locate`.
