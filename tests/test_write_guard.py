@@ -25756,9 +25756,10 @@ class TestTheHardTierReadsWhatALauncherRuns:
         "echo 'rm -rf ~' | su app", "su app <<< 'rm -rf ~'", "builtin eval \"sudo rm -rf ~\"",
         "bash -c \"gosu app rm -rf ~\"", "eval 'gosu app rm -rf ~'",
         "sudo -u bob gosu app rm -rf ~", "sudo -u bob flock /tmp/lk -c 'rm -rf ~'",
+        "runuser -s /usr/bin/rm app -- -rf ~", "su --shell=/usr/bin/rm app -- -rf ~",
     ], ids=[
         "su-stdin-pipe", "su-here-string", "builtin-eval-sudo", "bare-c-launcher", "eval-launcher",
-        "wrapper-value-argv", "wrapper-value-shell",
+        "wrapper-value-argv", "wrapper-value-shell", "runuser-shell-switch", "su-shell-switch",
     ])
     def test_the_recorded_limits_stay_unread(self, tmp_path, cmd):
         # Recorded as limits, each past one level: a launcher ahead of a
@@ -25770,6 +25771,10 @@ class TestTheHardTierReadsWhatALauncherRuns:
         # switch's word value ahead of the launcher (`sudo -u bob`), which
         # ends the head walk (`_LAUNCH_STEP_WORDS`): declared for the nudge
         # first, and the hard tier reads the same walk (`sudo gosu` walls).
+        # And a program named as su's or runuser's shell (`-s` / `--shell`),
+        # which neither reader takes: an unusual wrapper argument, so a limit
+        # until a real session records it (air's 95a719; 0 of 31 su/runuser
+        # commands in 14,762 Bash commands on the win box, none on the Air).
         # A fix flips this row and docs/HOOKS.md's line together.
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) != "wall"
 

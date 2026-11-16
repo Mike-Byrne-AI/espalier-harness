@@ -378,7 +378,9 @@ class TestTheSentenceSplitter:
 #: `TestTheHardTierReadsWhatALauncherRuns::test_the_recorded_limits_stay_unread`;
 #: its cite's hit is paid by the time-budget section's state-write cite,
 #: which sits in no declaring sentence and is now cited by class and test
-#: name alone, so the seeded docs stay at the ceiling.
+#: name alone, so the seeded docs stay at the ceiling. Later the same day
+#: (air's 95a719) a program named as su's or runuser's shell (`-s` /
+#: `--shell`) joined that sentence and its pin, so the census is unmoved.
 _CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 45, "docs/SHARP_EDGES.md": 5}
 
 

@@ -1931,7 +1931,10 @@ on stdin (`echo '...' | su app`, `su app <<< '...'`), a launcher ahead of
 the piped shell; `builtin eval "sudo ..."`; and a wrapper switch's word
 value ahead of the launcher (`sudo -u bob gosu app ...`), which ends the
 walk to the launcher here as it does for the nudge (`sudo gosu app ...` is
-read), each pinned in
+read); and a program named as su's or runuser's shell (`-s` / `--shell`:
+`runuser -s /usr/bin/rm app -- ...`, `su --shell=/usr/bin/rm app -- ...`),
+an unusual wrapper argument no recorded session has used, which neither
+reader takes until one does; each pinned in
 `tests/test_write_guard.py::TestTheHardTierReadsWhatALauncherRuns::test_the_recorded_limits_stay_unread`.
 runuser's switches are read where getopt permutes them
 (`runuser rm -u app -- -rf ~`), and with `-u` the argv's own `-c` is the
