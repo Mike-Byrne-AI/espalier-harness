@@ -240,16 +240,21 @@ HOOKS = REPO_ROOT / "tools" / "cc" / "hooks"
 BENCH = REPO_ROOT / "bench"
 
 
-def _refusal(monkeypatch) -> str:
+def _refusal(monkeypatch, *, start_up_spent: bool = False) -> str:
     """write_guard's time-budget refusal as the hook prints it: its own
-    ``deny`` over the live template at the live budget."""
+    ``deny`` over the live templates at the live budget, worded as judging
+    spent the time, or (``start_up_spent``) as start-up did (DEF-2091): a
+    child that had not begun judging, which the re-issue answers."""
     monkeypatch.syspath_prepend(str(HOOKS))
     import _denial_reasons
     import write_guard
 
+    began = not start_up_spent
+    start_up, judged = (write_guard.JUDGMENT_BUDGET_S, 0.0) if start_up_spent else (0.3, 3.2)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        write_guard.deny(_denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=write_guard.JUDGMENT_BUDGET_S))
+        write_guard.deny(write_guard._budget_reason(
+            _denial_reasons, write_guard.JUDGMENT_BUDGET_S, write_guard._CHILD_BOUND, began, start_up, judged))
     return out.getvalue()
 
 
@@ -284,6 +289,10 @@ class TestTheBudgetsRefusalIsNoVerdict:
         with contextlib.redirect_stdout(judged):
             write_guard.deny("Command blocked: a judged deny, whatever its reason.")
         assert rb.budget_refused(refusal, HOOKS) is True
+        # Its start-up twin is the same miss, never a scored block (DEF-2091).
+        twin = _refusal(monkeypatch, start_up_spent=True)
+        assert "re-issue the same command once" in twin, twin
+        assert rb.budget_refused(twin, HOOKS) is True
         assert rb.budget_refused(judged.getvalue(), HOOKS) is False
         assert rb.budget_refused("", HOOKS) is False
         assert rb.budget_refused("not json", HOOKS) is False
@@ -313,8 +322,10 @@ class TestTheBudgetsRefusalIsNoVerdict:
                  for s in h.body for n in ast.walk(s) if isinstance(n, ast.Assign)
                  and any(isinstance(x, ast.Name) and x.id == "reason" for x in n.targets)]
         assert len(bound) == 1, bound
+        # The binding reads what spent the time (DEF-2091): rendered here for a
+        # child still starting up, the shape a loaded box gave.
         reason = eval(compile(ast.Expression(bound[0]), "write_guard.py", "eval"),
-                      {"HARD_DEADLINE_S": write_guard.HARD_DEADLINE_S})
+                      {**vars(write_guard), "began": False, "start_up": write_guard.HARD_DEADLINE_S, "judged": 0.0})
         assert hs.BUDGET_FALLBACK in reason and hs.BUDGET_REFUSAL not in reason, reason
 
         def decision(text: str) -> str:

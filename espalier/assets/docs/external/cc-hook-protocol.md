@@ -21,7 +21,7 @@ redirect_note: |
   origin; the docs.claude.com URL is retained below only as the redirect entry.
 mirrors:
   - https://docs.claude.com/en/docs/claude-code/hooks
-fetched: 2026-11-09
+fetched: 2026-11-16
 section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails, Failed hooks on Windows without Git Bash), JSON output, Decision control; Command hook fields — Exec form and shell form; the WorktreeCreate and WorktreeRemove events"
 section_anchor: "hook-input-and-output"
 content_hash: ""
@@ -35,7 +35,7 @@ purpose: |
 # Claude Code Hook Protocol — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/hooks.md (formerly docs.claude.com/en/docs/claude-code/hooks, now a 301)
-**Fetched:** 2026-10-31
+**Fetched:** 2026-11-16
 **Section:** "Hook input and output" — "Exit code output", "JSON output", "Decision control", plus the per-event rows espalier wires, "Exec form and shell form" and the two worktree events
 **Purpose:** Verification target for Espalier-Harness's hook implementations and any espalier doc claim that mentions hook exit codes, stdout, stderr, or the structured JSON schema.
 
@@ -49,7 +49,8 @@ channel-XOR rule survives only as **advice**, a `<Note>`. The 2026-10-10 page
 rewrote "Exit code output" again, as a reword around a three-outcome model and
 a stdout-by-exit-code table, and added `onFailure: "block"`. The 2026-10-31
 page keeps that model and qualifies each failure outcome with the hooks whose
-failure blocks the action; every quote below stands on that page. Read
+failure blocks the action. Every quote below stands on the page of the
+`fetched:` date, and the dated notes at the foot say what moved since. Read
 "Channel and exit code semantics" before trusting any
 in-repo sentence about exit 2 and stdout. (Written as prose, not a
 blockquote: in a pin every `>` line is an upstream quote.)
@@ -106,10 +107,12 @@ exit 2, so the missing-file downgrade does not reach it.
 
 > Exit 0 means success, and is the intended exit code when you print JSON for
 > structured control.
->
-> For most events, Claude Code writes stdout to the debug log and doesn't show
-> it in the transcript. On these events, your stdout reaches Claude or the
-> compaction summary:
+
+Where plain stdout goes on exit 0 (verbatim, the same section, after the JSON
+syntax rules quoted below):
+
+> On these events, your plain-text stdout reaches Claude or the compaction
+> summary:
 >
 > * **`UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, and
 >   `PostModelSwitch`**: Claude Code adds plain-text stdout as context that
@@ -121,8 +124,24 @@ The four events whose plain stdout reaches Claude are the 2026-10-31 page's
 four; the 2026-11-09 page adds `PreCompact`, whose stdout goes to the
 compaction summary instead (the 10,000-character cap below says how it is cut).
 
+The 2026-11-16 page drops the sentence that opened this list on the earlier
+pages, "For most events, Claude Code writes stdout to the debug log and doesn't
+show it in the transcript", and now says "plain-text stdout" where it said
+"stdout". The list is still the whole set: no other part of the page has
+another event's plain stdout reaching Claude. Where the rest lands is now
+shown by the page's "Debug hooks" section, whose worked example is a
+`PostToolUse` hook's plain stdout written to the debug log (verbatim):
+
+> Hook execution details are written to the debug log file.
+>
+> For example, a `PostToolUse` hook on `Write` whose command prints `hook-ran`
+> produces entries like:
+
+The entries it shows are `Hook output does not start with {, treating as plain
+text` and `"Hook PostToolUse:Write (PostToolUse) success:\nhook-ran"`.
+
 Whether stdout is read as JSON or as plain text is a **syntactic** test, not a
-channel declaration. The 2026-10-31 page states it under "Exit code 0"
+channel declaration. The 2026-11-16 page states it under "Exit code 0"
 (verbatim):
 
 > When your hook exits 0 but prints JSON that can't be parsed or fails schema
@@ -130,8 +149,8 @@ channel declaration. The 2026-10-31 page states it under "Exit code 0"
 > the action. Instead of a success with your fields applied, the run is a
 > non-blocking error.
 >
-> To fix your output, use the parse or validation message that the
-> `<hook name> hook error` notice carries. For a hook that isn't async, your
+> If a `<hook name> hook error` notice carries a parse or validation message,
+> use it to fix your output. For a hook that isn't async, your
 > stdout counts as JSON output only when you print one JSON object, on one line
 > or several, with nothing around it but whitespace. Claude Code reads any other
 > stdout as plain text or a parse failure:
@@ -178,9 +197,10 @@ whenever an espalier doc claims a hook's stderr is visible):
 **Any other exit code** (verbatim, "Other exit codes"):
 
 > A `<hook name> hook error` notice with `Failed with non-blocking status code:`
-> means your hook's exit code wasn't 0 or 2 and its stdout was plain text or
-> empty. Unless the hook is one whose failure blocks the action, this is a
-> non-blocking error, so your hook didn't stop the action.
+> means your hook didn't exit 0 or 2 and its stdout was plain text or empty.
+> The run is a non-blocking error, so your hook didn't stop the action. If the
+> notice cuts off your stderr, turn on debug logging as Debug hooks describes
+> and rerun the hook.
 >
 > If the path is wrong, correct it where the hook is configured. In shell form,
 > when the script path doesn't exist or isn't executable, the shell exits with
@@ -692,11 +712,16 @@ the model, which are easy to conflate:
    > than re-running the hook for past turns, so values like timestamps or commit
    > SHAs become stale.
 
-`suppressOutput` is now documented as inert (verbatim):
+`suppressOutput` is documented as inert (verbatim, its row of the universal
+fields table):
 
-> `suppressOutput` […] — Has no effect: Claude Code accepts the field but doesn't
-> act on it. A successful hook's stdout is never shown in the transcript and is
-> recorded in the debug log
+> | `suppressOutput` | `false` | Has no effect |
+
+The 2026-11-16 page cut the row to those three words. The earlier row went on
+to say the field is accepted and not acted on, and that "a successful hook's
+stdout is never shown in the transcript and is recorded in the debug log"; the
+stdout half now rests on "Exit code 0" and "Debug hooks", both quoted under
+"Channel and exit code semantics" above.
 
 ## PostToolUse vs PostToolUseFailure (success / failure split)
 
@@ -1022,4 +1047,22 @@ read this pin, never a candidate; the forward ledger carries that row. -->
      No hook here is wired to `PreCompact`, so neither change reaches
      espalier's output. The "Exit code 0" sentence on JSON that fails to
      parse or validate is unchanged and stays as quoted. Every quoted passage
+     stands on that page. -->
+
+<!-- re-excerpt 2026-11-16, against the page fetched that day (the refresh
+     that day found 4 of 63 quotes off; the live page read the same when
+     this was written). Under "Exit code 0" the success sentence and the
+     unparseable-JSON sentence now share one paragraph, the JSON syntax rules
+     come before the stdout list, the list's lead says "plain-text stdout",
+     and the sentence sending every other event's stdout to the debug log is
+     gone; "Debug hooks" is quoted beside the list for where that stdout now
+     lands. The JSON rules' second paragraph opens on the notice ("If a ...
+     hook error notice carries a parse or validation message"). "Other exit
+     codes" opens "means your hook didn't exit 0 or 2", calls the run a
+     non-blocking error without the "unless the hook is one whose failure
+     blocks the action" clause (the paragraphs after it keep theirs, and the
+     outcome list under "Exit code output" still carries it), and adds the
+     debug-logging step for a cut-off stderr. The `suppressOutput` row is cut
+     to "Has no effect". Nothing here rules on `onFailure`, which stays an
+     open decision, and no hook's wiring or output changes. Every quoted passage
      stands on that page. -->

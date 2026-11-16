@@ -64,7 +64,8 @@ _PROSE_SUBJECT_TEMPLATES = frozenset({
     "GATE_DOCS_REFRESH_NO_CHANGES",
     "GATE_CODE_REVIEW_BLOCK",
     "NO_ACTIVE_PLAN_BASH",       # a Bash mutation; its fields are the plan state and a hint
-    "WRITE_GUARD_TIME_BUDGET",   # "this command"; its field is the budget
+    "WRITE_GUARD_TIME_BUDGET",   # "this command"; its fields are the budget, its bound and how it was spent
+    "WRITE_GUARD_START_UP_BUDGET",  # its start-up twin (DEF-2091), the same subject and fields
 })
 
 # The ``{field}`` names that carry the TARGET of the attempt -- the path, the
@@ -130,6 +131,11 @@ _CONCRETE_STEP_RE = re.compile(
     # re-issued whole runs out of time again, and each shorter part is judged
     # on its own.
     r"|split it into shorter commands"
+    # The fourth, 2026-11-16 (DEF-2091): the same refusal where the guard's
+    # start-up, not the command, spent the time clears by the RE-ISSUE of the
+    # same command, once; the split leaves the start-up as it was. The split
+    # template's Don't line says "unchanged", never this phrase.
+    r"|re-issue the same command once"
 )
 
 _FORMAT_FIELD_RE = re.compile(r"\{[a-z_][a-z_]*\}")
@@ -445,7 +451,7 @@ def _templates_carrying_the_habit_pair() -> frozenset[str]:
 # 17 since 2026-10-07: WRITE_GUARD_TIME_BUDGET, the refusal of a judgment that
 # outran the guard's own time budget, whose wrong move (the same long command
 # again) is named beside the split that clears it.
-_PINNED_REGISTRY_COUNT = 22  # 21 -> 22 (2026-11-15): USER_SETTINGS_SWITCH, write_guard's refusal of a Write or Edit of the user settings file that turns the hooks off (DEF-5112); 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster; 17 -> 18 (2026-10-08): GOVERNANCE_GATES_UNWIRED, config_guard's unwired-gate refusal; 18 -> 20 (2026-10-18): HARNESS_GROUND_ENCLOSED and ADOPTER_ZONE_ENCLOSING_HARNESS, a directory holding harness ground (DEF-5012)
+_PINNED_REGISTRY_COUNT = 23  # 22 -> 23 (2026-11-16): WRITE_GUARD_START_UP_BUDGET, the time budget's refusal where start-up spent the time, whose wrong move is the split (DEF-2091); 21 -> 22 (2026-11-15): USER_SETTINGS_SWITCH, write_guard's refusal of a Write or Edit of the user settings file that turns the hooks off (DEF-5112); 13 -> 16 (2026-09-30): the three adopter-zone templates (espalier.toml protected_paths / generated_paths) joined the roster; 17 -> 18 (2026-10-08): GOVERNANCE_GATES_UNWIRED, config_guard's unwired-gate refusal; 18 -> 20 (2026-10-18): HARNESS_GROUND_ENCLOSED and ADOPTER_ZONE_ENCLOSING_HARNESS, a directory holding harness ground (DEF-5012)
 
 
 class TestRegistryIsPinnedAgainstDeletion:

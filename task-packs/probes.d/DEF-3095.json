@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3095",
+ "subject": "tests/test_forced_copy_parity.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_forced_copy_parity.py',encoding='utf-8').read());C=[c for c in ast.walk(t) if isinstance(c,ast.ClassDef) and c.name=='TestEngineConfigKeysParity'][0];R=('read_toml_scalar','read_toml_string_list');print(not any((isinstance(n,ast.Constant) and n.value in R) or (isinstance(n,ast.Attribute) and n.attr in R) or (isinstance(n,ast.Name) and n.id in R) for n in ast.walk(C)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "9b2400550f3a",
+ "text_sha": "a5cf5e8da8e4",
+ "verified_2026_11_16": "OPEN (filed 2026-11-16; probe driven at filing here and in the export of HEAD 4d6418b16efe)"
+}

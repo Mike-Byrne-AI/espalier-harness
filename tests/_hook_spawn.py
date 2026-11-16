@@ -79,10 +79,11 @@ import pytest
 #: The text of write_guard's refusal when its judgment outran its budget
 #: (``tools/cc/hooks/_denial_reasons.py::WRITE_GUARD_TIME_BUDGET``).
 BUDGET_REFUSAL = "could not finish judging"
-#: The text of the parent's own refusal at its deadline when it cannot import
-#: ``_denial_reasons`` (``tools/cc/hooks/write_guard.py::_answer_from_a_judging_child``,
-#: the plain-words fallback): the floor plants and a renamed reasons module
-#: reach it, and it never holds ``BUDGET_REFUSAL``.
+#: The text of the parent's own refusal at its deadline when its reasons were
+#: not built by then (``tools/cc/hooks/write_guard.py::_answer_from_a_judging_child``,
+#: the plain-words fallback): a build that failed to import ``_denial_reasons``
+#: (the floor plants, a renamed reasons module) or had not finished reaches it,
+#: and it never holds ``BUDGET_REFUSAL``.
 BUDGET_FALLBACK = "time budget before it had"
 #: How many budget retries one pooled fixture build may spend
 #: (``RetryAllowance``): past it the miss rate is the finding, not the runner.

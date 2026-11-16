@@ -599,14 +599,32 @@ WRITE_GUARD_INTERNAL_ERROR = (
 # timeout rather than let the call through unjudged. Carried like every
 # other deny, one stdout JSON object through the audited funnel. {budget}
 # is the budget in seconds.
+#: write_guard's time budget, where judging spent the time. ``{bound}`` names
+#: the bound it met (the judging child's budget or the hook's deadline) and
+#: ``{spent}`` how the time split between start-up and judging (DEF-2091).
 WRITE_GUARD_TIME_BUDGET = (
     "Command blocked: write_guard could not finish judging this command within"
-    " its {budget} s time budget, so the call is refused rather than let"
-    " through unjudged."
+    " its {budget} s time budget ({bound}; {spent}), so the call is refused"
+    " rather than let through unjudged."
     "\n  Don't: re-issue the same command unchanged -- a command this long runs"
     " out of time again."
     "\n  Do: split it into shorter commands (a long generated list of paths in"
     " batches of a hundred or two), each judged on its own."
+)
+
+#: write_guard's time budget, where start-up spent the time: the judging
+#: child had not begun judging, so no judgment ran and the re-issue passes no
+#: nudge unseen. A loaded box's start-up refused 10 ordinary calls in a week on
+#: the Windows seat, each told to split a command that was not long (DEF-2091).
+WRITE_GUARD_START_UP_BUDGET = (
+    "Command blocked: write_guard could not finish judging this command within"
+    " its {budget} s time budget ({bound}; {spent}): the time went to starting"
+    " the guard on a busy machine, not to this command, so the call is refused"
+    " rather than let through unjudged."
+    "\n  Don't: split or shorten the command -- the guard's start-up, not the"
+    " command's length, ran out the time."
+    "\n  Do: re-issue the same command once; if it is refused this way again,"
+    " the machine is still too busy, so let its load fall before re-issuing."
 )
 
 KILL_SWITCH_DETECTED = (
@@ -1115,6 +1133,9 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     # The time-budget refusal: the wrong move (the same long command again)
     # times out again, so it is named beside the split that passes.
     "WRITE_GUARD_TIME_BUDGET",
+    # Its start-up twin (DEF-2091): the wrong move there is the split, which
+    # leaves the start-up as it was, so it is named beside the re-issue.
+    "WRITE_GUARD_START_UP_BUDGET",
 )
 
 # ── a deny hook that cannot start (DEF-1176, DEF-2010, DEF-4025) ─────
@@ -1147,6 +1168,17 @@ WRITE_GUARD_CRASHED_ON_A_KEPT_FILE = (
     " edit in progress removed the name or added its read, restore the edited file to"
     " HEAD: {restore}. A read-only call may still pass, so the file can be read; every"
     " mutation is refused until then."
+)
+#: The same crash raised where write_guard's parent runs its judging child
+#: (DEF-2094): every call goes through that runner, a read-only one included,
+#: so this text never says a read-only call may pass (the failure-mode review's
+#: F3: the crash guard's text above said so, and the parent refuses them all).
+WRITE_GUARD_RUNNER_FAULT = (
+    "write_guard internal error ({error} at {file}:{line}) while it ran its judging"
+    " child; failing closed. Re-issue once. Refused the same way again, the guard is"
+    " wedged and refuses every call, a read-only one included: if {file} is being"
+    " edited, restore it to HEAD: {restore}. Otherwise `/status --log` counts it and"
+    " the repair is made from a terminal outside this session."
 )
 
 #: Reasons whose deny/block is FAIL-CLOSED because the hook could not read or

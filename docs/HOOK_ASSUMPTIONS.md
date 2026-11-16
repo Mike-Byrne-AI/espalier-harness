@@ -94,7 +94,7 @@ The same blindness holds for an exit-0 hook's **stderr**, on every event: it rea
 **Backed by:**
 <!-- canon: convention -->
 <!-- claim-id: hook-assumption-2-additional-context -->
-- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — the "Channel and exit code semantics" section pins this property: **plain stdout** on most events goes to the debug log, with SessionStart / UserPromptSubmit / UserPromptExpansion / PostModelSwitch as the named exceptions; PreToolUse is *not* in that list. The same excerpt lists PreToolUse among the events where `additionalContext` JSON *is* delivered next to the tool result — the two channels differ.
+- [docs/external/cc-hook-protocol.md](external/cc-hook-protocol.md) — the "Channel and exit code semantics" section pins this property: **plain stdout** reaches Claude only on the events the page lists, SessionStart / UserPromptSubmit / UserPromptExpansion / PostModelSwitch (PreCompact's goes to the compaction summary), and its "Debug hooks" quote shows a PostToolUse hook's plain stdout written to the debug log; PreToolUse is *not* in that list. The same excerpt lists PreToolUse among the events where `additionalContext` JSON *is* delivered next to the tool result — the two channels differ.
 - No Espalier-side runtime probe. The harness's own `session_start.py` legitimately uses `additionalContext` (SessionStart *is* a plain-stdout exception and also delivers `additionalContext`), so the presence of that field in the codebase is not evidence about PreToolUse plain-stdout blindness. Drift would show up as a hook author writing PreToolUse plain stdout and being surprised when the agent doesn't act on it.
 
 ---
