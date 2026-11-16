@@ -5408,12 +5408,13 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
     ),
     "session_catch_up": (
         "Catch the checkout up at each fresh session (tools/cc/hooks/session_start.py,\n"
-        "# through tools/cc/checkout_sync.py): a checkout on main, or on a branch\n"
-        "# deleted at its merge, moves to origin/main when nothing is in flight, and\n"
-        "# leftover worktrees that hold nothing are removed. Off when absent, since\n"
-        "# moving a branch unasked is a surprise; ESPALIER_SESSION_CATCH_UP=0 or 1 in\n"
-        "# the launching shell overrides it. `python tools/cc/checkout_sync.py` says\n"
-        "# what it would do.",
+        "# through tools/cc/checkout_sync.py): a checkout on origin's default branch,\n"
+        "# or on a branch deleted at its merge, moves to the remote's tip when nothing\n"
+        "# is in flight (the merged local branch is then deleted with `git branch -d`),\n"
+        "# and leftover worktrees under .claude/worktrees/ that hold nothing are\n"
+        "# removed. Off when absent, since moving a branch unasked is a surprise;\n"
+        "# ESPALIER_SESSION_CATCH_UP=0 or 1 in the launching shell overrides it.\n"
+        "# `python3 tools/cc/checkout_sync.py` (or `python`) says what it would do.",
         "session_catch_up = true",
     ),
     "id_blocks": (

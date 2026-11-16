@@ -587,16 +587,18 @@ class TestEngineConfigKeysParity:
         hook_utils, _, copy = self._sets()
         assert {key for key, _ in hook_utils.ADOPTER_ZONE_KEYS} <= copy
 
-    def test_every_key_a_hook_names_is_an_engine_key(self):
-        """The class guard over the keys a hook names: a top-level
-        espalier.toml key a hook reads through a module constant is one the
-        engine declares, or ``load_config`` tells the adopter who set it that
-        it is an unknown key and ignored, and the obvious response, deleting
-        it, turns the hook's behavior off (``session_catch_up`` was, while
-        root CLAUDE.md told adopters to set it, until 2026-11-16). The other
-        hooks' constants are read from their source, not imported: a hook's
-        module body is the hook's to run. A key a hook reads by a literal at
-        the call site is outside this pin."""
+    def test_the_key_constants_listed_here_are_engine_keys(self):
+        """The top-level espalier.toml keys held by the hook constants listed
+        below are keys the engine declares, or ``load_config`` tells the
+        adopter who set one that it is an unknown key and ignored, and the
+        obvious response, deleting it, turns the hook's behavior off
+        (``session_catch_up`` was, while root CLAUDE.md told adopters to set
+        it, until 2026-11-16). The list is hand-kept, not a scan: a NEW key
+        constant, a key read by a literal at the call site, and one read by
+        ``.get`` on ``read_toml_table``'s table are outside it until DEF-3095's
+        scan lands; add a new hook key constant here. The other hooks'
+        constants are read from their source, not imported: a hook's module
+        body is the hook's to run."""
         import ast
 
         def literal(path: Path, name: str) -> object:
