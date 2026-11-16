@@ -370,14 +370,16 @@ _ENGINE_INTERPRETER_MEMOS = (
     ("espalier._python_floor", "_START_VERDICTS"),
     ("espalier._python_floor", "_BANNER_VERDICTS"),
     ("espalier.cli", "_VENV_ONLY_VERDICTS"),
+    ("espalier.cli", "_WRITERS_GATE_VERDICTS"),
 )
 
 
 def _clear_engine_interpreter_memos() -> None:
     """Clear the engine's per-process interpreter verdicts (DEF-5014): the
     start-up probe's (`espalier._python_floor._START_VERDICTS`), the banner
-    probe's (`_BANNER_VERDICTS`, DEF-5015) and the venv-only probe's
-    (`espalier.cli._VENV_ONLY_VERDICTS`). Production keeps
+    probe's (`_BANNER_VERDICTS`, DEF-5015), the venv-only probe's
+    (`espalier.cli._VENV_ONLY_VERDICTS`) and the writers' gate's
+    (`espalier.cli._WRITERS_GATE_VERDICTS`, DEF-3088). Production keeps
     them for one CLI run; one pytest process spans the suite, so a verdict one
     test drove would answer the next test's ask (both reviews of DEF-5014
     drove a test that passed or failed by order). A module not yet imported
