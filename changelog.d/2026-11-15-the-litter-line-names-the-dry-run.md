@@ -13,7 +13,8 @@
   no flag, run from the session's own shell, which says which worktrees may
   go and why each other one stays (a live session in it, a lock, an
   operation in progress, commits not in `main`, ignored files); run from
-  another terminal while that session is open, it judges none and says so.
+  another terminal while that session is open, it says its verdicts assume
+  that session is in none of them.
   Where that script is not deployed, the line names
   `espalier upgrade --execute` first. A worktree that a recent session marker places a
   session in, its own or one the main checkout's session moved into, is not

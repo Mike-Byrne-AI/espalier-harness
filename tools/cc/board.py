@@ -542,13 +542,27 @@ def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
     green, newest first (the newest is ``run_id``; a ruling on an older one is
     named when the newest has none), ``green_sha`` the last green run before
     it and ``suspects`` the pull requests merged in between, several when a
-    run between the two is red or still going (None when no green run is in
-    the window); ``between`` holds the head of each run still going there,
-    whose verdict can narrow the suspects (runs overlap since no newer push
-    cancels an older one). A failed suspects read keeps the red and says so;
-    it never turns red into unread."""
+    run between the two is red, still going or ended with no verdict (None
+    when no green run is in the window); ``between`` holds the head of each
+    run still going there, whose verdict can narrow the suspects (runs overlap
+    since no newer push cancels an older one). ``no_verdict_runs`` holds each
+    completed run newer than the last green that reached no verdict
+    (cancelled, stale, skipped, neutral, action required), newest first, as
+    ``{"sha", "run_id", "url", "conclusion", "newer"}``, ``newer`` saying it is
+    newer than the verdict's run (every one when there is none) rather than
+    inside a red stretch. A job cut by its ``timeout-minutes`` concludes
+    cancelled, and walking past such a run unnamed read the base as proven
+    past merges no run judged (DEF-4106). Every cancel is named: on a workflow
+    with no ``cancel-in-progress`` (this repository's, which its CI-bounds
+    test pins) a cancel is a cut or a hand cancel; where an adopter's
+    concurrency cancels a superseded run, that run is named while the newer
+    one goes, which is true, since nothing has judged its merge yet, and the
+    newer run's green ends the walk above it. (``_post_merge.base_run_verdict``
+    records the kinds of its own, without heads or ids, and walks a
+    superseded cancel past.) A failed suspects read keeps the red and says
+    so; it never turns red into unread."""
     out: dict = {"verdict": "none", "sha": "", "url": "", "run_id": "", "red_runs": [], "running": False,
-                 "between": [], "green_sha": "", "suspects": None, "suspects_unread": ""}
+                 "between": [], "green_sha": "", "suspects": None, "suspects_unread": "", "no_verdict_runs": []}
     try:
         runs = _gh_json(root, "run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
                         "--limit", str(RUN_WINDOW), "--json", "databaseId,status,conclusion,headSha,url", run_=run_)
@@ -583,6 +597,11 @@ def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
             # Every red back to the last green, newest first: a ruling on an
             # older red in the stretch is named when the newest has none.
             out["red_runs"].append(str(run_row.get("databaseId") or ""))
+            continue
+        out["no_verdict_runs"].append({"sha": sha, "run_id": str(run_row.get("databaseId") or ""),
+                                       "url": str(run_row.get("url") or ""),
+                                       "conclusion": conclusion.lower() or "no conclusion",
+                                       "newer": out["verdict"] == "none"})
     if out["verdict"] == "red":
         try:
             out["suspects"] = read_suspects(root, out["green_sha"], out["sha"], run_=run_)
@@ -1718,10 +1737,27 @@ def read_ruling(by_machine: dict, dispatcher: str | None, how: str, run_id: obje
     return out
 
 
+def _no_verdict_names(runs: list) -> str:
+    """Each post-merge run that reached no verdict, by its head and run id
+    with its conclusion (``bbbbbbb (run 222, cancelled)``; the id left out
+    where gh gave none, ``run 222 (cancelled)`` where it gave no head),
+    comma-joined; "" for none (DEF-4106)."""
+    names = []
+    for r in runs:
+        sha, run_id = str(r.get("sha") or "")[:7], str(r.get("run_id") or "")
+        kind = str(r.get("conclusion") or "no conclusion")
+        if sha:
+            names.append(f"{sha} (run {run_id}, {kind})" if run_id else f"{sha} ({kind})")
+        else:
+            names.append(f"run {run_id} ({kind})" if run_id else f"a run gh gave no head or id ({kind})")
+    return ", ".join(names)
+
+
 def _red_line(pm: dict, base: str, prs: object) -> str:
     """The red base and what to do about it. A red run's suspects are the
     merges since the last green run before it, several when a run between the
-    two is red or still going: the revert is printed only when exactly one
+    two is red, still going or ended with no verdict (each such run is named,
+    DEF-4106): the revert is printed only when exactly one
     pull request merged in between, and otherwise the suspects are named.
     Where the dispatcher has ruled the red run a fix-forward (``read_ruling``)
     the ruling is printed in place of the revert and of the suspects' advice,
@@ -1794,6 +1830,16 @@ def _red_line(pm: dict, base: str, prs: object) -> str:
     if between:
         text += ("; a run between it and the last green is still going (on " + ", ".join(between) + ")"
                  + ("" if ruled else ", and its verdict can narrow the suspects"))
+    unjudged = [r for r in pm.get("no_verdict_runs") or [] if isinstance(r, dict)]
+    newer = _no_verdict_names([r for r in unjudged if r.get("newer")])
+    if newer:
+        text += f"; no verdict on the newer {newer}"
+    inside = _no_verdict_names([r for r in unjudged if not r.get("newer")])
+    if inside:
+        # With no green among the runs read there is no "last green" to point
+        # at: the run is older than the red, and every merge before it is a
+        # suspect already (the line's own words above).
+        text += f"; no verdict on {inside}, " + ("between it and the last green" if green else "older than it")
     if pm.get("running"):
         # Runs overlap (no newer push cancels an older one), so a newer tip's
         # proof is often in flight beside a red: say so, as the green line does.
@@ -2176,10 +2222,19 @@ def render(board: dict) -> str:
         lines.append(f"{label}no post-merge proof here ({POST_MERGE_WORKFLOW} is not in this repository), so two "
                      "merges that break together show only on the next pull request's CI")
     elif pm.get("verdict") == "green":
-        lines.append(f"{label}post-merge proof green on {str(pm.get('sha') or '')[:7]}"
+        green = str(pm.get("sha") or "")[:7]
+        # A run newer than the green that reached no verdict (a timeout cut
+        # or a hand cancel) leaves its merge unjudged: named, never walked
+        # past, so main never reads proven past it (DEF-4106).
+        unjudged = _no_verdict_names([r for r in pm.get("no_verdict_runs") or [] if isinstance(r, dict)])
+        lines.append(f"{label}post-merge proof green on {green}"
+                     + (f"; no verdict on the newer {unjudged}, so {base} is unproven past {green}" if unjudged else "")
                      + ("; a newer run is going" if pm.get("running") else ""))
     else:
-        lines.append(f"{label}no post-merge verdict yet" + ("; a run is going" if pm.get("running") else ""))
+        unjudged = _no_verdict_names([r for r in pm.get("no_verdict_runs") or [] if isinstance(r, dict)])
+        lines.append(f"{label}no post-merge verdict "
+                     + (f"among the runs read: {unjudged} reached none, so {base} is unproven" if unjudged else "yet")
+                     + ("; a run is going" if pm.get("running") else ""))
     pmc = board.get("post_merge_checks") or {}
     if "unread" in pmc:
         lines.append(f"checks:   unread ({pmc['unread']})")
