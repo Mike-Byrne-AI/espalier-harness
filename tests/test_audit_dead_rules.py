@@ -6,7 +6,8 @@ Its collector kept the module-level names ending in `_RE` that hold an
 since DEF-2084 every module-level pattern is a `_FirstUse` object, which that
 check reads as none. Each population below is derived from the module, by
 type and by signature, never from a name list, so a rule of either kind the
-collector misses reds here.
+collector misses reds here. This pins the collector's reach to the module it
+audits, because a rule it misses is silently never audited at all.
 """
 # pytest-marker: default-unit
 from __future__ import annotations
