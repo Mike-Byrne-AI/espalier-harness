@@ -1237,6 +1237,16 @@ class TestABrokenFirstUsePatternRefuses:
         reason = _the_one_deny(streams)
         assert "_bash_patterns.py" in reason, reason
 
+    @pytest.mark.parametrize("source", ["(", 123, None], ids=["re-error", "int", "none"])
+    def test_any_failure_to_compile_raises_past_the_walkers(self, source):
+        # The broad arm too: a raise other than re.error (a source that is not a
+        # string) must still leave as FirstUseCompileError, its message built
+        # without raising, or a walker's `except Exception` reads it as no match.
+        import _bash_patterns as bp
+
+        with pytest.raises(bp.FirstUseCompileError, match="does not compile"):
+            bp._FirstUse(source, 0).search("x")
+
 
 #: Stands for the guard's begun mark in the parametrize rows below, which
 #: resolve it in the test: a name the guard gained in this lane, read at

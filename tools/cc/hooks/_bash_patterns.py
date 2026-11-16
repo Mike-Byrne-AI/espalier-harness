@@ -110,9 +110,13 @@ class _FirstUse:
             raise AttributeError(name)
         try:
             real = re.compile(self.pattern, self._flags)
-        except Exception as exc:  # noqa: BLE001 -- re.error or any other: the crash guard's, never a walker's (FirstUseCompileError)
+        except re.error as exc:  # the source no longer compiles: its message says where
             raise FirstUseCompileError(
-                f"a first-use pattern does not compile ({type(exc).__name__}: {exc}): {self.pattern[:120]!r}"
+                f"a first-use pattern does not compile (re.error: {exc}): {str(self.pattern)[:120]!r}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 -- any other: the crash guard's, never a walker's (FirstUseCompileError); its class alone, since an OSError's text renders its path through repr
+            raise FirstUseCompileError(
+                f"a first-use pattern does not compile ({type(exc).__name__}): {str(self.pattern)[:120]!r}"
             ) from exc
         return self._fill(real, name)
 
