@@ -14,6 +14,7 @@
   in, the same rule the session catch-up keeps it by. Run from the
   session's own shell, the run leaves that session's own marker out, so
   a worktree it has since left is judged like any other; and
-  its last line offers `--apply` only where the apply would act: not when
-  the session registry could not be read and no worktree was judged,
-  unless the checkout itself would catch up.
+  its last line offers `--apply` only where the apply would act -- a
+  checkout that would catch up, or a worktree it would remove with no
+  other session holding it -- and no longer after a run that judged no
+  worktree (the session registry unread, say) or found none to remove.

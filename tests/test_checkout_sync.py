@@ -3025,7 +3025,7 @@ class TestTheDryRunJudgesPastTheHold:
             "kept 1: busy [1 uncommitted change]")
 
     @staticmethod
-    def _outside(cs, monkeypatch, registry: list[dict], markers: dict[str, list[dict]]) -> None:
+    def _outside(cs, monkeypatch, registry: list[dict] | None, markers: dict[str, list[dict]]) -> None:
         """The CLI run from a terminal no session owns: no ``CLAUDECODE``, and
         no registry entry among its ancestors. ``markers`` maps a tree to the
         live session markers its state directory holds."""
@@ -3076,13 +3076,13 @@ class TestTheDryRunJudgesPastTheHold:
         monkeypatch.setenv("CLAUDECODE", "1")
         monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([4242], True))
         monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: [_row(work, pid=4242, sid="own")])
+        hook_utils = cs._hook_utils_by_path()
+        # Real markers, read by the reader the CLI loads; the control's marker
+        # is written beside the caller's, so its run holds both.
         for sid, pid, would, kept in (
                 ("own", 4242, ["fresh", "left"], []),
                 ("other", 5151, ["fresh"], [["left", "a live Claude session is in it"]])):
-            marks = {cs._norm(work): [{"session_id": sid, "cwd": str(left), "pid": pid, "alive": None}]}
-            reader = SimpleNamespace(other_live_sessions=lambda tree, own, marks=marks: [
-                m for m in marks.get(cs._norm(tree), []) if not own or m["session_id"] != own])
-            monkeypatch.setattr(cs, "_hook_utils_by_path", lambda reader=reader: reader)
+            assert hook_utils.write_session_marker(work, sid, pid=pid, cwd=str(left)), sid
             assert cs.main(["--root", str(work), "--json"]) == 0
             trees = json.loads(capsys.readouterr().out)["worktrees"]
             assert sorted(trees["would_remove"]) == would, (sid, trees)
@@ -3090,12 +3090,13 @@ class TestTheDryRunJudgesPastTheHold:
         assert fresh.is_dir() and left.is_dir()
 
     def test_the_footer_offers_the_apply_only_where_it_would_act(self, cs, repos, monkeypatch, capsys):
-        """An unread registry judges no tree, so the footer offers no --apply
-        for the trees; a checkout that would catch up is still the apply's to
-        do. Dies to: the footer offering --apply wherever no session holds it,
-        and to one gated on the registry alone, which drops the catch-up."""
+        """The footer offers --apply where the apply acts on what was judged:
+        a checkout that would catch up, or a tree it would remove with no other
+        session holding the apply. Dies to: the offer wherever no session
+        holds it (an unread registry judged no tree), to one gated on the
+        registry alone, which drops the catch-up, and to one reading the hold
+        from the trees' report, which names none where no tree is left."""
         work = repos["work"]
-        _worktree(repos, "fresh")
         monkeypatch.chdir(work)
         held = [_row(work, pid=4242, sid="root-session")]
 
@@ -3104,12 +3105,22 @@ class TestTheDryRunJudgesPastTheHold:
             assert cs.main(["--root", str(work)]) == 0
             return capsys.readouterr().out.splitlines()
 
+        # No tree left over: a held catch-up offers nothing (the reviews' case,
+        # a footer under a NOT caught up line), and nor does a current checkout.
+        _advance(repos["seed"])
+        lines = run(held)
+        assert lines[0].startswith("Checkout:  NOT caught up") and lines[-1] == "(dry run)", lines
+        _git(work, "pull", "--quiet", "--ff-only")
+        assert run([])[-1] == "(dry run)"
+        fresh = _worktree(repos, "fresh")
         assert run([])[-1] == "(dry run; --apply does it)"
         unread = run(None)
         assert unread[0] == "Checkout:  current" and unread[-1] == "(dry run)", unread
         assert "session registry could not be read, so no worktree was removed" in unread[1], unread
         assert run(held)[-1] == "(dry run)"
-        _advance(repos["seed"])
+        (fresh / "draft.txt").write_text("work\n", encoding="utf-8")
+        assert run([])[-1] == "(dry run)", "a tree kept leaves the apply nothing to do"
+        _advance(repos["seed"], prefix="again")
         behind = run(None)
         assert behind[0].startswith("Checkout:  would catch up 1 commit"), behind
         assert behind[-1] == "(dry run; --apply does it)", behind
