@@ -20,3 +20,18 @@
   this session. The hooks guide now says the check reaches past one letter
   (`protect_paths`, `generated_path`), not that it catches a name one letter
   off.
+- **`session_catch_up` is a key the engine knows.** The SessionStart catch-up
+  reads `session_catch_up = true` from `espalier.toml`, and the hooks guide
+  tells adopters to set it, but the engine's loader did not declare it, so
+  `espalier doctor` and every command that loads the config called it an
+  unknown key and said it was ignored, and deleting it would have turned the
+  catch-up off. It is declared now, with the hook as its reader, and the
+  config skeleton documents it. A test now checks that each key a hook reads
+  through a named constant is one the engine declares.
+- **The config skeleton keeps its plain keys above its tables.** TOML reads
+  every key below a `[table]` header as that table's, and the skeleton put
+  `ledger_fragments` below `[id_blocks]`, so uncommenting both put it inside
+  the id blocks. Table-form keys now render last, and the skeleton's header
+  says the keys under "Other readers" are read by the script each one names.
+  A kept `espalier.toml` is never rewritten: move such a line above
+  `[id_blocks]` by hand.

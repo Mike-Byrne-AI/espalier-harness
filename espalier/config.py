@@ -34,6 +34,7 @@ FOREIGN_KEYS: dict[str, str] = {
     "id_blocks": "tools/cc/ledger_row.py",
     "changelog_fragments": "tools/cc/_record_fragments.py",
     "ledger_fragments": "tools/cc/_record_fragments.py",
+    "session_catch_up": "tools/cc/hooks/session_start.py",
 }
 
 

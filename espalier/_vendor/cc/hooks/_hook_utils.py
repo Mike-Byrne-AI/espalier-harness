@@ -1055,7 +1055,7 @@ ENGINE_CONFIG_KEYS: frozenset[str] = frozenset({
     # FOREIGN_KEYS
     "record_requires_exclusions", "record_remote_required", "handoff_push",
     "handoff_context_tokens", "dispatcher", "id_blocks", "changelog_fragments",
-    "ledger_fragments",
+    "ledger_fragments", "session_catch_up",
 })
 
 

@@ -5289,6 +5289,16 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
         "# count, not a share of the window: set it for the model's window.",
         "handoff_context_tokens = 200000",
     ),
+    "session_catch_up": (
+        "Catch the checkout up at each fresh session (tools/cc/hooks/session_start.py,\n"
+        "# through tools/cc/checkout_sync.py): a checkout on main, or on a branch\n"
+        "# deleted at its merge, moves to origin/main when nothing is in flight, and\n"
+        "# leftover worktrees that hold nothing are removed. Off when absent, since\n"
+        "# moving a branch unasked is a surprise; ESPALIER_SESSION_CATCH_UP=0 or 1 in\n"
+        "# the launching shell overrides it. `python tools/cc/checkout_sync.py` says\n"
+        "# what it would do.",
+        "session_catch_up = true",
+    ),
     "id_blocks": (
         "Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,\n"
         "# and `ledger_row.py mint`, take the lowest free number of this seat's block\n"
@@ -5353,10 +5363,13 @@ def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -
         "generated_paths = [" + ", ".join(f'"{z}"' for z in sorted(set(zones))[:4]) + "]"
         if zones else 'generated_paths = ["dist/", "coverage/"]'
     )
-    foreign = [
-        key for key, reader in sorted(FOREIGN_KEYS.items())
-        if reader.replace("\\", "/").startswith("tools/cc/")
-    ]
+    # The table-form keys (`[id_blocks]`) last: TOML reads every key below a
+    # table header as the table's, so a plain key rendered under one would land
+    # in it the day an adopter uncomments both.
+    foreign = sorted(
+        (key for key, reader in FOREIGN_KEYS.items() if reader.replace("\\", "/").startswith("tools/cc/")),
+        key=lambda key: (_FOREIGN_KEY_SENTENCES.get(key, ("", ""))[1].startswith("["), key),
+    )
     foreign_blocks = []
     for key in foreign:
         sentence, example = _FOREIGN_KEY_SENTENCES.get(
@@ -5380,6 +5393,7 @@ def _build_espalier_toml(fp: 'RepoFingerprint', repo_root: Path | None = None) -
 #   recall_sources and recall_records are read by /recall on every run.
 #   default_profile       is read when `init` renders settings.json.
 #   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
+#   the keys under Other readers are read by the script each one names.
 #   every other key       is read when the saved plan
 #                         (reports/harness_config.json) is built. After an
 #                         edit, `espalier fingerprint .` rebuilds the plan.

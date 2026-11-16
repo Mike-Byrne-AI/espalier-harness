@@ -586,3 +586,45 @@ class TestEngineConfigKeysParity:
         would match itself at 1.0 and be told "did you mean" its own name."""
         hook_utils, _, copy = self._sets()
         assert {key for key, _ in hook_utils.ADOPTER_ZONE_KEYS} <= copy
+
+    def test_every_key_a_hook_names_is_an_engine_key(self):
+        """The class guard over the keys a hook names: a top-level
+        espalier.toml key a hook reads through a module constant is one the
+        engine declares, or ``load_config`` tells the adopter who set it that
+        it is an unknown key and ignored, and the obvious response, deleting
+        it, turns the hook's behavior off (``session_catch_up`` was, while
+        root CLAUDE.md told adopters to set it, until 2026-11-16). The other
+        hooks' constants are read from their source, not imported: a hook's
+        module body is the hook's to run. A key a hook reads by a literal at
+        the call site is outside this pin."""
+        import ast
+
+        def literal(path: Path, name: str) -> object:
+            for node in ast.parse(path.read_text(encoding="utf-8")).body:
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    targets, value = [node.target], node.value
+                else:
+                    continue
+                if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                    return ast.literal_eval(value)
+            raise AssertionError(f"{path.name} assigns no module-level {name}")
+
+        hook_utils, _, copy = self._sets()
+        named = {
+            "session_start.CATCH_UP_KEY": literal(HOOKS_DIR / "session_start.py", "CATCH_UP_KEY"),
+            "plan_guard._ADOPTER_CONFIG_KEY": literal(HOOKS_DIR / "plan_guard.py", "_ADOPTER_CONFIG_KEY"),
+            "_hook_utils.HANDOFF_CONTEXT_KEY": hook_utils.HANDOFF_CONTEXT_KEY,
+        }
+        for key, _family in literal(HOOKS_DIR / "_recall.py", "RECALL_SOURCE_KEYS"):
+            named[f"_recall.RECALL_SOURCE_KEYS[{key}]"] = key
+        for key in hook_utils.RELIEF_AGENT_KEYS:
+            named[f"_hook_utils.RELIEF_AGENT_KEYS[{key}]"] = key
+        for key, _kind in hook_utils.ADOPTER_ZONE_KEYS:
+            named[f"_hook_utils.ADOPTER_ZONE_KEYS[{key}]"] = key
+        undeclared = {where: key for where, key in named.items() if key not in copy}
+        assert not undeclared, (
+            "a hook reads a key the engine does not declare: add it to "
+            f"espalier/config.py::FOREIGN_KEYS with its reader, and to ENGINE_CONFIG_KEYS: {undeclared}"
+        )
