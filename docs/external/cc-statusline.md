@@ -6,7 +6,7 @@ fetch_note: |
   refresher stores the HTML verbatim.
 mirrors:
   - https://code.claude.com/docs/en/statusline
-fetched: 2026-10-10
+fetched: 2026-11-16
 section: "How status lines work; Windows configuration; Troubleshooting"
 section_anchor: "how-status-lines-work"
 content_hash: ""
@@ -22,7 +22,7 @@ purpose: |
 # Claude Code Status Line — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/statusline (fetched as the `.md` twin)
-**Fetched:** 2026-10-10
+**Fetched:** 2026-11-16
 **Section:** "How status lines work", "Windows configuration", "Troubleshooting"
 **Purpose:** Verification target for the statusLine string `espalier init` renders and every espalier claim about the shell that runs it, when it runs, and how it fails.
 
@@ -39,6 +39,16 @@ purpose: |
      sentence, same rule) and is re-excerpted. All four section names above
      still exist. -->
 
+<!-- re-excerpt 2026-11-16, against the page fetched that day (the refresh
+     that day found 1 of 12 quotes off; the live page read the same when this
+     was written): the page no longer documents `subagentStatusLine`, so the
+     one quote on it ("The same trust, `disableAllHooks`, and
+     `allowManagedHooksOnly` gates that apply to `statusLine` apply here") is
+     removed and the prose on it below is corrected. The other 11 passages
+     stand word for word, the four section names still exist, and the
+     optional fields are still `padding`, `refreshInterval` and
+     `hideVimModeIndicator`. Nothing espalier renders or asserts changes. -->
+
 ---
 
 ## It is a shell string, with no exec form
@@ -54,10 +64,12 @@ and `hideVimModeIndicator`. There is no `args` field and no exec form — which
 is why espalier's statusLine stays a single command string while its hooks are
 exec-form (`docs/external/cc-hook-protocol.md`, `tests/test_hook_exec_form.py`).
 
-The page now also documents a sibling setting, `subagentStatusLine`, with the
-same two-field shape (`type: "command"` plus a `command` string) and no `args`
-either, for the per-subagent rows in the agent panel. espalier does not render
-it.
+From 2026-09-28 to at least 2026-11-09 the page also documented a sibling
+setting, `subagentStatusLine`, with the same two-field shape (`type:
+"command"` plus a `command` string) and no `args` either, for the per-subagent
+rows in the agent panel. The 2026-11-16 page no longer names it, and neither do
+the settings, settings-reference or subagents pages read that day. espalier
+never rendered it.
 
 <!-- re-excerpt 2026-10-01: both quotes above are word for word what the
      2026-09-28 page says; the first now has a cross-reference sentence
@@ -189,11 +201,6 @@ A THIRD gate the 2026-09-07 excerpt did not carry:
 > If your organization sets `allowManagedHooksOnly` in managed settings, your
 > custom status line disappears without warning: you can only get a status
 > line from a `statusLine` value in those managed settings.
-
-and, on the sibling setting:
-
-> The same trust, `disableAllHooks`, and `allowManagedHooksOnly` gates that
-> apply to `statusLine` apply here.
 
 <!-- re-excerpt 2026-10-01: both 2026-09-07 quotes hold word for word and are
      EXTENDED, not contradicted -- the trust rule now says a parent folder's
