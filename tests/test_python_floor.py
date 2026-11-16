@@ -3955,7 +3955,7 @@ class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
         def run(verb, *extra):
             return subprocess.run(
                 [sys.executable, "-m", "espalier.cli", verb, str(target), *extra],
-                capture_output=True, text=True, timeout=scaled(120), env=env,
+                capture_output=True, text=True, timeout=scaled(50), env=env,
                 encoding="utf-8", cwd=str(target),
             )
 
