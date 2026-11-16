@@ -53,9 +53,10 @@ Usage::
     # a row that is a further instance of one already filed on the same job
     # says so: --sibling-of DEF-695 (repeatable; a row live or struck) records
     # its parent in a lineage file no strike touches. With it, the chain
-    # advisory reads the chain (recording-only until twenty rows carry the
-    # flag, one line meanwhile); a filing into the standalone class C0 prints
-    # the cluster advisory once its site family holds five live rows there.
+    # advisory prints the chain and the five questions when the new row is a
+    # sibling of a sibling or a parent's third child; a filing into the
+    # standalone class C0 prints the cluster advisory once its site family
+    # holds five live rows there.
     # Both are stderr advice: neither refuses or changes the exit code.
 
     # read a row's chain and its site family's standalone count before
@@ -2147,24 +2148,31 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
 # and the ``lineage`` verb read the lineage files and the current ledger only,
 # no history, and none of them refuses or changes an exit code.
 
-#: The advisories' thresholds. First guesses, each to be reviewed once it has
-#: twenty filings behind it: fired on more than half is noise; never fired is
-#: reported, and never lowered to make it speak.
+#: The advisories' thresholds. First guesses, each reviewed once it had twenty
+#: filings behind it, by a rule fixed before the count: fired on more than half
+#: is noise; never fired is reported, and never lowered to make it speak. Both
+#: were kept at the review of 2026-11-15. The chain advisory would have fired on
+#: 6 of the first 20 filings carrying ``--sibling-of`` (4 on depth, 2 on
+#: fan-out). The cluster advisory fired on 14 of the 15 standalone filings in
+#: the families already at its figure when it landed (judged apart, since they
+#: fire by construction), and on 0 of the other 5.
 CHAIN_DEPTH_AT = 2            # a sibling of a sibling
 CHAIN_FAN_OUT_AT = 3          # a parent's third child, the new row counted
 CLUSTER_AT = 5                # live standalone rows on one site family, the new row counted
-#: The chain advisory is recording-only until this many rows carry
-#: ``--sibling-of``: it prints one line saying so, and at the figure the line
-#: says the threshold review is due. The full print waits for that review.
+#: With the chain print off, the advisory only records: it prints one line,
+#: and once this many rows carry ``--sibling-of`` the line says a threshold
+#: review is due.
 CHAIN_RECORDING_UNTIL = 20
 #: Whether the chain advisory prints the chain and the questions when it
-#: fires. Off while recording: a filer who reads that a chain would fire can
-#: change what it files, and that shapes the very data the review reads; what
-#: would have fired is derivable afterwards from the lineage files and each
-#: row's filing commit. Turned on by a ruling on that review, never by a count.
-#: The ``lineage`` verb prints a chain in full regardless: it is read at plan
-#: time, for a row already filed, so it shapes the fix and not the filing.
-CHAIN_ADVISORY_PRINTS = False
+#: fires. It was off while its first twenty filings were gathered: a filer who
+#: reads that a chain would fire can change what it files, and that shapes the
+#: very data a review reads; what would have fired is derivable afterwards from
+#: the lineage files and each row's filing commit. On since the review of
+#: 2026-11-15. A ruling turns it, never a count, so a later review that wants
+#: unshaped data again turns it off the same way. The ``lineage`` verb prints a
+#: chain in full regardless: it is read at plan time, for a row already filed,
+#: so it shapes the fix and not the filing.
+CHAIN_ADVISORY_PRINTS = True
 #: The standalone class: rows filed into no class of their own.
 STANDALONE_SECTION = "§C0"
 #: Asked before the class question, when a chain or a standalone cluster says
@@ -2291,8 +2299,8 @@ def _chain_lines(rid: str, lineage: dict[str, tuple[str, ...]], text: str) -> li
 
 def _chain_advisory(rid: str, lineage: dict[str, tuple[str, ...]], text: str) -> list[str]:
     """The chain advisory for a filing with ``--sibling-of``, ``lineage``
-    holding the new row's parents. While recording, one line; with the print
-    on, the chain and the questions when it fires, nothing when it does not."""
+    holding the new row's parents: the chain and the questions when it fires,
+    nothing when it does not; with the print turned off, one recording line."""
     carrying = len(lineage)
     if not CHAIN_ADVISORY_PRINTS:
         if carrying < CHAIN_RECORDING_UNTIL:
