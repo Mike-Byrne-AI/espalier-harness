@@ -156,40 +156,53 @@ def _settings_label(file_path: str | None, source: str, root: Path) -> str | Non
     With no path, the source names the file. A path is matched against the
     project file, then the local file, by ``_same_file``, so a local file that
     is the project file takes the project label and its hook-list arms are
-    read; then the user file, by its source and name (Claude Code gives its
-    absolute path with ``source: user_settings``, which no root bound can
-    hold) or as the same file. The path decides before the source: a payload
-    naming the project file is the project file whatever source it carries.
-    Raises OSError or RuntimeError where a path cannot be resolved or, at the
-    user file, no home is found."""
+    read; then the user file: by its source and name where the path lies
+    outside the root (Claude Code gives its absolute path with ``source:
+    user_settings``, which no root bound can hold), or as the same file, so
+    another ``settings.json`` inside the root is read as any other in-root
+    file. The path decides before the source: a payload naming the project
+    file is the project file whatever source it carries. Raises OSError,
+    RuntimeError or ValueError where a path cannot be resolved (a symlink
+    loop raises RuntimeError on 3.11 and 3.12, a NUL byte ValueError) or, at
+    the user file, no home is found."""
     if not file_path:
-        return _integrity.user_settings_label() if source == _USER_SOURCE else _SOURCE_LABELS.get(source)
+        return _source_label(source)
     path = Path(file_path)
     if not path.is_absolute():
         path = root / path
     for label in (_integrity.PROJECT_SETTINGS_REL, _integrity.LOCAL_SETTINGS_REL):
         if _same_file(path, root / label):
             return label
-    if (source == _USER_SOURCE and path.name == "settings.json") or _same_file(path, _integrity.user_settings_path()):
+    if source == _USER_SOURCE and path.name == "settings.json" and _in_root(file_path, root) is None:
+        return _integrity.user_settings_label()
+    if _same_file(path, _integrity.user_settings_path()):
         return _integrity.user_settings_label()
     return None
 
 
+def _source_label(source: str) -> str | None:
+    """The settings file a source names: the change's label where its path
+    is missing, or cannot be located."""
+    return _integrity.user_settings_label() if source == _USER_SOURCE else _SOURCE_LABELS.get(source)
+
+
 def _locate(file_path: str | None, source: str, root: Path) -> str | None:
     """``_settings_label`` for this change; where it raises, the change is
-    judged as no settings file's -- the gate-switch and unwiring checks are
-    skipped, the kill-switch scan of the inventory still runs -- and that is
-    said once a session."""
+    judged as the file its source names (``_source_label``), so a project
+    settings change keeps its unwiring check, and as no settings file's where
+    the source names none (the kill-switch scan of the inventory still runs).
+    Said once a session, under the key the gate-switch read's fault shares."""
     try:
         return _settings_label(file_path, source, root)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
+        label = _source_label(source)
         _hook_utils.say_once(
             root, "settings-locate", "config_guard", "configchange_failed_open_settings_locate",
-            f"the changed settings file could not be located ({type(exc).__name__}); "
-            "its gate-switch and unwiring checks are skipped and the inventory scan still runs",
+            f"the changed file could not be located ({type(exc).__name__}); "
+            f"it is judged as the file its source names ({label or 'none'})",
             fault=type(exc).__name__,
         )
-        return None
+        return label
 
 
 def _in_root(file_path: str | None, root: Path) -> Path | None:
@@ -213,10 +226,13 @@ def _in_root(file_path: str | None, root: Path) -> Path | None:
 
 
 def _record_file(label: str | None, file_path: str | None, root: Path) -> str | None:
-    """How a record names the file a change named: its settings label, a
-    fixed word for any other file (``_OTHER_FILE_LABEL`` inside the root,
-    ``_OUTSIDE_FILE_LABEL`` outside it), or None for a change naming none --
-    never the payload's text, which can carry the home directory."""
+    """How a record's file field names the file a change named: its settings
+    label, a fixed word for any other file (``_OTHER_FILE_LABEL`` inside the
+    root, ``_OUTSIDE_FILE_LABEL`` outside it), or None for a change naming
+    none -- never the payload's text, which can carry the home directory.
+    (A kill switch found in another in-root file is named in the findings by
+    its path inside the root; the record's top-level ``repo_path`` is the
+    audit log's own field, ``_integrity.append_audit``.)"""
     if label is not None or not file_path:
         return label
     return _OTHER_FILE_LABEL if _in_root(file_path, root) is not None else _OUTSIDE_FILE_LABEL
@@ -306,7 +322,7 @@ def _judge_gate_switch(label: str | None, root: Path) -> tuple[list[str], dict |
         after_values = _integrity.effective_settings_values(root)
     except (OSError, RuntimeError, ValueError) as exc:
         _hook_utils.say_once(
-            root, "settings-gate-unreadable", "config_guard", "configchange_failed_open_settings_locate",
+            root, "settings-locate", "config_guard", "configchange_failed_open_settings_locate",
             f"a settings file could not be located or read ({type(exc).__name__}); "
             "the gate-switch check is skipped",
             fault=type(exc).__name__,

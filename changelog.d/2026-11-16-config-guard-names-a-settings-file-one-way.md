@@ -1,7 +1,7 @@
 ### Fixed
 
-- **The settings guard's records name the file a change named, never the
-  path the change carried.** A refusal over a kill switch beside a command or
+- **The settings guard's records name the file a change named in their file
+  field, never the path the change carried.** A refusal over a kill switch beside a command or
   skill change recorded that markdown file's absolute path (the home
   directory included) next to a finding about `.claude/settings.json`, and
   the refusal of a change that unwires the gates recorded the payload's path
