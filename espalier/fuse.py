@@ -1065,13 +1065,24 @@ def cmd_fuse(args: argparse.Namespace) -> int:
     from espalier.cli import (  # lazy: fuse imports cli
         _dead_reporters_line,
         _remedy_py,
+        _venv_only_claim,
+        _venv_only_hold,
         merge_refusal_step,
     )
     py = _remedy_py()  # the interpreter to spell in a remedy (DEF-758)
     print()
     if init_ran and hooks_wired:
         print("Next: open the fusion in Claude Code and run the finish-up session.")
-        print("The harness is live, but these still want a human/agent pass:")
+        # A wired name that runs the harness only inside the virtualenv: "live"
+        # there alone, said as init's summary says it (DEF-3088's sibling,
+        # the failure-mode review). The settings walk reads None on a file it
+        # cannot read, so no read hiccup reaches here.
+        held = _venv_only_claim(Path(report["out"]) / ".claude" / "settings.json")
+        if held is not None:
+            print("The harness is live " + _venv_only_hold(held))
+            print("These still want a human/agent pass:")
+        else:
+            print("The harness is live, but these still want a human/agent pass:")
         # DEF-619: "live" is a sentence about the gates; a reporter the host's
         # file left dead is named here, by the same line every other armed
         # claim carries. Best-effort like the read above.

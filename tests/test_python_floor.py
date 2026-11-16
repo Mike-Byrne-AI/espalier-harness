@@ -3908,3 +3908,337 @@ class TestAVenvShimOverAnOutsidePython:
         self._host(tmp_path, monkeypatch, "none")
         assert cli._runs_a_failing_python_outside_its_venv("python") is None
         assert cli._remedy_interpreter(persisted=True) == ("python", True)
+
+
+class TestAVenvOnlyNameIsSaidWhereItIsClaimedOrPrescribed:
+    """DEF-3088 and DEF-3089: on the Store-over-venv host the writers' gate
+    says once that the name it writes runs the harness only inside the
+    virtualenv, and doctor says the same of a wired name. Then ``init`` still
+    printed "Hooks now intercept", ``merge-settings`` still ended its wired
+    line with "Enforcement is now active.", and every hand-edit sentence told
+    the operator to wire that same name. Each of those now reads one reader
+    of the name (the gate's kept verdict where the gate asked, doctor's own
+    reading elsewhere) and says what holds, with the interpreter remedy
+    first. Driven first on the Windows box at main 11726f84."""
+
+    _host = staticmethod(TestAVenvShimOverAnOutsidePython._host)
+
+    @staticmethod
+    def _drive_host(tmp_path, outside):
+        """The probes' host as a subprocess drive: PATH holds the venv, the
+        outside and git alone, and the command runs from the adopter repo
+        with this checkout on PYTHONPATH, so a dropped argument never reaches
+        the checkout."""
+        import shutil
+
+        from tests import _interpreter_hosts as hosts
+
+        venv, venv_bin, outside_bin = hosts.build_venv_over(tmp_path / "host", outside)
+        git = shutil.which("git")
+        assert git, "precondition: git is needed to drive the command"
+        if os.name == "nt":
+            git_dir = Path(git).parent
+        else:
+            git_dir = tmp_path / "gitbin"
+            git_dir.mkdir()
+            (git_dir / "git").symlink_to(git)
+        target = tmp_path / "adopter"
+        target.mkdir()
+        subprocess.check_call([git, "init", "--quiet"], cwd=str(target))
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("CLAUDE") and k != "ESPALIER_MAINTENANCE_MODE"}
+        env["PATH"] = os.pathsep.join([str(venv_bin), str(outside_bin), str(git_dir)])
+        env["VIRTUAL_ENV"] = str(venv)
+        env["ESPALIER_AUDIT_DIR"] = str(tmp_path / "audit")
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        def run(verb, *extra):
+            return subprocess.run(
+                [sys.executable, "-m", "espalier.cli", verb, str(target), *extra],
+                capture_output=True, text=True, timeout=scaled(50), env=env,
+                encoding="utf-8", cwd=str(target),
+            )
+
+        return venv, outside_bin, target, run
+
+    @staticmethod
+    def _settings(target):
+        path = target / ".claude" / "settings.json"
+        return path, json.loads(path.read_text(encoding="utf-8"))
+
+    def test_init_and_merge_settings_say_what_holds_in_place_of_the_claim(self, tmp_path):
+        """DEF-3088's drive: the intercept line, the wired line's "now
+        active" and the already-wired "is active" each say the session the
+        hooks run in and the remedy, and none says "Nothing to do"."""
+        venv, outside_bin, target, run = self._drive_host(tmp_path, "store")
+        init = run("init")
+        said = init.stdout + init.stderr
+        assert init.returncode == 0, said
+        assert "only inside the virtualenv at" in init.stderr, f"precondition: the gate warned: {said}"
+        lines = init.stdout.splitlines()
+        assert "  - Hooks now intercept Claude Code tool calls (write_guard, plan_guard, stop_gate, ...)." \
+            not in lines, said
+        claim = [line for line in lines if line.startswith("  - Hooks intercept Claude Code tool calls")]
+        assert len(claim) == 1, said
+        assert f"only in a session started from the virtualenv at {venv}" in claim[0], claim
+        assert str(outside_bin) in claim[0] and "--rewire-interpreter" in claim[0], claim
+        assert f"Put a Python {_python_floor.floor_text()} or newer on PATH" in claim[0], claim
+
+        path, settings = self._settings(target)
+        settings["hooks"].pop("ConfigChange")
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        merged = run("merge-settings")
+        said = merged.stdout + merged.stderr
+        assert merged.returncode == 0, said
+        assert not any(line.rstrip().endswith("Enforcement is now active.")
+                       for line in merged.stdout.splitlines()), said
+        assert "Enforcement is now active only in a session started from the virtualenv" in merged.stdout, said
+
+        again = run("merge-settings")
+        said = again.stdout + again.stderr
+        assert again.returncode == 0, said
+        assert "-- enforcement is active only in a session started from the virtualenv" in again.stdout, said
+        assert "Nothing to do." not in again.stdout, said
+        assert "launching Claude Code from the virtualenv is no fix" in again.stdout, said
+
+        # Upgrade's merge stage (both reviews: it was never driven). A
+        # version-current tree never reaches it, so the stamp is aged, as
+        # tests/test_init_upgrade_paths.py stages a stale tree.
+        manifest = target / "cc" / "PACK_MANIFEST.txt"
+        stamped = manifest.read_text(encoding="utf-8")
+        assert "# espalier-version:" in stamped, stamped[:200]
+        manifest.write_text("\n".join(
+            "# espalier-version: 0.0.0" if line.startswith("# espalier-version:") else line
+            for line in stamped.splitlines()) + "\n", encoding="utf-8")
+        upgraded = run("upgrade", "--execute")
+        said = upgraded.stdout + upgraded.stderr
+        assert upgraded.returncode == 0, said
+        assert ("settings.json hooks already current; they run only in a session started "
+                "from the virtualenv") in upgraded.stdout, said
+
+    def test_wire_hooks_says_what_holds_over_a_hookless_file(self, tmp_path):
+        """``init --wire-hooks`` arms an existing hookless settings file through
+        the merge narrators' claim (both reviews: never driven)."""
+        venv, _outside_bin, target, run = self._drive_host(tmp_path, "store")
+        (target / ".claude").mkdir()
+        (target / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        wired = run("init", "--wire-hooks")
+        said = wired.stdout + wired.stderr
+        assert wired.returncode == 0, said
+        assert not any(line.rstrip().endswith("Enforcement is now active.")
+                       for line in wired.stderr.splitlines()), said
+        assert f"Enforcement is now active only in a session started from the virtualenv at {venv}" \
+            in wired.stderr, said
+
+    def test_a_wired_name_stays_venv_only_after_a_launcher_joins_the_path(self, tmp_path, monkeypatch):
+        """The failure-mode review's F1, driven: the operator follows the
+        remedy halfway and a working ``py -3`` lands on PATH, so the resolver
+        answers it and the gate says nothing, while the hooks are still wired
+        ``python``. Each wired name is read on its own."""
+        from espalier import cli
+        from tests import _interpreter_hosts as hosts
+
+        _venv, outside_bin = self._host(tmp_path, monkeypatch, "store")
+        (hosts._cmd_stub if os.name == "nt" else hosts._sh_stub)(outside_bin, "py", working=True)
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        assert cli._detect_python_command() != "python", "precondition: the launcher answers now"
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "python",
+             "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]}]}]}}), encoding="utf-8")
+        held = cli._venv_only_claim(settings)
+        assert held is not None and held.name == "python", held
+
+    def test_doctor_points_a_hand_edit_to_the_interpreter_first(self, tmp_path):
+        """DEF-3089's drive: doctor says the wired name runs only inside the
+        virtualenv, and its hand edit for an orphaned gate now opens with the
+        interpreter remedy instead of spelling that name."""
+        venv, _outside_bin, target, run = self._drive_host(tmp_path, "store")
+        assert run("init").returncode == 0
+        path, settings = self._settings(target)
+        for group in settings["hooks"]["PreToolUse"]:
+            for entry in group["hooks"]:
+                if "plan_guard" in json.dumps(entry):
+                    entry["command"] = "echo"
+                    entry.pop("args", None)
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        doctor = run("doctor")
+        out = doctor.stdout
+        assert "only inside the virtualenv" in out, f"precondition: doctor read the name as venv-only: {out}"
+        assert "add it yourself (command `python`, script path in args)" not in out, out
+        floor = _python_floor.floor_text()
+        assert (f"add it yourself (first put a Python {floor} or newer on PATH outside the "
+                f"virtualenv at `{venv}`") in out, out
+        assert ("then command `<that interpreter>` (a launcher's flag, such as `-3`, leads the args), "
+                "script path in args)") in out, out
+
+    @pytest.mark.parametrize("outside", ["store", "none"])
+    def test_a_retired_rule_is_held_and_upgrade_says_what_holds(self, tmp_path, outside):
+        """Air's ruling db4749, driven on the Air first: the retired-rule
+        advice ("delete that line") rode the same empty blockers, and on a
+        venv-only host the rule is the guard left outside the virtualenv. It
+        is held in doctor and the writers alike, the host with nothing
+        outside included (doctor's reading), while upgrade's "nothing to do"
+        gives way to the venv-only line where the gate warned (the claims'
+        oracle, ruling 20e1d4)."""
+        venv, _outside_bin, target, run = self._drive_host(tmp_path, outside)
+        assert run("init").returncode == 0
+        # The hold first, so both hosts prove it red at the lane's base.
+        path, settings = self._settings(target)
+        settings.setdefault("permissions", {}).setdefault("deny", []).append("Bash(rm -rf /*)")
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        merged = run("merge-settings")
+        said = merged.stdout + merged.stderr
+        assert "carries the retired deny rule Bash(rm -rf /*)" not in said, said
+        assert (f"kept because write_guard runs only in a session started from the "
+                f"virtualenv at {venv}") in merged.stderr, said
+        doctor = run("doctor").stdout
+        assert "only inside the virtualenv" in doctor, f"precondition: doctor read the name: {doctor}"
+        assert "carries the retired deny rule Bash(rm -rf /*)" not in doctor, doctor
+        upgrade = run("upgrade")
+        said = upgrade.stdout + upgrade.stderr
+        assert upgrade.returncode == 0, said
+        assert "harness is current" in upgrade.stdout, f"precondition: the version-current branch: {said}"
+        if outside == "store":
+            assert "nothing to do" not in upgrade.stdout, said
+            assert f"[upgrade] the hooks run only in a session started from the virtualenv at {venv}" \
+                in upgrade.stdout, said
+        else:
+            # The control: the writers' claims keep ruling 20e1d4's silence.
+            assert "the hooks run only in a session started" not in said, said
+
+    @pytest.mark.parametrize("outside", ["store", "none", "working"])
+    def test_the_reader_takes_the_gates_verdict_where_it_asked(self, tmp_path, monkeypatch, outside):
+        """One reader of the name. Before the gate asks (doctor's process) it
+        is doctor's reading, which names a venv-only name with nothing
+        outside too; once the gate asked (a writing command) it is the
+        gate's verdict, silent with nothing outside (air's ruling 20e1d4)."""
+        from espalier import cli
+
+        venv, outside_bin = self._host(tmp_path, monkeypatch, outside)
+        doctors = cli._venv_only_name("python")
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert os.environ["PATH"] in cli._WRITERS_GATE_VERDICTS, "precondition: the gate kept its verdict"
+        writers = cli._venv_only_name("python")
+        if outside == "working":
+            assert doctors is None and writers is None
+            return
+        assert doctors is not None and doctors.venv == venv, doctors
+        if outside == "none":
+            assert doctors.outside is None and writers is None, (doctors, writers)
+        else:
+            assert writers is not None and writers.venv == venv, writers
+            assert writers.outside is not None and Path(writers.outside).parent == outside_bin, writers
+        assert cli._venv_only_name("python3x-not-written") is None
+
+    def test_the_hand_edit_phrase_leads_with_the_interpreter_remedy(self, tmp_path, monkeypatch):
+        from espalier import cli
+
+        venv, _outside = self._host(tmp_path, monkeypatch, "store")
+        phrase = cli.hand_wiring_phrase("python")
+        floor = _python_floor.floor_text()
+        assert phrase.startswith(f"first put a Python {floor} or newer on PATH outside the "
+                                 f"virtualenv at `{venv}`, where `python` runs the harness only "
+                                 f"inside it"), phrase
+        assert "`<that interpreter> -m espalier init . --rewire-interpreter`" in phrase, phrase
+        assert phrase.endswith("then command `<that interpreter>` (a launcher's flag, such as `-3`, "
+                               "leads the args), script path in args"), phrase
+        quoted = cli.hand_wiring_phrase("python", quote='"')
+        assert '"<that interpreter>"' in quoted and "`" not in quoted, quoted
+        # The launcher spelling is never a venv shim: its phrase is unchanged.
+        assert cli.hand_wiring_phrase("py -3") == "command `py`, args `-3` then the script path"
+
+    def test_a_working_python_outside_keeps_the_plain_phrase(self, tmp_path, monkeypatch):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "working")
+        assert cli.hand_wiring_phrase("python") == "command `python`, script path in args"
+
+    def test_the_unwired_diagnosis_carries_the_caveat_in_a_writing_command(self, tmp_path, monkeypatch):
+        """The sentences init's disarmed summary and the merge narrators
+        reach (``_unwired_gate_diagnosis``): every hand edit in them leads with
+        the interpreter remedy on the Store host, after the gate asked."""
+        from espalier import cli, harness_config
+
+        self._host(tmp_path, monkeypatch, "store")
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        _reason, remedies = cli._unwired_gate_diagnosis(
+            {harness_config.GATE_ORPHANED: ["plan_guard.py"],
+             harness_config.GATE_INERT: ["write_guard.py"]}, "py",
+        )
+        hand = [line for line in remedies if "by hand" in line]
+        assert len(hand) == 2, remedies
+        for line in hand:
+            assert 'first put a Python' in line and '"<that interpreter>"' in line, line
+            assert 'command "python"' not in line, line
+
+    def test_the_claim_reads_only_a_wired_entry_that_runs_the_name(self, tmp_path, monkeypatch):
+        """A settings file that names another interpreter keeps it (the
+        gate's own words), so the claim is qualified only where a wired
+        Espalier entry runs the venv-only name."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "store")
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+
+        def wired(command):
+            settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": command,
+                 "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]}]}]}}),
+                encoding="utf-8")
+            return cli._venv_only_claim(settings)
+
+        held = wired("python")
+        assert held is not None and held.name == "python", held
+        # A second venv-only name, read on its own (the gate wrote `python`).
+        other = wired("python3")
+        assert other is not None and other.name == "python3", other
+        assert wired(sys.executable) is None
+
+    def test_the_statusline_note_spells_the_remedy_first(self, tmp_path, monkeypatch):
+        from espalier import doctor
+
+        venv, _outside = self._host(tmp_path, monkeypatch, "store")
+        script = tmp_path / "tools" / "cc" / "statusline.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("", encoding="utf-8")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "my-line"}}),
+                            encoding="utf-8")
+        note = doctor.foreign_statusline_note(settings, tmp_path)
+        assert note is not None, "precondition: the foreign statusLine is noted"
+        assert f"First put a Python {_python_floor.floor_text()} or newer on PATH outside the " \
+               f"virtualenv at `{venv}`, where `python` runs the harness only inside it" in note, note
+        assert "`<that interpreter> tools/cc/statusline.py --segments`" in note, note
+        assert "`python tools/cc/statusline.py" not in note, note
+
+    def test_the_caveat_asks_no_probe_the_resolver_did_not(self, tmp_path, monkeypatch):
+        """No new spawn, in either process: after the resolver, doctor's
+        reading, the phrase, the gate and the claim's reading ask nothing."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "store")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "python",
+             "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]}]}]}}), encoding="utf-8")
+        assert cli._detect_python_command() == "python"
+        asked = []
+        real_banner, real_start = _python_floor._ask_banner, _python_floor._ask_start
+        real_venv = cli._ask_resolves_only_inside_a_virtualenv
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, s, t: asked.append(("banner", argv)) or real_banner(argv, s, t))
+        monkeypatch.setattr(_python_floor, "_ask_start",
+                            lambda argv, s, t: asked.append(("start", argv)) or real_start(argv, s, t))
+        monkeypatch.setattr(cli, "_ask_resolves_only_inside_a_virtualenv",
+                            lambda name, path: asked.append(("venv", name)) or real_venv(name, path))
+        assert cli._venv_only_name("python") is not None
+        assert "<that interpreter>" in cli.hand_wiring_phrase("python")
+        assert cli._refuse_below_floor_wiring("merge-settings") is None
+        assert cli._venv_only_claim(settings) is not None
+        assert asked == []
