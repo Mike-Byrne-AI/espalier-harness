@@ -283,6 +283,9 @@ class TestTheBudgetSitsBelowTheWiring:
         timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
         lead = write_guard.HARD_DEADLINE_S - write_guard.JUDGMENT_BUDGET_S
         assert lead >= _CHILD_LEAD_S, f"the child's budget refuses only {lead:.2f} s before the parent's kill"
+        # The refusal is built while the parent still waits (DEF-2092): a build
+        # time at or past the deadline would build nothing ahead of it.
+        assert 0 < write_guard._BUILD_THE_REFUSAL_AT_S < write_guard.HARD_DEADLINE_S
         after_kill = write_guard.HARD_DEADLINE_S + _json_safe.TREE_DRAIN_SECONDS + _DENY_AFTER_DRAIN_S
         assert after_kill <= write_guard.EXIT_BY_S, (
             f"the kill, the drain and the deny need {after_kill:.2f} s, past the exit point {write_guard.EXIT_BY_S} s")
@@ -923,20 +926,26 @@ class TestTheHookAnswersThroughItsJudgingChild:
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_failed_open_time_budget"]
         assert [r["details"].get("fault") for r in records] == ["OSError"], records
 
-    def test_a_child_whose_answer_is_lost_is_refused_never_judged_again(self, tmp_path):
+    def test_a_child_whose_answer_is_lost_is_refused_naming_the_raiser_never_judged_again(self, tmp_path):
         """Only a child that never started is judged in the hook process; one
         that started and whose answer was lost is refused. Its judgment may
         have spent a one-shot nudge, which a second judgment would read as the
-        re-issue and let through."""
+        re-issue and let through. The refusal names the file that raised and
+        its line, as the crash guard does, never the time budget (DEF-2094)."""
         site = _site(tmp_path, _LOST_ANSWER_SITE)
         code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
         assert code == 0, (code, err)
-        decisions = _decisions(out.decode("utf-8"))
-        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], out
+        decisions = [d["hookSpecificOutput"] for d in _decisions(out.decode("utf-8"))]
+        assert [d["permissionDecision"] for d in decisions] == ["deny"], out
+        reason = decisions[0]["permissionDecisionReason"]
+        assert reason.startswith("write_guard internal error (RuntimeError at tools/cc/_json_safe.py:"), reason
+        assert "git restore --source=HEAD -- tools/cc/_json_safe.py" in reason, reason
+        assert "time budget" not in reason, reason
         assert b"judging child could not start" not in err, err
-        refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [(r["details"].get("bound"), r["details"].get("fault")) for r in refusals] == [
-            ("child", "RuntimeError")], refusals
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_internal_error"]
+        assert [(d.get("where"), d.get("error"), d.get("file")) for d in refusals] == [
+            ("parent", "RuntimeError", "tools/cc/_json_safe.py")], refusals
+        assert "pretooluse_blocked_time_budget" not in _types(), _types()
 
     @pytest.mark.skipif(os.name == "nt", reason="a closed fd 0 across an exec is POSIX's shape")
     def test_a_stdin_the_parent_cannot_read_still_meets_the_kill_switch_gate(self, tmp_path):
@@ -1000,14 +1009,43 @@ _SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE = textwrap.dedent('''
         sys.meta_path.insert(0, _ColdAfterTheDeadline())
 ''')
 
+#: How long the judging child sleeps in its start-up, before its begun mark,
+#: in the row that pins the mark's clock: under the deadline by more than a
+#: loaded box's interpreter start, so the mark is written before the kill.
+_PRE_MARK_SLEEP_S = 1.0
+
+#: A ``sitecustomize`` that holds the judging child in its start-up for
+#: ``_PRE_MARK_SLEEP_S`` and then, once it is judging, in the payload's own
+#: parse past the deadline (the payload carries the marker; the parent passes
+#: its bytes through unparsed), so the parent reads a child that had begun.
+_STALL_AFTER_THE_MARK_SITE = textwrap.dedent(f'''
+    import json, sys, time
+    if sys.argv[1:2] == ["--judge"]:
+        time.sleep({_PRE_MARK_SLEEP_S})
+        _loads = json.loads
+        def _stalled_loads(text, *args, **kwargs):
+            if isinstance(text, str) and "STALL-AFTER-THE-MARK" in text:
+                time.sleep(60)
+            return _loads(text, *args, **kwargs)
+        json.loads = _stalled_loads
+''')
+
+
+def _wired_timeout() -> float:
+    from espalier.harness_config import CANONICAL_HOOK_WIRING
+
+    return float(CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"])
+
 
 class TestTheDeadlineRefusalSaysWhatSpentTheTime:
     """DEF-2091: the parent's refusal at its deadline told the agent the
     command was too long and to split it, where a loaded box's start-up had
     spent the time and the same command judges in well under a second. It now
     names the bound it met and whether its judging child had begun judging,
-    and asks for the re-issue where start-up spent the time. DEF-2092: its
-    record, which a cold import after the deadline cut off, lands."""
+    and asks for the re-issue where the child had not begun. DEF-2092: its
+    record, which a cold import after the deadline cut off, lands. Each row's
+    deny lands under the wired timeout, past which Claude Code lets the call
+    through unjudged."""
 
     def _refused(self, out: bytes) -> str:
         decisions = _decisions(out.decode("utf-8"))
@@ -1022,7 +1060,7 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
         elapsed = time.monotonic() - started
         assert code == 0, (code, err)
-        assert elapsed < write_guard.EXIT_BY_S + _OVERRUN_CEILING_MS / 1000, elapsed
+        assert elapsed < _wired_timeout(), elapsed
         reason = self._refused(out)
         assert "re-issue the same command once" in reason, reason
         assert "Do: split" not in reason, reason
@@ -1040,9 +1078,30 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         self._refused(out)
         # The deny itself waited on no cold import: before the build it landed
         # at 6.1 s under this model, past the wired timeout.
-        assert elapsed < write_guard.EXIT_BY_S + _OVERRUN_CEILING_MS / 1000, elapsed
+        assert elapsed < _wired_timeout(), elapsed
         refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
         assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
+
+    def test_a_child_that_had_begun_is_refused_with_the_split_and_its_clock_read(self, tmp_path):
+        """The begun mark carries the child's clock across the two processes:
+        the parent's record splits the deadline at the mark, start-up at least
+        the child's own pre-mark sleep, and the two parts sum to the deadline.
+        A child that had begun keeps the split (its judgment may have spent a
+        one-shot nudge the identical re-issue would pass unseen)."""
+        site = _site(tmp_path, _STALL_AFTER_THE_MARK_SITE)
+        started = time.monotonic()
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "echo STALL-AFTER-THE-MARK"}), site=site)
+        elapsed = time.monotonic() - started
+        assert code == 0, (code, err)
+        assert elapsed < _wired_timeout(), elapsed
+        reason = self._refused(out)
+        assert "Do: split it into shorter commands" in reason, reason
+        assert "s went to start-up and" in reason and "s to judging" in reason, reason
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", True)], (refusals, err)
+        start_up, judged = refusals[0]["start_up_s"], refusals[0]["judged_s"]
+        assert start_up >= _PRE_MARK_SLEEP_S, refusals
+        assert start_up + judged == pytest.approx(write_guard.HARD_DEADLINE_S, abs=0.02), refusals
 
 
 #: Stands for the guard's begun mark in the parametrize rows below, which
@@ -1087,19 +1146,35 @@ class TestTheRefusalReadsWhatSpentTheTime:
 
     @pytest.mark.parametrize(("began", "start_up", "judged", "re_issue"), [
         (False, 4.0, 0.0, True),
-        (True, 3.2, 0.8, True),
+        # A child that had begun judging keeps the split even where start-up
+        # took more of the bound: its judgment may have spent a one-shot nudge
+        # keyed on the command, which the identical re-issue would pass unseen.
+        (True, 3.2, 0.8, False),
         (True, 0.3, 3.7, False),
         (True, 2.0, 2.0, False),
         (True, None, None, False),
         (None, None, None, False),
     ], ids=["not begun", "start-up took more", "judging took more", "an even split", "begun, unread",
             "unread"])
-    def test_the_re_issue_is_asked_where_start_up_spent_the_time(self, began, start_up, judged, re_issue):
-        assert write_guard._start_up_spent_it(began, start_up, judged) is re_issue
+    def test_the_re_issue_is_asked_only_where_no_judging_began(self, began, start_up, judged, re_issue):
+        assert write_guard._start_up_spent_it(began) is re_issue
         reason = write_guard._budget_reason(_denial_reasons, 4.0, write_guard._PARENT_BOUND, began, start_up, judged)
         assert ("re-issue the same command once" in reason) is re_issue, reason
         assert ("Do: split it into shorter commands" in reason) is (not re_issue), reason
         assert write_guard._PARENT_BOUND in reason and reason.isascii()
+        if start_up is not None and judged is not None and began:
+            assert f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging" in reason, reason
+
+    def test_a_kept_reasons_module_without_the_start_up_template_gives_the_split(self):
+        """A kept, older ``_denial_reasons.py`` predates the start-up template:
+        the refusal is the split it gave before DEF-2091, never a raise, which
+        in the judging child is an exit 1 that lets the call through."""
+        kept = types.SimpleNamespace(WRITE_GUARD_TIME_BUDGET=(
+            "Command blocked: write_guard could not finish judging this command within its {budget} s time"
+            " budget.\n  Don't: re-issue it.\n  Do: split it into shorter commands."))
+        reason = write_guard._budget_reason(kept, 4.0, write_guard._PARENT_BOUND, False, 4.0, 0.0)
+        assert reason.startswith("Command blocked: write_guard could not finish judging"), reason
+        assert "Do: split it into shorter commands" in reason, reason
 
 
 def _modules_the_guard_reaches() -> list[Path]:

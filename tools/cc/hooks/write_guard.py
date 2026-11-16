@@ -249,31 +249,39 @@ def _spent(began: bool | None, start_up: float | None, judged: float | None) -> 
     return f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging"
 
 
-def _start_up_spent_it(began: bool | None, start_up: float | None, judged: float | None) -> bool:
-    """Whether start-up, not this command's judging, spent the time (DEF-2091):
-    the child had not begun judging, or start-up took more of the bound than
-    judging did. Where that is unread it is the judging, as every refusal said
-    before."""
-    if began is False:
-        return True
-    return began is True and start_up is not None and judged is not None and start_up > judged
+def _start_up_spent_it(began: bool | None) -> bool:
+    """Whether start-up alone spent the time, so the refusal asks for the
+    re-issue (DEF-2091): the judging child had not begun judging, so no
+    judgment ran and nothing it keeps was spent. A judgment that began may have
+    fired a one-shot nudge whose flag the same command reads as its retry (the
+    discard and kill checkpoints key it on the command), and the re-issue
+    would pass that nudge unseen; so where the child had begun, the split is
+    asked, as before DEF-2091, and ``_spent`` still says how the time split.
+    Where it is unread it is the judging, as every refusal said before."""
+    return began is False
 
 
 def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool | None,  # noqa: N803
                    start_up: float | None, judged: float | None) -> str:
     """The time budget's refusal from its two templates: the re-issue where
-    start-up spent the time, the split where judging did (DEF-2091). The
+    start-up alone spent the time, the split otherwise (DEF-2091). The
     reasons module comes in as a parameter (the parent builds it on a thread
     of its own), named as the module it is, so the template census reads its
-    two uses (``tests/test_denial_reasons.py``)."""
-    template = (_denial_reasons.WRITE_GUARD_START_UP_BUDGET if _start_up_spent_it(began, start_up, judged)
-                else _denial_reasons.WRITE_GUARD_TIME_BUDGET)
+    two uses (``tests/test_denial_reasons.py``). A kept, older reasons module
+    that predates the start-up template gives the split, as before it, never a
+    raise (in the judging child an exit 1, which lets the call through)."""
+    template = _denial_reasons.WRITE_GUARD_TIME_BUDGET
+    if _start_up_spent_it(began):
+        try:
+            template = _denial_reasons.WRITE_GUARD_START_UP_BUDGET
+        except AttributeError:  # fail-open: ok text-fallback -- a kept, older _denial_reasons: the split's text, the refusal it gave before DEF-2091
+            pass
     return str(template.format(budget=budget, bound=bound, spent=_spent(began, start_up, judged)))
 
 
-def _plain_remedy(began: bool | None, start_up: float | None, judged: float | None) -> str:
+def _plain_remedy(began: bool | None) -> str:
     """The parent's plain-words fallback's remedy, by the same rule."""
-    if _start_up_spent_it(began, start_up, judged):
+    if _start_up_spent_it(began):
         return "Re-issue the same command once: the time went to starting the guard on a busy machine."
     return "Split it into shorter commands, each judged on its own."
 
@@ -293,6 +301,7 @@ class _DeadlineRefusal:
         self.reasons: Any = None
         self._write: Callable[[dict], object] | None = None
         self._details: dict | None = None
+        self._event = "pretooluse_blocked_time_budget"
         self._building = False
         self._lock = threading.Lock()
         self._events: tuple[threading.Event, threading.Event] | None = None
@@ -328,27 +337,23 @@ class _DeadlineRefusal:
                 pass
             deny_out.wait(max(0.0, _HOOK_STARTED + EXIT_BY_S - time.monotonic()))
             if self._write is not None and self._details is not None:
-                self._write({"event_type": "pretooluse_blocked_time_budget", "details": self._details})
+                self._write({"event_type": self._event, "details": self._details})
         finally:
             done.set()
 
-    def reason(self, began: bool | None, start_up: float | None, judged: float | None, *, lost: bool) -> str:
+    def reason(self, began: bool | None, start_up: float | None, judged: float | None) -> str:
         """The deny's reason from the built reasons; raises where none were
-        built in time, and the caller words it in plain words. An answer lost
-        before the deadline has time for the import itself."""
-        reasons = self.reasons
-        if reasons is None and lost:
-            import _denial_reasons  # type: ignore[import-not-found]
-            reasons = _denial_reasons
-        if reasons is None:
+        built in time, and the caller words it in plain words."""
+        if self.reasons is None:
             raise LookupError("the refusal's reasons were not built before the deadline")
-        return _budget_reason(reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged)
+        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged)
 
-    def record(self, details: dict, *, by: float) -> None:
-        """Hand the record to the build once the deny is out, starting the
-        build where the child's answer was lost before its time, and wait for
-        the write until ``by``."""
+    def record(self, details: dict, *, by: float, event: str = "pretooluse_blocked_time_budget") -> None:
+        """Hand the record (``event``, ``details``) to the build once the deny
+        is out, starting the build where none ran (a runner that raised before
+        ``ahead`` came), and wait for the write until ``by``."""
         deny_out, done = self._armed()
+        self._event = event
         self._details = details
         with self._lock:
             idle = not self._building
@@ -358,14 +363,109 @@ class _DeadlineRefusal:
         done.wait(max(0.0, by - time.monotonic()))
 
 
+def _the_runner_ran(exc: BaseException, runner: object) -> bool:
+    """Whether ``exc`` was raised inside ``runner`` (its code is on the
+    traceback), so a judging child may have started (DEF-2094). A raise that
+    never entered it started none: a ``TypeError`` binding the call's
+    arguments, which a kept, older ``_json_safe.py`` without ``heard`` and
+    ``ahead`` raises (no frame of the callee: driven on CPython 3.10, 3.11 and
+    3.13), or an argument that could not be built. A runner whose code cannot
+    be read reads as one that ran: the refusal, never a second judgment."""
+    code = getattr(runner, "__code__", None)
+    if code is None:
+        return True
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is code:
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _runner_fault_reason(refusal: _DeadlineRefusal, named: tuple[dict, dict] | None) -> str:
+    """The refusal of a runner fault (DEF-2094): the crash guard's placed text
+    (``_denial_reasons.WRITE_GUARD_CRASHED_AT``, the file, its line and the
+    restore) from the reasons the build made, or imported here while the
+    deadline is still ahead; past it, the same facts in plain words, since a
+    cold import there can hold the deny past the wired timeout (DEF-2092)."""
+    reasons: Any = refusal.reasons
+    if reasons is None and time.monotonic() < _HOOK_STARTED + HARD_DEADLINE_S:
+        try:
+            import _denial_reasons  # type: ignore[import-not-found]
+            reasons = _denial_reasons
+        # fail-open: ok text-fallback -- a reasons module that cannot import: the plain words below
+        except Exception:  # noqa: BLE001
+            reasons = None
+    fields = named[0] if named is not None else None
+    if reasons is not None:
+        try:
+            if fields is None:
+                return str(reasons.WRITE_GUARD_INTERNAL_ERROR)
+            if "kept" in fields and hasattr(reasons, "WRITE_GUARD_CRASHED_ON_A_KEPT_FILE"):
+                return str(reasons.WRITE_GUARD_CRASHED_ON_A_KEPT_FILE.format(**fields))
+            return str(reasons.WRITE_GUARD_CRASHED_AT.format(**fields))
+        # fail-open: ok text-fallback -- a kept, older reasons module: the plain words below
+        except Exception:  # noqa: BLE001, S110
+            pass
+    if fields is None:
+        return ("write_guard internal error while it ran its judging child; failing closed. Re-issue once; if"
+                " the call is refused the same way the guard is wedged, and the repair is made from a terminal"
+                " outside this session.")
+    return (f"write_guard internal error ({fields['error']} at {fields['file']}:{fields['line']}) while it ran"
+            f" its judging child; failing closed. Re-issue once; if the call is refused the same way the guard"
+            f" is wedged, and if {fields['file']} is being edited, restore it to HEAD: {fields['restore']}.")
+
+
+def _refuse_a_runner_fault(exc: BaseException, payload: bytes, refusal: _DeadlineRefusal) -> None:
+    """The runner raised inside it (``_the_runner_ran``), so a judging child
+    may have started (DEF-2094): refuse the call naming the file that raised
+    and its line, as the crash guard names a fault in a judgment, and let
+    through the one call that repairs it, a Bash restore to HEAD of a file the
+    refusal names (DEF-4025's ``_start_refusal.wedge_restore``, its copy saved
+    first); then exit. The call is never judged again. Before this the fault
+    read as the deadline's lost answer and was refused with the time budget's
+    split: a ``tools/cc/_json_safe.py`` under edit refused every call so, the
+    Edit and the Bash that could repair it included, from 02:50 to 03:29Z on
+    2026-11-16 on seat win, and the way out was the operator's own terminal.
+    The deny goes out before the record, as the deadline's does (DEF-3048)."""
+    error = type(exc).__name__
+    passed: tuple[str, dict] | None = None
+    named: tuple[dict, dict] | None = None
+    try:
+        try:
+            data: object = json.loads(payload.decode("utf-8", errors="replace"))
+        except ValueError:  # fail-open: ok deliberate -- an unread call is no restore: the refusal offers the terminal alone
+            data = None
+        reading = _start_refusal.wedge_reading(exc)
+        passed = _start_refusal.wedge_restore("write_guard", reading, error, data)
+        if passed is None:
+            named = _start_refusal.crash_refusal(reading, error, isinstance(data, dict))
+    # fail-open: ok text-fallback -- a kept, older _start_refusal: the unplaced refusal below
+    except Exception:  # noqa: BLE001
+        passed, named = None, None
+    out: dict[str, object] = {"hookEventName": "PreToolUse"}
+    if passed is not None:
+        out["additionalContext"] = passed[0]
+        event, details = "pretooluse_failed_open_wedge_restore", {**passed[1], "where": "parent"}
+    else:
+        out.update(permissionDecision="deny", permissionDecisionReason=_runner_fault_reason(refusal, named))
+        event = "pretooluse_blocked_internal_error"
+        details = {"hook": "write_guard", "error": error, "where": "parent", **(named[1] if named else {})}
+    sys.stdout.write(json.dumps({"hookSpecificOutput": out}) + "\n")
+    sys.stdout.flush()
+    refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S, event=event)
+    os._exit(0)
+
+
 def _answer_from_a_judging_child() -> None:
     """The parent: answer with a judging child's verdict, or refuse at the
     deadline, and exit. It returns only where no child ran: a stdin it cannot
     read (the in-process judgment then meets the same stdin and answers it, its
     record and the kill-switch gate included), or a child that could not start
-    (the payload is put back on stdin, and `main` says so once). A child that
-    started is never judged again in this process: its judgment may already
-    have spent a one-shot nudge, which a second judgment reads as the re-issue."""
+    (the payload is put back on stdin, and `main` says so once), a runner the
+    call never entered among them (DEF-2094). A child that may have started is
+    never judged again in this process: its judgment may already have spent a
+    one-shot nudge, which a second judgment reads as the re-issue."""
     try:
         payload = sys.stdin.buffer.read()
     except (OSError, ValueError, AttributeError):  # fail-open: ok deliberate -- an unreadable stdin is the in-process judgment's to answer, with read_stdin_safely's record and the kill-switch gate
@@ -381,7 +481,7 @@ def _answer_from_a_judging_child() -> None:
     except Exception as exc:  # noqa: BLE001 -- a helper that cannot load keeps the judgment, never an allow
         _judge_in_this_process(payload, type(exc).__name__)
         return
-    lost: str | None = None
+    fault: Exception | None = None
     refusal = _DeadlineRefusal()
     heard: list[bytes] = []
     try:
@@ -393,12 +493,17 @@ def _answer_from_a_judging_child() -> None:
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
         _judge_in_this_process(payload, type(exc.__cause__ or exc).__name__)
         return
-    # fail-open: ok deliberate -- a child that started and whose answer was lost is refused below, never judged twice
+    # fail-open: ok deliberate -- a raise the runner never saw started no child, and is judged here as above; one inside it is refused below, never judged twice
     except Exception as exc:  # noqa: BLE001
-        answer, lost = None, type(exc).__name__
+        if not _the_runner_ran(exc, run_tree_to_deadline):
+            _judge_in_this_process(payload, type(exc).__name__)
+            return
+        answer, fault = None, exc
     # A decision is written below (the child's, or the deadline's): from here a
     # raise is no start refusal, which would add a second document after it.
     _start_refusal.body_done()
+    if fault is not None:
+        _refuse_a_runner_fault(fault, payload, refusal)
     if answer is not None:
         code, out, err = answer
         sys.stdout.buffer.write(out)
@@ -412,11 +517,11 @@ def _answer_from_a_judging_child() -> None:
     # its reasons and its record were built while the parent waited (DEF-2092).
     began, start_up, judged = _how_the_child_spent_it(heard)
     try:
-        reason = refusal.reason(began, start_up, judged, lost=lost is not None)
+        reason = refusal.reason(began, start_up, judged)
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
         reason = (f"Command blocked: write_guard ran out of its {HARD_DEADLINE_S} s time budget before it had"
                   f" judged this command ({_spent(began, start_up, judged)}), so the call is refused rather"
-                  f" than let through unjudged. {_plain_remedy(began, start_up, judged)}")
+                  f" than let through unjudged. {_plain_remedy(began)}")
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()
@@ -424,8 +529,6 @@ def _answer_from_a_judging_child() -> None:
                                   "bytes": len(payload), "began": began}
     if start_up is not None and judged is not None:
         details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
-    if lost:
-        details["fault"] = lost
     refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S)
     os._exit(0)
 
@@ -4841,9 +4944,11 @@ JUDGMENT_BUDGET_S = 3.5
 #: would have judged in milliseconds included. That reverses the trade this
 #: window once made (left uncapped, so such a box still answered an ordinary
 #: call, and a slow judgment's refusal landed after the timeout had let the
-#: call through): on that box an ordinary call is refused, with a reason that
-#: asks for shorter commands the box's start-up earned and the command did not,
-#: where a late answer let a call through unjudged.
+#: call through): on that box an ordinary call is refused, where a late answer
+#: let a call through unjudged. Since DEF-2091 that refusal says start-up
+#: spent the time and asks for the re-issue once where the child had not
+#: begun judging; it asked for shorter commands before, which the box's
+#: start-up earned and the command did not.
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"

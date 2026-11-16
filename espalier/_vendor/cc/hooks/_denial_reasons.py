@@ -613,8 +613,8 @@ WRITE_GUARD_TIME_BUDGET = (
 )
 
 #: write_guard's time budget, where start-up spent the time: the judging
-#: child had not begun judging, or start-up took more of the bound than
-#: judging did. A loaded box's start-up refused 10 ordinary calls in a week on
+#: child had not begun judging, so no judgment ran and the re-issue passes no
+#: nudge unseen. A loaded box's start-up refused 10 ordinary calls in a week on
 #: the Windows seat, each told to split a command that was not long (DEF-2091).
 WRITE_GUARD_START_UP_BUDGET = (
     "Command blocked: write_guard could not finish judging this command within"

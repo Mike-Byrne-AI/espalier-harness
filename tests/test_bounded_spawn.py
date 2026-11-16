@@ -264,14 +264,66 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
         kill, so the stderr drained at the deadline goes to ``heard``."""
         js = _load_json_safe()
         done = tmp_path / "sleeper.done"
-        body = (f"import os, time; os.write(2, b'began\\n'); time.sleep({HOLD_SECONDS}); "
-                f"open({str(done)!r}, 'w').write('done')")
+        began = tmp_path / "sleeper.began"
+        # The child marks its first line before it writes, so a red tells a
+        # child the cap's load kept from starting from a drain that lost what
+        # it wrote.
+        body = (f"import os, time; open({str(began)!r}, 'w').close(); os.write(2, b'began\\n'); "
+                f"time.sleep({HOLD_SECONDS}); open({str(done)!r}, 'w').write('done')")
         heard: list[bytes] = []
-        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + CAP_SECONDS,
-                                         input=b"", heard=heard)
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body],
+                                         deadline=time.monotonic() + scaled(CAP_SECONDS), input=b"", heard=heard)
         assert not done.exists(), "the call waited for the child's sleep"
         assert answer is None, answer
+        assert began.exists(), ("the child never reached its first line inside the cap: the box's load, not"
+                                " the drain", heard)
         assert heard == [b"began\n"], heard
+
+    def test_a_reader_thread_that_cannot_start_leaves_stderr_to_the_drain(self, monkeypatch):
+        """Where ``heard`` is asked on Windows, stderr is read on a thread of
+        its own; one that cannot start leaves it to ``communicate``, as on
+        POSIX, never a raise before the tree's guard that loses the answer
+        and leaves the child running (DEF-2094's review)."""
+        import threading
+
+        js = _load_json_safe()
+        start = threading.Thread.start
+
+        def refuse_the_reader(self: threading.Thread) -> None:
+            if getattr(self, "_target", None) is js._read_chunks:
+                raise RuntimeError("can't start new thread")
+            start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", refuse_the_reader)
+        body = "import sys; sys.stdout.write('out'); sys.stderr.write('err')"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + scaled(30),
+                                         input=b"", heard=[])
+        assert answer == (0, b"out", b"err"), answer
+
+    def test_an_ahead_thread_that_cannot_start_leaves_the_wait_to_answer(self, monkeypatch):
+        """``ahead``'s callback starts on a thread of its own; one that cannot
+        start is skipped and the wait goes on, never a raise that loses the
+        child's answer (DEF-2094's review)."""
+        import threading
+
+        js = _load_json_safe()
+        start = threading.Thread.start
+        ran: list[int] = []
+
+        def build() -> None:
+            ran.append(1)
+
+        def refuse_the_build(self: threading.Thread) -> None:
+            if getattr(self, "_target", None) is build:
+                raise RuntimeError("can't start new thread")
+            start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", refuse_the_build)
+        body = "import sys, time; time.sleep(0.5); sys.stdout.write('late')"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", body], deadline=time.monotonic() + scaled(30),
+                                         input=b"", ahead=(time.monotonic() + 0.05, build))
+        assert answer is not None and answer[:2] == (0, b"late"), answer
+        assert ran == [], ran
 
     def test_a_child_that_answers_before_ahead_never_starts_it(self):
         """DEF-2092's callback costs a call answered in time nothing: a child

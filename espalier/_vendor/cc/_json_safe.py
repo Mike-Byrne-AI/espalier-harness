@@ -877,15 +877,19 @@ def run_tree_to_deadline(
     all raises :class:`TreeStartError`.
 
     ``heard``, where given, takes the stderr the child wrote before its tree
-    was ended, when the deadline answers ``None`` (nothing is added where the
-    drain could not read it, so an empty list is "not read", never "wrote
-    nothing"): ``write_guard``'s parent reads there whether its judging child
+    was ended, when the deadline answers ``None``: on Windows what the reader
+    thread had read by then, however the drain ended; on POSIX (or on Windows
+    where no reader thread could start) what the drain read, and nothing where
+    the drain could not read it, so an empty list is "not read", never "wrote
+    nothing". ``write_guard``'s parent reads there whether its judging child
     had begun judging (DEF-2091). ``ahead``, where given, is a time before the
     deadline and a callback: a child still running at that time starts the
     callback on a daemon thread of its own and the wait goes on to the
     deadline, so the caller can build what the deadline needs while it waits
     (``write_guard``'s refusal and its record, DEF-2092); a child that answers
     first never starts it, and a call answered in time pays nothing for it.
+    A thread that cannot start is skipped (the build runs after the deadline,
+    as before ``ahead``), never a raise that loses the child's answer.
 
     For a parent that must answer by a fixed time whatever its child is doing:
     ``write_guard``'s judgment runs in such a child, because a compiled
@@ -933,13 +937,20 @@ def run_tree_to_deadline(
     # the drain ends: `communicate` reads a Windows pipe whole, and the tree
     # walk outlasted the drain in 7 of 12 refusals driven on the Windows seat
     # (2026-11-16). On POSIX the session kill ends every holder at once.
+    # A thread that cannot start leaves stderr to `communicate`, as on POSIX:
+    # this sits before the `try` that ends the tree, so a raise here would
+    # leave the child running and lose its answer (DEF-2094's review).
     chunks: "list[bytes] | None" = None
     reader = None
     if heard is not None and os.name == "nt" and proc.stderr is not None:
-        chunks = []
-        errpipe, proc.stderr = proc.stderr, None
-        reader = threading.Thread(target=_read_chunks, args=(errpipe, chunks), daemon=True)
-        reader.start()
+        pending: "list[bytes]" = []
+        reading = threading.Thread(target=_read_chunks, args=(proc.stderr, pending), daemon=True)
+        try:
+            reading.start()
+        except RuntimeError:  # fail-open: ok deliberate -- no thread to read on: communicate reads stderr whole, as on POSIX
+            pass
+        else:
+            chunks, reader, proc.stderr = pending, reading, None
     try:
         if os.name == "nt":
             job = _kill_on_close_job(proc)
@@ -949,7 +960,10 @@ def run_tree_to_deadline(
                 # A retried communicate loses no output (the subprocess docs).
                 out, err = proc.communicate(timeout=max(0.0, ahead[0] - time.monotonic()))  # spawn: ok its own deadline
             except subprocess.TimeoutExpired:
-                threading.Thread(target=ahead[1], daemon=True).start()
+                try:
+                    threading.Thread(target=ahead[1], daemon=True).start()
+                except RuntimeError:  # fail-open: ok deliberate -- no thread to build on: the wait goes on, and the caller builds after the deadline, as before ahead
+                    pass
             else:
                 return proc.returncode, out, _stderr_of(err, reader, chunks, deadline)
         out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
@@ -996,7 +1010,8 @@ def _read_chunks(pipe: "IO[bytes]", chunks: "list[bytes]") -> None:
 def _stderr_of(err: "bytes | None", reader: "Any", chunks: "list[bytes] | None", until: float) -> bytes:
     """A child's stderr: ``err`` as ``communicate`` read it, or, where
     :func:`_read_chunks` read it on its own thread, what that thread read by
-    ``until``."""
+    ``until``. Never raises: ``reader`` is set only once its thread started,
+    so the join cannot meet a thread never started."""
     if reader is None or chunks is None:
         return err or b""
     reader.join(max(0.0, until - time.monotonic()))

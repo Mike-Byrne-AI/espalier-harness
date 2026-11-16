@@ -2231,13 +2231,16 @@ runs out -- a long generated list of paths is the shape that gets there --
 is denied the way the guard denies any call, one deny decision on stdout
 whose reason tells the agent the guard could not finish judging the command
 in time, names the bound it met and how the time split between start-up and
-judging, and words its remedy by that split: where judging took more, split
-the command into shorter ones (batches of a hundred or two paths); where
-start-up took more, re-issue the same command once, since a busy machine's
-start-up, not the command, spent the time (`_denial_reasons.py`'s
-`WRITE_GUARD_TIME_BUDGET` and `WRITE_GUARD_START_UP_BUDGET`; before the split
-was read, 10 ordinary calls in a week on a loaded Windows box were refused
-and each told to split). It writes one `pretooluse_blocked_time_budget` record that
+judging, and asks for the command split into shorter ones (batches of a
+hundred or two paths). Where the judging child had not begun judging at the
+parent's deadline (below), it asks instead for the same command once more,
+since a busy machine's start-up, not the command, spent the time and no
+judgment ran; a child that had begun keeps the split, since its judgment may
+have spent a one-shot nudge keyed on the command, which the identical
+re-issue would pass unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
+and `WRITE_GUARD_START_UP_BUDGET`; before the start-up was read, 10 ordinary
+calls in a week on a loaded Windows box were refused and each told to
+split). It writes one `pretooluse_blocked_time_budget` record that
 `/status --log` counts. That budget is a thread's wait, and a judgment
 sitting in one long compiled-pattern search holds the interpreter lock for
 the whole call, so the wait can end long past the timeout (40.4 s under
@@ -2257,8 +2260,13 @@ has the parent build its refusal while it waits: the reasons, the audit
 helpers, the project root, the log's path and the lock's first-use imports,
 so neither the deny nor the record waits on a cold import after the deadline
 (9 of those 10 refusals had left no record); a call answered
-before then pays nothing for it. A child that started and whose answer was lost is refused the same
-way, never judged a second time. The child
+before then pays nothing for it. A raise inside the parent's runner itself (a
+child may have started) is never judged a second time: it is refused naming
+the file that raised and its line, as a fault in a judgment is, and the one
+call let through is a Bash restore to HEAD of a file the refusal names, its
+copy saved first; a raise the runner never saw (a kept, older
+`tools/cc/_json_safe.py` whose runner predates the deadline's readings)
+started no child, and the hook judges the call itself, as below. The child
 also caps its own CPU time at 10 s on POSIX, for a child whose parent was
 ended from outside. An ordinary call finishes in a small fraction of either
 bound; the second interpreter adds its start to every call (about 30 ms on
