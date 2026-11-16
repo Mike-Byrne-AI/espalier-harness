@@ -281,7 +281,10 @@ def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool 
             template = _denial_reasons.WRITE_GUARD_START_UP_BUDGET
         except AttributeError:  # fail-open: ok text-fallback -- a kept, older _denial_reasons: the split's text, the refusal it gave before DEF-2091
             pass
-    return str(template.format(budget=budget, bound=bound, spent=_spent(began, start_up, judged)))
+    # Bound to a name, never returned inside str(): the deny-marker census
+    # follows a local and `.format` back to the two templates, not a call.
+    rendered: str = template.format(budget=budget, bound=bound, spent=_spent(began, start_up, judged))
+    return rendered
 
 
 def _plain_remedy(began: bool | None) -> str:
