@@ -15,7 +15,9 @@ Usage::
     python3 scripts/guard_cost_census.py --compile --at caae022 --json
 
 ``--calls N`` spawns the guard N times for each call kind (a Read, a Bash ``ls
--la``, an MCP read, an MCP write) beside a bare interpreter start as the control,
+-la``, an MCP read, an MCP write, a PowerShell ``Get-ChildItem``, and the three
+calls that pay a first-use accessor's compile, ``COMMANDS``) beside a bare
+interpreter start as the control,
 which is always timed, shuffled, each spawn in an empty temp project of its own
 (no settings file, no ``espalier.toml``), the way the wiring starts it
 (``<python> <tools/cc/hooks/write_guard.py>``, the payload on stdin) with
@@ -42,19 +44,22 @@ flags) and the characters of the distinct string patterns, those again for the
 compiles whose call stack passes through the hooks folder (the standard
 library's own differ by interpreter), the hooks-folder patterns the loader
 compiled first (``loader_patterns``, ``loader_chars``: the imports compile the
-rest), the shared fragment
-``_bash_patterns._CMD_POS_NO_VERB``'s length (and ``_CMD_POS``'s), and how many
-of the patterns, and of their characters, embed it. Then, with the recorder
-still in place, it calls each pattern compiled on first use behind a cache
+rest), and the shared fragment
+``_bash_patterns._CMD_POS_NO_VERB``'s length (and ``_CMD_POS``'s). Then, with the recorder
+still in place, it compiles each pattern compiled on first use
 (``FIRST_USE_RULE``: a module-level cached accessor of the three modules that
-takes no argument and whose body names ``compile``; ``tests/_first_use_patterns.py``'s
+takes no argument and whose body names ``compile``, called; and each of a
+module's own first-use objects, ``_bash_patterns._FirstUse``, which hold every
+module-level pattern there since DEF-2084, read once; ``tests/_first_use_patterns.py``'s
 rule, carried here and pinned equal to it): ``first_use_patterns`` and
-``first_use_chars`` are those accessors and their patterns' characters, each
+``first_use_chars`` are those patterns and their characters, each
 counted whether or not an import compiled it first (note 0b0d58's hand probe),
 and ``summed_patterns`` and ``summed_chars`` are the distinct patterns the hooks
 folder compiled across the imports, the loader and those calls: the figure a
 cost gate reads, since a pattern moved behind an accessor is still compiled by
-every call that opens its check (DEF-4122). ``loader_ran`` and
+every call that opens its check (DEF-4122). ``embedding_patterns`` and
+``embedding_chars`` count the patterns of every compile recorded, first use
+included, that embed the fragment, and their characters. ``loader_ran`` and
 ``fragment_found`` say whether those two were there: a tree whose
 ``write_guard`` has no ``_load_the_pattern_path`` (before DEF-946, 2026-11-08)
 is read by its imports alone and says so, and on this checkout that is an error,
@@ -121,10 +126,26 @@ from pathlib import Path
 from typing import Any, Callable, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-KINDS = ("control", "read", "bash", "mcp_read", "mcp_write")
+KINDS = ("control", "read", "bash", "mcp_read", "mcp_write",
+         "powershell", "powershell_pipe", "bash_xargs", "bash_powershell")
+#: The commands of the Bash and PowerShell kinds. ``bash`` and ``powershell``
+#: are the ordinary call of each tool; the other three are the calls each of
+#: `_bash_patterns`' first-use accessors exists for (the ratchet's
+#: ``OPENING_CALLS``, pinned equal by ``tests/test_guard_compile_ratchet.py``):
+#: a piped PowerShell call (``_ps_interp_stdin_re``), a Bash pipe into xargs
+#: (``_carrier_fed_remove_re``) and a Bash call naming powershell
+#: (``_powershell_head_re``), so the call that pays a first-use compile has a
+#: per-call figure of its own (DEF-5115).
+COMMANDS = {
+    "bash": ("Bash", "ls -la"),
+    "powershell": ("PowerShell", "Get-ChildItem notes"),
+    "powershell_pipe": ("PowerShell", "Get-ChildItem notes | Select-Object -First 1"),
+    "bash_xargs": ("Bash", "echo notes | xargs cat"),
+    "bash_powershell": ("Bash", "powershell Get-ChildItem notes"),
+}
 #: The decision an ordinary call of each kind gets; any other makes the row's
 #: figure something other than a cost.
-EXPECTED_DECISION = {"control": "exit 0", "read": "allow", "bash": "allow", "mcp_read": "allow", "mcp_write": "allow"}
+EXPECTED_DECISION = {"control": "exit 0", **{kind: "allow" for kind in KINDS[1:]}}
 #: How long one spawn may take: the guard's own deadline is 4 s from its first
 #: line and the wired timeout 5 s, so a spawn past this is a hang, not a cost.
 SPAWN_TIMEOUT_S = 30.0
@@ -337,8 +358,9 @@ def payload(kind: str, project: Path) -> dict:
             "transcript_path": str(project / "transcript.jsonl"), "permission_mode": "default"}
     if kind == "read":
         base.update(tool_name="Read", tool_input={"file_path": notes})
-    elif kind == "bash":
-        base.update(tool_name="Bash", tool_input={"command": "ls -la", "description": "List files"})
+    elif kind in COMMANDS:
+        tool, command = COMMANDS[kind]
+        base.update(tool_name=tool, tool_input={"command": command, "description": "List files"})
     elif kind == "mcp_read":
         base.update(tool_name="mcp__filesystem__read_file", tool_input={"path": notes})
     elif kind == "mcp_write":
@@ -459,14 +481,21 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
 #: script imports nothing from ``tests/``. ``{"<accessor>()": pattern}`` for each
 #: function ``module`` defines behind ``functools.lru_cache`` or
 #: ``functools.cache`` that takes no argument and whose body names ``compile``,
-#: each called once; only a compiled pattern it returns is kept.
+#: each called once; only a compiled pattern it returns is kept. And
+#: ``{"<name>": pattern}`` for each of the module's own first-use objects
+#: (``module._FirstUse``, DEF-2084), compiled by its own first read, so the
+#: recorder sees the hooks folder's frame compile it.
 #: ``tests/test_guard_cost_census.py`` pins it equal to the helper both ways and
 #: its function body equal to the helper's, statement for statement (the
 #: docstring and annotations apart).
 FIRST_USE_RULE = r'''
 def first_use_patterns(module):
     found = {}
+    first_use = getattr(module, "_FirstUse", None)
     for name, obj in vars(module).items():
+        if first_use is not None and type(obj) is first_use:
+            found[name] = obj.search.__self__
+            continue
         wrapped = getattr(obj, "__wrapped__", None)
         code = getattr(wrapped, "__code__", None)
         if not hasattr(obj, "cache_info") or code is None:
@@ -540,7 +569,7 @@ fragment = getattr(_bash_patterns, "_CMD_POS_NO_VERB", None)
 cmd_pos = getattr(_bash_patterns, "_CMD_POS", None)
 found = isinstance(fragment, str) and bool(fragment)
 texts = [k[0] for k in imported if isinstance(k[0], str)]
-embedding = [t for t in texts if found and fragment in t]
+embedding = [k[0] for k in seen if isinstance(k[0], str) and found and fragment in k[0]]
 tools_cc = os.path.dirname(os.path.abspath(hooks))
 modules = sorted({os.path.abspath(m.__file__) for m in list(sys.modules.values())
                   if isinstance(getattr(m, "__file__", None), str)
@@ -979,7 +1008,7 @@ def render(result: dict) -> str:
                   f"patterns at import and load:       {c['patterns']} ({c['hooks_patterns']} from the hooks folder)",
                   f"characters at import and load:     {c['compiled_chars']} ({c['hooks_chars']} from the hooks folder)",
                   f"first compiled by the loader:      {c['loader_patterns']} patterns, {c['loader_chars']} characters",
-                  f"compiled on first use (accessors): {c['first_use_patterns']} patterns, {c['first_use_chars']} characters",
+                  f"compiled on first use (all kinds): {c['first_use_patterns']} patterns, {c['first_use_chars']} characters",
                   f"path plus first use (distinct):    {c['summed_patterns']} patterns, {c['summed_chars']} characters",
                   f"_CMD_POS_NO_VERB length:           {c['fragment_len']}",
                   f"_CMD_POS length:                   {c['cmd_pos_len']}",
@@ -1000,14 +1029,14 @@ def render(result: dict) -> str:
                   "cache:   " + (", ".join(f"{n} {s}" for s, n in counts.items()) or "no module read")
                   + " (the modules a spawn imports)",
                   f"n={result['n']} a kind, shuffled, ms per spawn; a guard call starts two interpreters, the control one",
-                  f"{'kind':10} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
+                  f"{'kind':15} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
         for kind, row in result["kinds"].items():
             seen = ", ".join(f"{d} x{c}" for d, c in sorted(row["decisions"].items()))
             if row["budget_records"]:
                 seen += f"; {row['budget_records']} budget record(s)"
             row_tags = run_tags + ([] if row["as_expected"] else ["decisions mixed"])
             iqr = f"{_ms(row['q1'])}-{_ms(row['q3'])}"
-            lines.append(f"{kind:10} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
+            lines.append(f"{kind:15} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
                          f"{_ms(row['max']):>8}  {seen}" + (f"  [{', '.join(row_tags)}]" if row_tags else ""))
         if result["audit_dir_rejected"]:
             lines.append("note:    the guard rejected the run's audit folder, so its records went to ~/.espalier/audit")

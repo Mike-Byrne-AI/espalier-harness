@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._first_use_patterns import first_use_patterns
+from tests._first_use_patterns import compiled, first_use_patterns
 from tests._spaced_paths import PS, fill, quoted
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -2891,14 +2891,15 @@ class TestCommandPositionClassClose:
         can never see a sibling in the file that OWNS the anchor. A class-fix's
         population is the IDIOM, not one file.
         """
-        import re as _re
         import _bash_patterns
 
         git_res = {}
         for mod in (_speedbump, _bash_patterns):
             for name, obj in vars(mod).items():
-                if isinstance(obj, _re.Pattern) and "git" in obj.pattern:
-                    git_res[f"{mod.__name__}.{name}"] = obj
+                # `_bash_patterns`' are first-use objects (DEF-2084), read through `compiled`
+                pattern = compiled(mod, obj)
+                if pattern is not None and "git" in pattern.pattern:
+                    git_res[f"{mod.__name__}.{name}"] = pattern
         assert set(git_res) == {
             "_speedbump._PUSH_HEAD_RE",
             # the PowerShell tool's twins (DEF-1038), behind `_PS_GIT_CMD`

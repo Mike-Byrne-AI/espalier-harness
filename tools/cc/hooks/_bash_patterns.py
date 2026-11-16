@@ -47,7 +47,7 @@ import shlex
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, NamedTuple, TypedDict
+from typing import Any, NamedTuple, TypedDict, cast
 
 # Co-located sibling, the one shared path helper (`_msys_drive_to_windows`,
 # DEF-731). This module is imported under TWO spellings: bare, with the hooks
@@ -62,6 +62,53 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import _hook_utils  # noqa: E402
+
+#: What a compiled pattern answers, read once from the real pattern on its
+#: first use and kept on its `_FirstUse` (DEF-2084).
+_PATTERN_READS = ("search", "match", "fullmatch", "finditer", "findall", "sub", "subn", "split",
+                  "flags", "groups", "groupindex", "scanner")
+
+
+class _FirstUse:
+    """One module-level pattern of this module, compiled on its first use (DEF-2084).
+
+    Every call write_guard judges on the pattern path imports this module, and
+    its module-level patterns were all compiled there: 218 of them, 98.8% of
+    the module body's time, where an ordinary Bash call uses 55 to 57 of them
+    and a Write none (Task 0 of DEF-2084, the Windows box, 2026-11-16). So each
+    is this object instead: it holds the source and the flags, and its first
+    read of anything else compiles the pattern and keeps what the real pattern
+    answers in its slots, so a later use reads a slot (16 ns a search more than
+    a real pattern's 526 ns, measured there). ``pattern`` answers without
+    compiling. ``type()`` names this class, never ``re.Pattern``, so a walker
+    of the module's patterns reads both kinds."""
+
+    __slots__ = ("pattern", "_flags", *_PATTERN_READS)
+
+    def __init__(self, source: str, flags: int) -> None:
+        self.pattern = source
+        self._flags = flags
+
+    def __getattr__(self, name: str) -> Any:
+        # Reached only for a slot not yet filled: compile once, fill them all.
+        # Any other name is one a real pattern lacks too, so it raises without
+        # compiling: a walker's `hasattr(obj, "cache_info")` or
+        # `getattr(obj, "__wrapped__", None)` over the module's names would
+        # otherwise compile all 218.
+        if name not in _PATTERN_READS:
+            raise AttributeError(name)
+        return self._fill(re.compile(self.pattern, self._flags), name)
+
+    def _fill(self, real: "re.Pattern[str]", name: str) -> Any:
+        for read in _PATTERN_READS:
+            setattr(self, read, getattr(real, read))
+        return getattr(real, name)
+
+
+def _first_use(source: str, flags: int = 0) -> "re.Pattern[str]":
+    """``re.compile(source, flags)``, deferred to the pattern's first use (DEF-2084)."""
+    return cast("re.Pattern[str]", _FirstUse(source, flags))
+
 
 #: DEF-2073's two readings (air's ruling 8aa088): whether a comment opener
 #: glued to the token before it opens a comment. Off, the default, is the
@@ -111,11 +158,11 @@ def reading_cache(maxsize: int) -> Callable[[Any], Any]:
 # extended to a quote's close: that, not a quote-aware regex, is what survives
 # a target with a space or a blanked inert character without a new backtracking
 # surface on an operator that is retried at every `>`.
-_REDIRECT_RE = re.compile(r">>?\|?\s*([^\s<>|&;]+)")
+_REDIRECT_RE = _first_use(r">>?\|?\s*([^\s<>|&;]+)")
 # The capture admits a quoted target (one quoted span, or a bare run): with
 # `([^\s]+)` alone the arm never matched `cat > "<root with a space>/x" <<EOF`
 # and the row passed through the redirect arm instead (review, DEF-794).
-_HEREDOC_RE = re.compile(r"""cat\s*>\s*((?:"[^"\n]*"|'[^'\n]*'|[^\s"']+))\s*<<""")
+_HEREDOC_RE = _first_use(r"""cat\s*>\s*((?:"[^"\n]*"|'[^'\n]*'|[^\s"']+))\s*<<""")
 # ---------------------------------------------------------------------------
 # Command-position anchor.
 #
@@ -578,7 +625,7 @@ _BASH_DISCOVERED_BACKTICK = (
     + r"(?:[ \t]+2>/dev/null)?[ \t]*`"
 )
 _BASH_DISCOVERED_EQUALS = r"=(?P<verb_e>" + _DISCOVERED_VERB + r")"
-_BASH_DISCOVERED_HEAD_RE = re.compile(
+_BASH_DISCOVERED_HEAD_RE = _first_use(
     "(?P<pos>" + _CMD_POS_NO_VERB + r")"
     r"(?:(?P<q>\"?)(?:" + _BASH_DISCOVERED_SUBSTITUTION + "|" + _BASH_DISCOVERED_BACKTICK
     + r")(?P=q)|" + _BASH_DISCOVERED_EQUALS + r")"
@@ -622,7 +669,7 @@ def _resolve_bash_discovered_heads(scan: str) -> str:
 # The bare arm admits `<>` on purpose: `tee 2> 1 <hook>` (the neutralised
 # `2>&1`) must reach `_operands`, which drops the redirect and its target; with
 # `<>` excluded the run stopped at `2` and the hook was never read.
-_TEE_RE = re.compile(
+_TEE_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:tee)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL + r"((?:[ \t]+-\S+|[ \t]+[^-\s][^\s|;&]*)*)"
 )
 # Verb-regex class: the six extraction regexes shaped
@@ -640,7 +687,7 @@ _TEE_RE = re.compile(
 # committed write regardless): a protected target pushed >512 chars / >64 tokens
 # PAST its verb is not extracted -- contrived padding, not a real command shape.
 # See docs/sharp-edges/protected-zone-path-equivalence.md sibling note.
-_SED_INPLACE_RE = re.compile(
+_SED_INPLACE_RE = _first_use(
     _CMD_POS + r"(?i:sed)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL
     # {0,64}: bound the option run. A token of the run may not hold an unquoted
     # statement separator, so the run ends where sed's own statement does:
@@ -703,7 +750,7 @@ _SED_INPLACE_RE = re.compile(
 # "no match, no claim", this segment IS the operand list -- so a target pushed
 # past the bound drops every operand and fails OPEN. Pinned by a boundary test.
 _INPLACE_VERB_ALT = r"(?:sed|perl)"
-_INPLACE_SEGMENT_RE = re.compile(
+_INPLACE_SEGMENT_RE = _first_use(
     # `_QUOTED_VERB_TAIL` tolerates a quoted verb (`'sed' -i ...`), which shell
     # quote-removal collapses back to a plain `sed` -- the one home every verb
     # arm reads. IGNORECASE for a case-insensitive filesystem
@@ -821,7 +868,7 @@ _OPERAND_SPAN = (
     r"((?:\"[^\"]*\"|'[^']*'|[^\s;|&\"']+)"
     r"(?:[ \t]+(?:\"[^\"]*\"|'[^']*'|[^\s;|&\"']+))*)"
 )
-_CP_MV_RE = re.compile(
+_CP_MV_RE = _first_use(
     # `verb` is a named group (§C52): a move's SOURCE is a relocated operand
     # the remove/relocate reader classifies, a copy's source is a read. The
     # operand span is group 2 from here on.
@@ -836,17 +883,17 @@ _CP_MV_RE = re.compile(
 # path goes -- and is quote-aware like every write arm, so a target under a
 # root with a space is one operand. `\b(?!=)` skips an assignment (`rm=...`)
 # and never narrows to whitespace: a quoted verb must still fire.
-_DESTROY_RE = re.compile(
+_DESTROY_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:rm|unlink|rmdir|shred)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 # `rename [opts] <expression-or-from> [<to>] files...` (the perl and the
 # util-linux spellings): every positional after the first is relocated.
-_RENAME_RE = re.compile(
+_RENAME_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:rename)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 # `zip [opts] <archive> inputs...`: the inputs are copied by effect (the
 # secret leg reads them; the zone leg does not -- an archive reads).
-_ZIP_RE = re.compile(
+_ZIP_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:zip)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 
@@ -856,10 +903,10 @@ _ZIP_RE = re.compile(
 # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
 # \b(?!=): exclude a `dd=…` shell assignment (`=` is a word boundary a bare `\bdd\b`
 # false-matched), but NOT a quoted `'dd' …` real command. Same guard across the verbs.
-_DD_OF_RE = re.compile(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bof=([^\s|;&]+)")
+_DD_OF_RE = _first_use(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bof=([^\s|;&]+)")
 # The INPUT of `dd` (`if=`): its source is copied by effect (§C52's secret
 # leg). Same shape and bound as the output arm above.
-_DD_IF_RE = re.compile(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bif=([^\s|;&]+)")
+_DD_IF_RE = _first_use(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bif=([^\s|;&]+)")
 # \b(?!=) on these two as well: `cp`/`mv`/`install`/`tar` are valid shell var
 # names, so a `cp=…`/`tar=…` assignment whose value contains `-t <path>` /
 # `-C <path>` / `--target-directory=` / `--directory=` text false-matched the
@@ -1039,7 +1086,7 @@ def _target_directory_walk(
                 rest = body[position + 1:]
                 return (rest if rest else following), at, frozenset(swallowed)
     return None, -1, frozenset(swallowed)
-_TAR_C_RE = re.compile(
+_TAR_C_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:tar)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?(?:-C[ \t]+|--directory=)([^\s|;&]+)"
 )
 # A tar CREATE's inputs (§C52's secret leg): the argument span, read by
@@ -1047,7 +1094,7 @@ _TAR_C_RE = re.compile(
 # `czf out.tgz`, `--create --file=out.tar`, `-c -f out.tar`) and returns
 # the positionals that are neither the archive nor a flag's value. One
 # bounded quantifier: linear.
-_TAR_CREATE_RE = re.compile(
+_TAR_CREATE_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:tar)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})"
 )
 # For verbs where the protected target is the final positional and
@@ -1071,9 +1118,9 @@ _TAR_CREATE_RE = re.compile(
 # <hook>` cut the span at `file` and dropped the hook (code-reviewer, driven
 # old-vs-new at all five verbs). The classes stay `#`-blind so a `#` inside a
 # filename survives; the scanner cuts at a word-start `#` outside quotes.
-_INSTALL_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:install)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
-_RSYNC_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:rsync)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
-_TRUNCATE_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:truncate)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
+_INSTALL_CMD_RE = _first_use(_CMD_POS + r"\b" + r"(?i:install)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
+_RSYNC_CMD_RE = _first_use(_CMD_POS + r"\b" + r"(?i:rsync)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
+_TRUNCATE_CMD_RE = _first_use(_CMD_POS + r"\b" + r"(?i:truncate)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
 # `patch [opts] [originalfile [patchfile]]`: the WRITE target is the FIRST
 # positional and the last is the patchfile READ, so the last-token pick the three
 # verbs above share read `patch <hook> p.diff` as a write to `p.diff` and allowed
@@ -1081,7 +1128,7 @@ _TRUNCATE_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:truncate)" + _EXE_SUFFIX 
 # candidate for patch, with a glued `--output=`/`--directory=` value
 # (`_patch_targets`): a patchfile named like a protected path is friction, a
 # missed originalfile is an unchecked write.
-_PATCH_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:patch)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n<]+)")
+_PATCH_CMD_RE = _first_use(_CMD_POS + r"\b" + r"(?i:patch)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n<]+)")
 # `find <roots...> ... -delete` and `-exec rm {} \;` (§C52): the roots are
 # the leading positionals before the first predicate; `_find_delete_roots`
 # yields them only when a delete action sits in the span. Bounded like the
@@ -1090,7 +1137,7 @@ _PATCH_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:patch)" + _EXE_SUFFIX + r"\b
 # case-insensitive platforms this harness supports, as `RM` does and
 # `_RM_SEGMENT_RE` admits; the predicates below stay case-sensitive, since
 # find itself rejects `-DELETE`.
-_FIND_DELETE_RE = re.compile(
+_FIND_DELETE_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:find)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})",
     re.IGNORECASE,
 )
@@ -1192,7 +1239,7 @@ _FIND_EXEC_VERB = (
     _CARRIER_WRAP_RUN
     + r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
 )
-_FIND_DELETE_ACTION_RE = re.compile(
+_FIND_DELETE_ACTION_RE = _first_use(
     r"(?<![\w-])-delete\b|(?<![\w-])-(?:exec|execdir|ok|okdir)[ \t]+" + _FIND_EXEC_VERB
 )
 #: A predicate that NARROWS what a `find` removes BY NAME OR PATH: with one
@@ -1213,16 +1260,16 @@ _FIND_DELETE_ACTION_RE = re.compile(
 #: was a one-token exit from the catastrophic wall in the first cut. An
 #: un-narrowed root reaches the catastrophic tier
 #: (`has_catastrophic_find_delete`) as an rm operand reaches its classifier.
-_FIND_NARROWING_RE = re.compile(
+_FIND_NARROWING_RE = _first_use(
     r"(?<![\w-])-i?(?:name|path|regex|wholename|lname|samefile|inum|empty|prune)\b"
 )
 #: `-o` / `-or` and the token after it, the alternation's right operand.
-_FIND_OR_RE = re.compile(r"(?<![\w-])-or?[ \t]+([^\s;|&]+)")
+_FIND_OR_RE = _first_use(r"(?<![\w-])-or?[ \t]+([^\s;|&]+)")
 #: A negation directly before a predicate (`! -name`, `-not -name`), or an
 #: `-o` with nothing after it inside the slice (its right operand is the
 #: action itself): applied to the text BEFORE the predicate or the action.
-_FIND_NEGATED_RE = re.compile(r"(?:(?<![\w-])-not|!)[ \t]*$")
-_FIND_OR_AT_END_RE = re.compile(r"(?<![\w-])-or?[ \t]*$")
+_FIND_NEGATED_RE = _first_use(r"(?:(?<![\w-])-not|!)[ \t]*$")
+_FIND_OR_AT_END_RE = _first_use(r"(?<![\w-])-or?[ \t]*$")
 #: GNU `find`'s global options, which sit BEFORE the starting points.
 _FIND_GLOBAL_OPTIONS = frozenset({"-H", "-L", "-P"})
 
@@ -1436,7 +1483,7 @@ _SPAN_QUOTED_ARMS = r"""\\.|"[^"\n]{0,512}"|'[^'\n]{0,512}'"""
 _SPAN_QUOTED_ARMS_WIDE = r"""\\.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
 _PS_SPAN_QUOTED_ARMS_WIDE = r"""`.|"[^"\n]{0,2048}"|'[^'\n]{0,2048}'"""
 _ENUM_ARGS = r"""(?P<args>(?:[^\n;|&\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
-_PIPED_REMOVE_RE = re.compile(
+_PIPED_REMOVE_RE = _first_use(
     _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _ENUM_ARGS + _XARGS_CARRIER_TAIL
     + r"(?P<verb>" + _FIND_EXEC_VERB + r")(?P<rmargs>[^\n;|&]{0,200})",
@@ -1457,7 +1504,7 @@ _PIPED_CARRIER_WITNESS = (
     r"\|&?[ \t\r\n]*" + _CARRIER_LEAD_RUN + r"(?:&[ \t]*)?"
     + r"(?:" + _CMD_POS_VERB_PREFIX + r"|(?:[A-Za-z]:)?(?:[\w.~-]*[/\\])+)\bxargs\b"
 )
-_PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
+_PIPED_CARRIER_WITNESS_RE = _first_use(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
 #: ── The loop carrier (DEF-830) ───────────────────────────────────────────
 #: The enumerator's output bound to a loop variable and removed in the body
 #: is the carrier wipe spelled as a compound statement, which no pipeline
@@ -1576,7 +1623,7 @@ _DO_BODY = (
 )
 #: (1) the enumerator piped into the read loop, the pipe ON THE LINE as the
 #: carrier's is.
-_LOOP_REMOVE_RE = re.compile(
+_LOOP_REMOVE_RE = _first_use(
     _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _ENUM_ARGS + r"\|[ \t]*" + _WHILE_READ_HEAD + _DO_BODY,
     re.IGNORECASE,
@@ -1598,7 +1645,7 @@ _SUBST_ENUM_ARGS = (
 #: quote's tail follows it. Until DEF-3028 the head took the tail alone, so
 #: `"find"`, `$'find'`, `/usr/bin/find`, `command find` and `LC_ALL=C find`
 #: there drew no zone deny where the bare head drew the wall.
-_FOR_SUBST_REMOVE_RE = re.compile(
+_FOR_SUBST_REMOVE_RE = _first_use(
     _CMD_POS + r"(?-i:for)[ \t]+(?P<vars>" + _LOOP_VAR + r")[ \t]+(?-i:in)[ \t]+(?:\$(?=\()|(?=`))"
     + _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _SUBST_ENUM_ARGS + r"(?:\)|`)" + _DO_BODY,
@@ -1606,7 +1653,7 @@ _FOR_SUBST_REMOVE_RE = re.compile(
 )
 #: (3) the read loop fed at its tail: `done < <(find .)`, `done <<< "$(ls)"`;
 #: up to four statements between the remove and `done`.
-_TAIL_LOOP_REMOVE_RE = re.compile(
+_TAIL_LOOP_REMOVE_RE = _first_use(
     _CMD_POS + _WHILE_READ_HEAD + _DO_BODY
     + _LOOP_SEP + r"[ \t\n]{0,64}(?:" + _LOOP_BODY_STATEMENT + r"){0,4}"
     + r"(?-i:done)[ \t]*(?:<[ \t]*<(?=\()|<<<[ \t]*\"?\$(?=\())"
@@ -1661,8 +1708,8 @@ _FOR_LIST_WORD = (
 #: nudge (driven under every root shape, 2026-09-18). Cutting the RAW text
 #: instead would re-open that the day the masker blanks a quoted span the
 #: scan matched. A tokenizer, never run over a whole command.
-_FOR_LIST_WORD_RE = re.compile(_FOR_LIST_WORD)
-_FOR_WORDS_REMOVE_RE = re.compile(
+_FOR_LIST_WORD_RE = _first_use(_FOR_LIST_WORD)
+_FOR_WORDS_REMOVE_RE = _first_use(
     _CMD_POS + r"(?P<head>(?-i:for))[ \t]+(?P<vars>" + _LOOP_VAR + r")[ \t]+(?-i:in)"
     + r"(?P<args>(?:[ \t]+" + _FOR_LIST_WORD + r")+)" + _DO_BODY,
     re.IGNORECASE,
@@ -1682,24 +1729,27 @@ _LOOP_OPENERS: tuple[tuple["re.Pattern[str]", str], ...] = (
     (_TAIL_LOOP_REMOVE_RE, "enumerator"),
     (_FOR_WORDS_REMOVE_RE, "words"),
 )
-_LOOP_OPENER_SHAPE: dict["re.Pattern[str]", str] = dict(_LOOP_OPENERS)
+#: Keyed by each opener's source, read as ``_LOOP_OPENER_SHAPE[m.re.pattern]``:
+#: a match's ``m.re`` is the compiled pattern, never the `_FirstUse` object the
+#: roster holds (DEF-2084), and the source is the one key both answer alike.
+_LOOP_OPENER_SHAPE: dict[str, str] = {rx.pattern: shape for rx, shape in _LOOP_OPENERS}
 #: The cheapest witness of the loop carrier for the pre-check both tiers run
 #: before any walk (a GATE, as `_PIPED_CARRIER_WITNESS_RE` is): the `do`
 #: keyword where bash reserves it, behind a separator, at most two line
 #: breaks away (so a flood of separators pays one bounded scan each).
 _LOOP_CARRIER_WITNESS = r"(?:;|\n)[ \t]*(?:\n[ \t]*){0,2}do(?=\s)"
-_LOOP_CARRIER_WITNESS_RE = re.compile(_LOOP_CARRIER_WITNESS)
+_LOOP_CARRIER_WITNESS_RE = _first_use(_LOOP_CARRIER_WITNESS)
 #: ONE operand token that is exactly the expansion of a name -- bare,
 #: braced, or double-quoted (a single-quoted one is a literal): the loop
 #: variable's spelling in the body. `"$f"/sub` and `"$f".bak` name a path
 #: beside the item and are not it.
-_LOOP_OPERAND_RE = re.compile(
+_LOOP_OPERAND_RE = _first_use(
     r'^"?\$(?:\{(' + _LOOP_VAR + r')\}|(' + _LOOP_VAR + r'))"?$'
 )
 #: Inside an enumerator span the anchored opener selected: `-type f` (the
 #: files-only walk, every file under the root) and ls's recursion flag.
-_FIND_TYPE_F_RE = re.compile(r"(?<![\w-])-type[ \t]+f\b")
-_LS_WALK_RE = re.compile(r"(?<![\w-])-[A-Za-z]*R[A-Za-z]*\b|(?<![\w-])--recursive\b")
+_FIND_TYPE_F_RE = _first_use(r"(?<![\w-])-type[ \t]+f\b")
+_LS_WALK_RE = _first_use(r"(?<![\w-])-[A-Za-z]*R[A-Za-z]*\b|(?<![\w-])--recursive\b")
 
 
 def _find_predicate_value_is_catchall(before: str, word: str, at: int) -> bool:
@@ -1760,7 +1810,7 @@ def _find_is_narrowed(span: str, action_at: int) -> bool:
 # This matcher was born excluding `#` from its class instead, which was a
 # fail-open the `_INSTALL_CMD_RE` block explains (`chmod 000 a#b
 # .claude/settings.json` -> allow); the class is `#`-blind now like its siblings.
-_CHMOD_CHOWN_RE = re.compile(
+_CHMOD_CHOWN_RE = _first_use(
     _CMD_POS + r"\b((?i:chmod|chown|chgrp|chflags|chattr|setfacl))" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]{0,512})"
 )
 
@@ -1879,12 +1929,12 @@ _GIT_RESTORE_TAIL = (
     r"""restore[ \t]+(?:["']?(?:-s|--source)[ \t]+[^\s;|&]+[ \t]+|["']?-\S+[ \t]+)*"""
     r"""(?!["']?-)([^\s;|&]+)"""
 )
-_GIT_CHECKOUT_DASHDASH_RE = re.compile(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_DASHDASH_TAIL)
-_GIT_CHECKOUT_BARE_RE = re.compile(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_BARE_TAIL)
-_GIT_RESTORE_RE = re.compile(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_RESTORE_TAIL)
+_GIT_CHECKOUT_DASHDASH_RE = _first_use(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_DASHDASH_TAIL)
+_GIT_CHECKOUT_BARE_RE = _first_use(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_BARE_TAIL)
+_GIT_RESTORE_RE = _first_use(_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_RESTORE_TAIL)
 # `git rm` / `git mv` (§C52): the operands leave the tracked tree or move
 # within it. Group 1 is the subcommand, group 2 the quote-aware operand span.
-_GIT_RM_MV_RE = re.compile(
+_GIT_RM_MV_RE = _first_use(
     _CMD_POS + _GIT_SUBCOMMAND_AT + r"(rm|mv)[ \t]+" + _OPERAND_SPAN
 )
 # `git clean` (§C52, the failure-mode review): with the ignored-files flag it
@@ -1895,7 +1945,7 @@ _GIT_RM_MV_RE = re.compile(
 # tree (`.`), which the consumer refuses as a tree that holds a protected
 # path. Without the ignored-files flag the no-operand form stays the speed
 # bump's (the zones hold no untracked-unignored file in a normal session).
-_GIT_CLEAN_RE = re.compile(
+_GIT_CLEAN_RE = _first_use(
     _CMD_POS + _GIT_SUBCOMMAND_AT + r"clean\b([^\n;|&]{0,512})"
 )
 # ``ln [opts] target linkname`` -- symlink creation into protected zones
@@ -1922,7 +1972,7 @@ _GIT_CLEAN_RE = re.compile(
 # tokenizer reads the dir as a positional (see
 # docs/sharp-edges/protected-zone-symlink-backstop.md); reader-side symlink
 # refusal is the decisive defense.
-_LN_S_RE = re.compile(
+_LN_S_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:ln)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"[ \t]+"       # the tail tolerates a quoted verb `'ln'`
     r"(?:-[a-zA-Z]+[ \t]+|--[a-z-]+[ \t]+)*"        # leading flags (short or long)
     r"(?:-[a-zA-Z]*s[a-zA-Z]*|--symbolic)"     # symlink flag: cluster w/ s, or --symbolic
@@ -1938,7 +1988,7 @@ _LN_S_RE = re.compile(
 # allowlisted-in-protected path (cc/blueprints/, cc/execution_plan.json) slipped
 # the protected-zone check. Same flag-cluster grammar as _LN_S_RE; the captured
 # group is the operand span, tokenised by the same `symlink_linkname`.
-_CP_SYMLINK_RE = re.compile(
+_CP_SYMLINK_RE = _first_use(
     _CMD_POS + r"\b" + r"(?i:cp)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"[ \t]+"            # the tail tolerates a quoted verb `'cp'`
     r"(?:-[a-zA-Z]+[ \t]+|--[a-z-]+[ \t]+)*"             # leading flags
     r"(?:-[a-zA-Z]*s[a-zA-Z]*|--symbolic-link)"    # symlink flag: cluster w/ s, or --symbolic-link
@@ -1994,7 +2044,7 @@ def symlink_linkname(span: str) -> str | None:
 # (driven: `ls -ln <protected>` and `grep -ln foo <protected>` both ALLOW) but the
 # stated mechanism was gone, which is worse than no comment: a reader trusts it
 # and reasons from a guard that is not there.
-_LN_CP_INVOCATION_RE = re.compile(_CMD_POS + r"\b(ln|cp)" + _EXE_SUFFIX + r"\b(?!=)([^;\n|&]*)", re.IGNORECASE)
+_LN_CP_INVOCATION_RE = _first_use(_CMD_POS + r"\b(ln|cp)" + _EXE_SUFFIX + r"\b(?!=)([^;\n|&]*)", re.IGNORECASE)
 
 
 def iter_hardlink_operands(command: str) -> Iterator[str]:
@@ -2181,13 +2231,13 @@ _INLINE_E_TAIL = (
 )
 # `(?i:...)` on the NAME only: a whole-pattern IGNORECASE leaked onto
 # `_CMD_POS`'s wrapper and keyword arms for this one opener (code review).
-_PYTHON_DASH_C_RE = re.compile(
+_PYTHON_DASH_C_RE = _first_use(
     _CMD_POS + r"(?i:python|pypy)" + _INLINE_C_TAIL,
     re.DOTALL,
 )
-_NODE_DASH_E_RE = re.compile(_CMD_POS + r"(?i:node)" + _INLINE_E_TAIL, re.DOTALL)
-_RUBY_DASH_E_RE = re.compile(_CMD_POS + r"(?i:ruby)" + _INLINE_E_TAIL, re.DOTALL)
-_PERL_DASH_E_RE = re.compile(_CMD_POS + r"(?i:perl)" + _INLINE_E_TAIL, re.DOTALL)
+_NODE_DASH_E_RE = _first_use(_CMD_POS + r"(?i:node)" + _INLINE_E_TAIL, re.DOTALL)
+_RUBY_DASH_E_RE = _first_use(_CMD_POS + r"(?i:ruby)" + _INLINE_E_TAIL, re.DOTALL)
+_PERL_DASH_E_RE = _first_use(_CMD_POS + r"(?i:perl)" + _INLINE_E_TAIL, re.DOTALL)
 
 # ── Cross-shell routing: a program handed to the OTHER shell (DEF-637, §C49) ──
 #
@@ -2282,7 +2332,7 @@ _SHELL_COMMAND_TAIL = (
     + r"""(?:(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
     + r"""|(?P<bare>[^;|&\n\r"'\-$/][^;|&\n\r]{0,4095}))"""
 )
-_POWERSHELL_DASH_COMMAND_RE = re.compile(
+_POWERSHELL_DASH_COMMAND_RE = _first_use(
     _CMD_POS + r"(?i:" + _POWERSHELL_HEADS + r")" + _SHELL_COMMAND_TAIL,
     re.DOTALL,
 )
@@ -2434,7 +2484,7 @@ _POSIX_SHELL_SWITCH_RUN_AFTER_C = (
     + _POSIX_SHELL_SWITCH + r"|" + _SWITCH_REDIRECT + r"))*"
     + r"(?:[ \t]+--(?:[ \t]+" + _SWITCH_REDIRECT + r")*)?"
 )
-_SHELL_DASH_C_RE = re.compile(
+_SHELL_DASH_C_RE = _first_use(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _POSIX_SHELL_C_CLUSTER
     + _POSIX_SHELL_SWITCH_RUN_AFTER_C + r"[ \t]+"
@@ -2464,7 +2514,7 @@ def _posix_shell_c_bodies(command: str, scan: str) -> Iterator[str]:
 #: `_CMD_POS_EXEC_QUOTE` ending right where the word starts (its optional
 #: quote is the word's own). Derived from that arm, so it says what the arm
 #: reads and nothing of its own.
-_EXEC_QUOTE_AT_WORD_RE = re.compile(_CMD_POS_EXEC_QUOTE + r"\Z")
+_EXEC_QUOTE_AT_WORD_RE = _first_use(_CMD_POS_EXEC_QUOTE + r"\Z")
 #: Whether a `-c` program's word opens on a prefix `_CMD_POS`'s separator
 #: arm reads and its other arms do not: a wrapper run, an assignment, a
 #: keyword, `!` or a redirect, after the word's quote and blanks. Reached by
@@ -2473,7 +2523,7 @@ _EXEC_QUOTE_AT_WORD_RE = re.compile(_CMD_POS_EXEC_QUOTE + r"\Z")
 #: opens takes a bare verb only, so `sudo <delete>` there was read in place
 #: by nobody (the code review's 15 rows). Derived from those arms' own
 #: pieces, so it names no spelling of its own.
-_PROGRAM_OPENS_ON_PREFIX_RE = re.compile(
+_PROGRAM_OPENS_ON_PREFIX_RE = _first_use(
     r"[\"'][ \t]*(?:" + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
     + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
     + "|" + _CMD_POS_NEGATE
@@ -2585,7 +2635,7 @@ def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator
 # word and no pattern is added (rulings 40ec7f, 63f101, and 0b0d58, which
 # counts a pattern compiled on first use). Spelled as typed, since bash
 # matches a builtin case-sensitively.
-_CARRIER_HEAD_RE = re.compile(
+_CARRIER_HEAD_RE = _first_use(
     _CMD_POS + r"(?P<head>eval|builtin|(?i:" + _WRAPPER_CARRIER_BINARIES + r"|su)" + _EXE_SUFFIX + r")"
     + _QUOTED_VERB_TAIL + r"(?=[ \t])"
 )
@@ -3324,14 +3374,14 @@ def _carried_programs_cached(command: str, removal: bool) -> tuple[str, ...]:
 # declares), while a brace in the tail still lands inside one and denies --
 # both the direction wanted, which is why `f` stays in the class (DEF-712).
 _PY_STR_PREFIX = r"(?:[rRbBuUfF]{1,2})?"
-_PY_FILE_OPEN_RE = re.compile(
+_PY_FILE_OPEN_RE = _first_use(
     r"""open\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1\s*,\s*(['"])[wax]"""
 )
 # The pathlib writers: `Path(<lit>).write_text(` / `.write_bytes(` / `.open('w')`
 # (`pathlib.Path(...)` reaches the same `\bPath`). Same ReDoS shape as
 # `_PY_FILE_OPEN_RE`: a greedy quote-excluding path class closed directly by
 # the backreference, one deterministic token at a time after it.
-_PY_PATH_WRITE_RE = re.compile(
+_PY_PATH_WRITE_RE = _first_use(
     r"""\bPath\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1\s*\)\s*\.\s*"""
     r"""(?:write_text|write_bytes|open\s*\(\s*['"][wax])"""
 )
@@ -3340,16 +3390,16 @@ _PY_PATH_WRITE_RE = re.compile(
 # over WITHOUT a backreference (a quote of the other kind inside it is a miss,
 # never a backtrack), so the destination is group(2) like every other inner
 # pattern and the caller needs no per-pattern group table.
-_PY_DEST_ARG_WRITE_RE = re.compile(
+_PY_DEST_ARG_WRITE_RE = _first_use(
     r"""\b(?:shutil\s*\.\s*(?:copyfile|copytree|copy2|copy|move)|os\s*\.\s*(?:rename|replace))"""
     r"""\s*\(\s*""" + _PY_STR_PREFIX + r"""['"][^'"]*['"]\s*,\s*"""
     + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1"""
 )
-_NODE_FS_WRITE_RE = re.compile(
+_NODE_FS_WRITE_RE = _first_use(
     r"""\b(?:writeFileSync|appendFileSync|createWriteStream|"""
     r"""writeFile|appendFile)\s*\(\s*(['"])([^'"]+)\1"""
 )
-_RUBY_FILE_WRITE_RE = re.compile(
+_RUBY_FILE_WRITE_RE = _first_use(
     r"""File\.(?:open|write|new)\s*\(\s*(['"])([^'"]+)\1"""
     r"""(?:\s*,\s*(['"])(?:w|a)['"]?)?"""
 )
@@ -3377,7 +3427,7 @@ _RUBY_FILE_WRITE_RE = re.compile(
 # (harmless -- no protected zone matches): a first char of ``>``/``+``, a
 # lexical-``my $fh`` filehandle, or an ``open`` glued to a leading identifier
 # char.
-_PERL_OPEN_RE = re.compile(
+_PERL_OPEN_RE = _first_use(
     r"""(?<![A-Za-z0-9_])open\s*(?:\(\s*)?[^\s,('"]+\s*,\s*(['"])\s*[>+]+\s*([^'"\s>+][^'"\n]*)\1"""
 )
 #: The THREE-argument perl `open` (DEF-813): the mode and the path in
@@ -3401,7 +3451,7 @@ _PERL_OPEN_RE = re.compile(
 #: the read table below.
 _PERL_OPEN3_HEAD = r"""(?<![A-Za-z0-9_])open\s*(?:\(\s*)?(?:my[ \t]+)?[^\s,('"]+\s*,\s*"""
 _PERL_OPEN3_WRITE_MODE = r"""(?:>>?|\+(?:<|>>?))(?::[^'"\s]{0,64})?"""
-_PERL_OPEN3_RE = re.compile(
+_PERL_OPEN3_RE = _first_use(
     _PERL_OPEN3_HEAD
     + r"""(?:'\s*""" + _PERL_OPEN3_WRITE_MODE + r"""\s*'|"\s*""" + _PERL_OPEN3_WRITE_MODE + r"""\s*")"""
     + r"""\s*,\s*(['"])([^'"\s<>+][^'"\n]*)\1"""
@@ -3520,7 +3570,7 @@ _OUTPUT_REDIRECT_UNIT = _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET
 _OUTPUT_REDIRECT_RUN = (
     _OUTPUT_REDIRECT_UNIT + r"(?:[ \t]+" + _OUTPUT_REDIRECT_UNIT + r")*"
 )
-_INTERP_STDIN_RE = re.compile(
+_INTERP_STDIN_RE = _first_use(
     _CMD_POS
     + r"\b((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*" + _QUOTED_VERB_TAIL
     + r"[ \t]*(?:-[A-Za-z]+[ \t]+)*"
@@ -3558,49 +3608,49 @@ if set(_INTERP_ALTERNATION.split("|")) != (set(_STDIN_PROGRAM_WRITE_RES) | _STDI
 # DESTINATION of the same relocations; a read (`open(x)` without a write
 # mode, `Path(x).read_text`, `fs.readFileSync`, `File.read`, perl `open(F,
 # '<x')`) surfaces the file, which the secret leg reads by effect.
-_PY_OS_MUTATE_RE = re.compile(
+_PY_OS_MUTATE_RE = _first_use(
     r"""\b(?:os\s*\.\s*(?:remove|unlink|rmdir|removedirs|rename|replace)"""
     r"""|shutil\s*\.\s*(?:rmtree|move))\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1"""
 )
-_PY_PATH_MUTATE_RE = re.compile(
+_PY_PATH_MUTATE_RE = _first_use(
     r"""\bPath\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1\s*\)\s*\.\s*"""
     r"""(?:unlink|rmdir|rename|replace)\b"""
 )
 _PY_MUTATE_RES: tuple[re.Pattern[str], ...] = (_PY_OS_MUTATE_RE, _PY_PATH_MUTATE_RE)
-_NODE_FS_MUTATE_RE = re.compile(
+_NODE_FS_MUTATE_RE = _first_use(
     r"""\b(?:unlinkSync|rmSync|rmdirSync|renameSync|unlink|rm|rmdir|rename)\s*\(\s*(['"])([^'"]+)\1"""
 )
-_RUBY_FILE_MUTATE_RE = re.compile(
+_RUBY_FILE_MUTATE_RE = _first_use(
     r"""\b(?:File\s*\.\s*(?:delete|unlink|rename)"""
     r"""|FileUtils\s*\.\s*(?:rm_rf|rm_r|rm_f|rm|remove_dir|remove_entry|remove|rmdir|mv|move))"""
     r"""\s*\(\s*(['"])([^'"]+)\1"""
 )
 # `\s*(?:\(\s*)?`: the paren and its trailing blank as one optional unit, the
 # `_PERL_OPEN_RE` shape (two adjacent blank runs would be the ambiguous pair).
-_PERL_MUTATE_RE = re.compile(
+_PERL_MUTATE_RE = _first_use(
     r"""(?<![A-Za-z0-9_])(?:unlink|rename|rmdir|rmtree|remove_tree)\s*(?:\(\s*)?(['"])([^'"]+)\1"""
 )
 # A read: `open(<lit>)` closed at once or followed by a mode that starts
 # with `r`; `\1\s*` then `\)` or `,` -- exclusive. `(?<![\w.])` keeps the
 # pathlib spelling for the path pattern beside it.
-_PY_FILE_OPEN_READ_RE = re.compile(
+_PY_FILE_OPEN_READ_RE = _first_use(
     r"""(?<![A-Za-z0-9_.])open\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1\s*"""
     r"""(?:\)|,\s*(?:mode\s*=\s*)?['"]r)"""
 )
-_PY_PATH_READ_RE = re.compile(
+_PY_PATH_READ_RE = _first_use(
     r"""\bPath\s*\(\s*""" + _PY_STR_PREFIX + r"""(['"])([^'"]+)\1\s*\)\s*\.\s*"""
     r"""(?:read_text|read_bytes|open\s*\(\s*(?:\)|['"]r))"""
 )
 _PY_READ_RES: tuple[re.Pattern[str], ...] = (_PY_FILE_OPEN_READ_RE, _PY_PATH_READ_RE)
-_NODE_FS_READ_RE = re.compile(
+_NODE_FS_READ_RE = _first_use(
     r"""\b(?:readFileSync|readFile|createReadStream)\s*\(\s*(['"])([^'"]+)\1"""
 )
-_RUBY_FILE_READ_RE = re.compile(
+_RUBY_FILE_READ_RE = _first_use(
     r"""\b(?:File|IO)\s*\.\s*(?:read|readlines|foreach|binread)\s*\(\s*(['"])([^'"]+)\1"""
 )
 # The `<` mode of a two-argument perl open; the first path character excludes
 # a blank and the mode characters, so the blank run before it keeps one parse.
-_PERL_OPEN_READ_RE = re.compile(
+_PERL_OPEN_READ_RE = _first_use(
     r"""(?<![A-Za-z0-9_])open\s*(?:\(\s*)?[^\s,('"]+\s*,\s*(['"])\s*<\s*([^'"\s<>+][^'"\n]*)\1"""
 )
 # The three-argument read (DEF-813, the twin of `_PERL_OPEN3_RE`): the `<`
@@ -3608,7 +3658,7 @@ _PERL_OPEN_READ_RE = re.compile(
 # `+<` is read-write and the write arm's; the `<` here follows the quote
 # directly, so the two arms are exclusive on the mode's first character.
 _PERL_OPEN3_READ_MODE = r"""<(?::[^'"\s]{0,64})?"""
-_PERL_OPEN3_READ_RE = re.compile(
+_PERL_OPEN3_READ_RE = _first_use(
     _PERL_OPEN3_HEAD
     + r"""(?:'\s*""" + _PERL_OPEN3_READ_MODE + r"""\s*'|"\s*""" + _PERL_OPEN3_READ_MODE + r"""\s*")"""
     + r"""\s*,\s*(['"])([^'"\s<>+][^'"\n]*)\1"""
@@ -3641,7 +3691,7 @@ if not all(name in globals() for name in _MUTATION_INNER_ARMS):
         "inner-pattern dispatch names an arm this module lacks: "
         + ", ".join(n for n in _MUTATION_INNER_ARMS if n not in globals())
     )
-_INNER_MOVE_WORD_RE = re.compile(r"\bmove\b|\bmv\b|rename|replace")
+_INNER_MOVE_WORD_RE = _first_use(r"\bmove\b|\bmv\b|rename|replace")
 
 
 def _inner_arm(name: str) -> tuple[re.Pattern[str], ...]:
@@ -3727,7 +3777,7 @@ _BINDING_NAME = r"([A-Za-z_][A-Za-z0-9_]*)"
 #: nudge (DEF-1173, a Windows operator in Git Bash). The prefix is a fixed two
 #: characters whose colon the class after it cannot take, so a start offset
 #: tries at most two readings (linear; the ReDoS rule).
-_VAR_ASSIGN_RE = re.compile(
+_VAR_ASSIGN_RE = _first_use(
     _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + r"""\s*=\s*"""
     r"""(?:'([^'$]*)'|\"([^\"$]*)\"|(~[A-Za-z0-9_./\-]*|(?:[A-Za-z]:)?[A-Za-z0-9_./\-]+))"""
 )
@@ -3737,7 +3787,7 @@ _VAR_ASSIGN_RE = re.compile(
 #: Matched on the masked text, as the literal bindings are, so a binding
 #: inside a quoted argument or a comment is a mention; the words are judged
 #: by `_mktemp_stays_in_temp` before the value is read as scratch.
-_MKTEMP_BINDING_RE = re.compile(
+_MKTEMP_BINDING_RE = _first_use(
     _BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME
     + r"=(?P<val>\"?(?:\$\((?P<a>[^()`$;&|<>\n'\"\\]*)\)|`(?P<b>[^()`$;&|<>\n'\"\\]*)`)\"?)"
     + r"(?=[ \t;&|\n)]|$)"
@@ -3752,7 +3802,7 @@ _MKTEMP_SCRATCH = "/tmp/.mktemp-scratch"
 #: walls only (`_followed_variable_value`). ReDoS: `"?` then `$`, a name run
 #: then a non-name lookahead or `{`, an operator word of a negated class then
 #: the `}` it excludes -- each adjacent pair exclusive.
-_BOUND_VARIABLE_VALUE_RE = re.compile(
+_BOUND_VARIABLE_VALUE_RE = _first_use(
     r"(?P<q>\"?)\$(?:(?P<n>HOME|TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])"
     r"|\{(?P<b>HOME|TEMP|TMP|TMPDIR)(?P<op>:?[-=?][^}\"$`\\]*|%%?/)?\})(?P=q)"
 )
@@ -3913,7 +3963,7 @@ def _bound_value(lit: "re.Match[str]", command: str, wall: bool) -> str | None:
 #: name (its value is computed, so a later reference
 #: is unknown rather than stale -- a stale binding is the only way this
 #: pre-pass could REFUSE a write that lands elsewhere).
-_VAR_ANY_ASSIGN_RE = re.compile(_BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + "=")
+_VAR_ANY_ASSIGN_RE = _first_use(_BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + "=")
 
 _BASH_COMMAND_CAP = 32_768  # bytes (total scan budget head + tail combined)
 _BASH_COMMAND_HALF_CAP = _BASH_COMMAND_CAP // 2  # 16384 each side
@@ -3974,7 +4024,7 @@ _INERTABLE_SYNTAX = frozenset("`(){};|&<>\n\r#")
 #: The live syntax the masker's comment cursor reads (`_CommentCursor`): a
 #: backtick, which opens or closes a body, a paren, and a parameter
 #: expansion's `${`, which the cursor jumps to its close.
-_CURSOR_SYNTAX_RE = re.compile(r"[`()]|\$\{")
+_CURSOR_SYNTAX_RE = _first_use(r"[`()]|\$\{")
 
 
 def _param_expansion_end(s: str, p: int) -> int:
@@ -4117,7 +4167,7 @@ class _CommentCursor:
 #: Scanning only up to the operator left exactly that shape open. Stopping at
 #: the body rather than scanning the whole command is what keeps a documentation
 #: heredoc whose BODY quotes a backtick relieved.
-_CAPTURING_PREFIX_RE = re.compile(r"\$\(|`|[<>]\(")
+_CAPTURING_PREFIX_RE = _first_use(r"\$\(|`|[<>]\(")
 
 #: Above this size the walker is skipped and the raw command returned. The scan
 #: cap (_cap_for_scan) already trims to 32KB; this is the belt for callers that
@@ -4215,7 +4265,7 @@ _NON_REPARSING_HEADS = frozenset({
 #: position -- was measured and REJECTED: it loses `find -exec sh -c`,
 #: `ssh host '...'`, a flag-embedded `--wrap='eval ...'` and a `git` alias body
 #: (four genuinely-executing shapes) to relieve three inert ones. Wrong trade.
-_EXEC_OPENER_RE = re.compile(r"\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)\b")
+_EXEC_OPENER_RE = _first_use(r"\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)\b")
 
 #: Prefix words that do not themselves consume the argument -- step over them and
 #: keep looking for the real head.
@@ -5758,21 +5808,21 @@ _PS_GLUED_NUMBER = (
 #: so a run of `[a]` has one reading: as `(?:\[..\])+` beside the index
 #: member it backtracked cubically (the code review: 3.1 s on a 2.4 KB `$x[1]`
 #: run).
-_PS_GLUED_EXPRESSION_END_RE = re.compile(
+_PS_GLUED_EXPRESSION_END_RE = _first_use(
     r"(?:^(?:-[A-Za-z]+)?|(?<=[!+*/%=,.\]])|(?<=-)(?:[A-Za-z]+)?)(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*(?:\+\+|--)?"
     r"|\[[A-Za-z_][\w.]*(?:\[\])?\]" + _PS_GLUED_MEMBER + r"*"
     r"|-?" + _PS_GLUED_NUMBER + r")$"
 )
 #: In argument mode: the whole token is a variable with a member, or a switch
 #: bound by its colon.
-_PS_GLUED_ARGUMENT_TOKEN_RE = re.compile(
+_PS_GLUED_ARGUMENT_TOKEN_RE = _first_use(
     r"(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+|-[A-Za-z_?][\w?]*:)"
 )
 #: The token that opens in either mode: a variable with a member. Where the
 #: statement's head is unread (a group closed before the token), it is the
 #: only one read as opening (`Write-Output (1) $x.y<#`); the colon-bound
 #: switch is not, since expression mode absorbs it (`$x -eq:<#`).
-_PS_GLUED_MEMBER_TOKEN_RE = re.compile(_PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+")
+_PS_GLUED_MEMBER_TOKEN_RE = _first_use(_PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+")
 #: A statement whose first character is one of these is an expression; one
 #: that opens on a digit is one only where a number is the whole first word
 #: (`1kb`, `0x1F`; `7z x $y<#` runs the command `7z`); one that opens on `-`,
@@ -5780,19 +5830,19 @@ _PS_GLUED_MEMBER_TOKEN_RE = re.compile(_PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r
 #: `-not $x`, `++$x`), and a command otherwise (`-foo $x<#` and the
 #: dot-source `. $x<#` absorb it).
 _PS_EXPRESSION_HEAD = frozenset("$'\"[!@")
-_PS_NUMBER_HEAD_RE = re.compile(_PS_GLUED_NUMBER + r"(?!\w)")
-_PS_UNARY_HEAD_RE = re.compile(
+_PS_NUMBER_HEAD_RE = _first_use(_PS_GLUED_NUMBER + r"(?!\w)")
+_PS_UNARY_HEAD_RE = _first_use(
     r"(?:-(?:[\d.]|-(?=\$)|(?:not|bnot|join|split)(?![\w-]))|\.\d|\+(?:\+(?=\$)|[\d.$(]))",
     re.IGNORECASE,
 )
 #: A dash operator word ending right before a string glued to it
 #: (`$x -eq'a'<#`, `-join'a'<#`), read in the last 16 characters only: the
 #: longest operator word is 12 letters, and a longer run stays unopened.
-_PS_OPERATOR_WORD_END_RE = re.compile(r"-[A-Za-z]+$")
+_PS_OPERATOR_WORD_END_RE = _first_use(r"-[A-Za-z]+$")
 _PS_OPERATOR_WORD_SPAN = 16
 #: The keywords whose operand is a pipeline read for its own mode (`return
 #: $x<#` opens; `return gc $x<#` does not).
-_PS_PIPELINE_KEYWORD_RE = re.compile(r"(?:return|throw|exit)(?=[ \t])", re.IGNORECASE)
+_PS_PIPELINE_KEYWORD_RE = _first_use(r"(?:return|throw|exit)(?=[ \t])", re.IGNORECASE)
 #: The characters that end the statement before a token (`&&` too, below; a
 #: lone `&` is the call operator, whose statement is a command).
 _PS_STATEMENT_STOP = frozenset(";|({}\n\r")
@@ -7035,7 +7085,7 @@ def _consume_heredoc_body(
 #: The tokenizer every last-positional and every-positional helper below uses,
 #: so a quoted operand with a space is ONE operand at every site. Defined at
 #: `_QUOTED_OR_BARE_OPERAND` beside the cp/mv pair that first needed it.
-_OPERAND_TOKEN_RE = re.compile(_QUOTED_OR_BARE_OPERAND)
+_OPERAND_TOKEN_RE = _first_use(_QUOTED_OR_BARE_OPERAND)
 
 def raw_operand(raw: str, m: "re.Match[str]", group: int = 1, *,
                 keep_quotes: bool = False, word: bool = False,
@@ -7454,8 +7504,8 @@ def _strip_tail_kept_nonempty(operand: str, *, powershell: bool = False) -> str:
 #: the `&>` arm, `cp x <hook> &>/dev/null` kept `&>/dev/null` as a positional
 #: and the hook fell out of the last-positional pick on EVERY root (review,
 #: driven: 720 regressions across cp/mv/install/rsync/truncate, 0 after).
-_REDIRECT_TOKEN_RE = re.compile(r"^(?:[0-9]*[<>]{1,3}|&>{1,2})")
-_BARE_REDIRECT_OPERATOR_RE = re.compile(r"^(?:[0-9]*[<>]{1,3}[&|]?|&>{1,2})$")
+_REDIRECT_TOKEN_RE = _first_use(r"^(?:[0-9]*[<>]{1,3}|&>{1,2})")
+_BARE_REDIRECT_OPERATOR_RE = _first_use(r"^(?:[0-9]*[<>]{1,3}[&|]?|&>{1,2})$")
 
 
 def _redirect_words(tok: str, *, powershell: bool = False) -> int:
@@ -7559,7 +7609,7 @@ def _ps_hands_the_pipe_nothing(span: str, tokens: list[str]) -> bool:
 #: and refuse `&&`/`&|` on the other, so `&&`, a background `&` and an `a&b`
 #: inside a pattern are untouched; the masker has already blanked a quoted `&`
 #: when the head is on the non-reparsing roster.
-_REDIRECT_AMPERSAND_RE = re.compile(r"(?<=[<>])&(?![&|])|&(?=>)")
+_REDIRECT_AMPERSAND_RE = _first_use(r"(?<=[<>])&(?![&|])|&(?=>)")
 
 
 def neutralise_redirect_ampersands(text: str) -> str:
@@ -7864,11 +7914,11 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
 #: a subshell `( )` and a command substitution `$( )`, read on the masked text
 #: (a quoted or commented paren is blank there). A case arm's lone `)` closes
 #: nothing when no scope is open.
-_BINDING_SCOPE_CHAR_RE = re.compile(r"[()]")
+_BINDING_SCOPE_CHAR_RE = _first_use(r"[()]")
 #: The opener of a program handed to a POSIX shell's `-c` in a quoted word:
 #: the program runs in a CHILD shell, so its bindings end at its closing
 #: quote. `eval` is not here: it runs its program in the current shell.
-_SHELL_C_BODY_OPEN_RE = re.compile(r"\b(?:ba|z|k|da)?sh[ \t]+-c[ \t]*(['\"])")
+_SHELL_C_BODY_OPEN_RE = _first_use(r"\b(?:ba|z|k|da)?sh[ \t]+-c[ \t]*(['\"])")
 
 
 def _binding_scope_events(command: str, live: str) -> list[tuple[int, bool]]:
@@ -7933,7 +7983,7 @@ def _substitute_bash_refs(
 #: A reference the pre-pass may substitute: `${NAME}` or `$NAME`, the name
 #: read greedily. `${NAME:-x}` and every other parameter expansion match
 #: neither arm and stay as written.
-_BASH_REF_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_BASH_REF_RE = _first_use(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 def _tee_targets(tee_args_blob: str) -> list[str]:
@@ -8329,7 +8379,7 @@ def _bash_unescape_program(body: str, quote: str) -> str:
 #: grammar the openers carry, anchored by `match` at a start an anchored
 #: reader selected -- a TOKENIZER over that span, declared as such in the
 #: anchor census.
-_BASH_WORD_AT_RE = re.compile(_BASH_QUOTED_WORD, re.DOTALL)
+_BASH_WORD_AT_RE = _first_use(_BASH_QUOTED_WORD, re.DOTALL)
 
 
 def _bash_word_text(word: str) -> str:
@@ -8439,7 +8489,7 @@ def _shell_program_bodies(command: str, scan: str) -> Iterator[str]:
 #: IS a boundary -- a piped program is the stage immediately before its
 #: consumer -- and one boundary list per call is searched by bisection, the
 #: `_PS_STDIN_SEGMENT_BOUNDARY_RE` discipline.
-_STDIN_SEGMENT_BOUNDARY_RE = re.compile(r"[;\n\r(){}&|`]")
+_STDIN_SEGMENT_BOUNDARY_RE = _first_use(r"[;\n\r(){}&|`]")
 
 #: The POSIX shell heads as a set, for the consumers that dispatch on a
 #: piped program's head.
@@ -8526,7 +8576,7 @@ _PIPE_STATEMENT_END = r"(?:$|[;\n\r)}]|(?<!>)\||(?<!>)&(?!>))"
 #: read here: the pipe scan blanks a quoted span and the path prefix holds
 #: no `:` (40ec7f: an unusual wrapper argument). A clobber's `|` (`>| sh`,
 #: a file named sh) is never a pipe.
-_INTERP_PIPE_RE = re.compile(
+_INTERP_PIPE_RE = _first_use(
     r"(?<!>)\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?"
     # DEF-3077 (air's fb2b3f, site 5): output redirects before the head
     # (`| 2>/dev/null bash`); an input redirect there gives the head another
@@ -8548,7 +8598,7 @@ _INTERP_PIPE_RE = re.compile(
 #: `sh<<<'...'`, so the arm must not REQUIRE the blank). The heredoc
 #: spelling needs no arm -- behind a shell head the body stays raw and the
 #: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
-_SHELL_HERESTRING_RE = re.compile(
+_SHELL_HERESTRING_RE = _first_use(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     # the shared switch run (§C52): unbounded, and linear because a value is
     # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
@@ -8559,9 +8609,9 @@ _SHELL_HERESTRING_RE = re.compile(
 
 #: The three statement readers' heads, on the masked text at a command
 #: position; the words after each are read from the raw command.
-_AWK_HEAD_RE = re.compile(_CMD_POS + r"(?i:[gmn]?awk)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
-_SED_HEAD_RE = re.compile(_CMD_POS + r"(?i:g?sed)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
-_GIT_HEAD_RE = re.compile(_CMD_POS + _GIT_VERB + r"\b" + _QUOTED_VERB_TAIL)
+_AWK_HEAD_RE = _first_use(_CMD_POS + r"(?i:[gmn]?awk)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
+_SED_HEAD_RE = _first_use(_CMD_POS + r"(?i:g?sed)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
+_GIT_HEAD_RE = _first_use(_CMD_POS + _GIT_VERB + r"\b" + _QUOTED_VERB_TAIL)
 
 #: git config keys whose value is a program run through a shell. An `alias.*`
 #: or `credential[.<url>].helper` value is a program only behind a leading
@@ -8586,37 +8636,37 @@ _GIT_FILTER_OPTIONS = frozenset({
 #: Inside a PROGRAM: the call heads. The argument after each is read by hand
 #: (`_read_call_args`), so no regex ever reads a literal -- the linear-time
 #: discipline the ReDoS receipt asks of every body regex.
-_PY_SHELL_OUT_HEAD_RE = re.compile(
+_PY_SHELL_OUT_HEAD_RE = _first_use(
     r"(?<![\w.])(?:os[ \t]*\.[ \t]*(?:system|popen|exec[lvpe]{1,3}|spawn[lvpe]{1,3})"
     r"|subprocess[ \t]*\.[ \t]*(?:run|call|check_call|check_output|Popen|getoutput"
     r"|getstatusoutput)|commands[ \t]*\.[ \t]*getoutput"
     r"|run|call|check_call|check_output|Popen|system|popen|getoutput)[ \t]*\([ \t]*"
 )
-_JS_SHELL_OUT_HEAD_RE = re.compile(
+_JS_SHELL_OUT_HEAD_RE = _first_use(
     r"\b(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)[ \t]*\([ \t]*"
 )
-_PERL_SHELL_OUT_HEAD_RE = re.compile(
+_PERL_SHELL_OUT_HEAD_RE = _first_use(
     r"(?<![\w$@%])(?:system|exec)[ \t]*(?:\([ \t]*)?"
 )
-_PERL_OPEN_PIPE_RE = re.compile(
+_PERL_OPEN_PIPE_RE = _first_use(
     r"(?<![\w$@%])open[ \t]*(?:\([ \t]*)?(?:my[ \t]+)?[\w$:]+[ \t]*,[ \t]*"
 )
-_PERL_QX_RE = re.compile(r"(?<![\w$@%])qx(?=[ \t]*[^\w\s])")
-_RUBY_SHELL_OUT_HEAD_RE = re.compile(
+_PERL_QX_RE = _first_use(r"(?<![\w$@%])qx(?=[ \t]*[^\w\s])")
+_RUBY_SHELL_OUT_HEAD_RE = _first_use(
     r"(?<![\w.:@$])(?:system|exec|spawn|IO[ \t]*\.[ \t]*popen"
     r"|Open3[ \t]*\.[ \t]*\w+|Kernel[ \t]*\.[ \t]*(?:system|exec|spawn))[ \t]*(?:\([ \t]*)?"
 )
-_RUBY_PERCENT_X_RE = re.compile(r"%x(?=[^\w\s])")
-_AWK_SYSTEM_RE = re.compile(r"\bsystem[ \t]*\([ \t]*")
-_AWK_STRING_RE = re.compile(r"\"((?:[^\"\\\n]|\\[\s\S])*)\"")
-_AWK_GETLINE_RE = re.compile(r"\"((?:[^\"\\\n]|\\[\s\S])*)\"[ \t]*\|[ \t]*getline\b")
-_AWK_PIPE_TO_CMD_RE = re.compile(r"\|[ \t]*\"((?:[^\"\\\n]|\\[\s\S])*)\"")
+_RUBY_PERCENT_X_RE = _first_use(r"%x(?=[^\w\s])")
+_AWK_SYSTEM_RE = _first_use(r"\bsystem[ \t]*\([ \t]*")
+_AWK_STRING_RE = _first_use(r"\"((?:[^\"\\\n]|\\[\s\S])*)\"")
+_AWK_GETLINE_RE = _first_use(r"\"((?:[^\"\\\n]|\\[\s\S])*)\"[ \t]*\|[ \t]*getline\b")
+_AWK_PIPE_TO_CMD_RE = _first_use(r"\|[ \t]*\"((?:[^\"\\\n]|\\[\s\S])*)\"")
 #: GNU sed's `e`: with text it runs that text; bare (or as the `e` flag of a
 #: substitution) it runs the PATTERN SPACE -- the input stream, line by line.
-_SED_E_COMMAND_RE = re.compile(
+_SED_E_COMMAND_RE = _first_use(
     r"(?:^|[;\n{])[ \t]*e(?:[ \t]+([^\n]+)|(?=[ \t]*(?:[;\n}]|$)))"
 )
-_SED_S_E_FLAG_RE = re.compile(
+_SED_S_E_FLAG_RE = _first_use(
     r"(?:^|[;\n{])[ \t]*s(.)(?:\\[\s\S]|(?!\1)[^\\\n])*\1(?:\\[\s\S]|(?!\1)[^\\\n])*\1"
     r"[0-9gpiImMw]*e"
 )
@@ -8625,9 +8675,9 @@ _SED_S_E_FLAG_RE = re.compile(
 #: raw scan now (the failure-mode review drove an awk redirect into a hook
 #: landing behind the relief). awk: `print ... > "path"` and `>>`; sed: the
 #: `w path` command (to end of line) and the `w path` flag of a substitution.
-_AWK_REDIRECT_WRITE_RE = re.compile(r"(?<![<>])>>?[ \t]*\"((?:[^\"\\\n]|\\[\s\S])*)\"")
-_SED_W_COMMAND_RE = re.compile(r"(?:^|[;\n{])[ \t]*w[ \t]+([^\n]+)")
-_SED_S_W_FLAG_RE = re.compile(
+_AWK_REDIRECT_WRITE_RE = _first_use(r"(?<![<>])>>?[ \t]*\"((?:[^\"\\\n]|\\[\s\S])*)\"")
+_SED_W_COMMAND_RE = _first_use(r"(?:^|[;\n{])[ \t]*w[ \t]+([^\n]+)")
+_SED_S_W_FLAG_RE = _first_use(
     r"(?:^|[;\n{])[ \t]*s(.)(?:\\[\s\S]|(?!\1)[^\\\n])*\1(?:\\[\s\S]|(?!\1)[^\\\n])*\1"
     r"[0-9gpiImMe]*w[ \t]+([^\n]+)"
 )
@@ -9770,7 +9820,7 @@ def _nested_shell_programs(command: str, _depth: int) -> list[str]:
 #: share an input (the ReDoS rule). `builtin cd` is spelled here because
 #: `builtin` is not on `_CMD_POS`'s wrapper run (`command cd` is; the
 #: asymmetry was driven by the failure-mode review).
-_DIR_VERB_RE = re.compile(
+_DIR_VERB_RE = _first_use(
     _CMD_POS + r"(?:builtin[ \t]+)?\b(cd|pushd|popd)" + _QUOTED_VERB_TAIL
     + r"(?:[ \t]+-[A-Za-z@]{1,8}|[ \t]+--){0,4}"
     + r"(?:[ \t]+(?:(['\"])([^'\"\n]{0,512})\2|(-|[^\s'\"<>-][^\s'\"<>]{0,511})))?$"
@@ -9784,7 +9834,7 @@ _DIR_VERB_RE = re.compile(
 #: the word. Until 2026-09-18 every brace was one, so a delete of a brace
 #: list under the checkout (`./{a,b}`) was sliced to `./` and walled as the
 #: whole checkout, and `${HOME}` reached the wall only through the net.
-_CHAIN_BOUNDARY_RE = re.compile(r"&&|\|\||[;|&\n()`]|\{(?=[ \t\n]|$)|(?<=[ \t\n;&|])\}")
+_CHAIN_BOUNDARY_RE = _first_use(r"&&|\|\||[;|&\n()`]|\{(?=[ \t\n]|$)|(?<=[ \t\n;&|])\}")
 # The PowerShell twin (`_PS_DIR_VERB_RE`, `_PS_CHAIN_BOUNDARY_RE`,
 # `_PS_DIR_VERBS`) is defined beside `_PS_CMD_POS`, the anchor it composes,
 # further down; `powershell_directory_chain` below reads it at call time.
@@ -9830,14 +9880,14 @@ def another_shells_program() -> Iterator[None]:
 _WALK_SET_CAP = 64
 #: A removal operand that names more than one path: the walk's ``gone`` set
 #: (blocker condition 4) matches it as a pattern, not a spelling.
-_GLOB_CHARS_RE = re.compile(r"[*?\[]")
+_GLOB_CHARS_RE = _first_use(r"[*?\[]")
 #: A `mkdir` statement and its operands: a directory an EARLIER statement of
 #: the same command makes is credited as there when a later `cd` enters it,
 #: because the disk cannot know it yet when the hook runs and the
 #: make-then-enter idiom (`mkdir -p sandbox && cd sandbox && ...`) is
 #: ordinary scratch work (failure-mode re-check, driven). Not a write arm:
 #: the roster test declares it so.
-_MKDIR_RE = re.compile(
+_MKDIR_RE = _first_use(
     _CMD_POS + r"(?:builtin[ \t]+)?\bmkdir" + _QUOTED_VERB_TAIL
     + r"(?:[ \t]+(?:-[A-Za-z]{1,8}|--[a-z-]{1,32}(?:=[^\s'\"]{0,256})?)){0,8}"
     + r"((?:[ \t]+(?:'[^'\n]{0,512}'|\"[^\"\n]{0,512}\"|[^\s'\"<>-][^\s'\"<>]{0,511})){1,32})"
@@ -9968,7 +10018,7 @@ def _step_one(
 #: name that appears in a statement other than its own literal binding may
 #: be rebound there (`read`, `unset`, `for`, `printf -v`, an arithmetic
 #: assignment, a flagged declaration), so the walk forgets it.
-_SHELL_NAME_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SHELL_NAME_WORD_RE = _first_use(r"[A-Za-z_][A-Za-z0-9_]*")
 #: Names the shell itself sets or reads specially, bash's and zsh's (the Bash
 #: tool runs either): `cd` sets `PWD` and `OLDPWD`, every command `_`, `read`
 #: and `select` `REPLY`, `getopts` `OPTARG` and `OPTIND`; `IFS` and `CDPATH`
@@ -11307,7 +11357,7 @@ def _loop_head_reading(command: str, m: "re.Match[str]") -> tuple[list[str], boo
     reader; a WORD LIST's words cut by the word regex on the SCAN span that
     matched and read raw from ``command`` at each word's offsets -- never
     narrowed as a whole, no walk, each word a named target."""
-    if _LOOP_OPENER_SHAPE[m.re] == "words":
+    if _LOOP_OPENER_SHAPE[m.re.pattern] == "words":
         roots = [
             command[w.start():w.end()]
             for w in _FOR_LIST_WORD_RE.finditer(m.string, m.start("args"), m.end("args"))
@@ -11342,7 +11392,7 @@ def _loop_removal_paths(command: str, m: "re.Match[str]") -> "_LoopRemoval | Non
     roots, narrowed, _wipe, effect, extra = _bash_loop_reading(command, m)
     if effect == "none":
         return None
-    if _LOOP_OPENER_SHAPE[m.re] == "words":
+    if _LOOP_OPENER_SHAPE[m.re.pattern] == "words":
         roots = [_shell_unquote(p) for p in roots]
         whole = True
     else:
@@ -11939,7 +11989,7 @@ _PS_CMD_POS = "(?:(?:" + _PS_CMD_POS_SEP + ")|(?:" + _PS_CMD_POS_EXEC_QUOTE + ")
 #: (`-PassThru`) stepped over. Matched against one right-stripped statement;
 #: every optional piece begins with its own whitespace run. A script block's
 #: `Set-Location` persists in the caller, so braces push nothing.
-_PS_DIR_VERB_RE = re.compile(
+_PS_DIR_VERB_RE = _first_use(
     _PS_CMD_POS
     + r"(Set-Location|Push-Location|Pop-Location|chdir|pushd|popd|cd|sl)(?![-\w])"
     + _QUOTED_VERB_TAIL
@@ -11948,7 +11998,7 @@ _PS_DIR_VERB_RE = re.compile(
     + r"(?:[ \t]+-\w{1,32}){0,4}$",
     re.IGNORECASE,
 )
-_PS_CHAIN_BOUNDARY_RE = re.compile(r"&&|\|\||[;|\n{}]")
+_PS_CHAIN_BOUNDARY_RE = _first_use(r"&&|\|\||[;|\n{}]")
 _PS_DIR_VERBS = {
     "set-location": "cd", "cd": "cd", "sl": "cd", "chdir": "cd",
     "push-location": "pushd", "pushd": "pushd", "pop-location": "popd", "popd": "popd",
@@ -12024,7 +12074,7 @@ _PS_EXE_PREFIX = (
 #     expandable-span sibling (`$x = '$y'; iex "$x=<cmd>"`).
 # Both are motivated bypass, not ordinary work; the shape below is the one an
 # operator writes by hand.
-_PS_REPARSED_SPAN_BEFORE = re.compile(
+_PS_REPARSED_SPAN_BEFORE = _first_use(
     # the SAME openers and the SAME switch run as the exec-quote arm (DEF-717):
     # a valued switch between the opener and a literal span used to read as
     # "not re-parsed", so `-Verb RunAs -ArgumentList '<write>'` was blanked
@@ -12290,13 +12340,13 @@ _PS_RECURSIVE_FORCE_TAIL = (
 #: working cmdlet spelling carries them -- and swallowed the operand, which
 #: is how `rm -rf ~` reached no rung with a target. The GNU long forms ride
 #: along (pwsh on Linux hands them to GNU rm; BSD rm has none).
-_PS_RM_CLUSTER_RE = re.compile(r"-[fvdiIPWxrR]+|--(?:recursive|force)")
+_PS_RM_CLUSTER_RE = _first_use(r"-[fvdiIPWxrR]+|--(?:recursive|force)")
 
 #: A recursive force-delete in either flag order or one cluster. Used by the
 #: soft tier to ask "is this the shape the hard tier just stepped aside
 #: from?" without importing write_guard (hooks load siblings flat; the
 #: dependency would be circular).
-_PS_RECURSIVE_FORCE_RE = re.compile(
+_PS_RECURSIVE_FORCE_RE = _first_use(
     _PS_REMOVE_AT + r"\b" + _QUOTED_VERB_TAIL
     + r"[^\n;|&]{0,200}?" + _PS_RECURSIVE_FORCE_TAIL,
     re.IGNORECASE,
@@ -12307,7 +12357,7 @@ _PS_RECURSIVE_FORCE_RE = re.compile(
 #: argument span is `_PS_RECURSE_SWITCH_RE`, below -- the pipeline reader's,
 #: reused, never through a bounded verb-to-switch span whose bound would be
 #: a cliff past which the switch is not seen.
-_PS_DRIVE_QUALIFIED_RE = re.compile(r"[A-Za-z]:")
+_PS_DRIVE_QUALIFIED_RE = _first_use(r"[A-Za-z]:")
 
 # ⚠ BUILT FROM THE SHARED VERB, not a second spelling of the same concept. This
 # read only the literal `Remove-Item` while the DETECTOR matched seven aliases,
@@ -12316,7 +12366,7 @@ _PS_DRIVE_QUALIFIED_RE = re.compile(r"[A-Za-z]:")
 # delete in the alias statement. Two functions naming one concept differently is
 # the drift this module's single-source-of-truth rule exists to prevent, and the
 # comment claiming they were already shared was measured false.
-_PS_REMOVE_ITEM_RE = re.compile(
+_PS_REMOVE_ITEM_RE = _first_use(
     _PS_REMOVE_AT + r"\b" + _QUOTED_VERB_TAIL
     + r"(?P<args>[^\n;|&]*)", re.IGNORECASE
 )
@@ -12326,7 +12376,7 @@ _PS_REMOVE_ITEM_RE = re.compile(
 # an operand with a space is one target. `\b` after the verb keeps
 # `Rename-ItemProperty` and `Remove-ItemProperty` (registry verbs) out.
 _PS_RENAME_VERB = r"(?:Rename-Item|ren|rni)"
-_PS_RENAME_RE = re.compile(
+_PS_RENAME_RE = _first_use(
     _PS_CMD_POS + _PS_RENAME_VERB + r"\b" + _QUOTED_VERB_TAIL + r"(?P<args>[^\n;|&]{0,512})",
     re.IGNORECASE,
 )
@@ -12390,7 +12440,7 @@ _PS_PIPE_REMOVE_STAGE = (
 #: MASKER, which blanks a quoted separator for every head but cmd, not by
 #: this regex: a roster change there reopens this match silently (the
 #: failure-mode review, 2026-10-07).
-_PS_PIPED_REMOVE_RE = re.compile(
+_PS_PIPED_REMOVE_RE = _first_use(
     _PS_CMD_POS + r"(?P<head>" + _PS_ENUMERATE_VERB + r"|" + _PIPED_MULTIWORD_HEADS + r")\b" + _QUOTED_VERB_TAIL
     + r"(?P<args>[^\n;|&]{0,512})\|[ \t\r\n]*" + _PS_PIPE_REMOVE_STAGE
     + r"(?P<rmargs>[^\n;|&]{0,200})",
@@ -12401,7 +12451,7 @@ _PS_PIPED_REMOVE_RE = re.compile(
 #: speed bump run before any walk. A GATE, not a matcher: the anchored
 #: readers above and `_PS_DOTNET_FILE_RE` select the operands (declared as
 #: such in tests/test_speedbump_irreversible.py).
-_PS_SWEEP_WITNESS_RE = re.compile(
+_PS_SWEEP_WITNESS_RE = _first_use(
     r"\|[ \t\r\n]*(?:&[ \t]*[\"']?)?" + _PS_REMOVE_VERB + r"\b|Directory\]::Delete[ \t]*\("
     + r"|" + _PIPED_CARRIER_WITNESS,
     re.IGNORECASE,
@@ -12409,8 +12459,8 @@ _PS_SWEEP_WITNESS_RE = re.compile(
 #: The recurse switch alone, compiled: the pipeline reader asks the remove
 #: verb's span for it (a flag matcher over a span an anchored reader
 #: selected, never a command matcher).
-_PS_RECURSE_SWITCH_RE = re.compile(_PS_RECURSE_SWITCH, re.IGNORECASE)
-_PS_GIT_RM_MV_RE = re.compile(
+_PS_RECURSE_SWITCH_RE = _first_use(_PS_RECURSE_SWITCH, re.IGNORECASE)
+_PS_GIT_RM_MV_RE = _first_use(
     _PS_CMD_POS + _GIT_SUBCOMMAND_AT + r"(rm|mv)[ \t]+(?P<args>[^\n;|&]{0,512})",
     re.IGNORECASE,
 )
@@ -12428,7 +12478,7 @@ _PS_GIT_RM_MV_RE = re.compile(
 #: permission verbs' head); the span is the Bash arm's and
 #: `_find_delete_roots` reads it, so both tools keep ONE reading of what a
 #: find takes and what narrows it. IGNORECASE on the head as the Bash twin.
-_PS_FIND_DELETE_RE = re.compile(
+_PS_FIND_DELETE_RE = _first_use(
     _PS_CMD_POS + _PS_NATIVE_WRAP_RUN + _PS_EXE_PREFIX + r"\bfind\b(?!=)" + _QUOTED_VERB_TAIL
     + r"[ \t]+(?P<args>[^|;&\n]{0,512})",
     re.IGNORECASE,
@@ -12437,7 +12487,7 @@ _PS_FIND_DELETE_RE = re.compile(
 #: GNU `shred -u`): the Bash `_DESTROY_RE` verbs the PowerShell zone reader
 #: lacked (failure-mode review, driven: `unlink <hook>` deleted the hook
 #: while the Bash tool refused it). `rm` and `rmdir` are `_PS_REMOVE_VERB`'s.
-_PS_NATIVE_DESTROY_RE = re.compile(
+_PS_NATIVE_DESTROY_RE = _first_use(
     _PS_CMD_POS + _PS_NATIVE_WRAP_RUN + _PS_EXE_PREFIX + r"\b(?:unlink|shred)\b(?!=)"
     + _QUOTED_VERB_TAIL + r"(?P<args>[^\n;|&]{0,512})",
     re.IGNORECASE,
@@ -12446,13 +12496,13 @@ _PS_NATIVE_DESTROY_RE = re.compile(
 #: `_GIT_SUBCOMMAND_AT`, as the other git arms on this tool compose it, its
 #: operands read by the one `_git_clean_operands` (the same review: `git
 #: clean -fdx` allowed here, refused on Bash).
-_PS_GIT_CLEAN_RE = re.compile(
+_PS_GIT_CLEAN_RE = _first_use(
     _PS_CMD_POS + _GIT_SUBCOMMAND_AT + r"clean\b(?P<args>[^\n;|&]{0,512})", re.IGNORECASE,
 )
 #: `truncate` on the PowerShell head (`/usr/bin/truncate` under pwsh on a
 #: POSIX host empties a hook as surely as a write): the write extractor's
 #: arm, every positional but a size or reference value a target.
-_PS_TRUNCATE_RE = re.compile(
+_PS_TRUNCATE_RE = _first_use(
     _PS_CMD_POS + _PS_NATIVE_WRAP_RUN + _PS_EXE_PREFIX + r"\btruncate\b(?!=)"
     + _QUOTED_VERB_TAIL + r"(?P<args>[^\n;|&]{0,512})",
     re.IGNORECASE,
@@ -12484,16 +12534,16 @@ def _ps_truncate_targets(args: str) -> list[str]:
 # PowerShell head the way `_PS_GIT_RM_MV_RE` is (IGNORECASE for the head
 # word and the anchor's keywords, as that sibling; the over-capture of a
 # mis-cased subcommand git would reject is the fail-safe direction).
-_PS_GIT_CHECKOUT_DASHDASH_RE = re.compile(
+_PS_GIT_CHECKOUT_DASHDASH_RE = _first_use(
     _PS_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_DASHDASH_TAIL, re.IGNORECASE,
 )
-_PS_GIT_CHECKOUT_BARE_RE = re.compile(
+_PS_GIT_CHECKOUT_BARE_RE = _first_use(
     _PS_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_CHECKOUT_BARE_TAIL, re.IGNORECASE,
 )
-_PS_GIT_RESTORE_RE = re.compile(
+_PS_GIT_RESTORE_RE = _first_use(
     _PS_CMD_POS + _GIT_SUBCOMMAND_AT + _GIT_RESTORE_TAIL, re.IGNORECASE,
 )
-_PS_COMPRESS_ARCHIVE_RE = re.compile(
+_PS_COMPRESS_ARCHIVE_RE = _first_use(
     _PS_CMD_POS + r"Compress-Archive\b" + _QUOTED_VERB_TAIL + r"(?P<args>[^\n;|&]{0,512})",
     re.IGNORECASE,
 )
@@ -12531,7 +12581,7 @@ _PS_COMPRESS_ARCHIVE_RE = re.compile(
 # (review, driven). Bash's twin is `splice_line_continuations`, with its own
 # CRLF caveat; PowerShell's continuation is the backtick, so CR is simply
 # optional.
-_PS_BACKTICK_CONTINUATION_RE = re.compile(r"`[ \t]*\r?\n[ \t]*")
+_PS_BACKTICK_CONTINUATION_RE = _first_use(r"`[ \t]*\r?\n[ \t]*")
 
 
 # ── the call operator on a COMMAND OBJECT (DEF-827) ─────────────────────────
@@ -12574,7 +12624,7 @@ _PS_BACKTICK_CONTINUATION_RE = re.compile(r"`[ \t]*\r?\n[ \t]*")
 #: -First 1)`), and a discovery that is not `Get-Command` (`(Get-Item
 #: /usr/bin/find)`, a `[System.IO.FileInfo]` literal).
 _PS_COMMAND_OBJECT_SWITCH_RUN = r"(?:[ \t]+-\w+(?:[ \t]+[\w.]+)?){0,3}"
-_PS_COMMAND_OBJECT_HEAD_RE = re.compile(
+_PS_COMMAND_OBJECT_HEAD_RE = _first_use(
     "(?P<pos>" + _PS_CMD_POS + r")[&.][ \t]*\({1,2}[ \t]*(?:&[ \t]*)?"
     r"[\"']?(?:Get-Command|gcm)[\"']?" + _PS_COMMAND_OBJECT_SWITCH_RUN
     + r"[ \t]+(?P<vq>[\"']?)(?P<verb>" + _DISCOVERED_VERB + r")(?P=vq)"
@@ -12717,7 +12767,7 @@ def _ps_blocks_as_one_blank(
 #: A pipe whose gap, past blanks, opens with a line break or a comment: the
 #: pipe gap `_ps_join_command_gaps` rewrites, so a scan without one, and
 #: without a statement gap, skips the walk. A GATE, not a matcher.
-_PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
+_PS_PIPE_GAP_WITNESS_RE = _first_use(r"\|[ \t]*[\r\n#<]")
 
 #: A statement opener whose gap, past blanks, opens with a block comment
 #: (DEF-2070): the text's start, or `_PS_CMD_POS_SEP`'s separator class less
@@ -12729,17 +12779,17 @@ _PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
 #: an opener added there is added here too:
 #: `tests/test_write_guard.py::TestAStatementStartGapIsRead::test_the_opener_sets_agree`
 #: derives the three sets by matching and asserts they agree.
-_PS_STATEMENT_GAP_WITNESS_RE = re.compile(
+_PS_STATEMENT_GAP_WITNESS_RE = _first_use(
     r"(?:^|[;\n\r(){}&=]|\b(?:return|throw))[ \t]*<#", re.IGNORECASE)
 
 #: Where a gap the walk reads can open: a pipe, a separator of
 #: `_PS_CMD_POS_SEP`'s class, or `return`/`throw` (the witness above's
 #: openers, the text's start apart). A SYNTAX TOKEN, not a matcher.
-_PS_GAP_OPENER_RE = re.compile(r"[|;\n\r(){}&=]|\b(?:return|throw)\b", re.IGNORECASE)
+_PS_GAP_OPENER_RE = _first_use(r"[|;\n\r(){}&=]|\b(?:return|throw)\b", re.IGNORECASE)
 
 #: The next line end, CR or LF: one search, which stops at the first of
 #: either (two `find` calls ran one of them to the end of the text).
-_PS_LINE_END_RE = re.compile(r"[\r\n]")
+_PS_LINE_END_RE = _first_use(r"[\r\n]")
 
 
 def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
@@ -13027,19 +13077,19 @@ _PS_FILE_VERB_PATH_FLAG = r"-(?:Fil|Fi|F)(?::\s*|\s+)"
 # read). The element never holds the separator, so the list is linear.
 _PS_PATH_ELEMENT = r"(?:\"[^\"]*\"|'[^']*'|[^\s|;&,]+)"
 _PS_PATH_LIST = _PS_PATH_ELEMENT + r"(?:[ \t]*,\s*" + _PS_PATH_ELEMENT + r")*"
-_PS_PATH_FLAG_RE = re.compile(
+_PS_PATH_FLAG_RE = _first_use(
     _PS_CMD_POS + r"\b" + _PS_WRITE_VERB + _QUOTED_VERB_TAIL
     # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
     + r"[^|;&\n]{0,512}?" + _PS_WRITE_PATH_FLAG_AT + r"(" + _PS_PATH_LIST + r")",
     re.IGNORECASE,
 )
-_PS_FILE_VERB_PATH_FLAG_RE = re.compile(
+_PS_FILE_VERB_PATH_FLAG_RE = _first_use(
     _PS_CMD_POS + r"\b(?:Out-File|Tee-Object|tee)(?![-.\w])" + _QUOTED_VERB_TAIL
     # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
     + r"[^|;&\n]{0,512}?(?<![\w$-])" + _PS_FILE_VERB_PATH_FLAG + r"(" + _PS_PATH_LIST + r")",
     re.IGNORECASE,
 )
-_PS_POSITIONAL_RE = re.compile(
+_PS_POSITIONAL_RE = _first_use(
     _PS_CMD_POS + r"\b" + _PS_WRITE_VERB + _QUOTED_VERB_TAIL
     + r"\s+(?!-)(" + _PS_PATH_LIST + r")",
     re.IGNORECASE,
@@ -13080,7 +13130,7 @@ _PS_DESTINATION_FLAG = (
     r"-(?:Destination|Destinatio|Destinati|Destinat|Destina|Destin|Desti|Dest|Des)"
     r":?\s*"
 )
-_PS_COPY_MOVE_DEST_RE = re.compile(
+_PS_COPY_MOVE_DEST_RE = _first_use(
     _PS_CMD_POS + r"\b" + _PS_COPY_MOVE_VERB + r"\b" + _QUOTED_VERB_TAIL
     # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
     # `pre`: what sits between the verb and the flag -- a positional source
@@ -13094,7 +13144,7 @@ _PS_COPY_MOVE_DEST_RE = re.compile(
 # PowerShell). A VALUE-taking switch in either run (`-Filter *.py`) reads its
 # value as an operand and the pair misses -- the documented limit; the
 # `-Destination` spelling is the covered one.
-_PS_COPY_MOVE_POSITIONAL_RE = re.compile(
+_PS_COPY_MOVE_POSITIONAL_RE = _first_use(
     _PS_CMD_POS + r"\b" + _PS_COPY_MOVE_VERB + r"\b" + _QUOTED_VERB_TAIL + r"\s+"
     r"(?:-\w+\s+)*(?!-)(" + _PS_OPERAND + r")\s+"
     r"(?:-\w+\s+)*(?!-)(" + _PS_OPERAND + r")",
@@ -13108,7 +13158,7 @@ _PS_COPY_MOVE_POSITIONAL_RE = re.compile(
 # `-LiteralPath`. Driven red before this existed. `-PSPath` is `-LiteralPath`'s
 # alias on both verbs, and no other parameter of theirs begins `-PS` (5.1.26100's
 # metadata; the DEF-4029 failure-mode review).
-_PS_COPY_MOVE_SRC_FLAG_RE = re.compile(
+_PS_COPY_MOVE_SRC_FLAG_RE = _first_use(
     r"-(?:Path|Pat|LiteralPath|LiteralPat|LiteralPa|LiteralP|Literal|Litera"
     r"|Liter|Lite|Lit|Li|L|PSPath|PSPat|PSPa|PSP|PS):?\s*(" + _PS_OPERAND + r")",
     re.IGNORECASE,
@@ -13206,7 +13256,7 @@ _PS_PERMISSION_VERB = (
     r"(icacls(?:\.exe)?|cacls(?:\.exe)?|takeown(?:\.exe)?|attrib(?:\.exe)?"
     r"|cipher(?:\.exe)?|Set-Acl|Set-ItemProperty|sp)(?![-\w])"
 )
-_PS_PERMISSION_RE = re.compile(
+_PS_PERMISSION_RE = _first_use(
     # `_PS_EXE_PREFIX`, not `\b`: the head may end a quoted or bare path
     # (`& "C:\Windows\System32\icacls.exe" <hook> /deny ...`), the limit
     # DEF-697 declared and the DEF-712 lane closed; the optional quote after
@@ -13222,7 +13272,7 @@ _PS_PERMISSION_RE = re.compile(
 #: backslashes (`tools\cc\hooks\x.py` would read as `toolscchooksx.py`, the
 #: posix-lexer-on-PowerShell fail-open memory/a-class-one-fix-is-a-claim.md
 #: records).
-_PS_OPERAND_RE = re.compile(_PS_OPERAND)
+_PS_OPERAND_RE = _first_use(_PS_OPERAND)
 #: icacls / cacls switches that only READ, compared on the part before any
 #: `:`. A bare `icacls PATH` displays, and so does one carrying only these.
 #: Every OTHER switch is a write: the set is an allow-list of reads on purpose,
@@ -13359,7 +13409,7 @@ def _ps_permission_targets(span: str, verb: str) -> list[str]:
 # writes one has a syntax error, and matching it costs nothing). Bounded
 # span, one parse. No `(?!=)` guard here on purpose: that text is the Bash
 # verb regexes' "not an assignment" marker and a derivation scrapes for it.
-_PS_ITEM_PROPERTY_ASSIGN_RE = re.compile(
+_PS_ITEM_PROPERTY_ASSIGN_RE = _first_use(
     _PS_CMD_POS
     + r"(?:Get-Item|gi|Get-ChildItem|gci|ls|dir)(?![-\w])" + _QUOTED_VERB_TAIL
     + r"([^()\n]{0,256})\)"
@@ -13388,7 +13438,7 @@ _PS_ITEM_PROPERTY_ASSIGN_RE = re.compile(
 # first since DEF-801) or built by an expression (the indirection
 # class), and a stream opened through `New-Object`. `\w{1,64}` then `[ \t]*`
 # then the literal paren: every adjacent pair exclusive, bounded span.
-_PS_DOTNET_FILE_RE = re.compile(
+_PS_DOTNET_FILE_RE = _first_use(
     _PS_CMD_POS
     + r"\[(?:System\.)?IO\.(?:File|Directory)\]::(\w{1,64})[ \t]*\(([^()\n]{0,512})",
     re.IGNORECASE,
@@ -13430,13 +13480,13 @@ _PS_DOTNET_WRITE_ARGS: dict[str, tuple[int, ...]] = {
 # quote then a run that excludes quotes, a literal paren then a dot, and the
 # optional wrapping paren is bound to its own whitespace run.
 _PS_DOTNET_INFO_TYPE = r"\[(?:System\.)?IO\.(?:File|Directory)Info\]"
-_PS_DOTNET_INFO_NEW_RE = re.compile(
+_PS_DOTNET_INFO_NEW_RE = _first_use(
     _PS_CMD_POS + r"\(?" + _PS_DOTNET_INFO_TYPE
     + r"::new[ \t]*\([ \t]*(['\"])([^'\"\n]{1,512})\1[ \t]*\)\)?"
     + r"\.(\w{1,64})[ \t]*\(([^()\n]{0,512})",
     re.IGNORECASE,
 )
-_PS_DOTNET_INFO_CAST_RE = re.compile(
+_PS_DOTNET_INFO_CAST_RE = _first_use(
     _PS_CMD_POS + r"\(" + _PS_DOTNET_INFO_TYPE
     + r"[ \t]*(['\"])([^'\"\n]{1,512})\1[ \t]*\)"
     + r"\.(\w{1,64})[ \t]*\(([^()\n]{0,512})",
@@ -13452,7 +13502,7 @@ _PS_DOTNET_INFO_CAST_RE = re.compile(
 #: spells it (`[-+]?=`, no `(?!=)` guard: that text is the Bash verb regexes'
 #: "not an assignment" marker and a derivation scrapes for it; PowerShell
 #: has no `==`, and `-eq` carries no `=`).
-_PS_DOTNET_INFO_ATTR_ASSIGN_RE = re.compile(
+_PS_DOTNET_INFO_ATTR_ASSIGN_RE = _first_use(
     _PS_CMD_POS
     + r"(?:\(?" + _PS_DOTNET_INFO_TYPE
     + r"::new[ \t]*\([ \t]*(['\"])([^'\"\n]{1,512})\1[ \t]*\)\)?"
@@ -13601,17 +13651,17 @@ _PS_INLINE_E_TAIL = _PS_INTERP_HEAD_TAIL + _PS_SWITCH_RUN + r"-e[ \t]+" + _PS_PR
 # `py` is the Windows launcher (`py -3 -c "..."` is python); it is the python
 # arm. Case-insensitive like every PowerShell matcher; DOTALL for the
 # backtick-escaped newline a double-quoted program may hold.
-_PS_PYTHON_DASH_C_RE = re.compile(
+_PS_PYTHON_DASH_C_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:python|pypy|py)" + _PS_INLINE_C_TAIL,
     re.IGNORECASE | re.DOTALL,
 )
-_PS_NODE_DASH_E_RE = re.compile(
+_PS_NODE_DASH_E_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"node" + _PS_INLINE_E_TAIL, re.IGNORECASE | re.DOTALL,
 )
-_PS_RUBY_DASH_E_RE = re.compile(
+_PS_RUBY_DASH_E_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"ruby" + _PS_INLINE_E_TAIL, re.IGNORECASE | re.DOTALL,
 )
-_PS_PERL_DASH_E_RE = re.compile(
+_PS_PERL_DASH_E_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"perl" + _PS_INLINE_E_TAIL, re.IGNORECASE | re.DOTALL,
 )
 #: The inline openers, keyed by the `_STDIN_PROGRAM_WRITE_RES` table they
@@ -13668,7 +13718,7 @@ _PS_STDIN_PS_HEADS = _PS_STDIN_SHELL_HEADS | _PS_STDIN_IEX_HEADS
 _PS_STDIN_POSIX_HEADS = _POSIX_SHELL_HEAD_SET
 #: The gate before that reader's pass: a POSIX shell's name as a word of its
 #: own, so a command naming none (nearly every one) pays one linear search.
-_PS_STDIN_POSIX_HINT_RE = re.compile(
+_PS_STDIN_POSIX_HINT_RE = _first_use(
     r"(?<![\w-])(?:" + _POSIX_SHELL_HEADS + r")(?:\.exe)?(?![\w-])", re.IGNORECASE
 )
 #: A bash program behind `bash -c` / `sh -c` on the PowerShell tool (DEF-637,
@@ -13717,7 +13767,7 @@ _PS_SHELL_C_TAIL = (
     _PS_INTERP_HEAD_TAIL + _PS_POSIX_SHELL_SWITCH_RUN + _POSIX_SHELL_C_CLUSTER + r"[ \t]+"
     + _PS_SHELL_SWITCH_RUN_AFTER_C + _PS_PROGRAM_STRING
 )
-_PS_BASH_DASH_C_RE = re.compile(
+_PS_BASH_DASH_C_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:" + _POSIX_SHELL_HEADS + r")" + _PS_SHELL_C_TAIL,
     re.IGNORECASE | re.DOTALL,
 )
@@ -13770,15 +13820,15 @@ def _ps_interp_stdin_re() -> "re.Pattern[str]":
 
 #: A `-File <script>` (or `/f`) switch with a value that is not `-`: the
 #: shell's program is that file, and what is piped to it is data.
-_PS_STDIN_FILE_SWITCH_RE = re.compile(r"[-/]f(?:ile)?[ \t]+[^\s\"'\-/]", re.IGNORECASE)
+_PS_STDIN_FILE_SWITCH_RE = _first_use(r"[-/]f(?:ile)?[ \t]+[^\s\"'\-/]", re.IGNORECASE)
 #: A here-string, either quote kind: `@'` + EOL, the body, EOL + `'@`. The body
 #: admits any character but a newline, or a newline NOT followed by the
 #: terminator -- exclusive branches, one parse. Searched only when the segment
 #: ends in a terminator, so an opener never scans to an absent close.
-_PS_HERE_STRING_RE = re.compile(
+_PS_HERE_STRING_RE = _first_use(
     r"@(['\"])[ \t]*\r?\n((?:[^\n]|\n(?![ \t]*\1@))*)\r?\n[ \t]*\1@"
 )
-_PS_PROGRAM_STRING_RE = re.compile(_PS_PROGRAM_STRING)
+_PS_PROGRAM_STRING_RE = _first_use(_PS_PROGRAM_STRING)
 #: Statement boundaries for the segment before a pipe: the separator set of
 #: `_PS_CMD_POS_SEP` less `=` (the body may sit on the right of an
 #: assignment, `$x = @'...'@ | python -`). The pipe IS a boundary: the
@@ -13788,7 +13838,7 @@ _PS_PROGRAM_STRING_RE = re.compile(_PS_PROGRAM_STRING)
 #: the hook's timeout, with a real protected write in front of the flood
 #: (review, driven). One boundary list is built per call and searched by
 #: bisection, so a flood of openers costs one pass.
-_PS_STDIN_SEGMENT_BOUNDARY_RE = re.compile(r"[;\n\r(){}&|]")
+_PS_STDIN_SEGMENT_BOUNDARY_RE = _first_use(r"[;\n\r(){}&|]")
 #: How deep a piped PowerShell program is re-scanned. One level is the shape
 #: an agent writes; two covers a program that pipes to a second shell; the
 #: bound exists so a body can never recurse on its own length.
@@ -13816,7 +13866,7 @@ def _ps_unescape_program(body: str) -> str:
 #: or a doubled double quote. Read left to right in one pass, so a doubled
 #: backtick is one backtick and the character after it stays as typed. Each
 #: branch opens on a fixed character and the hex run is bounded: linear.
-_PS_DQ_ESCAPE_RE = re.compile(r'`(u\{[0-9A-Fa-f]{1,6}\}|[\s\S])|""')
+_PS_DQ_ESCAPE_RE = _first_use(r'`(u\{[0-9A-Fa-f]{1,6}\}|[\s\S])|""')
 #: What Windows PowerShell 5.1 makes of a backtick escape (driven on
 #: 5.1.26100, 2026-11-13): these control characters, case-sensitive, and any
 #: other character itself (`` `e `` and `` `u{41} `` included, read as `e` and
@@ -14110,7 +14160,7 @@ def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> li
 # -c "gc" .env` reads `gc` alone; cmd's are read as cmd receives them, by
 # the cmd branch below, DEF-2081); the secret leg's old split refuses the
 # joined one whenever the statement opens with the string.
-_PS_CARRIER_RE = re.compile(
+_PS_CARRIER_RE = _first_use(
     r"(?:" + _PS_CMD_POS + _PS_EXE_PREFIX + r"(?P<head>" + _PS_REPARSE_OPENER_WORDS + r")"
     + _QUOTED_VERB_TAIL + r"(?=[ \t(]|$)|(?P<create>" + _PS_SCRIPTBLOCK_CREATE + r"))",
     re.IGNORECASE,
@@ -14118,9 +14168,9 @@ _PS_CARRIER_RE = re.compile(
 #: `pwsh`'s and `Invoke-Expression`'s `-Command` (any prefix), whole-word,
 #: and `cmd`'s switch whose remainder is the program: `/c`, `/k`, and `/r`,
 #: which cmd runs as `/c` (driven on Windows, echo only; DEF-4061).
-_SHELL_COMMAND_SWITCH_RE = re.compile(_SHELL_COMMAND_SWITCH)
+_SHELL_COMMAND_SWITCH_RE = _first_use(_SHELL_COMMAND_SWITCH)
 _CMD_PROGRAM_SWITCH_LETTERS = "ckr"
-_CMD_PROGRAM_SWITCH_RE = re.compile(r"[/-][" + _CMD_PROGRAM_SWITCH_LETTERS + r"]", re.IGNORECASE)
+_CMD_PROGRAM_SWITCH_RE = _first_use(r"[/-][" + _CMD_PROGRAM_SWITCH_LETTERS + r"]", re.IGNORECASE)
 #: The switch words read past a `pwsh` or `cmd` head before its program.
 _PS_CARRIER_SWITCHES_MAX = 64
 #: A subexpression's opener, `$(` or an array subexpression's `@(`: its
@@ -14129,7 +14179,7 @@ _PS_CARRIER_SWITCHES_MAX = 64
 #: text, and so is either inside a string a carrier re-parses until that
 #: carrier's program is read one level down. The masker blanks the `(` of one
 #: inside a single-quoted string, which is a mention.
-_PS_SUBEXPRESSION_RE = re.compile(r"[$@]\(")
+_PS_SUBEXPRESSION_RE = _first_use(r"[$@]\(")
 #: The value an array subexpression's body opens with when it is an array of
 #: strings (`@('gc .env', 'ls')`): a quote, or a here-string's at-sign and
 #: quote. Such a body runs nothing at its head; a statement after a separator
@@ -14513,15 +14563,15 @@ def _ps_stdin_program_spans(
 #
 # Group 1 stays the path in `_PS_POSITIONAL_PATH_RE`: every group inside
 # `_PS_CMD_POS` is non-capturing, exactly as for `_PS_PATH_FLAG_RE` above.
-_PS_NEW_ITEM_RE = re.compile(
+_PS_NEW_ITEM_RE = _first_use(
     _PS_CMD_POS + r"\b(?:New-Item|ni)\b" + _QUOTED_VERB_TAIL, re.IGNORECASE
 )
-_PS_SYMLINK_ITEMTYPE_RE = re.compile(r"-ItemType\s+SymbolicLink\b", re.IGNORECASE)
-_PS_LINK_LOCATION_RE = re.compile(r"-(?:Path|Name)\s+([^\s;|&]+)", re.IGNORECASE)
+_PS_SYMLINK_ITEMTYPE_RE = _first_use(r"-ItemType\s+SymbolicLink\b", re.IGNORECASE)
+_PS_LINK_LOCATION_RE = _first_use(r"-(?:Path|Name)\s+([^\s;|&]+)", re.IGNORECASE)
 # Positional -Path: the first non-flag token right after New-Item/ni
 # (``New-Item <path> -ItemType SymbolicLink``) -- the positional form evades the
 # -Path/-Name-only capture.
-_PS_POSITIONAL_PATH_RE = re.compile(
+_PS_POSITIONAL_PATH_RE = _first_use(
     _PS_CMD_POS + r"\b(?:New-Item|ni)" + _QUOTED_VERB_TAIL
     + r"\s+([^\s;|&-][^\s;|&]*)", re.IGNORECASE
 )
@@ -14707,11 +14757,11 @@ def powershell_removal_element_tier(command: str, root: str | None) -> str | Non
 #: conventional Windows scratch location beside the user's temp directory,
 #: read by its Windows meaning on every host as a drive-qualified path is
 #: (DEF-842's arm). Case-insensitive, as NTFS names are.
-_DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
+_DRIVE_SCRATCH_ROOT_RE = _first_use(r"^[a-z]:/te?mp$", re.IGNORECASE)
 #: A value of `TEMP`, `TMP` or `TMPDIR` that can serve as a scratch root: an
 #: absolute path with at least one component, so a `C:\` or `/` there never
 #: makes a whole drive scratch.
-_SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
+_SCRATCH_ROOT_VALUE_RE = _first_use(r"^(?:[A-Za-z]:)?/[^/]")
 
 
 #: ``FILE_ATTRIBUTE_REPARSE_POINT``: a junction, a directory link or a mount
@@ -14763,7 +14813,7 @@ def _long_path_name(value: str) -> str | None:
 #: digit (``SOMEUS~1``). Only a drive-qualified value of this shape asks the
 #: expander, so a POSIX ``TMPDIR`` holding a ``~`` elsewhere, and a host whose
 #: temp directory has no short component, never resolve a path (DEF-1125).
-_SHORT_NAME_SHAPE_RE = re.compile(r"~\d")
+_SHORT_NAME_SHAPE_RE = _first_use(r"~\d")
 
 
 def _vetted_scratch_values() -> list[str]:
@@ -15131,7 +15181,7 @@ def powershell_removal_is_below_a_scratch_root(
 #: other way fails on its first characters. `(?<![ \t])`: the one caller
 #: matches at offset 0, where it always holds; a `search` (the ReDoS suite's
 #: drive) never starts inside a blank run, so a blank flood stays linear.
-_PS_TEMP_BINDING_RE = re.compile(
+_PS_TEMP_BINDING_RE = _first_use(
     r"(?<![ \t])[ \t]*\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
     r"(\"?)\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_:{]))\2"
     r"[ \t]*(?:;[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*)",
@@ -15327,11 +15377,11 @@ _PS_ENUM_CATCHALL_LEAF = frozenset({"*", "**"})
 #: `-Attributes !Directory` (any case, `!D` too): the files-only enumeration
 #: in PowerShell's other spelling, the twin of `-File` (failure-mode review,
 #: driven to every file gone).
-_PS_ATTR_NO_DIRECTORY_RE = re.compile(r"!\s*d(?:irectory)?(?![a-z])", re.IGNORECASE)
+_PS_ATTR_NO_DIRECTORY_RE = _first_use(r"!\s*d(?:irectory)?(?![a-z])", re.IGNORECASE)
 #: A parenthesised first argument to `[IO.Directory]::Delete` followed by
 #: the recursion flag -- one nesting level, bounded -- read on the raw text
 #: past the arm's own argument group, which stops at the nested paren.
-_PS_DOTNET_SUBEXPR_RECURSIVE_RE = re.compile(
+_PS_DOTNET_SUBEXPR_RECURSIVE_RE = _first_use(
     r"\((?:[^()\n]{0,256}|\([^()\n]{0,256}\)){0,4}\)[ \t]*,[ \t]*\$true\b", re.IGNORECASE,
 )
 
@@ -15566,7 +15616,7 @@ def powershell_removal_lands_catastrophic(
 #: `$env:USERPROFILE`, `$env:HOME`, `$env:HOMEPATH`, braced or not), at the
 #: head of a target: DEF-842's arm reads it as `~` (operator, 2026-09-18: an
 #: ordinary variable is one nudge; one that names the home is the wall).
-_PS_HOME_VAR_RE = re.compile(
+_PS_HOME_VAR_RE = _first_use(
     r"\$(?:\{(?:HOME|env:(?:HOME|USERPROFILE|HOMEPATH))\}"
     r"|(?:HOME|env:(?:HOME|USERPROFILE|HOMEPATH))\b)",
     re.IGNORECASE,
@@ -15576,7 +15626,7 @@ _PS_HOME_VAR_RE = re.compile(
 #: already is -- `_PWD_PREFIX_RE`'s reading, in parity (DEF-843; operator).
 #: `$env:PWD` is the environment's copy, the parent's value that
 #: Set-Location never moves: a variable like any other.
-_PS_PWD_PREFIX_RE = re.compile(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)", re.IGNORECASE)
+_PS_PWD_PREFIX_RE = _first_use(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)", re.IGNORECASE)
 
 
 def _outside_quotes(span: str) -> str:
@@ -15620,10 +15670,10 @@ def _outside_quotes(span: str) -> str:
 #: too: its rows are in tests/test_write_guard_env_prefix_polarity.py, the
 #: only by-path and case rows for the PowerShell opener.
 _CMD_EXE_HEAD = r"(?i:cmd(?:\.exe)?)"
-_CMD_REMOVE_OPENER_RE = re.compile(
+_CMD_REMOVE_OPENER_RE = _first_use(
     _CMD_POS + _CMD_EXE_HEAD + _QUOTED_VERB_TAIL + r"(?=[ \t/]|$)"
 )
-_PS_CMD_REMOVE_OPENER_RE = re.compile(
+_PS_CMD_REMOVE_OPENER_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + _CMD_EXE_HEAD + _QUOTED_VERB_TAIL + r"(?=[ \t/]|$)",
     re.IGNORECASE,
 )
@@ -15642,11 +15692,11 @@ _CMD_DELETE_VERBS = {"rd": "rd", "rmdir": "rd", "del": "del", "erase": "del"}
 #: host (the unforced PowerShell reader reads `$env:USERPROFILE` the same
 #: way), and three whose meaning is fixed; any other is a variable, which the
 #: judges read as the nudge's.
-_CMD_HOME_VAR_RE = re.compile(
+_CMD_HOME_VAR_RE = _first_use(
     r"%HOMEDRIVE%%HOMEPATH%|%(?:USERPROFILE|HOME|HOMEPATH)%", re.IGNORECASE)
 _CMD_FIXED_VARS = {"systemdrive": "C:", "systemroot": "C:/Windows", "windir": "C:/Windows",
                    "cd": "."}
-_CMD_VAR_RE = re.compile(r"%(\w+)%|%%?([A-Za-z])\b|!(\w+)!")
+_CMD_VAR_RE = _first_use(r"%(\w+)%|%%?([A-Za-z])\b|!(\w+)!")
 #: A `del /s` pattern that excludes nothing: the whole tree under its root.
 _CMD_CATCHALL_LEAVES = frozenset({"*", "*.*", "**"})
 #: How deep a cmd program that starts cmd again is read.
@@ -15810,7 +15860,7 @@ def _ps_verbatim_end(text: str, at: int) -> int:
 #: 7 it is ambiguous and starts nothing (`-c` is 5.1's Credential), and
 #: `-wi`, in 7 WhatIf's alias, under which nothing starts, reads as 5.1's
 #: WindowStyle prefix.
-_PS_START_PROCESS_RE = re.compile(r"(?i)\b(?:Start-Process|saps)\b")
+_PS_START_PROCESS_RE = _first_use(r"(?i)\b(?:Start-Process|saps)\b")
 _PS_START_PROCESS_SWITCHES = ("loaduserprofile", "nonewwindow", "passthru", "wait",
                               "usenewenvironment", "verbose", "debug")
 _PS_START_PROCESS_VALUED = (
@@ -16003,21 +16053,21 @@ _PS_START_PROCESS_SHELLS = {"powershell": "ps", "pwsh": "ps", "bash": "bash", "s
 _PS_START_PROCESS_FILEPATH_ALIASES = frozenset({"pspath", "path"})
 #: PowerShell's `-File` switch by any prefix: the file is the program, and
 #: what follows it is the script's arguments.
-_PS_CLI_FILE_SWITCH_RE = re.compile(r"[-/]f(?:i(?:l(?:e)?)?)?", re.IGNORECASE)
+_PS_CLI_FILE_SWITCH_RE = _first_use(r"[-/]f(?:i(?:l(?:e)?)?)?", re.IGNORECASE)
 #: A POSIX shell's `-c` in the argv a `Start-Process` hands it: the `-c`
 #: openers' own cluster (`_POSIX_SHELL_C_CLUSTER`), the same shells' program
 #: from their own argv: either sign, its `c` anywhere (DEF-3074; the carrier
 #: reader's `-...c` rule, which this reader took until then, missed `+c` and
 #: `-cx`, both run by bash 5.2.37). The carriers keep theirs: `su` and
 #: `script` read `-c` as taking a value, so their `-cx` is `-c x`.
-_POSIX_CLI_C_CLUSTER_RE = re.compile(_POSIX_SHELL_C_CLUSTER)
+_POSIX_CLI_C_CLUSTER_RE = _first_use(_POSIX_SHELL_C_CLUSTER)
 #: The process-start cmdlet as a command word, by name or alias, behind a
 #: module qualifier too: the anchored opener of the shells it starts. The
 #: masker keeps a double-quoted string, so the command position is what
 #: refuses a mention there -- one holding a separator included, which the
 #: raw statement-start check alone reads as a statement (the lane's own
 #: draft did) -- as cmd's opener refuses it (`_PS_CMD_REMOVE_OPENER_RE`).
-_PS_START_PROCESS_OPENER_RE = re.compile(
+_PS_START_PROCESS_OPENER_RE = _first_use(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:Start-Process|saps)" + _QUOTED_VERB_TAIL + r"(?=[ \t]|$)",
     re.IGNORECASE,
 )
@@ -17424,7 +17474,7 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
 #: (failure-mode review, driven live 2026-09-11; the tokenizer already reads
 #: the glued operator as consuming nothing). The alternatives are exclusive
 #: on the character, so the run stays linear.
-_RM_SEGMENT_RE = re.compile(
+_RM_SEGMENT_RE = _first_use(
     _CMD_POS + r"(?P<seg>(?P<verb>rm" + _EXE_SUFFIX + r")\b(?!=)(?:[^\n;|&]|(?<=[<>])&|&(?=>))*)", re.IGNORECASE
 )
 
@@ -17539,11 +17589,11 @@ _TEMP_ROOTS: tuple[str, ...] = (
     "/var/folders", "/private/var/folders", "/dev/shm",
 )
 
-_HOME_PREFIX_RE = re.compile(r"^(?:~|\$\{HOME\}|\$HOME)(?=/|$)")
+_HOME_PREFIX_RE = _first_use(r"^(?:~|\$\{HOME\}|\$HOME)(?=/|$)")
 #: `$PWD` at the head of a target (DEF-843): the directory the command runs
 #: in, which the caller's ``base`` already is -- the one variable besides the
 #: home whose value the guard knows without the shell.
-_PWD_PREFIX_RE = re.compile(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)")
+_PWD_PREFIX_RE = _first_use(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)")
 #: A temp variable at the head of a removal target (DEF-2049): `$TEMP`,
 #: `$TMP` or `$TMPDIR`, braced or not, by bash's spelling (case-sensitive),
 #: and the environment drive's on the PowerShell tool (`$env:TEMP`,
@@ -17553,33 +17603,33 @@ _PWD_PREFIX_RE = re.compile(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)")
 #: braced form also takes the expansions that still name the variable's
 #: value where it is set (`${TMPDIR:?}`, `${TMPDIR:-/tmp}`, `${TMPDIR=x}`, the
 #: ShellCheck-safe spellings) and the trailing-separator strip `${TMPDIR%/}`.
-_TEMP_VAR_BASH_RE = re.compile(
+_TEMP_VAR_BASH_RE = _first_use(
     r"^\$(?:\{(?P<b>TEMP|TMP|TMPDIR)(?:(?P<op>:?[-=?])(?P<word>[^}]*)|%%?/)?\}"
     r"|(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))")
-_TEMP_VAR_PS_RE = re.compile(
+_TEMP_VAR_PS_RE = _first_use(
     r"^\$(?:\{env:(?P<b>TEMP|TMP|TMPDIR)\}|env:(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))",
     re.IGNORECASE)
-_ABSOLUTE_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/")
+_ABSOLUTE_VALUE_RE = _first_use(r"^(?:[A-Za-z]:)?/")
 #: A PowerShell command that names a temp variable by anything but a read of
 #: its environment-drive spelling (`_PS_TEMP_VAR_READ_RE`, removed first):
 #: an assignment (`$env:TEMP = ...`, the compound operators too), the drive
 #: by path (`Set-Item env:TEMP`, `Env:\TEMP`), or the name as a string (a
 #: .NET call's `'TEMP'`). A path component named `tmp` or `Temp` is none.
-_PS_TEMP_VAR_READ_RE = re.compile(
+_PS_TEMP_VAR_READ_RE = _first_use(
     r"\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))"
     r"(?!\s*(?:[-+*/%]|\?\?)?=)", re.IGNORECASE)
-_PS_TEMP_VAR_NAME_RE = re.compile(
+_PS_TEMP_VAR_NAME_RE = _first_use(
     r"env:[\\/]?(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])|(['\"])(?:TEMP|TMP|TMPDIR)\1", re.IGNORECASE)
 #: A PowerShell command that runs code which can set the session's
 #: environment where the guard does not read it: a dot-sourced or invoked
 #: script (`. ./setup.ps1`, `& ./x.ps1`), or a module import.
-_PS_RUNS_UNREAD_CODE_RE = re.compile(
+_PS_RUNS_UNREAD_CODE_RE = _first_use(
     r"(?:^|[;{(|&\n]\s*)\.\s+\S|\.ps1\b|\b(?:Import-Module|ipmo)\b", re.IGNORECASE)
 #: A Bash text that names a temp variable by anything but an expansion: an
 #: assignment (`TMPDIR=...`, `export TMPDIR=...`), `read`, `unset`, a `for`
 #: variable -- every way bash sets one spells the bare name (cmd's `set TEMP=`
 #: too; its `%TEMP%` read is no setting).
-_BASH_TEMP_VAR_NAME_RE = re.compile(r"(?<![A-Za-z0-9_${%])(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])")
+_BASH_TEMP_VAR_NAME_RE = _first_use(r"(?<![A-Za-z0-9_${%])(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])")
 #: Whether the text the classifier is judging sets a temp variable itself
 #: (DEF-2049), the top of a stack pushed by the two classifier entries the
 #: hard tier and the speed bump both call with the same text
@@ -17706,12 +17756,12 @@ def _posix(path: str) -> str:
 # POSIX-shaped assumption held for the rule this replaced, whose absolute test
 # expanded nothing; expanding a tilde is exactly what routes a target into the
 # drive form.
-_DRIVE_OR_UNC_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:/|//)")
+_DRIVE_OR_UNC_ABSOLUTE_RE = _first_use(r"^(?:[A-Za-z]:/|//)")
 # The drive half alone, for `_posix`: the spelling a POSIX host cannot resolve.
 # A `//x` spelling it CAN -- `posixpath.realpath` folds the doubled slash to
 # `/`, and the identity rule relies on that fold -- so the UNC half stays with
 # `realpath` there (both reviews of the scratch-root lane, 2026-10-04).
-_DRIVE_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:/")
+_DRIVE_ABSOLUTE_RE = _first_use(r"^[A-Za-z]:/")
 
 
 def _is_unbounded_glob(component: str) -> bool:
@@ -18191,7 +18241,7 @@ def rm_recursive_force_operands(
 # the next token) is read from whether the match consumed the whole token, which
 # needs no capture and stays linear. Anchored at token start so a filename that
 # merely contains `>` is never mistaken for a redirect.
-_REDIRECT_OPERATOR_RE = re.compile(r"^[0-9]*(?:&>>?|>>?&?|<<?&?)")
+_REDIRECT_OPERATOR_RE = _first_use(r"^[0-9]*(?:&>>?|>>?&?|<<?&?)")
 
 #: WARNING: NO `\r?` HERE, AND THAT IS MEASURED. A bash line continuation is a
 #: backslash immediately followed by a newline. With CRLF the backslash escapes
@@ -18200,10 +18250,10 @@ _REDIRECT_OPERATOR_RE = re.compile(r"^[0-9]*(?:&>>?|>>?&?|<<?&?)")
 #: deleted the victim. Splicing that away joined the two statements and the
 #: guard returned ALLOW. Windows operators are the population that produces
 #: CRLF, so this fired exactly where it was least likely to be noticed.
-_LINE_CONTINUATION_RE = re.compile(r"\\(\r?)\n")
+_LINE_CONTINUATION_RE = _first_use(r"\\(\r?)\n")
 #: A heredoc operator (not a here-string's `<<<`), found on a line's
 #: quote-blanked twin by the splicer so it can leave a quoted body alone.
-_HEREDOC_OPERATOR_RE = re.compile(r"(?<!<)<<(?!<)")
+_HEREDOC_OPERATOR_RE = _first_use(r"(?<!<)<<(?!<)")
 
 
 def _splice_replacement(match: "re.Match[str]") -> str:
@@ -18252,7 +18302,7 @@ def splice_line_continuations(command: str) -> str:
 #: comment opener: the splicer's pipe join is only possible where this
 #: matches (a superset: it reads the raw text, quotes and all), so a command
 #: without it skips the scan. A GATE, not a matcher.
-_PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
+_PIPE_AT_LINE_END_RE = _first_use(r"\|&?[ \t\r]*[\n#]")
 
 
 #: How many programs deep the splicer splices a program inside a program
@@ -20009,7 +20059,7 @@ def _ps_stage_is_variable(stage: str, name: str) -> bool:
 
 #: What may follow a closer that certainly ends a remove's statement: nothing,
 #: another closer, or a keyword that continues the block's own statement.
-_PS_CLOSER_ENDS_RE = re.compile(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
+_PS_CLOSER_ENDS_RE = _first_use(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
 
 
 def _ps_unmatched_closer(span: str) -> int:
@@ -20292,7 +20342,7 @@ def _ps_has_sweep_witness(command: str) -> bool:
 
 #: A pipe whose gap opens a comment, line or block: the sweep witness's
 #: superset arm (`_ps_has_sweep_witness`). A GATE, not a matcher.
-_PS_PIPE_THEN_COMMENT_RE = re.compile(r"\|[ \t\r\n]*<?#")
+_PS_PIPE_THEN_COMMENT_RE = _first_use(r"\|[ \t\r\n]*<?#")
 
 
 def iter_ps_unnarrowed_find_delete_roots(command: str) -> Iterator[list[str]]:
@@ -20547,7 +20597,7 @@ def _ps_dotnet_paths(scan: str, raw: str | None = None) -> list[str]:
 # (exclusive on the first character) and the double-quoted body a negated
 # class; the terminator lookahead is anchored on the closing quote. Budget
 # row: `tests/test_redos.py::test_ps_var_expansion_prepass_bounded`.
-_PS_VAR_ASSIGN_RE = re.compile(
+_PS_VAR_ASSIGN_RE = _first_use(
     r"(?:^|[;\r\n{]|&&|\|\|)[ \t]*"
     r"\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
     r"('(?:[^']|'')*'|\"[^\"$`]*\""
@@ -20564,7 +20614,7 @@ _PS_VAR_ASSIGN_RE = re.compile(
     r"(?=[ \t]*(?:$|[;\r\n|&#}]))"
 )
 #: A bound value `_ps_bound_env_read` reads as a variable, quotes off.
-_PS_BOUND_READ_RE = re.compile(
+_PS_BOUND_READ_RE = _first_use(
     r"\$(?:\{(?P<b>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
     r"|(?P<n>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_]))\Z",
     re.IGNORECASE,
@@ -20587,7 +20637,7 @@ def _ps_bound_env_read(literal: str) -> str | None:
         return None
     return "${" + (m.group("b") or m.group("n")) + "}"
 #: A `$name` / `${name}` reference; the lookahead refuses a scope qualifier.
-_PS_VAR_REF_RE = re.compile(
+_PS_VAR_REF_RE = _first_use(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(?![A-Za-z0-9_:])"
 )
 #: An assignment operator after a reference: the name is being REBOUND to
@@ -20599,7 +20649,7 @@ _PS_VAR_REF_RE = re.compile(
 #: a `search` over a blank flood is linear (the ReDoS suite drives every
 #: derived regex with `search`; the walker itself calls `match` at the
 #: reference's end, where the character before is the name's last one).
-_PS_REBIND_RE = re.compile(r"(?<![ \t])[ \t]*[-+*/%]?=(?![=])")
+_PS_REBIND_RE = _first_use(r"(?<![ \t])[ \t]*[-+*/%]?=(?![=])")
 
 
 def _expand_simple_ps_var_assignments(command: str) -> str:

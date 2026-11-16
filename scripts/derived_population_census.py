@@ -193,14 +193,43 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension
     "tests/test_guard_cost_census.py": (
-        3, "c1c859cd360fbd8305ecbb63066d46b9f7b946398c54a2d3f7ed7c8d82f3e628",
+        4, "3b8d77a04a93429509e184cf8822acc00dfdd93b921307b7a83d524787b42051",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
         "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
         "hand literal at tests/test_guard_cost_census.py:304 (set(helper) == keys) before the carried "
         "rule is compared, so a population that shrinks reds there; the third, the live tree's, is "
         "floored at tests/test_guard_cost_census.py:346 and held equal to the census child's own names, "
-        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST.",
+        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST. Kept 2026-11-16 "
+        "(DEF-5115): the fourth row parametrizes the census's call kinds (census.KINDS[1:]), each "
+        "held to its decision, everything present safe; the kinds that must be there, the calls each "
+        "first-use accessor exists for, are pinned present by tests/test_guard_compile_ratchet.py's "
+        "test_the_census_times_each_call_a_first_use_compile_exists_for against OPENING_CALLS, which "
+        "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_audit_dead_rules.py": (
+        1, "338df94f8ff7300917ea2b8490702b4207e54851de63bf01de42d9924464f029",
+        "CORRECT_BY_SHAPE",
+        "NEW 2026-11-16 (DEF-5116): the one row is the set of (pattern, flags) the collector under "
+        "test returns (audit.collect_regex_rules()), the side checked, never the required side: a "
+        "collector that narrows leaves a required pattern missing and the row reds. The required "
+        "populations are derived from the module by signature (the zero-argument cached accessors) "
+        "and by type (the first-use objects named _RE), each floored non-empty, and the type "
+        "predicate's population is held to an AST count of the source's _first_use calls by "
+        "tests/test_guard_compile_ratchet.py's test_every_first_use_call_is_a_module_global_the_walk_reaches.",
+    ),
+    # 2 row(s), shapes: comprehension
+    "tests/test_guard_compile_ratchet.py": (
+        2, "850e845805ae4baf2c74d1607347d9472eabae579784880a26116aad1d851247",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084): two comprehensions over a fresh copy of _bash_patterns' globals "
+        "read by type (type(obj) is module._FirstUse). The first forces each and asserts none raises, "
+        "everything present safe; the second counts them and is the remedy for both: it is held "
+        "equal to an AST count of the source's _first_use( calls at "
+        "tests/test_guard_compile_ratchet.py:576 (calls == reached > 0), so a "
+        "first-use pattern made anywhere the walk cannot reach, or a predicate that narrows, reds "
+        "there.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_harness_config.py": (
@@ -1249,7 +1278,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        4, "9397a001d23c296f864d3dfff657bdcc9c9cb043e7683f6b4904729db39ebcfd",
+        6, "21d2e4b2c3d2fc95d418532b40f1e413a741b1f6f3baf7e03e2f42089027f236",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
@@ -1262,7 +1291,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_reinject_pins.py binds both ways to the anchoring contract's own walk, "
         "and the enrolment it feeds is held equal to an AST read of the same modules' "
         "source, so a module dropped from the roster leaves its accessors compiled and "
-        "unenrolled, which reds there",
+        "unenrolled, which reds there. Kept 2026-11-16 (DEF-2084): the fifth row forces "
+        "each first-use object before any timed search (_FORCED_FLAGS), no check, and a "
+        "missed one times its compile too, failing toward red; the sixth holds every "
+        "first-use object named _RE inside the derivation (everything required present), "
+        "and its type-read population is held to an AST count of the source's _first_use "
+        "calls by tests/test_guard_compile_ratchet.py's "
+        "test_every_first_use_call_is_a_module_global_the_walk_reaches, so a narrowing reds there",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
