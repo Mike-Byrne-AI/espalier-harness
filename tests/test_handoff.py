@@ -442,6 +442,15 @@ class TestTheHandoffRestartsTheSeatLoop:
         step = " ".join(text[start:text.index("\n## 6. ", start)].split())
         assert "python tools/cc/seat.py tick <seat>" in step
 
+    def test_the_step_names_the_command_each_loop_line_runs(self):
+        """The dispatcher's loop line names its own command since job
+        20261116T105110Z-air-5154dc. Dies to: the step still saying the board
+        loop runs /inbox board, whose body no loop line names any more."""
+        text = self._body()
+        start = text.index("\n## 5b. ")
+        step = " ".join(text[start:text.index("\n## 6. ", start)].split())
+        assert "(`/worker-tick`, `/dispatcher-tick`)" in step and "`/inbox board`" not in step
+
     def test_a_worktree_seat_runs_the_loop_step(self):
         """Dies to: the preamble's worktree list stopping at step 5, which
         tells a seat in a linked worktree to skip the re-create."""

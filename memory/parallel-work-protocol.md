@@ -60,7 +60,11 @@ reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
 the tick this repository's workers have run since 2026-10-15, carrying the
 proceed clause and the refresh sentence since 2026-10-24 and the dispatch-model
 sentence since 2026-10-25); the dispatcher
-form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
+form names its duties and ends with `/loop 15m /dispatcher-tick`, whose command
+has the same driver print the board tick (`seat.py tick --role dispatcher`,
+which refuses a worker seat as the worker's refuses this one; a few lines naming
+`tools/cc/board.py` and the duties, in place of `/inbox`'s whole body at every
+fire: job `5154dc`, item (1) of the operator's note `1ea850`). `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
 with its jobs and the same short form, which a session started by hand reads

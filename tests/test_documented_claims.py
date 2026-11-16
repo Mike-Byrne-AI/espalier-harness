@@ -1780,8 +1780,9 @@ NUMERIC_CONTRACTS: tuple[NumericContract, ...] = (
         # 16 -> 17 (TP-233b: +/strengthen); 17 -> 18 (2026-09-28: +/ship);
         # 18 -> 17 (2026-09-28: the /accomplish alias retired);
         # 17 -> 18 (2026-10-05: +/inbox, the mail channel);
-        # 18 -> 19 (2026-11-15: +/worker-tick, the worker loop's command).
-        expected_value=19,
+        # 18 -> 19 (2026-11-15: +/worker-tick, the worker loop's command);
+        # 19 -> 20 (2026-11-16: +/dispatcher-tick, the board loop's command).
+        expected_value=20,
         sources=(
             (
                 "examples/CLAUDE.template.md",

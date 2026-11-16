@@ -369,7 +369,7 @@ a reader outside the window learns it.
 The new id is not the old one: step 7 writes it where the goal snapshot names
 the loop, and a seat in a linked worktree has no goal step (the preamble), so
 it writes none. Each loop line names a command (`/worker-tick`,
-`/inbox board`) whose text is read at every tick, so a tick changed here
+`/dispatcher-tick`) whose text is read at every tick, so a tick changed here
 reaches the loop at its next tick, with no re-create; a change to the line
 itself (its interval or its command) reads as no match and is reported as
 above. This runs before step 8, whose verb arms the clear: the loop the next
@@ -384,7 +384,14 @@ seven days without a handoff loses it. air-work's loop a7691fb6, created
 operator's ruling of 2026-11-15) a worker's loop line is
 `/loop 10m /worker-tick`, so each worker seat's first handoff after that
 merge finds its loop by the tick clause in step 2 and re-creates it from the
-new line.
+new line. The dispatcher's loop line became `/loop 15m /dispatcher-tick` with
+job 5154dc (ruling 204f5b), and step 2's tick clause reads a worker's tick
+alone, so an older board loop (a lean board-tick prompt, or the first
+`/loop 15m /inbox board`) reads as no match here. The dispatcher moves it by hand once,
+when its checkout holds the command: pull, run `/dispatcher-tick` once and act
+on the board tick it prints, then `CronCreate` from its brief's loop line as
+step 3 does, `CronList` to see the new id, and `CronDelete` the older loop.
+From then on step 2's line-prefix match finds it.
 <!-- /espalier:self-host-only -->
 
 ## 6. Refresh the working-summary doc
