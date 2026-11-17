@@ -96,6 +96,19 @@ class TestDecision:
     def test_a_deny_with_no_checkpoint_is_a_deny(self):
         assert census.decision("bash", 0, self._deny("Command blocked: a protected zone")) == "deny"
 
+    @pytest.mark.parametrize("reason", [
+        "write_guard internal error (TypeError at tools/cc/hooks/_bash_patterns.py:4560); failing closed.",
+        "write_guard internal error while it ran its judging child; failing closed.",
+        "write_guard cannot start: tools/cc/hooks/_hook_utils.py raised SyntaxError at line 3",
+        "write_guard cannot run here. The harness does not run on Python 3.10.",
+    ], ids=["crash-guard", "runner", "start", "floor"])
+    def test_a_deny_the_guard_gave_as_it_failed_is_a_crash(self, reason):
+        """DEF-2096: the guard judged nothing, so the row's time is no
+        judgment's cost (every template is driven in
+        tests/test_benchmark_pass_conditions.py::TestACrashIsNoVerdict)."""
+        assert census.decision("bash", 0, self._deny(reason)) == "deny (crash)"
+        assert census.decision("bash", 0, self._deny(f"Command blocked, quoting: {reason}")) == "deny"
+
     def test_output_that_is_not_one_object_is_unreadable(self):
         assert (census.decision("read", 0, "[1, 2]"), census.decision("read", 0, "not json")) == (
             "unreadable output", "unreadable output")

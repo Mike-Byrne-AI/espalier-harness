@@ -51,7 +51,14 @@ is when the retry is refused too (DEF-2057); every other such spawn hands its
 result to ``not_a_budget_miss``, which fails on the first refusal. Either way,
 never an ALLOW row redded as a wrong answer, nor a must-deny row passed on a
 judgment that never finished (DEF-5066). Both read the parent's plain-words
-fallback refusal as well (``BUDGET_FALLBACK``). A retry's warning names each
+fallback refusal as well (``BUDGET_FALLBACK``). A deny write_guard gave as it
+failed itself (its crash guard, its runner, its refusal to start:
+``CRASH_HEADS``) judged nothing either, so every helper here reads it as a
+miss: a fault in the runner of its judging child (``RUNNER_FAULT_MARK``) is
+retried as the budget's refusal is, and any other crash fails the row at
+once, since it comes back. A row that drives the crash guard or a wedged
+guard, whose answer the crash is, passes ``crash_expected`` at its spawn and
+is rostered (``_CRASH_ROSTER``, DEF-2096). A retry's warning names each
 retried spawn, but the run's summary counts rows, so a pooled fixture's
 retries show as one row there; its allowance is what bounds them.
 ``tests/test_hook_spawn_routing.py`` derives both populations from the tree,
@@ -85,6 +92,20 @@ BUDGET_REFUSAL = "could not finish judging"
 #: (the floor plants, a renamed reasons module) or had not finished reaches it,
 #: and it never holds ``BUDGET_REFUSAL``.
 BUDGET_FALLBACK = "time budget before it had"
+#: How a deny opens that write_guard gave a call it never judged because it
+#: failed itself: its crash guard's and its runner's refusals, and its refusal
+#: to start or to run below the Python floor. The suite's copy of
+#: ``bench/run_benchmark.py::CRASH_HEADS``; both readers are driven with every
+#: such template rendered from the hook sources
+#: (``tests/test_benchmark_pass_conditions.py::TestACrashIsNoVerdict``).
+CRASH_HEADS = ("write_guard internal error", "write_guard cannot start", "write_guard cannot run here")
+#: The words a refusal of a fault in the parent's runner of its judging child
+#: carries: the one crash a second call can pass, so the one retried (the
+#: suite's copy of ``bench/run_benchmark.py::RUNNER_FAULT_MARK``). Any other
+#: crash is the judgment's own and comes back: it fails the row at once.
+RUNNER_FAULT_MARK = "while it ran its judging child"
+#: Where a row that drives the crash on purpose is named with its reason.
+_CRASH_ROSTER = "tests/test_test_suite_contract.py::_CRASH_EXPECTED_SITES"
 #: How many budget retries one pooled fixture build may spend
 #: (``RetryAllowance``): past it the miss rate is the finding, not the runner.
 POOL_RETRIES = 2
@@ -365,22 +386,59 @@ def _ready_for_the_retry(name: str, miss: str, before: _Before) -> list[str]:
     return put_back
 
 
-def holds_a_budget_refusal(out: str) -> bool:
-    """``out`` holds write_guard's refusal of a judgment that outran the
-    budget: the child's message (``BUDGET_REFUSAL``) or the parent's fallback
-    at its deadline (``BUDGET_FALLBACK``), which a must-deny row would
-    otherwise read as its verdict. The one test-side home of the pair: a
-    reader outside this module calls it rather than naming the phrases
-    (DEF-2058)."""
-    return BUDGET_REFUSAL in (out or "") or BUDGET_FALLBACK in (out or "")
+def crash_head(out: str) -> str | None:
+    """The head of the deny in ``out`` when write_guard gave it as it failed
+    itself (``CRASH_HEADS``, read at the reason's start, so a judged deny
+    that quotes one is the verdict it is): its reason to the first ``;`` or
+    sentence end, the class and the place. None for any other answer."""
+    for line in (out or "").splitlines():
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
+        reason = hso.get("permissionDecisionReason") if isinstance(hso, dict) else None
+        if isinstance(reason, str) and reason.startswith(CRASH_HEADS):
+            return reason.split(";", 1)[0].split(". ", 1)[0][:200]
+    return None
+
+
+def holds_a_budget_refusal(out: str, *, crash_expected: bool = False) -> bool:
+    """``out`` holds a write_guard answer that judged nothing, which a
+    must-deny row would otherwise read as its verdict: its refusal of a
+    judgment that outran the budget, the child's message
+    (``BUDGET_REFUSAL``) or the parent's fallback at its deadline
+    (``BUDGET_FALLBACK``), or, unless the row expects the crash
+    (``crash_expected``), a deny it gave as it failed itself (``crash_head``,
+    DEF-2096). The one test-side home of them: a reader outside this module
+    calls it rather than naming the phrases (DEF-2058)."""
+    if BUDGET_REFUSAL in (out or "") or BUDGET_FALLBACK in (out or ""):
+        return True
+    return not crash_expected and crash_head(out) is not None
 
 
 def _stdout_text(result: subprocess.CompletedProcess) -> str:
     return result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
 
 
-def _budget_refused(result: subprocess.CompletedProcess) -> bool:
-    return holds_a_budget_refusal(_stdout_text(result))
+def _budget_refused(result: subprocess.CompletedProcess, crash_expected: bool = False) -> bool:
+    return holds_a_budget_refusal(_stdout_text(result), crash_expected=crash_expected)
+
+
+def _crash_fail(name: str, crash: str) -> str:
+    return (f"{name} answered with a write_guard crash ({crash}): it judged nothing, so no tier judged "
+            "this row. Fix the guard; a row that drives the crash on purpose passes crash_expected=True "
+            f"at its spawn and is rostered with its reason in {_CRASH_ROSTER}.")
+
+
+def _fail_a_crash_in_the_judgment(name: str, result: subprocess.CompletedProcess, crash_expected: bool) -> None:
+    """A crash the row does not expect, other than a runner fault, fails the
+    row at once, before any restore: it comes back, and a retry would hide it
+    behind a second answer and put its audit record back out of the row's
+    sight (DEF-2096's failure-mode review)."""
+    crash = None if crash_expected else crash_head(_stdout_text(result))
+    if crash is not None and RUNNER_FAULT_MARK not in crash:
+        pytest.fail(_crash_fail(name, crash) + " A crash in the judgment comes back, so it is not retried.")
 
 
 #: The guard whose two bounds a refusal names: both refusals share one
@@ -425,6 +483,9 @@ def refusing_bound(result: subprocess.CompletedProcess) -> str:
 
 
 def _miss_text(result: subprocess.CompletedProcess, seconds: float) -> str:
+    crash = crash_head(_stdout_text(result))
+    if crash is not None:
+        return f"a write_guard crash after {seconds:.1f} s: {crash}"
     return f"the budget's refusal after {seconds:.1f} s, {refusing_bound(result)}"
 
 
@@ -432,15 +493,21 @@ def _script(result: subprocess.CompletedProcess) -> str:
     return next((str(a) for a in reversed(result.args) if str(a).endswith(".py")), str(result.args))
 
 
-def not_a_budget_miss(result: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
-    """``result`` as it came, unless write_guard's budget refused the call:
-    then the row fails as a miss, never read as the verdict it looks like.
+def not_a_budget_miss(result: subprocess.CompletedProcess, *,
+                      crash_expected: bool = False) -> subprocess.CompletedProcess:
+    """``result`` as it came, unless write_guard's budget refused the call or
+    it crashed on it where the row does not expect the crash
+    (``crash_expected``, DEF-2096): then the row fails as a miss, never read
+    as the verdict it looks like.
     For a spawn whose bound is past ``HOOK_S`` that ``retry_a_budget_miss``
     cannot take (its bound twice over does not fit its ceiling, or the retry
     would read state the restore does not put back); it spawns nothing and
     reads the finished result only."""
-    if _budget_refused(result):
+    if _budget_refused(result, crash_expected):
         script = _script(result)
+        crash = crash_head(_stdout_text(result))
+        if crash is not None:
+            pytest.fail(_crash_fail(script, crash))
         pytest.fail(
             f"{script} answered with write_guard's budget refusal ({refusing_bound(result)}): a miss, "
             "not a verdict. This spawn "
@@ -473,7 +540,7 @@ class RetryAllowance:
 
 def retry_a_budget_miss(
     spawn: Callable[[], subprocess.CompletedProcess], *, env: dict | None, cwd: str | None = None,
-    allowance: RetryAllowance | None = None,
+    allowance: RetryAllowance | None = None, crash_expected: bool = False,
 ) -> subprocess.CompletedProcess:
     """``spawn()``'s result, with one retry when write_guard's budget refused
     the call, for a spawn whose bound is past ``HOOK_S``; the spawn is written
@@ -492,13 +559,16 @@ def retry_a_budget_miss(
 
     One retry per test row, through the row record ``run_hook_through``
     keeps, so a row waits at most one more spawn whichever helper it spends
-    it in; a pooled fixture build passes its ``RetryAllowance`` instead."""
+    it in; a pooled fixture build passes its ``RetryAllowance`` instead.
+    A crash is the same miss unless the row passes ``crash_expected``
+    (DEF-2096)."""
     before = _Before(env, cwd)
     began = time.monotonic()
     first = spawn()
-    if not _budget_refused(first):
+    if not _budget_refused(first, crash_expected):
         return first
     name = Path(_script(first)).name
+    _fail_a_crash_in_the_judgment(name, first, crash_expected)
     miss = _miss_text(first, time.monotonic() - began)
     if allowance is not None:
         allowance.take(name, miss)
@@ -510,9 +580,16 @@ def retry_a_budget_miss(
     put_back = _ready_for_the_retry(name, miss, before)
     began = time.monotonic()
     second = spawn()
-    if _budget_refused(second):
+    if _budget_refused(second, crash_expected):
+        crashed = crash_head(_stdout_text(first)) is not None or crash_head(_stdout_text(second)) is not None
+        what = "no verdict from write_guard" if crashed else "write_guard's budget refusal"
+        if crashed:
+            pytest.fail(
+                f"{name} answered with {what} on both attempts: {miss}, then "
+                f"{_miss_text(second, time.monotonic() - began)}. A runner fault that comes back on the "
+                "second call is the guard's to fix, not a stalled runner's.")
         pytest.fail(
-            f"{name} answered with write_guard's budget refusal on both attempts: {miss}, then "
+            f"{name} answered with {what} on both attempts: {miss}, then "
             f"{_miss_text(second, time.monotonic() - began)}. A stalled runner misses once; a judgment slow every "
             "time misses every time, on every runner.")
     began_with = f", from the {' and '.join(put_back)} it began with" if put_back else ""
@@ -614,6 +691,7 @@ def _row() -> str:
 def run_hook_through(
     argv: list[str], *, env: dict | None = None, input: str | bytes | None = None,
     cwd: str | None = None, statusline: bool = False, bare_project: bool = False,
+    crash_expected: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a hook as Claude Code does, text in and out (or bytes, when the
     input is bytes), with one retry on a miss under the same bound.
@@ -621,7 +699,9 @@ def run_hook_through(
     write_guard judging a shell payload in a temp project gets the protected
     tree laid first (``lays_the_protected_tree``, DEF-2045); ``bare_project``
     keeps the project bare, and the caller that passes it is named, with its
-    reason, on ``tests/test_test_suite_contract.py::_BARE_GUARD_SPAWNERS``."""
+    reason, on ``tests/test_test_suite_contract.py::_BARE_GUARD_SPAWNERS``.
+    A write_guard crash is a miss unless the row passes ``crash_expected``
+    (DEF-2096)."""
     name = Path(argv[1]).name if len(argv) > 1 else str(argv[0])
     bound = STATUSLINE_S if statusline else HOOK_S
     if not bare_project:
@@ -639,13 +719,14 @@ def run_hook_through(
         except subprocess.TimeoutExpired:
             misses.append(f"no answer in {time.monotonic() - began:.1f} s")
         else:
-            if not _budget_refused(result):
+            if not _budget_refused(result, crash_expected):
                 if misses:
                     began_with = f", from the {' and '.join(put_back)} it began with" if put_back else ""
                     warnings.warn(HookSpawnRetried(
                         f"{name}: the first attempt missed ({misses[0]}); "
                         f"the retry answered in {time.monotonic() - began:.1f} s{began_with}"), stacklevel=2)
                 return result
+            _fail_a_crash_in_the_judgment(name, result, crash_expected)
             misses.append(_miss_text(result, time.monotonic() - began))
         if len(misses) == 2:
             break
@@ -655,7 +736,10 @@ def run_hook_through(
                         f"(each attempt bounded at {bound:.0f} s).")
         put_back = _ready_for_the_retry(name, misses[0], before)
         _RETRIED.add(row)
+    why = ("A runner fault that comes back on the second call is the guard's to fix, not a stalled "
+           "runner's." if any(m.startswith("a write_guard crash") for m in misses) else
+           "A stalled runner misses once; a hook that hangs, or is slow every time, misses every "
+           "time, on every runner.")
     pytest.fail(
         f"{name} missed on both attempts: {misses[0]}, then {misses[1]} (each bounded at "
-        f"{bound:.0f} s). A stalled runner misses once; a hook that hangs, or is slow "
-        "every time, misses every time, on every runner.")
+        f"{bound:.0f} s). {why}")

@@ -56,6 +56,29 @@ def test_c1_red_when_hook_stubbed_to_allow(tmp_path):
     assert "kill-switch" in joined
 
 
+#: A write_guard that crashes on every call: its crash guard's deny, which
+#: judged nothing (DEF-2096's sibling).
+_STUB_CRASH_HOOK = (
+    "import json\n"
+    "print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',\n"
+    "    'permissionDecisionReason': 'write_guard internal error (TypeError at tools/cc/hooks/x.py:1);"
+    " failing closed.'}}))\n"
+)
+
+
+def test_c1_red_when_hook_crashes_on_every_call(tmp_path):
+    """EARN-THE-RED: a guard that crashes denies every probe and judged none,
+    so C-1 names each as refused unjudged, never as denied."""
+    hooks = tmp_path / "tools" / "cc" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "write_guard.py").write_text(_STUB_CRASH_HOOK, encoding="utf-8")
+
+    result = selfcheck.check_live_deny_path(tmp_path)
+    assert not result.passed
+    assert len(result.failures) == 3, result.failures
+    assert all("refused unjudged" in f and "TypeError at tools/cc/hooks/x.py:1" in f for f in result.failures)
+
+
 def test_c1_red_when_hook_missing(tmp_path):
     """No deployed hook at all reds C-1 with a 'missing' failure."""
     result = selfcheck.check_live_deny_path(tmp_path)

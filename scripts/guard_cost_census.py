@@ -34,7 +34,8 @@ one-shot nudge an earlier spawn spent cannot change a later one's decision. A
 row whose decisions are not what an ordinary call gets (``allow``; ``exit 0`` for
 the control) is tagged ``decisions mixed`` and the run exits
 ``DECISIONS_MIXED_EXIT``: its figure is not a cost. A refusal at the guard's
-deadline reads ``deny (time budget)``, and the guard's own budget records are
+deadline reads ``deny (time budget)``, a deny it gave as it failed itself
+``deny (crash)`` (DEF-2096), and the guard's own budget records are
 counted per kind before the run's audit folder goes.
 
 ``--compile`` records every ``re._compile`` call while ``_bash_patterns``,
@@ -370,11 +371,18 @@ def payload(kind: str, project: Path) -> dict:
     return base
 
 
+#: How a deny opens that the guard gave a call it never judged because it
+#: failed itself: its crash guard's, its runner's, its refusal to start
+#: (``bench/run_benchmark.py::CRASH_HEADS``, the release bench's reader).
+_CRASH_HEADS = ("write_guard internal error", "write_guard cannot start", "write_guard cannot run here")
+
+
 def decision(kind: str, returncode: int, stdout: str) -> str:
     """What the spawn answered: the control's exit; for the guard, ``allow``
     (exit 0, no decision), ``deny`` or ``ask``, ``deny (time budget)`` for a
-    refusal at its deadline, ``nudge <CP-id>`` for a speed-bump checkpoint,
-    ``block`` for exit 2, ``error`` otherwise."""
+    refusal at its deadline, ``deny (crash)`` for a deny it gave as it failed
+    itself (DEF-2096: no judgment's cost either), ``nudge <CP-id>`` for a
+    speed-bump checkpoint, ``block`` for exit 2, ``error`` otherwise."""
     if kind == "control":
         return f"exit {returncode}"
     if returncode == 2:
@@ -395,6 +403,8 @@ def decision(kind: str, returncode: int, stdout: str) -> str:
     verdict = out.get("permissionDecision")
     if verdict in ("deny", "ask"):
         reason = str(out.get("permissionDecisionReason", ""))
+        if reason.startswith(_CRASH_HEADS):
+            return f"{verdict} (crash)"
         if "time budget" in reason.lower():
             return f"{verdict} (time budget)"
         cp = next((w.strip(".,:;()[]`'\"") for w in reason.split() if w.strip("[(`'\"").startswith("CP-")), None)

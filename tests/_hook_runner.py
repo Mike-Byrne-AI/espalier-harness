@@ -78,13 +78,16 @@ NOOP_INPUT: dict[str, dict] = {
 }
 
 
-def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = None) -> subprocess.CompletedProcess:
+def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = None, *,
+             crash_expected: bool = False) -> subprocess.CompletedProcess:
     """Run a hook script with JSON piped to stdin.
 
     ``env_overrides`` values: str sets the var; ``None`` deletes it. The
     deletion semantics let tests assert "no env var set" even when the
     operator's parent shell exports a harness var globally (see
     `docs/SHARP_EDGES.md` "ESPALIER_STOP_GATE=full Exported in Shell RC").
+    ``crash_expected``: the row drives write_guard's crash guard, so its
+    crash deny is the answer, never a miss (DEF-2096).
 
     Spawned through ``HOOK_PYTHON`` (the base interpreter), so the hook's
     parent is this process on every host, a Windows venv included: the
@@ -102,6 +105,7 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
         [HOOK_PYTHON, str(script)],
         input=json.dumps(input_data),
         env=env,
+        crash_expected=crash_expected,
     )
     # A session_start cut at its wall is cannot-tell for every row reading
     # through here (DEF-2048).

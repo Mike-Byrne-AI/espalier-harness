@@ -191,6 +191,23 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "script unclassified and reds there instead of shrinking the population silently "
         "(2026-10-09).",
     ),
+    # 2 row(s), shapes: comprehension, for-plain
+    "tests/test_benchmark_pass_conditions.py": (
+        2, "be53f123b68e0e3b4353d76b588cdeff643af6f2f6f6b283c24b333a930d6ea7",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-17 (DEF-2096): both rows are in _crash_reasons, the population of every deny "
+        "write_guard gives a call it never judged because it failed itself, which "
+        "TestACrashIsNoVerdict drives through all four readers (the bench, tests/_hook_spawn.py, the "
+        "guard cost census, selfcheck C-1). The comprehension takes every _denial_reasons template "
+        "whose words say write_guard's internal error; the for-plain loop takes every "
+        "_start_refusal._OPERATOR_FACING_TEMPLATES member but the two named as no deny. Deriving is "
+        "the point: a new template joins without an edit and reds a reader that does not know its "
+        "head. Blind to a template dropped from either source or reworded out of the words; the "
+        "remedy is in the same function: tests/test_benchmark_pass_conditions.py:604 holds eleven "
+        "members named by hand inside the population, and :587 holds the no-deny pair inside the "
+        "templates, so a renamed member of the pair reds rather than joining. Graded by reading; the "
+        "rows were red on the base, where the readers knew the budget's refusal alone.",
+    ),
     # 3 row(s), shapes: comprehension
     "tests/test_guard_cost_census.py": (
         4, "3b8d77a04a93429509e184cf8822acc00dfdd93b921307b7a83d524787b42051",
