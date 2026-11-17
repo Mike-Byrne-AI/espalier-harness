@@ -127,21 +127,30 @@ from typing import Any, Callable, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KINDS = ("control", "read", "bash", "mcp_read", "mcp_write",
-         "powershell", "powershell_pipe", "bash_xargs", "bash_powershell")
+         "powershell", "powershell_pipe", "bash_xargs", "bash_powershell",
+         "bash_redirect", "powershell_redirect")
 #: The commands of the Bash and PowerShell kinds. ``bash`` and ``powershell``
-#: are the ordinary call of each tool; the other three are the calls each of
-#: `_bash_patterns`' first-use accessors exists for (the ratchet's
-#: ``OPENING_CALLS``, pinned equal by ``tests/test_guard_compile_ratchet.py``):
-#: a piped PowerShell call (``_ps_interp_stdin_re``), a Bash pipe into xargs
+#: are the ordinary call of each tool; ``powershell_pipe``, ``bash_xargs``
+#: and ``bash_powershell`` are the calls each of `_bash_patterns`' first-use
+#: accessors exists for (the ratchet's ``OPENING_CALLS``, pinned equal by
+#: ``tests/test_guard_compile_ratchet.py``): a piped PowerShell call
+#: (``_ps_interp_stdin_re``), a Bash pipe into xargs
 #: (``_carrier_fed_remove_re``) and a Bash call naming powershell
 #: (``_powershell_head_re``), so the call that pays a first-use compile has a
-#: per-call figure of its own (DEF-5115).
+#: per-call figure of its own (DEF-5115). The two ``_redirect`` kinds are the
+#: ordinary call with a redirect on it, which about two thirds of this
+#: project's Bash calls carry (3,996 of 6,104 in its 60 newest transcripts,
+#: air's ruling f03cb7): the readers that also match with the redirects
+#: blanked (`_bash_patterns._redirects_blanked`, DEF-2087) do that work on
+#: such a call alone, so the plain kinds never time it.
 COMMANDS = {
     "bash": ("Bash", "ls -la"),
     "powershell": ("PowerShell", "Get-ChildItem notes"),
     "powershell_pipe": ("PowerShell", "Get-ChildItem notes | Select-Object -First 1"),
     "bash_xargs": ("Bash", "echo notes | xargs cat"),
     "bash_powershell": ("Bash", "powershell Get-ChildItem notes"),
+    "bash_redirect": ("Bash", "git status 2>&1"),
+    "powershell_redirect": ("PowerShell", "git status 2>&1"),
 }
 #: The decision an ordinary call of each kind gets; any other makes the row's
 #: figure something other than a cost.

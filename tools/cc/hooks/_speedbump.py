@@ -499,6 +499,28 @@ def _ps_started_program_scans(command: str) -> list[str]:
                             *_bash_patterns.ps_piped_ps_programs(twin, scan))]
 
 
+def _with_redirect_views(readings: list[Any]) -> list[Any]:
+    """``readings`` and, after them, each reading again with its text's
+    redirects blanked (`_bash_patterns._redirects_blanked`, in the grammar
+    the reading's last field names) wherever that changes the text
+    (DEF-2087, air's ruling f03cb7): `git 2>/dev/null push --force origin
+    main`, `git 2>/dev/null reset --hard` and `git 2>/dev/null clean -fd`
+    drew no checkpoint, the redirect read as a global option the head does
+    not know. The view supplements the text and never replaces it (air's
+    note f19d8d (a)), and keeps its length, so a raw twin still indexes it.
+    A kept, older pattern module without the view reads the texts alone."""
+    blank = getattr(_bash_patterns, "_redirects_blanked", None)
+    if blank is None:
+        return readings
+    out = list(readings)
+    for reading in readings:
+        text = reading[0]
+        view = blank(text, powershell=not reading[-1])
+        if view is not text and view != text:
+            out.append((view, *reading[1:]))
+    return out
+
+
 def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str | None, bool]]:
     """``(scan, raw twin or None, is_bash_text)`` for everything CP-DISCARD
     and its snapshot search, by tool; empty for a tool neither reads (Write,
@@ -507,15 +529,16 @@ def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str |
     nested program is read whole too (review: `echo 'git checkout "hooks/my
     file.py"' | bash` kept the truncated capture while the bare spelling
     was fixed). A program a carrier runs (`_bash_patterns.carried_programs`)
-    is read as a shell's program is (DEF-5110)."""
+    is read as a shell's program is (DEF-5110). Each reading is read again
+    with its redirects blanked (`_with_redirect_views`, DEF-2087)."""
     if tool_name == "Bash":
         command = tool_input.get("command", "")
         readings: list[tuple[str, str | None, bool]] = [(*_bash_reading(command), True)]
         for program in (*_bash_patterns.nested_shell_programs(command), *_carried(command)):
             readings.append((*_bash_reading(program), True))
-        return readings
+        return _with_redirect_views(readings)
     if tool_name == "PowerShell":
-        return _ps_discard_readings(tool_input)
+        return _with_redirect_views(_ps_discard_readings(tool_input))
     return []
 
 
@@ -529,12 +552,14 @@ def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str
     these three (air, 2026-10-16), whose one exception is CP-DISCARD. A
     PowerShell program a ``Start-Process`` of powershell or pwsh carries
     (DEF-3011), or one piped to either (DEF-2079), is read beside it, by the
-    same PowerShell twins. Empty for any other tool."""
+    same PowerShell twins. Each text is read again with its redirects
+    blanked (`_with_redirect_views`, DEF-2087). Empty for any other tool."""
     if tool_name == "Bash":
-        return [(text, True) for text in _scan_texts(tool_input)]
+        return _with_redirect_views([(text, True) for text in _scan_texts(tool_input)])
     if tool_name == "PowerShell":
         command = str(tool_input.get("command", ""))
-        return [(text, False) for text in (_ps_scan_text(command), *_ps_started_program_scans(command))]
+        return _with_redirect_views(
+            [(text, False) for text in (_ps_scan_text(command), *_ps_started_program_scans(command))])
     return []
 
 
@@ -793,6 +818,9 @@ def _pred_discard(tool_name: str, tool_input: dict, root: Path, cwd: Path | None
     # Bash, and (DEF-747) the PowerShell tool's own text plus the bash programs
     # it hands to `bash -c`: the one checkpoint whose deny is a recovery
     # artifact rather than ceremony, so it is not tool-keyed like the others.
+    # a reading and its redirect view can find one pathspec at one place:
+    # git is asked about it once (DEF-2087's view doubles the readings)
+    probed: set[tuple[str | None, tuple[int, int]]] = set()
     for scan, raw, is_bash in _discard_readings(tool_name, tool_input):
         if (_DISCARD_RE if is_bash else _PS_DISCARD_RE).search(scan):
             return True
@@ -805,6 +833,10 @@ def _pred_discard(tool_name: str, tool_input: dict, root: Path, cwd: Path | None
         # most-typed destructive form uncovered -- cost a real, unrecoverable
         # loss of uncommitted work.
         m = _bash_patterns._GIT_CHECKOUT_BARE_RE.search(scan)
+        if m and (raw, m.span(1)) in probed:
+            continue
+        if m:
+            probed.add((raw, m.span(1)))
         if m and _destroys_uncommitted_work(
             root, _checkout_operand(scan, raw, m),
             _statement_directories(scan, m.start(1), root, cwd),

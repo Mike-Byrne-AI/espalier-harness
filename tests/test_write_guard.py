@@ -9632,6 +9632,11 @@ class TestCatastrophicRmFlagOrderIndependent:
             # whether a PowerShell literal span is re-parsed as a program --
             # read by the masker from the text alone, never from a flag
             "_ps_reparse_answers",
+            # `_redirects_blanked_built` (DEF-2087) is keyed on the scan and
+            # its grammar and returns the scan with each redirect blanked, the
+            # same length: a transform the operand readers match on beside
+            # the scan, which never reaches `_statement_bases` or a judge
+            "_redirects_blanked_built",
             "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
             # `_statement_structure` is keyed on the text and the shell alone
@@ -14660,6 +14665,349 @@ class TestAWordGluedToARedirectIsCleanedOnBash:
         assert {p.name for p in work.iterdir()} == {".git", "notes.txt", "loose.txt"}, (proc.stdout, proc.stderr)
 
 
+_HOOK = "tools/cc/hooks/write_guard.py"
+
+
+class TestARedirectWrittenFirstHidesNoOperand:
+    """DEF-2087 (§C0): the readers that take an operand by its PLACE read a
+    redirect written ahead of the operands as one of them. On the PowerShell
+    tool the write verbs' first positional and path-flag value, and copy and
+    move's positional pair and flag values, read `2>$null` (or `2> err.txt`,
+    a merge, the `*` stream) as the path, so a write into the harness's own
+    zone or a move of a dotenv with the redirect first was allowed where the
+    same command with the redirect last is refused. On both tools git's arms
+    met a redirect in git's global-option slot as an option the head does
+    not know, and one after `checkout` or `restore` as the path, so `git
+    2>/dev/null rm cc/x.json`, `git checkout 2>/dev/null <hook>` and the
+    tracked tree's wipe `git 2>/dev/null ls-files | xargs rm -f` were
+    allowed, or met only the discard bump. DEF-5108 took the redirects out
+    of the token readers' tokens; these readers work by pattern, so they now
+    ALSO match on a same-length view of the scan with each redirect blanked
+    (`_bash_patterns._redirects_blanked`) and read each operand from the raw
+    text at the match's offsets, where a redirect still stands for the
+    readers that read one (the redirect write leg, a listing's
+    success-stream test). The view supplements the scan and never replaces
+    it (`_bash_patterns._scan_and_view_matches`; air's ruling f03cb7 and
+    note f19d8d): every match the scan made is still made, so every verdict
+    main gave a refusal stays one by construction. The view is the scan
+    itself when it holds no `<` or `>`, leaves a process substitution whole,
+    and no pattern was added or grown (ruling 40ec7f).
+
+    Every row of the four tightening tests was allowed at main fda7160, the
+    two `git restore` rows apart (the CP-DISCARD bump there, a nudge a
+    re-issue passes), and every control held its verdict there. The named
+    user: an operator whose agent silences a command's errors with the
+    redirect written ahead of its operands, an unusual spelling, and so
+    moves a dotenv or wipes every tracked file unrefused (the secret leg
+    and the ls-files wall, in contract); the zone writes the same view
+    closes are the after-check's under the coverage contract (docs/HOOKS.md)
+    and are taken because the one view closes them. The speed bump's git
+    checkpoints read the same view (`tests/test_speedbump_irreversible.py::
+    TestARedirectInGitsOptionSlotDrawsTheCheckpoint`). Left as it was: a
+    redirect before the command word (the anchor family's ruled limits).
+    The oracle rows run each shape under the shell that runs it (pwsh 7.6.5
+    on the lane's box; Windows PowerShell 5.1 was not driven)."""
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param(f"Set-Content 2>$null {_HOOK} x", id="set-content"),
+        pytest.param(f"Add-Content 2>$null {_HOOK} x", id="add-content"),
+        pytest.param(f"sc 2>$null {_HOOK} x", id="sc-alias"),
+        pytest.param(f"Set-Content 2> err.txt {_HOOK} x", id="set-content-bare-operator"),
+        pytest.param(f"Set-Content 2>&1 {_HOOK} x", id="set-content-merge"),
+        pytest.param(f"Set-Content *>$null {_HOOK} x", id="set-content-star"),
+        pytest.param(f"Clear-Content 2>$null {_HOOK}", id="clear-content"),
+        pytest.param(f"Out-File 2>$null {_HOOK}", id="out-file"),
+        pytest.param("New-Item 2>$null tools/cc/hooks/x.py", id="new-item"),
+        pytest.param(f"Set-Content -Path 2>&1 {_HOOK} -Value x", id="path-flag-merge"),
+        pytest.param(f"Set-Content -Path 2>$null {_HOOK} -Value x", id="path-flag-stderr"),
+        pytest.param(f"Out-File -FilePath 2>$null {_HOOK}", id="filepath-flag"),
+        pytest.param(f"Copy-Item 2>$null b.py {_HOOK}", id="copy-first"),
+        pytest.param(f"Copy-Item b.py 2>$null {_HOOK}", id="copy-between"),
+        pytest.param(f"Copy-Item b.py -Destination 2>$null {_HOOK}", id="copy-destination-flag"),
+        pytest.param("Copy-Item -Path 2>$null settings.json -Destination .claude/", id="copy-path-flag-landed"),
+        pytest.param(f"Move-Item 2> err.txt {_HOOK} b.py", id="move-hook-out"),
+        pytest.param(f"git 2>$null checkout -- {_HOOK}", id="git-global-checkout"),
+        pytest.param(f"git checkout 2>$null {_HOOK}", id="git-checkout-after"),
+        pytest.param(f"git restore 2>$null {_HOOK}", id="git-restore-after"),
+        pytest.param("git 2>$null rm cc/x.json", id="git-global-rm"),
+        pytest.param("git 2>$null clean -fdx", id="git-global-clean"),
+    ])
+    def test_a_zone_write_with_the_redirect_first_is_refused_on_powershell(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("Move-Item 2> err.txt .env b.txt", id="move"),
+        pytest.param("Move-Item 2>&1 .env b.txt", id="move-merge"),
+        pytest.param("mv 2>$null .env b.txt", id="mv-alias"),
+        pytest.param("Move-Item *>$null .env b.txt", id="move-star"),
+        pytest.param("Copy-Item 2>$null .env b.txt", id="copy"),             # a control: refused at main by the read leg
+        pytest.param("git 2>$null mv .env b.txt", id="git-global-mv"),
+    ])
+    def test_a_dotenv_moved_with_the_redirect_first_is_refused_on_powershell(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param(f"git 2>/dev/null checkout -- {_HOOK}", id="git-global-checkout"),
+        pytest.param(f"git checkout 2>/dev/null {_HOOK}", id="git-checkout-after"),
+        pytest.param(f"git restore 2>/dev/null {_HOOK}", id="git-restore-after"),
+        pytest.param("git 2>/dev/null rm cc/x.json", id="git-global-rm"),
+        pytest.param("git 2>&1 rm cc/x.json", id="git-global-rm-merge"),
+        pytest.param("git >/dev/null 2>&1 rm cc/x.json", id="git-global-rm-two"),
+        pytest.param("git 2>/dev/null clean -fdx", id="git-global-clean"),
+    ])
+    def test_git_with_a_redirect_before_its_operand_is_refused_on_bash(self, cmd, tmp_path):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("git 2>/dev/null mv .env b.txt", id="git-global-mv"),
+    ])
+    def test_git_moving_a_dotenv_behind_a_redirect_is_refused_on_bash(self, cmd, tmp_path):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    # controls, each held at main: the redirect last, a redirect whose TARGET
+    # is the zone (the redirect leg reads the plain scan), a statement or a
+    # group the redirect sits beside, a digit no stream has
+    @pytest.mark.parametrize("cmd, reason", [
+        pytest.param(f"Set-Content {_HOOK} x 2>$null", "zone blocked", id="redirect-last"),
+        pytest.param(f"Copy-Item b.py {_HOOK} 2>$null", "zone blocked", id="copy-redirect-last"),
+        pytest.param("Move-Item .env b.txt 2> err.txt", "Secret-path access blocked", id="move-redirect-last"),
+        pytest.param(f"Set-Content notes.txt x 2> {_HOOK}", "zone blocked", id="redirect-target-last"),
+        pytest.param(f"Set-Content 2> {_HOOK} notes.txt x", "zone blocked", id="redirect-target-first"),
+        pytest.param(f"Set-Content 2>{_HOOK} notes.txt x", "zone blocked", id="redirect-target-glued"),
+        pytest.param("Set-Content 2>$null;Move-Item .env b.txt", "Secret-path access blocked",
+                     id="separator-after-redirect"),
+        pytest.param(f"Set-Content x 2>$null;Copy-Item b.py {_HOOK}", "zone blocked", id="separator-copy"),
+        pytest.param(f"if ($true) {{Set-Content 2>$null}}; Set-Content {_HOOK} x", "zone blocked",
+                     id="brace-after-redirect"),
+        pytest.param("Remove-Item 7>x,cc/x.json", "zone blocked", id="stream7-word"),
+    ])
+    def test_what_main_refused_beside_a_redirect_stays_refused(self, cmd, reason, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason=reason)
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("Set-Content 2>$null notes.txt x", id="set-content"),
+        pytest.param("Copy-Item 2>$null a.py b.py", id="copy"),
+        pytest.param("Move-Item 2> err.txt a.txt b.txt", id="move"),
+        pytest.param(f"Set-Content '2>x' {_HOOK}", id="quoted-name"),
+        pytest.param(f"Set-Content notes.txt {_HOOK} 2>$null", id="hook-is-the-value"),
+    ])
+    def test_an_unprotected_operand_beside_a_redirect_stays_allowed(self, cmd, tmp_path):
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("git 2>/dev/null status", id="status"),
+        pytest.param("git 2>/dev/null rm notes.txt", id="rm-plain"),
+        pytest.param("git checkout 2>/dev/null main", id="checkout-branch"),
+    ])
+    def test_git_on_an_unprotected_operand_beside_a_redirect_stays_allowed(self, cmd, tmp_path):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("tool, cmd, expect", [
+        pytest.param("Bash", "git 2>/dev/null ls-files | xargs rm -f", "wall", id="bash-global"),
+        pytest.param("Bash", "git 2>&1 ls-files | xargs rm -f", "wall", id="bash-global-merge"),
+        pytest.param("Bash", "git ls-files | xargs rm -f", "wall", id="bash-control"),
+        pytest.param("Bash", "find . 2>/dev/null | xargs rm -rf", "wall", id="bash-find-control"),
+        pytest.param("PowerShell", "git 2>$null ls-files | Remove-Item -Force", "wall", id="ps-global"),
+        pytest.param("PowerShell", "git 2>&1 ls-files | Remove-Item -Force", "wall", id="ps-global-merge"),
+        pytest.param("PowerShell", "git ls-files | Remove-Item -Force", "wall", id="ps-control"),
+        pytest.param("PowerShell", "git ls-files *>$null | Remove-Item -Force", "allow", id="ps-success-null"),
+        pytest.param("PowerShell", "Get-ChildItem . -Recurse > out.txt | Remove-Item -Recurse -Force",
+                     "allow", id="ps-stdout-file"),
+    ])
+    def test_the_tracked_listing_behind_a_redirect_meets_the_wall(self, tool, cmd, expect, tmp_path):
+        run = run_bash_guard if tool == "Bash" else _run_ps_guard
+        assert _delete_verdict(run(cmd, tmp_path)) == expect
+
+    # The view itself: each redirect and a bare operator's target blank, the
+    # same length, and nothing else moved -- a statement after the redirect,
+    # a group's brace, a quoted name the scan already masked, a digit no
+    # PowerShell stream has, a backtick-escaped blank's word, Bash's `*>x`
+    # (a glob, then a redirect, `_redirect_words`). The two Bash rows with a
+    # merge's ampersand are the hard tier's scan, which keeps it.
+    @pytest.mark.parametrize("scan, powershell, view", [
+        pytest.param("Set-Content 2>$null h x", True, "Set-Content         h x", id="glued"),
+        pytest.param("Move-Item 2> err.txt .env b.txt", True, "Move-Item            .env b.txt", id="bare-operator"),
+        pytest.param("Move-Item 2> 1 .env b.txt", True, "Move-Item      .env b.txt", id="spaced-merge"),
+        pytest.param("Copy-Item a.py *> 1 h", True, "Copy-Item a.py      h", id="star-merge-between"),
+        pytest.param("Set-Content -Path 2> 1 h -Value x", True, "Set-Content -Path      h -Value x",
+                     id="after-a-flag"),
+        pytest.param("Set-Content 2>$null;Move-Item .env b.txt", True, "Set-Content        ;Move-Item .env b.txt",
+                     id="statement-kept"),
+        pytest.param("{Set-Content x 2>$null}", True, "{Set-Content x        }", id="brace-kept"),
+        pytest.param("Set-Content x 2>", True, "Set-Content x   ", id="operator-at-the-end"),
+        pytest.param("Set-Content 'a   b' x", True, "Set-Content 'a   b' x", id="quoted-kept"),
+        pytest.param("Remove-Item 7>x,cc/x.json", True, "Remove-Item 7>x,cc/x.json", id="stream7-a-word"),
+        pytest.param("Get-ChildItem a` >x", True, "Get-ChildItem a` >x", id="backtick-blank"),
+        pytest.param("git 10>x rm y", True, "git 10>x rm y", id="stream10-a-word"),
+        pytest.param("git 10>x rm y", False, "git      rm y", id="bash-fd10"),
+        pytest.param("git 2>&1 rm x", False, "git      rm x", id="bash-merge-kept-ampersand"),
+        pytest.param("a 2>&1|b", False, "a     |b", id="bash-pipe-kept"),
+        pytest.param("git >|o rm x", False, "git     rm x", id="bash-noclobber"),
+        pytest.param("git &>/dev/null rm x", False, "git             rm x", id="bash-both-streams"),
+        pytest.param("git rm x 2> 'e f'", False, "git rm x         ", id="bash-quoted-target"),
+        pytest.param("echo x <(ls)", False, "echo x <(ls)", id="bash-process-substitution"),
+        pytest.param("diff >(git rm a) b 2>x", False, "diff >(git rm a) b    ", id="bash-process-substitution-out"),
+        pytest.param("Move-Item 2> 'e r.txt' .env b.txt", True, "Move-Item              .env b.txt",
+                     id="quoted-target-with-a-blank"),
+        pytest.param("*>x", False, "*>x", id="bash-glob-then-redirect"),
+        pytest.param("*>x", True, "   ", id="star-stream"),
+    ])
+    def test_the_view_blanks_each_redirect_and_nothing_else(self, scan, powershell, view):
+        got = _bash_patterns_module()._redirects_blanked(scan, powershell=powershell)
+        assert (got, len(got)) == (view, len(scan))
+
+    @pytest.mark.parametrize("powershell", [True, False], ids=["powershell", "bash"])
+    def test_a_scan_with_no_angle_is_handed_back_uncopied(self, powershell):
+        scan = "Set-Content tools/cc/hooks/write_guard.py x; git rm cc/x.json"
+        assert _bash_patterns_module()._redirects_blanked(scan, powershell=powershell) is scan
+
+    # The readers, in process: each names the operand the shell acts on,
+    # beside whatever the scan's own reading named (the view supplements it).
+    @pytest.mark.parametrize("cmd, effects", [
+        pytest.param("Move-Item 2> err.txt .env b.txt", {("move", ".env")}, id="move"),
+        pytest.param("mv 2>$null .env b.txt", {("move", ".env")}, id="mv-alias"),
+        pytest.param(f"Move-Item 2> err.txt {_HOOK} b.py", {("move", _HOOK)}, id="move-hook-out"),
+        pytest.param("git 2>$null rm cc/x.json", {("delete", "cc/x.json")}, id="git-global-rm"),
+        pytest.param("git 2>$null clean -fdx", {("clean", ".")}, id="git-global-clean"),
+    ])
+    def test_the_powershell_effect_reader_reads_past_the_redirect(self, cmd, effects):
+        assert effects <= set(_bash_patterns_module().iter_ps_removed_or_relocated_operands(cmd))
+
+    @pytest.mark.parametrize("cmd, effects", [
+        pytest.param("git 2>/dev/null rm cc/x.json", {("delete", "cc/x.json")}, id="git-global-rm"),
+        pytest.param("git >/dev/null 2>&1 rm cc/x.json", {("delete", "cc/x.json")}, id="git-global-two"),
+        pytest.param("git 2>/dev/null mv .env b.txt", {("move", ".env"), ("move", "b.txt")}, id="git-global-mv"),
+        pytest.param("git 2>/dev/null clean -fdx", {("clean", ".")}, id="git-global-clean"),
+    ])
+    def test_the_bash_effect_reader_reads_past_the_redirect(self, cmd, effects):
+        assert effects <= set(_bash_patterns_module().iter_removed_or_relocated_operands(cmd))
+
+    # The view supplements the scan (note f19d8d (a)): a match the scan makes
+    # is kept even where blanking would lose it, and the two merge in offset
+    # order. A process substitution holds a command, never a redirect target.
+    def test_every_scan_match_is_kept_beside_the_views(self):
+        bp = _bash_patterns_module()
+        scan = "git rm a.txt 2>/dev/null; git 2>/dev/null rm b.txt"
+        got = bp._scan_and_view_matches(bp._GIT_RM_MV_RE, scan, bp._redirects_blanked(scan))
+        on_scan = list(bp._GIT_RM_MV_RE.finditer(scan))
+        assert [m.regs for m in got if m.string is scan] == [m.regs for m in on_scan] != []
+        assert scan.index("rm b.txt") in {m.start(1) for m in got if m.string is not scan}
+        assert [m.start() for m in got] == sorted(m.start() for m in got)
+        lost = "git    a.txt"            # a same-length view whose blank hides the subcommand
+        kept = bp._scan_and_view_matches(bp._GIT_RM_MV_RE, "git rm a.txt", lost)
+        assert [m.span() for m in kept] == [m.span() for m in bp._GIT_RM_MV_RE.finditer("git rm a.txt")] != []
+
+    @pytest.mark.parametrize("tool, cmd, expect", [
+        pytest.param("Bash", "cat <(git ls-files | xargs rm -f)", "wall", id="process-substitution-in"),
+        pytest.param("Bash", "cat 2>/dev/null <(git ls-files | xargs rm -f)", "wall",
+                     id="process-substitution-beside-a-redirect"),
+    ])
+    def test_a_process_substitution_keeps_its_command(self, tool, cmd, expect, tmp_path):
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == expect
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("diff >(git rm cc/x.json) a", id="process-substitution-out"),
+        pytest.param("diff 2>/dev/null >(git rm cc/x.json) a", id="process-substitution-out-beside"),
+    ])
+    def test_a_process_substitutions_git_rm_stays_refused(self, cmd, tmp_path):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="zone blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param("Move-Item 2> 'e r.txt' .env b.txt", id="quoted-target-with-a-blank"),
+        pytest.param('Move-Item 2> "e r.txt" .env b.txt', id="double-quoted-target-with-a-blank"),
+    ])
+    def test_a_quoted_redirect_target_is_no_operand(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    def test_a_quoted_angle_is_no_redirect(self, tmp_path):
+        # the scan masks the quoted `>`, so the value is the path and the
+        # hook is the value written (note f19d8d (c)); allowed at main too
+        assert_hook_allowed(_run_ps_guard(f"Set-Content 'a > b' {_HOOK}", tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        pytest.param(f"Set-Content 2>$null {_HOOK} x", id="positional"),
+        pytest.param(f"Set-Content -Path 2>&1 {_HOOK} -Value x", id="path-flag"),
+        pytest.param(f"Copy-Item 2>$null b.py {_HOOK}", id="copy-first"),
+        pytest.param(f"Copy-Item b.py 2>$null {_HOOK}", id="copy-between"),
+        pytest.param(f"Copy-Item b.py -Destination 2>$null {_HOOK}", id="destination-flag"),
+        pytest.param(f"git checkout 2>$null {_HOOK}", id="git-checkout"),
+    ])
+    def test_the_powershell_write_reader_reads_past_the_redirect(self, cmd):
+        assert _HOOK in _bash_patterns_module()._candidate_paths_from_powershell(cmd)
+
+    # The shell is the oracle: it runs each spelling with the redirect taken
+    # out and the operands as written. Each row runs in a throwaway folder of
+    # its own, every operand relative to it and the only variable PowerShell's
+    # own `$null` (pwsh 7.6.5 on the lane's box; 5.1 was not driven).
+    @pytest.mark.parametrize("command, left, written", [
+        pytest.param("Set-Content 2>$null f.txt x", {"a.txt", "f.txt"}, ("f.txt", "x"), id="set-content"),
+        pytest.param("Set-Content -Path 2>&1 f.txt -Value x", {"a.txt", "f.txt"}, ("f.txt", "x"),
+                     id="path-flag-merge"),
+        pytest.param("Out-File 2>$null f.txt", {"a.txt", "f.txt"}, None, id="out-file"),
+        pytest.param("Copy-Item 2>$null a.txt b.txt", {"a.txt", "b.txt"}, ("b.txt", "A_DEF_2087"), id="copy-first"),
+        pytest.param("Copy-Item a.txt 2>$null b.txt", {"a.txt", "b.txt"}, ("b.txt", "A_DEF_2087"),
+                     id="copy-between"),
+        pytest.param("Move-Item 2> err.txt a.txt b.txt", {"b.txt", "err.txt"}, ("b.txt", "A_DEF_2087"), id="move"),
+        pytest.param("Move-Item 2>&1 a.txt b.txt", {"b.txt"}, ("b.txt", "A_DEF_2087"), id="move-merge"),
+    ])
+    def test_powershell_runs_the_operands_after_the_redirect(self, command, left, written, tmp_path):
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "a.txt").write_bytes(b"A_DEF_2087\n")
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                              cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=private_cache_env(_git_free_base()))
+        assert {p.name for p in work.iterdir()} == left, (proc.stdout, proc.stderr)
+        if written is not None:
+            name, text = written
+            assert (work / name).read_text(encoding="utf-8-sig").strip() == text, (proc.stdout, proc.stderr)
+
+    # git with a redirect in its global-option slot runs the subcommand, and
+    # one after `checkout` restores the path, on each shell (the listing is
+    # read, never piped into a remove here).
+    @pytest.mark.parametrize("shell_kind, redirect", [
+        pytest.param("pwsh", "2>$null", id="powershell"),
+        pytest.param("bash", "2>/dev/null", id="bash"),
+    ])
+    def test_git_runs_the_subcommand_after_a_redirect_in_its_option_slot(self, shell_kind, redirect, tmp_path):
+        import shutil
+        if shell_kind == "pwsh":
+            shell = shutil.which("pwsh") or shutil.which("powershell")
+            argv = [shell, "-NoProfile", "-NonInteractive", "-Command"] if shell else None
+        else:
+            if os.name == "nt":
+                from espalier._venv import git_bash_path
+                shell = git_bash_path()
+            else:
+                shell = shutil.which("bash")
+            argv = [shell, "-c"] if shell else None
+        if argv is None:
+            pytest.skip(f"no {shell_kind} on this host to run the row")
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "notes.txt").write_bytes(b"N_DEF_2087\n")
+        (work / "other.txt").write_bytes(b"O_DEF_2087\n")
+        _git_seed_repo(work, "notes.txt", "other.txt")
+
+        def run(command: str) -> subprocess.CompletedProcess:
+            return subprocess.run([*argv, command], cwd=str(work), capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=scaled(30),
+                                  env=private_cache_env(_git_free_base()))
+
+        listed = run(f"git {redirect} ls-files")
+        assert listed.stdout.split() == ["notes.txt", "other.txt"], (listed.stdout, listed.stderr)
+        (work / "notes.txt").write_bytes(b"EDITED\n")
+        restored = run(f"git checkout {redirect} notes.txt")
+        assert (work / "notes.txt").read_bytes().replace(b"\r\n", b"\n") == b"N_DEF_2087\n", (
+            restored.stdout, restored.stderr)
+        removed = run(f"git {redirect} rm -q other.txt")
+        assert not (work / "other.txt").exists(), (removed.stdout, removed.stderr)
+
+
 class TestSecretPathAccess:
     """The hook-layer replacement for the five `Read()` deny rules.
 
@@ -18296,9 +18644,11 @@ class TestQuotedTargetSurvivesTheRoot:
     #: match from a `finditer` over one of those names is an OPERAND read
     #: off the masked text -- the DEF-794 class -- unless it is on the
     #: allowlist below, which names a VERB or METHOD read (never a path).
+    #: The PowerShell reader's ``scan`` is each text of its ``scans``: the
+    #: command, its nesting-level views and its redirect view (DEF-2087).
     _SCAN_READERS = {
         "_candidate_paths_from_bash": {"scan", "stripped"},
-        "_candidate_paths_from_powershell": {"command"},
+        "_candidate_paths_from_powershell": {"command", "scan"},
         "_ps_dotnet_paths": {"scan"},
         "powershell_symlink_linknames": {"command"},
     }
@@ -18330,11 +18680,19 @@ class TestQuotedTargetSurvivesTheRoot:
                 if not isinstance(loop, ast.For) or not isinstance(loop.iter, ast.Call):
                     continue
                 call = loop.iter
-                if not (isinstance(call.func, ast.Attribute) and call.func.attr == "finditer"
+                if (isinstance(call.func, ast.Attribute) and call.func.attr == "finditer"
                         and call.args and isinstance(call.args[0], ast.Name)
                         and call.args[0].id in scans and isinstance(loop.target, ast.Name)):
+                    regex = call.func.value.id if isinstance(call.func.value, ast.Name) else "?"
+                elif (isinstance(call.func, ast.Name) and call.func.id == "_scan_and_view_matches"
+                        and len(call.args) == 3 and isinstance(call.args[0], ast.Name)
+                        and isinstance(call.args[1], ast.Name) and call.args[1].id in scans
+                        and isinstance(loop.target, ast.Name)):
+                    # the scan and its redirect view in one loop (DEF-2087):
+                    # a match of either is read the same way
+                    regex = call.args[0].id
+                else:
                     continue
-                regex = call.func.value.id if isinstance(call.func.value, ast.Name) else "?"
                 # a regex held in a loop variable (`for rx in (A, B): for m in
                 # rx.finditer(scan)`) resolves to every name THAT loop iterates
                 regexes = _held_regexes(fn, loop, regex)
@@ -18347,7 +18705,11 @@ class TestQuotedTargetSurvivesTheRoot:
                         group = node.args[0].value if node.args and isinstance(node.args[0], ast.Constant) else 0
                         if any((r, group) not in self._VERB_READS for r in regexes):
                             offenders.append(f"{fn.name}:{node.lineno} {var}.group({group}) over {regex}")
-        assert seen >= 12, f"the census saw only {seen} finditer loops over scan text"
+        # the floor is the count the census reads (22 at DEF-2087): a floor
+        # of 12 let five loops leave it unseen when they moved to the view
+        # helper, so a loop the walk stops seeing reds here, and one removed
+        # on purpose lowers the floor with it
+        assert seen >= 22, f"the census saw only {seen} finditer loops over scan text"
         assert not offenders, "an OPERAND read off the masked scan (DEF-794):\n  " + "\n  ".join(offenders)
 
     def test_a_loop_variable_regex_resolves_to_the_loop_that_binds_it_at_the_site(self):
@@ -24990,6 +25352,12 @@ class TestRemovedOrRelocatedOperandIsAMutation:
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
                             and sub.func.id in helpers):
                         searched.add(helpers[sub.func.id])
+                    # an arm matched on the scan and its redirect view
+                    # (DEF-2087) is searched with the regex it is handed
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id == "_scan_and_view_matches" and sub.args
+                            and isinstance(sub.args[0], ast.Name) and sub.args[0].id.endswith("_RE")):
+                        searched.add(sub.args[0].id)
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                             and sub.func.attr in ("finditer", "search", "match")
                             and isinstance(sub.func.value, ast.Name)
