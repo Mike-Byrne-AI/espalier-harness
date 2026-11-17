@@ -24277,6 +24277,18 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         out = run_guard_tool("Bash", {"command": cmd}, tmp_path).stdout or ""
         assert '"permissionDecision": "deny"' in out, out
 
+    @pytest.mark.parametrize("cmd", [
+        "10>/dev/null cmd //c del tools/cc/hooks/x.py",
+        "10>/dev/null cmd //c type .env",
+    ], ids=["zone-delete", "secret-read"])
+    def test_a_redirect_with_a_long_fd_before_cmd_keeps_the_deny(self, tmp_path, cmd):
+        """The Bash cmd gate opens on the redirect view as well (DEF-5120):
+        the command-position prefix reads one fd digit and the view blanks
+        any, so with only the scan arm this read as no cmd at all (the second
+        code review's B1, deny before the arm was dropped and allow after)."""
+        out = run_guard_tool("Bash", {"command": cmd}, tmp_path).stdout or ""
+        assert '"permissionDecision": "deny"' in out, out
+
 
 class TestTheCoverageContract:
     """The coverage contract for the jobs the parser keeps (docs/HOOKS.md §4,

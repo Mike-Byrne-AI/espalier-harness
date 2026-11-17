@@ -11805,7 +11805,11 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     # reads them through the cmdlet's word roster (`cmd` is a re-parsing
     # wrapper there); this tool had no arm, so a zone directory removed
     # through cmd met the nudge and then nothing on the re-issue.
-    if _CMD_REMOVE_OPENER_RE.search(scan):
+    # the gate reads the view too, as the opener reader does (DEF-5120): the
+    # command-position prefix reads one fd digit, the view blanks any, so
+    # `10>/dev/null cmd //c del ...` opens on the view alone (the second code
+    # review drove it from deny to allow when this arm was dropped)
+    if _CMD_REMOVE_OPENER_RE.search(scan) or (view is not scan and _CMD_REMOVE_OPENER_RE.search(view)):
         for _at, targets in iter_cmd_recursive_removes(
                 command, scan, bash=True, recursive_only=False):
             out.extend(("delete", t) for t in targets)
