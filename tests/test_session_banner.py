@@ -4990,7 +4990,8 @@ class TestTheGovernanceWiringLine:
               "config_guard.py": ("ConfigChange", None),
               "stop_gate.py": ("Stop", None)}
 
-    def _tree(self, root: Path, *, drop: str | None = None) -> None:
+    def _tree(self, root: Path, *, drop: str | None = None, session_start: bool = False,
+              beside: tuple[str, dict] | None = None) -> None:
         hooks_dir = root / "tools" / "cc" / "hooks"
         hooks_dir.mkdir(parents=True)
         wiring: dict = {}
@@ -5003,8 +5004,99 @@ class TestTheGovernanceWiringLine:
             if matcher:
                 group["matcher"] = matcher
             wiring.setdefault(event, []).append(group)
+        if session_start:
+            wiring["SessionStart"] = [{"hooks": [{"type": "command", "command": "python", "args": [
+                "${CLAUDE_PROJECT_DIR}/tools/cc/hooks/session_start.py"]}]}]
+        if beside:
+            wiring.setdefault(beside[0], []).append({"hooks": [beside[1]]})
         (root / ".claude").mkdir()
         (root / ".claude" / "settings.json").write_text(json.dumps({"hooks": wiring}), encoding="utf-8")
+
+    #: An entry Claude Code 2.1.321 ignores under PostToolUse and applies the
+    #: rest of the file beside (driven, DEF-2065), which the voiding rule reads
+    #: as voiding the whole hooks block.
+    _IGNORED = ("PostToolUse", {"type": "websocket", "url": "ws://127.0.0.1:9/h"})
+
+    @staticmethod
+    def _void_reading(mod, root: Path) -> tuple[str, list[str]]:
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(root)
+        return summary, [line for line in mod._hook_utils.take_advisories() if "voiding rule" in line]
+
+    @staticmethod
+    def _user_file(config: Path, script: str) -> None:
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
+            {"type": "command", "command": "python3", "args": [f"/home/u/.claude/hooks/{script}"]}]}]}}),
+            encoding="utf-8")
+
+    @staticmethod
+    def _audit_types() -> list[str]:
+        types = []
+        for log in Path(os.environ["ESPALIER_AUDIT_DIR"]).glob("*.log"):
+            for line in log.read_text(encoding="utf-8").splitlines():
+                types.append(json.loads(line).get("event_type"))
+        return types
+
+    def test_a_hook_that_ran_from_a_void_reading_file_says_claude_code_applied_it(self, tmp_path, monkeypatch):
+        """DEF-2065, earn-the-red: the hook said nothing of a file the voiding
+        rule reads as void, though this hook running from it proves Claude Code
+        applied it. Mutation: drop the void-reading report."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=self._IGNORED)
+        summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1, lines
+        assert "applied the file" in lines[0] and "websocket" in lines[0] and "/hooks" in lines[0], lines
+        assert lines[0].isascii(), lines
+        assert "UNWIRED" not in summary, summary
+        assert "session_settings_void_applied" in self._audit_types()
+
+    def test_a_user_hook_running_another_script_keeps_the_proof(self, tmp_path, monkeypatch):
+        """The operator's own box wires a user-scope SessionStart canary
+        beside the tree's hook: it runs another script, so it cannot have
+        run this one."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        self._user_file(tmp_path / "config", "espalier_hook_wiring_canary.py")
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=self._IGNORED)
+        _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1 and "applied the file" in lines[0], lines
+
+    def test_another_file_naming_the_hook_leaves_it_unproven(self, tmp_path, monkeypatch):
+        """The caveat the row carries: SessionStart wired from another settings
+        file may be what ran, so the line says it cannot tell, and names the
+        file by its label, never its path."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        self._user_file(tmp_path / "config", "session_start.py")
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=self._IGNORED)
+        _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1, lines
+        assert "cannot tell" in lines[0] and "$CLAUDE_CONFIG_DIR/settings.json" in lines[0], lines
+        assert str(tmp_path) not in lines[0], lines
+        assert "session_settings_void_unproven" in self._audit_types()
+
+    def test_a_file_that_names_no_session_start_leaves_it_unproven(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, beside=self._IGNORED)
+        _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1 and "cannot tell" in lines[0] and "names no session_start.py" in lines[0], lines
+
+    def test_a_dropped_gate_beside_a_tolerated_entry_is_named(self, tmp_path, monkeypatch):
+        """Earn-the-red: the void reading hid a partial drop beside it. The
+        gates are judged as Claude Code applied the file, the entry set aside."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, drop="plan_guard.py", session_start=True, beside=self._IGNORED)
+        summary, _lines = self._void_reading(mod, root)
+        assert summary.startswith("UNWIRED (1 finding)"), summary
 
     def test_a_dropped_gate_is_named_with_the_wiring_fix(self, tmp_path):
         """plan_guard dropped while PreToolUse stays (write_guard's): the
@@ -5021,21 +5113,28 @@ class TestTheGovernanceWiringLine:
         assert named and "merge-settings --repair" in named[0], lines
         assert all(line.isascii() for line in lines), lines
 
-    def test_a_void_verdict_is_not_reported_by_a_hook_that_ran(self, tmp_path):
+    def test_a_void_reading_is_judged_as_applied_and_said(self, tmp_path, monkeypatch):
         """A well-formed http hook loads beside the gates (driven on Claude
-        Code 2.1.319, DEF-1195), so the rest reads wired; and a void verdict
-        is refuted by this hook running at all."""
+        Code 2.1.319, DEF-1195), so the rest reads wired. A type Claude Code
+        refuses, on the Stop gate's own entry, is an entry Claude Code 2.1.321
+        ignores alone (driven, DEF-2065): the line said nothing of it, which hid
+        that entry's gate and the dropped one. Now both are named, and the void
+        reading is said."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
         mod = _load()
-        self._tree(tmp_path, drop="plan_guard.py")
-        path = tmp_path / ".claude" / "settings.json"
+        root = tmp_path / "repo"
+        self._tree(root, drop="plan_guard.py")
+        path = root / ".claude" / "settings.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http", "url": "http://localhost:9/x"}]}]
         path.write_text(json.dumps(data), encoding="utf-8")
         mod._hook_utils.take_advisories()
-        assert mod._report_integrity_state(tmp_path).startswith("UNWIRED (1 finding)")
+        assert mod._report_integrity_state(root).startswith("UNWIRED (1 finding)")
         data["hooks"]["Stop"][0]["hooks"][0]["type"] = "wibble"  # a type Claude Code refuses
         path.write_text(json.dumps(data), encoding="utf-8")
-        assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
+        summary, lines = self._void_reading(mod, root)
+        assert summary.startswith("UNWIRED (2 findings)"), summary
+        assert len(lines) == 1 and "'wibble'" in lines[0], lines
 
     def test_a_dropped_gate_beside_an_agent_hook_is_still_named(self, tmp_path):
         """An agent hook with its prompt loads (driven on 2.1.319), so it does

@@ -2652,7 +2652,15 @@ gate; of the kill-switch shapes, `disableAllHooks` alone is read there. A
 well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
 does not void the file (Claude Code loads each beside the gates, driven); one
 missing its required field (`url`; `server` and `tool`; `prompt`) voids the
-whole hooks block, and the change is judged so. `espalier clean-generated`'s in-session
+whole hooks block, and the change is judged so. A session whose SessionStart ran
+from a file that reads as void is the exception: the hook running from it proves
+Claude Code applied the file (Claude Code 2.1.321 ignores such an entry outside
+`PreToolUse` and `PermissionRequest`, driven), so SessionStart records the gates
+the file wires with each such entry set aside, and keeps those entries' shapes,
+each with its event, as tolerated; a change is judged with them set aside, and any
+other malformed entry still voids. SessionStart says so on its own line, and
+says it cannot tell where another settings file also names `session_start.py`,
+or the file names none. `espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
 through, so its two-run flow still works.

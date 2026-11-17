@@ -260,14 +260,18 @@ def _unwiring_findings(root: Path) -> list[str]:
     # alike). Refusing such a change blocks no later edit -- each ConfigChange
     # is judged on its own content, so the repair is let through -- which is
     # why the kill-switch scan's leave-it-editable fail-open is not borrowed.
+    # The changed file is read under the voiding problems this session's
+    # Claude Code applied the project file with (DEF-2065): those set aside,
+    # as Claude Code set them aside, and any other still voids.
     state, data = _integrity.read_project_settings(root)
-    live = set(_integrity.live_governance_gates(data, root))
+    tolerated = _integrity.read_wired_tolerated(root)
+    live = set(_integrity.live_governance_gates(data, root, tolerated=tolerated))
     deployed = set(_integrity.deployed_governance_gates(root))
     before = _integrity.read_wired_gates(root)
     lost = sorted((deployed if before is None else set(before) & deployed) - live)
     if not lost or _integrity.recorded_settings_writer(root, data):
         # Let through: Claude Code now runs this file, so it is the session's.
-        _integrity.write_wired_gates(root, sorted(live))
+        _integrity.write_wired_gates(root, sorted(live), tolerated=tolerated)
         if not lost:
             _integrity.clear_unwired_pending(root)
         return []
@@ -275,7 +279,8 @@ def _unwiring_findings(root: Path) -> list[str]:
         root, lost, kind={"absent": "deleted", "unreadable": "unreadable"}.get(state, "unwired"))
     return [
         finding
-        for finding in _integrity.unwired_governance_gates(_integrity.PROJECT_SETTINGS_REL, data, root)
+        for finding in _integrity.unwired_governance_gates(
+            _integrity.PROJECT_SETTINGS_REL, data, root, tolerated=tolerated)
         if "loads NO hooks" in finding or any(f" {gate} " in finding for gate in lost)
     ]
 
