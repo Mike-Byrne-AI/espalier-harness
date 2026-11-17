@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5123",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import sys; sys.path.insert(0,'tools/cc/hooks'); import _bash_patterns as b; print(b.iter_ps_removed_or_relocated_operands('New-Item -ItemType SymbolicLink -Path link -Target .env'))\"",
+ "open_value": "[]",
+ "why_not": null,
+ "row_sha": "289c99d1fb76",
+ "text_sha": "945424fd0104",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD d8934e64c858)"
+}

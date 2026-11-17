@@ -1,0 +1,15 @@
+{
+ "id": "DEF-5122",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import os,sys,tempfile,pathlib; os.environ.pop('ESPALIER_MAINTENANCE_MODE',None); sys.path.insert(0,'.'); from tests.test_write_guard import run_guard_tool as g; c=[('Bash','cd cc 2>&1 && rm notes.md'),('Bash','ln 2>/dev/null -s x cc/z.json'),('PowerShell','Start-Process 2>\\$null bash -ArgumentList \\'-c\\',\\'rm -rf cc\\''),('PowerShell','iex 2>\\$null \\\"Remove-Item cc -Recurse -Force\\\"'),('Bash','find / -exec 2>/dev/null rm -rf {} +')]; v=lambda s: 'bump' if 'Speed-bump' in s else 'deny' if '\\\"deny\\\"' in s else 'allow'; print([v(g(t,{'command':k},pathlib.Path(tempfile.mkdtemp())).stdout or '') for t,k in c])\"",
+ "open_value": "['allow', 'allow', 'allow', 'allow', 'bump']",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tools/cc/hooks/write_guard.py",
+  "tools/cc/hooks/_speedbump.py"
+ ],
+ "row_sha": "82ce03c63f36",
+ "text_sha": "0eedeebc13c8",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD d8934e64c858)"
+}
