@@ -15,8 +15,8 @@ see, because both produced a REASSURING result rather than an error:
   and returns 0, so a return-code check reports every deny as an allow.
 
 ⚠ If you are tempted to simplify a refusal into a comment, read
-:func:`assert_safe_to_execute`'s docstring first: the four conditions are
-deliberately redundant.
+`bench/real_shell_confinement.py::assert_confined`'s docstring first: its nine
+conditions, the ones both legs run, are deliberately redundant.
 """
 
 from __future__ import annotations
@@ -35,6 +35,10 @@ from tests._spaced_paths import quoted, spaced
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "bench" / "reachability_differential.py"
+
+#: The loop-carrier bodies' variable (`rd._ITEM`), spelled for a parametrize
+#: list, which is built before the module fixture loads the script.
+_ITEM_NAME = "espalier_victim_item"
 
 # The same artifact-keyed stand-down `_NEEDS_REAL_BASH` (below) applies, spelled
 # once here so the confinement class above it can use it before the definition.
@@ -60,7 +64,7 @@ def rd():
 @pytest.fixture
 def sandbox(rd, tmp_path):
     """The sandbox the confinement tests hand the assertion: pytest's temp
-    path while condition (7) accepts it, else a directory under the
+    path while condition (4) accepts it, else a directory under the
     rehearsal's plain temp root -- a spaced `--basetemp` puts a blank in
     every `tmp_path` (DEF-5082), and these rows test the other six
     conditions, so their victim must be one bare word to begin with."""
@@ -133,7 +137,7 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_refuses_a_victim_whose_path_a_shell_would_split(self, rd, tmp_path, char, body):
         """A temp root holding a blank (`TMPDIR=.../axis tmp`, a maintainer's
         `--basetemp`) puts the blank in every victim's path. Quoted, the path
-        is one operand to `rm` and the six conditions above pass -- but
+        is one operand to `rm` and the operand conditions pass -- but
         `find | xargs` and `for x in $(find …)` split the enumerator's output
         on whitespace and hand the remove verb the PREFIX before the blank,
         `/x/axis`, the real directory beside the spaced one (driven 2026-11-04,
@@ -193,7 +197,7 @@ class TestRefusesToExecuteAnythingUnconfined:
 
     def test_every_body_template_carries_the_placeholder(self, rd):
         """A body without the placeholder would be executed verbatim; a body
-        with two would carry a second operand that condition (5) cannot see
+        with two would carry a second operand that condition (7) cannot see
         inside an interpreter program (one quoted token to shlex); a body
         carrying `$`, a backtick or `"` would be expanded by the outer shell
         inside a double-quoted wrapper before the interpreter saw it, so the
@@ -204,7 +208,7 @@ class TestRefusesToExecuteAnythingUnconfined:
                 # the reasoned exception (DEF-830): no backtick, and every
                 # expansion is the ONE name the sandbox environment binds
                 # inside the sandbox -- `assert_safe_to_execute` refuses any
-                # other before a shell sees it (condition 6, pinned below)
+                # other before a shell sees it (condition 8, pinned below)
                 assert "`" not in template, name
                 assert set(rd._PARAMETER_EXPANSION_RE.findall(template)) == {rd._ITEM}, name
                 continue
@@ -226,7 +230,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         rd.assert_safe_to_execute(f'rm -rf {quoted(str(victim))} "${rd._ITEM}"', victim, sandbox, env=env)
 
     def test_refuses_an_expansion_the_environment_does_not_bind(self, rd, sandbox):
-        """The must-trip twin of condition (6): the binding absent, empty, or
+        """The must-trip twin of condition (8): the binding absent, empty, or
         outside the sandbox, and the row is refused before any shell sees it
         -- whatever the shell would have made of the name. The 2026-09-17
         incident was an unbound fixture variable; this is the check that was
@@ -246,6 +250,142 @@ class TestRefusesToExecuteAnythingUnconfined:
         # the calibration twin: an expansion that is no delete's operand (the
         # git rows probe their environment so) is the shell's, not this check's
         rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(str(victim))}', victim, sandbox, env={})
+
+    def test_a_command_it_cannot_lex_is_refused_not_waved_through(self, rd, sandbox):
+        """The PowerShell leg's twin: unreadable is not the same as harmless.
+        A string the operand reader cannot lex is one whose operands it
+        cannot vouch for."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="cannot lex"):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} 'unclosed", victim, sandbox)
+
+    def test_an_operand_whose_landing_cannot_be_read_is_refused(self, rd, sandbox, monkeypatch):
+        """A resolve that raises (a symlink loop, a name this host cannot
+        hold) leaves where the operand lands unread: refused, never skipped.
+        Driven by making `Path.resolve` raise for that one operand."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        real = Path.resolve
+
+        def resolve(self, *args, **kwargs):
+            if self.name == "unreadable-landing":
+                raise OSError("driven: this operand's landing cannot be read")
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+        with pytest.raises(rd.UnsafeToExecute, match="unresolvable delete operand"):
+            rd.assert_safe_to_execute(
+                f"rm -rf {quoted(str(victim))} unreadable-landing", victim, sandbox)
+
+    def test_refuses_a_glob_behind_the_victim_after_a_cd_away(self, rd, sandbox):
+        """The PowerShell leg's lone re-ask of each operand, this leg's too
+        since the two share one condition set (DEF-5085). The resolution
+        condition reads a relative operand against the sandbox, where the row
+        starts, but a row that moves first (the `cd_then_delete` body's
+        `cd /tmp`) expands a glob wherever it moved to. Before the merge this
+        was ACCEPTED here and refused on the PowerShell leg."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="catastrophic delete operand"):
+            rd.assert_safe_to_execute(
+                f"cd /tmp; rm -rf {quoted(str(victim))} *", victim, sandbox)
+
+    @pytest.mark.parametrize("trailing", [
+        '"$(pwd)/.."', "$(echo ~)", '"`pwd`/.."', f'"${{{_ITEM_NAME}:+/}}"', '"$1"',
+    ], ids=["command-substitution", "unquoted-command-substitution", "backtick",
+            "braced-operator", "special-parameter"])
+    def test_refuses_a_substitution_behind_the_victim(self, rd, sandbox, trailing):
+        """Condition (9), refused on both legs (DEF-5085). Read as text, each
+        of these resolves inside the sandbox and names no unbound variable,
+        so (7) and (8) passed it, and before (9) it reached a real shell:
+        `"$(pwd)/.."` and its backtick twin land on the sandbox's parent, and
+        `${name:+/}` expands to `/` because the name IS bound. A value the
+        shell computes at run time is unknown here, so the row is
+        classifier-only (the 2026-09-17 incident's rules 1 and 2)."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {trailing}",
+                                      victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    def test_a_whole_bound_name_is_still_no_substitution(self, rd, sandbox):
+        """The calibration twin of (9): a bare `$name` and a whole `${name}`
+        are names, which (8) has read and bound inside the sandbox."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        env = rd._sandbox_env(sandbox)
+        for spelling in (f'"${rd._ITEM}"', f'"${{{rd._ITEM}}}"'):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {spelling}",
+                                      victim, sandbox, env=env)
+
+    def test_a_backtick_that_ends_the_string_closes_and_is_no_operand(self, rd, sandbox):
+        """The wrapper that puts a whole body inside one backtick capture
+        ends the row with its closer, which the operand reader collects after
+        the delete; with nothing after it, it substitutes nothing, so the row
+        is accepted. A backtick that opens among the operands is refused."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        wrapper = dict(rd.WRAPPERS)["backtick_heredoc_cut_by_separator_evaled"]
+        rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(str(victim))}", victim, sandbox)
+        with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} ` pwd `", victim, sandbox)
+        # glued, the closer ends the string inside a word the reader keeps
+        with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} `pwd`", victim, sandbox)
+
+    def test_an_operand_whose_home_cannot_be_read_is_refused(self, rd, sandbox, monkeypatch):
+        """`~user` for a user this host cannot name raises in `expanduser`
+        on POSIX: read inside the same refusal as a resolve that raises, so
+        the row is refused by name, never a crash out of the assertion.
+        Driven by making `Path.expanduser` raise for that one operand (on
+        Windows `~nosuchuser` resolves instead of raising)."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        real = Path.expanduser
+
+        def expanduser(self):
+            if str(self) == "~no-such-user-here":
+                raise RuntimeError("driven: could not determine home directory")
+            return real(self)
+
+        monkeypatch.setattr(Path, "expanduser", expanduser)
+        with pytest.raises(rd.UnsafeToExecute, match="unresolvable delete operand"):
+            rd.assert_safe_to_execute(
+                f"rm -rf {quoted(str(victim))} ~no-such-user-here", victim, sandbox)
+
+    def test_a_refused_row_is_no_verdict_never_a_fail_open(self, rd, monkeypatch, capsys):
+        """A row the set refuses stops the run before bash sees it: exit 3,
+        never FAIL-OPEN's 1 (failure-mode review)."""
+        def refused(argv, rehearsal):
+            raise rd.UnsafeToExecute("driven: a refused row")
+
+        monkeypatch.setattr(rd, "_differential", refused)
+        assert rd.main([]) == 3
+        assert "a row the confinement set refuses" in capsys.readouterr().err
+
+    def test_every_row_of_the_population_passes_the_condition_set(self, rd, sandbox):
+        """The census as a pin: every wrapper crossed with every body,
+        rendered as `bash_run` renders it and in the environment it runs in,
+        passes the assertion in memory. A condition that would refuse a
+        calibrated row reds here, on any host, before a run with bash finds
+        it as a crash."""
+        victim = sandbox / "victim"
+        env = rd._sandbox_env(sandbox)
+        rows = [(f"{w} / {b}", wt % bt) for w, wt in rd.WRAPPERS for b, bt in rd.BODIES]
+        assert rows
+        # the metamorphic gate's R1 rows reach this assertion through
+        # `bash_reaches` (bench/guard_metamorphic.py::check_r1)
+        from bench.guard_metamorphic import bash_rows
+        metamorphic = [(f"R1 {head} / {sep}", template) for head, sep, template in bash_rows(False)]
+        assert metamorphic
+        rows += metamorphic
+        for name, template in rows:
+            try:
+                rd.assert_safe_to_execute(
+                    template.replace(rd._TARGET, str(victim)), victim, sandbox, env=env)
+            except rd.UnsafeToExecute as exc:
+                pytest.fail(f"{name}: {exc}")
 
     @_NEEDS_REAL_BASH_DEFERRED
     def test_an_inherited_git_variable_does_not_reach_the_row(self, rd, monkeypatch):
@@ -320,6 +460,38 @@ class TestRefusesToExecuteAnythingUnconfined:
         reached, _rc = rd.bash_run(template)
         assert reached is True
         assert count() == before, "the row committed into the repository above the sandbox"
+
+
+class TestOneConditionSetServesBothLegs:
+    """DEF-5085: the confinement conditions were two hand-written copies, one
+    per shell, so a condition added on one leg's drive was not on the other's
+    (the PowerShell copy accepted `$HOME` behind its operand while the Bash
+    copy refused its twin). They are one set in
+    `bench/real_shell_confinement.py`; each leg declares a profile."""
+
+    LEGS = ("bench/reachability_differential.py",
+            "bench/powershell_reachability_differential.py")
+
+    @pytest.mark.parametrize("leg", LEGS)
+    def test_each_legs_assertion_only_hands_its_profile_to_the_one_set(self, leg):
+        """A leg whose assertion grows a condition of its own is a second
+        copy again, so its body is one call and no function in the leg reads
+        the operands itself."""
+        import ast
+
+        tree = ast.parse((REPO_ROOT / leg).read_text(encoding="utf-8"))
+        [fn] = [n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "assert_safe_to_execute"]
+        body = [s for s in fn.body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+        assert len(body) == 1 and isinstance(body[0], ast.Expr), ast.unparse(fn)
+        assert isinstance(body[0].value, ast.Call), ast.unparse(fn)
+        assert ast.unparse(body[0].value.func) == "_confinement.assert_confined", ast.unparse(fn)
+        readers = sorted(
+            n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+            and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                    and c.func.id == "_delete_operands" for c in ast.walk(n)))
+        assert readers == [], f"{leg}: {readers} read the delete operands outside the one set"
 
 
 # The guard below mirrors the product stand-down in

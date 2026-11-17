@@ -124,13 +124,44 @@ def _bounded_spawn():
 
 run_bounded = _bounded_spawn()
 
+
+def _sibling(name: str):
+    """A module of this directory, loaded by its path under its bare name --
+    never by putting ``bench/`` on ``sys.path`` at import (`_rehearsal` says
+    why) -- and the same object a bare import of that file gets, so both
+    differentials raise one ``UnsafeToExecute``. A module of that name loaded
+    from another file is left alone and this one is loaded beside it."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / f"{name}.py"
+    for key in (name, f"{name}_for_reachability_differential"):
+        loaded = sys.modules.get(key)
+        if loaded is None:
+            break
+        if Path(getattr(loaded, "__file__", None) or "").resolve() == path:
+            return loaded
+    spec = importlib.util.spec_from_file_location(key, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module      # a dataclass reads its module from here
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(key, None)  # never leave a half-built module to reuse
+        raise
+    return module
+
+
+#: The one condition set both real-shell drives run (DEF-5085); this leg's
+#: profile is `BASH`, beside `assert_safe_to_execute`.
+_confinement = _sibling("real_shell_confinement")
+
 #: Assembled rather than written whole: this file is scanned by the repo's own
 #: census and vocabulary gates, and a bare copy of the spelling is exactly the
 #: thing the guards under test key on.
 _RM = "rm" + " " + "-rf"
 
 #: Substituted with a throwaway victim directory before anything is executed.
-_TARGET = "__TARGET__"
+_TARGET = _confinement.PLACEHOLDER
 
 #: The loop variable the loop-carrier bodies (DEF-830) bind with `read` or
 #: `for` and remove in their body. Under a wrapper that re-parses its
@@ -138,7 +169,7 @@ _TARGET = "__TARGET__"
 #: heredoc) the OUTER shell expands the variable before the loop binds it,
 #: so it takes its value from the row's environment; `_sandbox_env` binds
 #: that name to a path inside the sandbox that does not exist, and
-#: `assert_safe_to_execute` (condition 6) refuses any expansion the
+#: `assert_safe_to_execute` (condition 8) refuses any expansion the
 #: environment does not bind inside the sandbox -- so no wrapper can hand
 #: the remove verb anything but the victim or nothing (the 2026-09-17
 #: incident: a fixture variable expanded by the wrong layer named the root).
@@ -158,9 +189,10 @@ _ITEM = "espalier_victim_item"
 BODIES_WITH_A_BOUND_EXPANSION: frozenset[str] = frozenset({
     "loop_find_while_read", "loop_for_substitution", "loop_tail_fed",
 })
-#: A parameter expansion by name, bare or braced (a command substitution
-#: `$(`, an ANSI-C quote `$'` and the special parameters are not names).
-_PARAMETER_EXPANSION_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+#: A parameter expansion by name, the condition set's own reading
+#: (`bench/real_shell_confinement.py`), so the body contract reads a name
+#: exactly as condition (8) does.
+_PARAMETER_EXPANSION_RE = _confinement.PARAMETER_EXPANSION_RE
 
 #: How the payload does (or does not) reach a shell. The first group re-parses
 #: its argument; the second consumes it as inert text.
@@ -679,19 +711,11 @@ QUICK_BODIES = {"one_statement", "two_statements_semicolon"}
 #: gone wrong and we must not run it.
 _CATASTROPHIC_OPERAND_RE = re.compile(r"\brm\s+(?:-\S+\s+)*(?:/|~|\*)(?=\s|$)")
 
-#: The characters bash reads in a BARE word as something other than the word:
-#: its metacharacters (a blank, a tab, a newline, ``|&;()<>``), the quotes,
-#: the expansions' ``$`` and backtick, and the glob characters. A victim path
-#: carrying one is not one operand to every row: a consumer that splits on
-#: whitespace (``find | xargs``, ``for x in $(find …)``) hands the remove verb
-#: the PREFIX before the blank -- the real directory beside a spaced temp root
-#: (``/x/axis`` beside ``/x/axis tmp``) -- which conditions (4) to (6) of
-#: `assert_safe_to_execute` cannot see, since that operand arrives on stdin or
-#: in a variable the loop binds (driven 2026-11-04, DEF-4093). The rehearsal's
-#: ``_INERT`` (what a plain root may not carry) is a subset, and `bash_run`
-#: builds its sandbox under the rehearsal's plain temp root, so condition (7)
-#: never fires; it is the belt to that brace.
-_BARE_WORD_HAZARDS = frozenset(" \t\n|&;()<>'\"$`*?[")
+#: The characters bash reads in a BARE word as something other than the word,
+#: condition (4)'s (`bench/real_shell_confinement.py` holds the reading and
+#: why): `bash_run` builds its sandbox under the rehearsal's plain temp root,
+#: and the condition is the belt to that brace (DEF-4093).
+_BARE_WORD_HAZARDS = _confinement.BARE_WORD_HAZARDS
 
 
 #: The four verdicts a shape can earn.
@@ -717,8 +741,9 @@ def classify(reaches: bool, base_denies: bool, work_denies: bool) -> str:
     return FAIL_OPEN if reaches else RELIEF
 
 
-class UnsafeToExecute(RuntimeError):
-    """The command about to be executed is not provably confined to the sandbox."""
+#: The command about to be executed is not provably confined to the sandbox:
+#: the condition set's one class, shared with the PowerShell leg.
+UnsafeToExecute = _confinement.UnsafeToExecute
 
 
 #: Tokens that end a delete's operand list.
@@ -743,6 +768,14 @@ def _delete_operands(cmd: str) -> list[str]:
 
     A command that cannot be lexed RAISES: a string this function cannot read is
     a string it must not vouch for.
+
+    ⚠ A LONE BACKTICK THAT ENDS THE STRING IS NO OPERAND. It closes a
+    substitution opened before the verb (`backtick_heredoc_cut_by_separator_evaled`
+    puts the whole body inside one), and with nothing after it, it substitutes
+    nothing: as an opener it would be bash's unexpected end of file, and the
+    command would not run. Any other backtick in an operand stays one, so
+    condition (9) refuses a substitution whose opener is among the operands
+    (DEF-5085: the nine rows of that wrapper were read as carrying one).
     """
     lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -751,6 +784,8 @@ def _delete_operands(cmd: str) -> list[str]:
     except ValueError as exc:
         raise UnsafeToExecute(
             f"cannot lex {cmd!r} to check its delete operands: {exc}") from None
+    if tokens and tokens[-1] == "`":
+        tokens.pop()
 
     operands: list[str] = []
     i = 0
@@ -769,109 +804,38 @@ def _delete_operands(cmd: str) -> list[str]:
     return operands
 
 
+#: How this leg's rows meet the one condition set
+#: (`bench/real_shell_confinement.py::assert_confined`, which holds every
+#: condition and why).
+BASH = _confinement.Shell(
+    name="bash",
+    delete_operands=_delete_operands,
+    # `bash_run` substitutes the victim's absolute path, unique to its
+    # throwaway, so its presence anywhere in the row is the substitution
+    victim_spellings=lambda victim: (str(victim),),
+    spelling_opens_a_word=False,
+    catastrophic=_CATASTROPHIC_OPERAND_RE,
+    # none: the victim is spelled ABSOLUTE here, so the escaping form refuses
+    # the rows themselves (2599 of the 2755 the census of 2026-11-17 read);
+    # condition (7) reads where each operand resolves instead
+    escaping=None,
+    lone_delete=_RM,
+    substitution_marks="$`",
+)
+
+
 def assert_safe_to_execute(
     cmd: str, victim: Path, sandbox: Path, env: "dict[str, str] | None" = None,
 ) -> None:
     """Refuse to hand `cmd` to a real shell unless it is confined to `sandbox`.
 
-    ⚠ THIS FUNCTION IS THE REASON THIS SCRIPT IS SAFE TO RUN. Everything below
-    executes genuine recursive deletes. If a template ever reached the shell with
-    its placeholder unsubstituted, the command run would be the catastrophic form
-    against the real filesystem. Seven independent conditions, each fatal:
-
-    1. the placeholder is gone (substitution happened at all)
-    2. the victim path is present (it was substituted with the RIGHT thing)
-    3. the victim really is inside the sandbox
-    4. no delete in the final string takes root, `~`, or a bare glob as operand
-    5. every delete operand resolves inside the sandbox (below)
-    6. every parameter expansion INSIDE a delete operand names a variable
-       `env` binds to a path inside the sandbox (below) -- the literal-operand
-       conditions cannot see what a shell will substitute for `$name`, and an
-       unbound fixture variable is the 2026-09-17 incident's shape; an
-       expansion elsewhere in the row (the git rows' environment probes) is
-       not a delete's operand and is left to the shell
-    7. the victim's path is one bare word to bash (none of
-       `_BARE_WORD_HAZARDS`): the sandbox is built under the rehearsal's plain
-       temp root, and this is the belt to that brace -- a consumer that splits
-       on whitespace would hand the delete the prefix before a blank, an
-       operand (4) to (6) never see (DEF-4093)
-
-    (4) is the belt to (1)-(3)'s braces: it does not care HOW a catastrophic
-    operand got there, only that one is present.
-
-    ⚠ (4) and (5) read the delete as a bare shell word. Inside an interpreter
-    program (`python3 -c '... os.system("<delete>")'`) it is ONE quoted token
-    to shlex, so neither sees an operand there: those rows are confined by
-    (1)-(3) alone, which is why a body carries exactly one operand (the test
-    file pins it).
+    ⚠ THIS CHECK IS THE REASON THIS SCRIPT IS SAFE TO RUN: everything below
+    executes genuine recursive deletes. It is the one condition set both legs
+    run (`real_shell_confinement.assert_confined`), under this leg's profile,
+    `BASH`, with `env` the environment the row's shell runs in (the bound
+    loop variable, condition 8).
     """
-    if _TARGET in cmd:
-        raise UnsafeToExecute(f"placeholder never substituted: {cmd!r}")
-    if str(victim) not in cmd:
-        raise UnsafeToExecute(f"victim path absent from command: {cmd!r}")
-    try:
-        victim.resolve().relative_to(sandbox.resolve())
-    except ValueError:
-        raise UnsafeToExecute(
-            f"victim {victim} is outside sandbox {sandbox}") from None
-    # (7) The victim's path is ONE bare word to bash. Quoted, a spaced path
-    # is one operand to `rm` and (4) to (6) pass; but a consumer that splits
-    # on whitespace (`find | xargs`, `for x in $(find …)`) hands the remove
-    # verb the prefix before the blank -- the real directory beside the
-    # spaced temp root -- and that operand is never in the text. Only the
-    # path itself can be read, so it is read here (DEF-4093).
-    hazards = _BARE_WORD_HAZARDS & set(str(victim))
-    if hazards:
-        raise UnsafeToExecute(
-            f"victim path {str(victim)!r} carries {sorted(hazards)}: a row reads it as "
-            f"more than one shell word, and a consumer that splits on whitespace would "
-            f"hand the delete the prefix before it, a path outside the sandbox: {cmd!r}")
-    hit = _CATASTROPHIC_OPERAND_RE.search(cmd)
-    if hit:
-        raise UnsafeToExecute(
-            f"refusing to execute a catastrophic operand {hit.group(0)!r}: {cmd!r}")
-    # (5) EVERY operand, not just the first. Condition 4 reads the verb plus one
-    # operand, so a second operand riding behind a valid path was invisible to it.
-    #
-    # ⚠ RESOLVED AGAINST THE SANDBOX, NOT THE PROCESS CWD. These commands are run
-    # with cwd set to the sandbox, so a bare relative operand IS confined; judging
-    # it against the caller's cwd would refuse well-formed rows (a heredoc
-    # terminator lexes as a trailing bare word) while proving nothing.
-    root = sandbox.resolve()
-    for operand in _delete_operands(cmd):
-        expanded = Path(operand).expanduser()
-        candidate = expanded if expanded.is_absolute() else root / expanded
-        try:
-            resolved = candidate.resolve()
-        except (OSError, RuntimeError):
-            raise UnsafeToExecute(
-                f"unresolvable delete operand {operand!r}: {cmd!r}") from None
-        try:
-            resolved.relative_to(root)
-        except ValueError:
-            raise UnsafeToExecute(
-                f"delete operand {operand!r} resolves outside sandbox {sandbox}: "
-                f"{cmd!r}") from None
-    # (6) EVERY parameter expansion inside a delete operand, bound or refused.
-    # The loop-carrier bodies (DEF-830) carry one; a double-quoting wrapper
-    # expands it in the OUTER shell before the loop's `read` or `for` binds
-    # it, so its value is the row's environment's or nothing. Conditions (4)
-    # and (5) read the literal token and pass for any value the shell later
-    # substitutes; this one asks the environment. An unbound name is refused
-    # whatever the shell would have made of it. Scoped to the delete operands
-    # because that is where the hazard is: the git rows probe their
-    # environment with expansions that are no delete's operand.
-    for operand in _delete_operands(cmd):
-        for name in _PARAMETER_EXPANSION_RE.findall(operand):
-            value = (env or {}).get(name)
-            if value is None:
-                raise UnsafeToExecute(
-                    f"unbound parameter expansion ${name} in a delete operand: {cmd!r}")
-            try:
-                Path(value).resolve().relative_to(root)
-            except (ValueError, OSError, RuntimeError):
-                raise UnsafeToExecute(
-                    f"${name} is bound outside sandbox {sandbox}: {cmd!r}") from None
+    _confinement.assert_confined(cmd, victim, sandbox, BASH, env=env)
 
 
 def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
@@ -993,7 +957,7 @@ def bash_run(template: str) -> tuple[bool, int | None]:
     The sandbox goes under the rehearsal's plain temp root (DEF-4093): the
     ambient temp directory while it is plain, else the platform's first plain
     fallback, so the victim's path is one word to every row and the rows keep
-    their bytes; `assert_safe_to_execute`'s condition (7) is the belt.
+    their bytes; `assert_safe_to_execute`'s condition (4) is the belt.
     """
     with tempfile.TemporaryDirectory(dir=str(_rehearsal().plain_temp_root())) as sandbox_str:
         sandbox = Path(sandbox_str)
@@ -1155,12 +1119,17 @@ def materialise_baseline(ref: str, dest: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     """The differential, or exit 3 with no verdict where write_guard's time
-    budget left a call unjudged (DEF-5071): exit 1 is a fail-open."""
+    budget left a call unjudged (DEF-5071) or the confinement set refused a
+    row before bash saw it (DEF-5085): exit 1 is a fail-open."""
     rehearsal = _rehearsal()
     try:
         return _differential(argv, rehearsal)
     except rehearsal.BudgetMiss as exc:
         print(f"[reachability] NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+    except UnsafeToExecute as exc:
+        print(f"[reachability] NO VERDICT -- a row the confinement set refuses: {exc}",
+              file=sys.stderr)
         return 3
 
 

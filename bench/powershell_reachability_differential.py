@@ -139,6 +139,10 @@ from powershell_guard_rehearsal import (  # noqa: E402
     throwaway_project,
 )
 
+# The one condition set both real-shell drives run (DEF-5085), from the same
+# directory; this leg's profile is `POWERSHELL`, beside `assert_safe_to_execute`.
+import real_shell_confinement as _confinement  # noqa: E402
+
 #: The root shape ``guard_tier`` builds every project under: plain unless
 #: ``--root-shape`` names another, so a run costs one shape's time.
 ROOT_SHAPE = "plain"
@@ -146,7 +150,7 @@ ROOT_SHAPE = "plain"
 # Assembled, never spelled literally — this file is scanned by the guards it
 # tests. Same construction, same reason, as the two sibling gates.
 _RI = "Remove-Item" + " " + "-Recurse" + " " + "-Force"
-_TARGET = "__TARGET__"
+_TARGET = _confinement.PLACEHOLDER
 
 #: Every head whose operand a row may delete under: the remove verbs, and
 #: (DEF-824, DEF-822) the sweep heads -- `find`, whose roots it deletes
@@ -183,8 +187,9 @@ _ESCAPING_OPERAND_RE = re.compile(
 )
 
 
-class UnsafeToExecute(RuntimeError):
-    """A generated command was not provably confined to the sandbox."""
+#: A generated command was not provably confined to the sandbox: the
+#: condition set's one class, shared with the Bash leg.
+UnsafeToExecute = _confinement.UnsafeToExecute
 
 
 class InstrumentBroken(RuntimeError):
@@ -636,8 +641,6 @@ def execution_rows(*, nested: str) -> list[dict]:
 # ── Oracles ─────────────────────────────────────────────────────────────────
 
 
-RI_VERB = "Remove-Item"
-
 #: The delete verbs PowerShell accepts, including its default aliases, and
 #: (DEF-824, DEF-822) the sweep heads whose roots a delete runs under: every
 #: operand of every one of them is judged by the assertion below. The WORD
@@ -730,71 +733,43 @@ def _delete_operands(cmd: str) -> list[str]:
     return operands
 
 
+#: How this leg's rows meet the one condition set
+#: (`bench/real_shell_confinement.py::assert_confined`, which holds every
+#: condition and why).
+POWERSHELL = _confinement.Shell(
+    name="PowerShell",
+    delete_operands=_delete_operands,
+    # ⚠ The rows deliberately use RELATIVE operands (the guard's operand parser
+    # tiers on exactly that), so the Bash leg's spelling -- the victim's
+    # absolute path -- would reject every row. What replaces it must not
+    # degrade to "the word victim appears somewhere": that accepts the name as
+    # unrelated prose. One of the EXACT declared spellings must open a word,
+    # paired with condition (6), which rejects any delete operand that escapes
+    # the working directory however it got there.
+    victim_spellings=lambda victim: tuple(spelling for _, spelling in TARGETS),
+    spelling_opens_a_word=True,
+    catastrophic=_CATASTROPHIC_OPERAND_RE,
+    escaping=_ESCAPING_OPERAND_RE,
+    lone_delete=_RI,
+    # `$` alone: PowerShell's backtick is its escape character, not a substitution
+    substitution_marks="$",
+    # PowerShell's own `$null` binds no path: the or-chained rows send an error
+    # stream there (`2>$null`), and the over-collecting operand reader hands
+    # the redirect's target over as an operand (three execution rows)
+    self_bound=frozenset({"null"}),
+)
+
+
 def assert_safe_to_execute(cmd: str, victim: Path, sandbox: Path) -> None:
     """Refuse to hand `cmd` to a real interpreter unless confined to `sandbox`.
 
-    ⚠ THIS FUNCTION IS THE REASON THIS SCRIPT IS SAFE TO RUN. Everything below
-    executes genuine recursive deletes. Four independent conditions, each fatal,
-    mirroring the Bash sibling:
-
-    1. the placeholder is gone (substitution happened at all)
-    2. the victim path is present (it was substituted with the RIGHT thing)
-    3. the victim really is inside the sandbox
-    4. no delete in the final string takes a drive root, ``/``, ``~`` or a bare
-       glob as operand
-
-    (4) is the belt to (1)-(3)'s braces: it does not care HOW a catastrophic
-    operand got there, only that one is present.
+    ⚠ THIS CHECK IS THE REASON THIS SCRIPT IS SAFE TO RUN: everything below
+    executes genuine recursive deletes. It is the one condition set both legs
+    run (`real_shell_confinement.assert_confined`), under this leg's profile,
+    `POWERSHELL`. No row on this leg binds a variable, so no environment is
+    passed and every name but the interpreter's own is refused (condition 8).
     """
-    if _TARGET in cmd:
-        raise UnsafeToExecute(f"placeholder never substituted: {cmd!r}")
-    # ⚠ The rows deliberately use RELATIVE operands (the guard's operand parser
-    # tiers on exactly that), so the Bash sibling's "absolute sandbox path must
-    # appear" check cannot be reused verbatim -- it would reject every row. What
-    # replaces it must not degrade to "the word victim appears somewhere": that
-    # accepts the name as unrelated prose. Require one of the EXACT declared
-    # spellings, and pair it with condition 5 below, which rejects any delete
-    # operand that escapes the working directory however it got there.
-    if not any(f" {spelling}" in cmd for _, spelling in TARGETS):
-        raise UnsafeToExecute(
-            f"no declared sandbox operand ({[t for _, t in TARGETS]}) in: {cmd!r}")
-    try:
-        victim.resolve().relative_to(sandbox.resolve())
-    except ValueError:
-        raise UnsafeToExecute(
-            f"victim {victim} is outside sandbox {sandbox}") from None
-    hit = _CATASTROPHIC_OPERAND_RE.search(cmd)
-    if hit:
-        raise UnsafeToExecute(
-            f"refusing to execute a catastrophic operand {hit.group(0)!r}: {cmd!r}")
-    # (5) ANY delete operand that is not plainly relative. The catastrophic
-    # regex above only catches the four bare forms (`/`, `~`, a drive root, a
-    # bare glob); it says nothing about `C:\Users\...` or `~/Documents`. This
-    # is the general backstop, and it is what lets condition 2 stay narrow.
-    escaped = _ESCAPING_OPERAND_RE.search(cmd)
-    if escaped:
-        raise UnsafeToExecute(
-            f"delete operand escapes the sandbox {escaped.group(0)!r}: {cmd!r}")
-
-
-    # (6) EVERY operand, not just the first. Conditions 2-5 all anchor on the verb
-    # plus ONE operand, so a second operand riding behind a declared one was
-    # invisible to every one of them -- and PowerShell's positional -Path is
-    # string[], so it really does bind and really does delete.
-    #
-    # Each operand is re-tested with THIS FILE'S OWN predicates by synthesising a
-    # single-operand delete around it. Reusing them keeps one definition of
-    # "catastrophic" rather than growing a second that can drift.
-    for operand in _delete_operands(cmd):
-        probe = f"{RI_VERB} -Recurse -Force {operand}"
-        if _CATASTROPHIC_OPERAND_RE.search(probe):
-            raise UnsafeToExecute(
-                f"catastrophic delete operand {operand!r} behind a valid one: "
-                f"{cmd!r}")
-        if _ESCAPING_OPERAND_RE.search(probe):
-            raise UnsafeToExecute(
-                f"escaping delete operand {operand!r} behind a valid one: "
-                f"{cmd!r}")
+    _confinement.assert_confined(cmd, victim, sandbox, POWERSHELL)
 
 
 #: Set by ``main()`` for the life of one run: a private cache directory for
@@ -1039,6 +1014,12 @@ def main(argv: list[str] | None = None) -> int:
         except BudgetMiss as exc:
             # A judgment that never finished: no tree verdict either.
             print(f"NO VERDICT -- {exc}", file=sys.stderr)
+            return 3
+        except UnsafeToExecute as exc:
+            # A row the confinement set refuses stops the run before any
+            # interpreter sees it, and that is a fault in the population, not
+            # a tree verdict: exit 3, never FAIL-OPEN's 1 (DEF-5085).
+            print(f"NO VERDICT -- a row the confinement set refuses: {exc}", file=sys.stderr)
             return 3
         finally:
             _RUN_CACHE_DIR = None

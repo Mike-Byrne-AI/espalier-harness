@@ -61,6 +61,9 @@ limit would mean the friction layer drifted past its stated scope.
 - `bench/powershell_reachability_differential.py` — its PowerShell twin: the
   same question put to a real `pwsh` (or Windows PowerShell 5.1), so it runs
   only on a host that has one.
+- `bench/real_shell_confinement.py` — the one condition set both differentials
+  run before a row reaches a real interpreter (`DEF-5085`); each declares a
+  per-shell profile beside its operand reader. Not an oracle of its own.
 - `bench/guard_metamorphic.py` — the metamorphic gate: relations that must hold
   across a transformation, asserted over a derived population, so the author
   never has to predict which combination breaks.
@@ -107,6 +110,7 @@ bench/
 ├── run_benchmark.py                  the runner
 ├── reachability_differential.py     generated-population gate (oracle: real bash)
 ├── powershell_reachability_differential.py   its PowerShell twin (oracle: a real pwsh / Windows PowerShell)
+├── real_shell_confinement.py         the one confinement condition set both differentials run
 ├── guard_metamorphic.py              metamorphic gate: relations over a derived population
 ├── powershell_guard_rehearsal.py     PowerShell row table as a pure evaluator, five project-root shapes
 ├── guard_row_probe.py                the walks' Bash-tool / home / root-shape rows on the same fixture
@@ -234,11 +238,22 @@ everywhere the Bash one does. Read a clean run as
 *no fail-open among the shapes enumerated here and runnable on this host*, never
 as *no fail-open*.
 
-**It executes real recursive deletes.** Four redundant preconditions in
-`assert_safe_to_execute` must all hold before any command reaches a shell:
-the placeholder was substituted, the victim path is present, the victim resolves
-under the throwaway directory, and no root/`~`/glob operand appears in the final
-string. Every refusal path is driven by `tests/test_reachability_differential.py`.
+**It executes real recursive deletes.** The redundant conditions of
+`bench/real_shell_confinement.py::assert_confined` must all hold before any
+command reaches a shell, and both differentials run that one set, each under
+its own shell's profile (`DEF-5085`; they were two hand-written copies until
+then, and the PowerShell one accepted a `$HOME` operand the Bash one refused).
+In short: the placeholder was substituted, the victim is named by the shell's
+own spelling and lies under the throwaway directory, that spelling is one bare
+word, no root, `~` or glob first operand appears in the final string (nor, on
+PowerShell, whose rows spell the victim relative, an escaping one), every
+delete operand resolves under the throwaway and is none of those when asked
+alone, every variable in an operand is bound under the throwaway, and no `$`
+substitution (nor, on Bash, a backtick) is left in one. The function's
+docstring is the whole list; what the operand readers cannot see yet is
+`DEF-2099` and `DEF-2100`. Every refusal path is driven by
+`tests/test_reachability_differential.py` and
+`tests/test_powershell_reachability_differential.py`, in memory.
 This is confinement for a test fixture and is not a security boundary: it guards
 against a mis-substituted template, not against hostile input.
 

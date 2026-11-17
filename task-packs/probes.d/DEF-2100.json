@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2100",
+ "subject": "bench/real_shell_confinement.py",
+ "cmd": "python3 -c \"import importlib.util as u,pathlib as p,tempfile as t,sys;ld=lambda n,f:[s:=u.spec_from_file_location(n,f),m:=u.module_from_spec(s),sys.modules.__setitem__(n,m),s.loader.exec_module(m),m][-1];rd=ld('rd','bench/reachability_differential.py');pd=ld('pd','bench/powershell_reachability_differential.py');d=p.Path(t.gettempdir()).resolve()/'blind-spot-probe'/'sb';v=d/'victim';c=[(pd.assert_safe_to_execute,pd._RI+' ./victim ..'+chr(92)+'outside',{}),(pd.assert_safe_to_execute,pd._RI+' ./victim (Resolve-Path ~)',{}),(rd.assert_safe_to_execute,rd._RM+' '+str(v)+' {~,x}',{'env':{}})];n=[0];exec(chr(10).join(['for f,x,k in c:',' try:','  f(x,v,d,**k);n[0]+=1',' except rd.UnsafeToExecute:pass']));print(n[0])\"",
+ "open_value": "3",
+ "why_not": null,
+ "inputs": [
+  "bench/reachability_differential.py",
+  "bench/powershell_reachability_differential.py"
+ ],
+ "row_sha": "6edad976a339",
+ "text_sha": "cac1135514db",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here; UNRESOLVED in the export of HEAD 1c02c4b48268)"
+}
