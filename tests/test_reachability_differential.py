@@ -181,11 +181,14 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_an_inert_quoted_delete_is_still_accepted(self, rd, sandbox):
         """The calibration twin. A quoted delete lexes to ONE token, so it is not
         a verb — which is correct, because the shell will not execute it either.
-        Without this the operand check would refuse well-formed prose rows."""
+        Without this the operand check would refuse well-formed prose rows.
+        A quoted delete of the root or home is (5)'s on both legs, inert or
+        not: the belt reads text and cannot tell `echo` from `eval` (DEF-2100's
+        review; the PowerShell leg already refused one ending at its quote)."""
         victim = sandbox / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"echo 'rm -rf /' ; rm -rf {quoted(str(victim))}", victim, sandbox)
+            f"echo 'rm -rf /x' ; rm -rf {quoted(str(victim))}", victim, sandbox)
 
     def test_a_heredoc_terminator_is_not_read_as_an_operand(self, rd, sandbox):
         """The other calibration twin: a bare trailing word resolves against the
@@ -318,6 +321,50 @@ class TestRefusesToExecuteAnythingUnconfined:
         for spelling in (f'"${rd._ITEM}"', f'"${{{rd._ITEM}}}"'):
             rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {spelling}",
                                       victim, sandbox, env=env)
+
+    @pytest.mark.parametrize("trailing", ["{~,x}", "{x,/}", "{a..b}", "{{x},/}", "{{},~}",
+                                          ".?/x", ".*", "x/.?/y"],
+                             ids=["brace-home", "brace-root", "brace-sequence",
+                                  "brace-nested-root", "brace-nested-home",
+                                  "dot-glob-question", "dot-glob-star", "dot-glob-deep"])
+    def test_refuses_an_expansion_behind_the_victim(self, rd, sandbox, trailing):
+        """Condition (9)'s expansions on this leg (DEF-2100). The reader keeps
+        each as ONE word that resolves inside the sandbox, so (7) passed it,
+        but bash makes it into others before `rm` sees them: `{~,x}` is the
+        home directory and `x`, `{x,/}` the root, and where the shell does
+        not skip dots (the Mac's /bin/bash 3.2) `.?` is `..`, a walk out.
+        All six were ACCEPTED before."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="an expansion"):
+            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {trailing}",
+                                      victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    @pytest.mark.parametrize("wrapper", ['eval "rm -rf ~/x; %s"', "bash -c 'rm -rf /; %s'",
+                                         'eval "rm -rf ~"; %s'],
+                             ids=["quoted-home-child", "quoted-root-then-separator",
+                                  "quoted-home-then-quote"])
+    def test_refuses_a_catastrophic_first_operand_inside_a_quoted_span(self, rd, sandbox, wrapper):
+        """Condition (5) on this leg, the one reader of a delete inside a
+        quoted span (the operand conditions lex the span as one word). Its
+        operand had to end at a blank or the string's end, so a root or home
+        ending at `;` or a quote, and `~/x` at all, passed it: each was
+        ACCEPTED (DEF-2100's failure-mode review)."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="catastrophic operand"):
+            rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(str(victim))}",
+                                      victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    def test_finds_braces_and_a_glob_inside_the_victim_are_no_expansion(self, rd, sandbox):
+        """The calibration twin: find's `{}` carries no comma and no `..`, so
+        bash leaves it a word; a glob whose component opens with a name, not a
+        dot, cannot match `..`. Both stay accepted."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        for cmd in (f"find {quoted(str(victim))} -exec rm -rf {{}} +",
+                    f"rm -rf {quoted(str(victim))}/a.b*"):
+            rd.assert_safe_to_execute(cmd, victim, sandbox, env=rd._sandbox_env(sandbox))
 
     def test_a_backtick_that_ends_the_string_closes_and_is_no_operand(self, rd, sandbox):
         """The wrapper that puts a whole body inside one backtick capture
@@ -492,6 +539,41 @@ class TestOneConditionSetServesBothLegs:
             and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
                     and c.func.id == "_delete_operands" for c in ast.walk(n)))
         assert readers == [], f"{leg}: {readers} read the delete operands outside the one set"
+
+    def test_every_expansion_form_is_one_a_leg_performs(self, rd):
+        """A form added to the set's table that no profile names is a
+        refusal no row ever meets: each form is claimed by a leg, and each
+        leg's profile passes its separators and expansions by name, so a
+        third leg copying a profile cannot take the defaults in silence."""
+        import ast
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "_prd_for_the_bash_tests", REPO_ROOT / "bench" / "powershell_reachability_differential.py")
+        prd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(prd)
+        assert rd._confinement.EXPANSIONS.keys() == rd.BASH.expansions | prd.POWERSHELL.expansions
+        for leg in self.LEGS:
+            tree = ast.parse((REPO_ROOT / leg).read_text(encoding="utf-8"))
+            [call] = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                      and ast.unparse(n.func) == "_confinement.Shell"]
+            named = {k.arg for k in call.keywords}
+            assert {"separators", "expansions"} <= named, f"{leg}: {sorted(named)}"
+
+    def test_a_profile_naming_an_expansion_the_set_lacks_is_refused(self, rd):
+        """A profile names its shell's expansions from the set's one table
+        (DEF-2100); a name the table lacks would read as a form refused while
+        the condition never looks for it, so the profile refuses to be
+        built."""
+        shell = rd.BASH
+        with pytest.raises(ValueError, match="no expansion form"):
+            rd._confinement.Shell(
+                name="misspelt", delete_operands=shell.delete_operands,
+                victim_spellings=shell.victim_spellings,
+                spelling_opens_a_word=shell.spelling_opens_a_word,
+                catastrophic=shell.catastrophic, escaping=shell.escaping,
+                lone_delete=shell.lone_delete, substitution_marks=shell.substitution_marks,
+                expansions=frozenset({"brace-expansion"}))
 
 
 # The guard below mirrors the product stand-down in

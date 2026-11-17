@@ -173,16 +173,18 @@ _HEADS = (
 )
 
 #: Operands that must never reach a real interpreter, whatever else went wrong.
+#: A lone backslash is the current drive's root (DEF-2100).
 _CATASTROPHIC_OPERAND_RE = re.compile(
-    _HEADS + r"(?:\s+-\S+)*\s+(?:[A-Za-z]:\\?|/|~|\*)(?=\s|$|['\"])",
+    _HEADS + r"(?:\s+-\S+)*\s+(?:[A-Za-z]:\\?|[\\/]|~|\*)(?=\s|$|['\"])",
     re.IGNORECASE,
 )
 
 
 #: Any delete whose operand is absolute, home-relative, parent-escaping or
-#: globbed -- the general form of the four bare shapes above.
+#: globbed -- the general form of the four bare shapes above. A leading
+#: backslash roots the operand at the current drive (DEF-2100: `\Windows`).
 _ESCAPING_OPERAND_RE = re.compile(
-    _HEADS + r"(?:\s+-\S+)*\s+['\"]?(?:[A-Za-z]:|/|~|\.\.[\\/])",
+    _HEADS + r"(?:\s+-\S+)*\s+['\"]?(?:[A-Za-z]:|[\\/]|~|\.\.[\\/])",
     re.IGNORECASE,
 )
 
@@ -672,6 +674,16 @@ _ENUM_PATTERN_FLAGS = frozenset({"-include", "-filter", "-exclude", "-attributes
 #: Tokens that end a delete's operand list.
 _PS_OPERAND_STOP = frozenset({";", "|", "&", "(", ")", "{", "}", "&&", "||"})
 
+#: The stops that open an ARGUMENT of the delete rather than end it: an
+#: argument expression (`(Resolve-Path ~)`) and a delay-bind scriptblock
+#: (`{ $_.FullName + '/..' }`). The reader hands each over as an operand, so
+#: the condition set's substitution reading refuses it (DEF-2100: until then
+#: the operand list ended at the opener and the argument was never read).
+_PS_ARGUMENT_OPENERS = frozenset({"(", "{"})
+
+#: A backtick before a line break: PowerShell's line continuation, a blank.
+_LINE_CONTINUATION_RE = re.compile(r"`\r?\n")
+
 #: A delete head the word roster cannot hold (DEF-1123): the native rm by its
 #: file name or its path (`rm.exe`, `/bin/rm`), read by the guard's own verb.
 _NATIVE_REMOVE_HEAD_RE = re.compile(_bash_patterns._PS_REMOVE_VERB, re.IGNORECASE)
@@ -699,9 +711,24 @@ def _delete_operands(cmd: str) -> list[str]:
     spelling: requiring the latter refused 43 well-formed rows whose delete sits
     inside a block comment. Over-collecting is safe here precisely because the
     test applied to each item is about danger, not about provenance.
+
+    ⚠ LEXED WITH POWERSHELL'S ESCAPE, THE BACKTICK. ``shlex``'s POSIX escape
+    is the backslash, which dropped it from every operand: `..\\outside` was
+    read as the name `..outside` inside the sandbox, `\\Windows` as `Windows`
+    (DEF-2100). PowerShell reads the backslash as a path separator. A
+    backtick before a line break is PowerShell's line continuation, a blank,
+    so it is read as one before the lexer would glue the break into a word.
+
+    An opener left in the operand run (`(`, `{`) is handed over and refused,
+    though shlex ends a statement at neither a newline nor a block comment:
+    safe in direction, at the cost of a row the population pin would name.
+    Find's `{}` (quoted in the rows, and the lexer strips the quotes) and an
+    empty scriptblock bind no path, so that whole word is no operand.
     """
+    cmd = _LINE_CONTINUATION_RE.sub(" ", cmd)
     lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.escape = "`"
     try:
         tokens = list(lexer)
     except ValueError as exc:
@@ -718,7 +745,12 @@ def _delete_operands(cmd: str) -> list[str]:
         while i < len(tokens):
             tok = tokens[i]
             if tok in _PS_OPERAND_STOP:
+                if tok in _PS_ARGUMENT_OPENERS:
+                    operands.append(tok)
                 break
+            if tok == "{}":
+                i += 1
+                continue
             low = tok.lower()
             if low in _ENUM_PATTERN_FLAGS:
                 i += 2                    # the flag and its pattern value
@@ -751,12 +783,27 @@ POWERSHELL = _confinement.Shell(
     catastrophic=_CATASTROPHIC_OPERAND_RE,
     escaping=_ESCAPING_OPERAND_RE,
     lone_delete=_RI,
-    # `$` alone: PowerShell's backtick is its escape character, not a substitution
-    substitution_marks="$",
+    # `$` opens a variable or a subexpression; `@` a splat (`@p` binds a
+    # table's `Path`) or an array; the `(` and `{` the reader hands over open
+    # an argument expression or a delay-bind scriptblock, each evaluated after
+    # this assertion reads the text (driven 2026-11-17 on PowerShell 5.1: each
+    # resolved to the working directory's parent or the home directory). A
+    # backtick is the escape: the lexer consumes it outside quotes, so one left
+    # in an operand is an escape inside a double-quoted span it did not
+    # resolve (`"`/"` is `/` to PowerShell)
+    substitution_marks="$@({`",
     # PowerShell's own `$null` binds no path: the or-chained rows send an error
     # stream there (`2>$null`), and the over-collecting operand reader hands
     # the redirect's target over as an operand (three execution rows)
     self_bound=frozenset({"null"}),
+    # the provider reads a backslash as a separator on every host, so
+    # `..\outside` is a parent walk under pwsh on Linux too (DEF-2100)
+    separators="/\\",
+    # a drive name the provider maps (`HKCU:`, `Env:`, `Temp:`). No brace
+    # expansion: a `{` opens a scriptblock, a mark above. No dot glob: its
+    # wildcards enumerate a directory's children, never `..` (driven: `.?`
+    # and `.*` resolved nothing in an empty directory, PowerShell 5.1)
+    expansions=frozenset({"mapped-drive"}),
 )
 
 

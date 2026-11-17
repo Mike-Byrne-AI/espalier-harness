@@ -66,6 +66,32 @@ _WHOLE_EXPANSION_RE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-
 #: declared relatives, which carry none of these.
 BARE_WORD_HAZARDS = frozenset(" \t\n|&;()<>'\"$`*?[")
 
+#: The word forms an interpreter makes into other words or another path
+#: before its delete sees them, which an operand reader keeps as ONE name
+#: (DEF-2100). Read as text, each resolves inside the sandbox, so condition
+#: (7) passed it; condition (9) refuses it on a shell whose profile names the
+#: form. Driven 2026-11-17, echo-only, on Windows PowerShell 5.1 and on WSL
+#: Ubuntu 24.04's bash 5.2.
+EXPANSIONS: dict[str, re.Pattern[str]] = {
+    # bash's brace expansion: `{~,x}` is the home directory and `x`, `{x,/}`
+    # the root, and a nested pair (`{{x},/}`) expands its outer level. A
+    # formed one carries a comma or a `..` sequence, so find's `{}` is none;
+    # the pattern spans pairs, so it over-reads a comma between two of them.
+    "brace": re.compile(r"\{.*(?:,|\.\.).*\}"),
+    # a glob in a path component that opens with a dot: where the shell does
+    # not skip dots (every bash before 5.2, the Mac's /bin/bash 3.2 among
+    # them, and 5.2 with `globskipdots` off) `.?` matches `..` and `.*`
+    # matches `.` and `..`, a walk out of the directory. It over-reads
+    # `.hidden*`, which cannot.
+    "dot-glob": re.compile(r"(?:^|/)\.[^/]*[*?[]"),
+    # a drive the interpreter maps through its own table: a provider-qualified
+    # path (`FileSystem::/`, `Microsoft.PowerShell.Core\FileSystem::`), or a
+    # drive name longer than one letter (`HKCU:` is the registry, `Env:` the
+    # environment, PowerShell 7's `Temp:` the temp directory). A one-letter
+    # drive is a path this host resolves.
+    "mapped-drive": re.compile(r"^[A-Za-z][\w./\\-]*::|^[A-Za-z][\w.-]+:"),
+}
+
 
 @dataclass(frozen=True)
 class Shell:
@@ -92,10 +118,24 @@ class Shell:
     escaping: re.Pattern[str] | None
     #: The delete a lone operand is re-asked under (condition 7).
     lone_delete: str
-    #: The characters that open a substitution in an operand (condition 9).
+    #: The characters that open a substitution in an operand, or that the
+    #: reader hands over for an argument the interpreter computes (condition 9).
     substitution_marks: str
     #: Names the interpreter binds itself to no path (condition 8).
     self_bound: frozenset[str] = frozenset()
+    #: The characters this shell separates path components with; condition
+    #: (7) reads each as `/` before it resolves an operand.
+    separators: str = "/"
+    #: The forms of :data:`EXPANSIONS` this shell's interpreter performs
+    #: (condition 9). A profile that leaves a form out says why.
+    expansions: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        unknown = self.expansions - EXPANSIONS.keys()
+        if unknown:
+            raise ValueError(
+                f"{self.name}: no expansion form {sorted(unknown)} in the set, "
+                f"which holds {sorted(EXPANSIONS)}")
 
 
 def assert_confined(
@@ -120,7 +160,8 @@ def assert_confined(
        parent-escaping first operand, on a shell whose rows spell the victim
        relative
     7. EVERY delete operand, not just the first: each resolves inside the
-       sandbox, and each, asked alone, is neither (5)'s nor (6)'s
+       sandbox, read with the shell's own separators, and each, asked alone,
+       is neither (5)'s nor (6)'s
     8. every parameter expansion inside a delete operand names a variable
        `env` binds to a path inside the sandbox, or one the interpreter binds
        itself to no path -- the literal-operand conditions cannot see what a
@@ -128,9 +169,10 @@ def assert_confined(
        the 2026-09-17 incident's shape; an expansion elsewhere in the row (the
        git rows' environment probes) is not a delete's operand and is left to
        the shell
-    9. no substitution is left in a delete operand once (8) has read its
-       names: its value is unknown until the shell runs it, so the row is
-       classifier-only (the incident's rules 1 and 2)
+    9. no substitution and no expansion is left in a delete operand once (8)
+       has read its names: the shell's substitution marks, and the forms of
+       `EXPANSIONS` it performs. Its value is unknown until the shell runs
+       it, so the row is classifier-only (the incident's rules 1 and 2)
 
     (5) and (6) are the belt to (1)-(3)'s braces: they do not care HOW a
     catastrophic operand got there, only that one is present, and they read
@@ -142,9 +184,11 @@ def assert_confined(
     to the lexer, so none of them sees an operand there: those rows are
     confined by (1)-(6) alone ((1)-(5) on a shell with no escaping form), which
     is why a Bash body carries exactly one operand (its test file pins it).
-    What the operand readers see as a harmless name though the interpreter
-    computes it (PowerShell's backslash walks and `(...)` arguments, Bash's
-    brace expansion) is DEF-2100's.
+    What an operand reader keeps as a harmless name though the interpreter
+    computes it is (7)'s separators and (9)'s marks and expansions since
+    DEF-2100. A delete head the reader does not read as a literal word (the
+    Bash reader reads `rm` alone; a head spelled by path or computed, on
+    either shell) is that row's remainder.
     """
     if PLACEHOLDER in cmd:
         raise UnsafeToExecute(f"placeholder never substituted: {cmd!r}")
@@ -200,11 +244,18 @@ def assert_confined(
     # Each operand is then re-asked ALONE with this shell's own patterns, by
     # synthesising a one-operand delete around it: one definition of
     # "catastrophic", never a second that can drift.
+    #
+    # Read with the SHELL's separators, not the host's: PowerShell's provider
+    # reads `..\outside` as a parent walk on every host, and a POSIX path
+    # reads its backslash as a name character (DEF-2100).
     root = sandbox.resolve()
     operands = shell.delete_operands(cmd)
     for operand in operands:
+        path_text = operand
+        for separator in shell.separators:
+            path_text = path_text.replace(separator, "/")
         try:
-            expanded = Path(operand).expanduser()
+            expanded = Path(path_text).expanduser()
             candidate = expanded if expanded.is_absolute() else root / expanded
             resolved = candidate.resolve()
         except (OSError, RuntimeError):
@@ -251,10 +302,19 @@ def assert_confined(
     # command substitution, a braced form with an operator (`${name:+/}`
     # expands to what follows it), a special parameter, and on a shell whose
     # backtick substitutes, a backtick. None has a value before the shell runs
-    # it (DEF-5085; until then `$(echo ~)` passed both copies).
+    # it (DEF-5085; until then `$(echo ~)` passed both copies). Then the
+    # expansions the shell performs, which no mark opens (DEF-2100).
     for operand in operands:
-        left = sorted(set(shell.substitution_marks) & set(_WHOLE_EXPANSION_RE.sub("", operand)))
+        stripped = _WHOLE_EXPANSION_RE.sub("", operand)
+        left = sorted(set(shell.substitution_marks) & set(stripped))
         if left:
             raise UnsafeToExecute(
                 f"a substitution ({''.join(left)}) in delete operand {operand!r}: its value "
                 f"is unknown until the {shell.name} interpreter runs it: {cmd!r}")
+        for form in sorted(shell.expansions):
+            hit = EXPANSIONS[form].search(stripped)
+            if hit:
+                raise UnsafeToExecute(
+                    f"an expansion ({form}, {hit.group(0)!r}) in delete operand {operand!r}: "
+                    f"the {shell.name} interpreter makes it into other words or another path, "
+                    f"unknown until it runs: {cmd!r}")

@@ -709,7 +709,11 @@ QUICK_BODIES = {"one_statement", "two_statements_semicolon"}
 #: A delete whose operand is the filesystem root, a bare `~`, or a leading glob.
 #: If this matches a command we are about to EXECUTE, the victim substitution has
 #: gone wrong and we must not run it.
-_CATASTROPHIC_OPERAND_RE = re.compile(r"\brm\s+(?:-\S+\s+)*(?:/|~|\*)(?=\s|$)")
+#: The operand may end at a separator or a closing quote, and `~` at a slash
+#: too: inside a quoted span (an `eval "..."` wrapper) the operand conditions
+#: read no operand, so this pattern is the one reader (DEF-2100's review).
+_CATASTROPHIC_OPERAND_RE = re.compile(
+    r"\brm\s+(?:-\S+\s+)*(?:[/*](?=[\s;&|)'\"]|$)|~(?=[\s;&|)'\"/]|$))")
 
 #: The characters bash reads in a BARE word as something other than the word,
 #: condition (4)'s (`bench/real_shell_confinement.py` holds the reading and
@@ -821,6 +825,13 @@ BASH = _confinement.Shell(
     escaping=None,
     lone_delete=_RM,
     substitution_marks="$`",
+    # a backslash is an escape to bash, which the reader's lexer consumes
+    separators="/",
+    # bash makes both into other words before `rm` sees them (driven
+    # 2026-11-17 on WSL's bash 5.2: `{~,x}` echoed the home directory and
+    # `x`; with `globskipdots` off, as in every bash before 5.2, `.?` echoed
+    # `..`). No mapped drive: a colon is a name character here.
+    expansions=frozenset({"brace", "dot-glob"}),
 )
 
 

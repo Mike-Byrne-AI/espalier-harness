@@ -247,11 +247,18 @@ In short: the placeholder was substituted, the victim is named by the shell's
 own spelling and lies under the throwaway directory, that spelling is one bare
 word, no root, `~` or glob first operand appears in the final string (nor, on
 PowerShell, whose rows spell the victim relative, an escaping one), every
-delete operand resolves under the throwaway and is none of those when asked
-alone, every variable in an operand is bound under the throwaway, and no `$`
-substitution (nor, on Bash, a backtick) is left in one. The function's
-docstring is the whole list; what the operand readers cannot see yet is
-`DEF-2099` and `DEF-2100`. Every refusal path is driven by
+delete operand resolves under the throwaway (read with the shell's own
+separators: PowerShell's backslash too) and is none of those when asked alone,
+every variable in an operand is bound under the throwaway, and no substitution
+is left in one (a `$`; on Bash a backtick; on PowerShell an `@`, an argument
+expression, a scriptblock or an escape left in a quoted span) nor an expansion
+the shell performs (on Bash a brace expansion or a dot glob, which every bash
+before 5.2 matches against `..`; on PowerShell a drive its provider maps, such
+as `HKCU:`). The function's docstring is the whole list; what the operand
+readers cannot see yet is `DEF-2099` (a relative operand after a `cd` away)
+and `DEF-2100` (a delete head not read as a literal word: Bash reads `rm`
+alone, and a head spelled by path or computed is read on neither shell).
+Every refusal path is driven by
 `tests/test_reachability_differential.py` and
 `tests/test_powershell_reachability_differential.py`, in memory.
 This is confinement for a test fixture and is not a security boundary: it guards
