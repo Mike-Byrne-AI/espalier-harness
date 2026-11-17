@@ -1340,10 +1340,20 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "pins the set by value and pins `held` OUT of it. Adjudicated "
         "2026-09-05 with the `held` disposition (DEF-685).",
     ),
-    # 2 row(s), shapes: comprehension, for-assert
+    # 3 row(s), shapes: comprehension, for-assert
     "tests/test_recall.py": (
-        2, "8413df67ce34ac2eb667bc5d2d9aec7b064e81a1a4ddd4dccdd9cd87b3f34601",
-        "CORRECT_BY_PROPERTY",
+        3, "79ce1727db1631f9b01d942e8ffdfa0f7ef44bd88a953726d86fc7d6a477de9b",
+        "CORRECT_BY_REMEDY",
+        "Three rows, two verdicts; the field carries the weaker. (3) CORRECT_BY_REMEDY, NEW "
+        "2026-11-16 (the hooks-guide recall lane): test_the_shipped_guides_carry_no_skip_marker "
+        "walks `_recall.REFERENCE_DOCS` and reads each shipped guide for a recall-skip marker, "
+        "blind to a guide dropped from the tuple. The drop reds one class over, where the "
+        "adopter fixture's questions read the same tuple (tools/cc/hooks/_recall.py:1104): "
+        "dropping docs/TROUBLESHOOTING.md reds tests/test_recall.py:4523 "
+        "(test_the_stop_gate_question_lands_its_section_first) alone, dropping docs/HOOKS.md "
+        "reds tests/test_recall.py:4517 (test_the_write_guard_question_lands_its_section_first) "
+        "and 11 more, and the loop stays "
+        "green under both (driven on a scratch archive, 2026-11-16). (1)-(2) CORRECT_BY_PROPERTY, "
         "NEW 2026-09-12 (the recall lane, DEF-775/DEF-699). The for-assert walks "
         "`_recall.PULL_EXCLUDED_MEMORY_NOTES` asserting each excluded name exists on "
         "disk under exactly that spelling and is absent from the pull corpus -- "
