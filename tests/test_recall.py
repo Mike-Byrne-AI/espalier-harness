@@ -77,18 +77,40 @@ def _two_candidate_corpus(tmp_path, monkeypatch) -> Path:
 
 # ── live-corpus smoke (the §6 pass-criteria) ──────────────────────────────────
 
+#: The topical pin's least lead, as (top1 - top2) / top1, _MUST_RANK's one formula.
+#: Until 2026-11-16 the pin asserted only top1 > top2, and its lead fell from 16.7% to
+#: 0.83% unseen when docs/HOOKS.md joined this repository's corpus: a review measured
+#: it by chance. With a floor the next decay reds at the commit that causes it.
+_TOPICAL_PIN_LEAD_FLOOR = 0.10
+
+
 def test_live_corpus_recalls_a_topical_memory_doc_top1():
     """A real topical query returns the right memory/ doc as the top hit, won by a
     score MARGIN (not a reverse=True source tie-break). 'speedbump cap exemption'
     used to tie at the top (gap 0.0); 'speedbump chokepoint' gave a clear gap so
     the assertion proves ranking, not tie ordering (TP-168 168-F). Re-anchored
     2026-09-26: the speedbump atlas stayed in the archive at the 2026-09-25 seed,
-    and 'speedbump chokepoint' now ties two SHARP_EDGES sections within 0.001;
-    'action justification protocol' wins its memo by 1.19 (measured)."""
-    hits = _recall.recall("action justification protocol", REPO_ROOT, top=2)
+    and 'speedbump chokepoint' now ties two SHARP_EDGES sections within 0.001.
+
+    Re-anchored 2026-11-16: 'action justification protocol' led its memo by 16.7%
+    without the hooks guide and by 0.83% with it, over docs/HOOKS.md :: Governance
+    audit log, and lost top-1 to that section at 2 of 12 guide versions sampled
+    from origin/main since 2026-10-16 (10-31 and 11-01). 'choose the artifact by
+    where the risk lives' leads by 37.7% at its least across the guide on and off,
+    those 12 versions, and the root CLAUDE.md cut drafted for job 9587e7, and its
+    runner-up is a memory/ note, not a guide that moves weekly."""
+    hits = _recall.recall("choose the artifact by where the risk lives", REPO_ROOT, top=2)
     assert hits, "expected a hit for a clearly topical query"
-    assert hits[0].source == "memory/action-justification-protocol.md"
+    assert hits[0].source == "memory/choose-the-artifact-by-where-the-risk-lives.md"
     assert len(hits) > 1 and hits[0].score > hits[1].score, "top-1 must win by margin"
+    lead = (hits[0].score - hits[1].score) / hits[0].score
+    assert lead >= _TOPICAL_PIN_LEAD_FLOOR, (
+        f"the topical pin leads {hits[1].source!r} by {lead:.2%}, under the "
+        f"{_TOPICAL_PIN_LEAD_FLOOR:.0%} floor (37.7% at its least when measured, "
+        "2026-11-16). A grown or new document is crowding it: re-anchor to a query "
+        "whose lead has headroom across the crowding document's history, and never "
+        "lower the floor to fit."
+    )
 
 
 def test_live_corpus_suppresses_pure_nonsense():
@@ -2484,6 +2506,23 @@ def _arm_hits(fn, skip=(), *, top=2):
     )
 
 
+def _arm_rows_past(seen, *, depth=10):
+    """For each arm row ``recall(top=seen)`` misses: (row number, principle, its
+    rank within ``depth`` or None, the sources ranked after slot ``seen`` and
+    above it). Read only by a failure message, so the green run pays nothing: the
+    curve's one climb has rested on a single row since 2026-11-16, and a flat
+    curve should name the row that slipped and what now outranks it."""
+    rows = []
+    for number, (query, want) in enumerate(_PARAPHRASE_ARM, 1):
+        hits = _recall.recall(query, REPO_ROOT, top=depth)
+        rank = next((k for k, h in enumerate(hits, 1)
+                     if h.source.startswith(f"docs/STANDING_PRINCIPLES.md :: {want}")), None)
+        if rank is not None and rank <= seen:
+            continue
+        rows.append((number, want, rank, [h.source for h in hits[seen:(rank or 1) - 1]]))
+    return rows
+
+
 def _arm_candidates(fn, top):
     """Mean candidates the CALLER receives per query -- the budget that must match.
 
@@ -2723,7 +2762,9 @@ def test_the_union_beats_a_six_slot_control():
     assert curve[-1] > curve[0], (
         f"recall()'s paraphrase curve is flat from slot 2 to slot 6 ({curve}): more "
         "slots buy nothing, which the union's reach-per-line headline below assumes "
-        "is false. Re-derive the headline."
+        "is false. Re-derive the headline. The rows recall(top=2) misses, as (row, "
+        "principle, rank within ten or None, the sources between slot 2 and it): "
+        f"{_arm_rows_past(2)}"
     )
     del steps  # computed for the message history above; the shape is the claim now
     # THE HEADLINE'S OWN PROPERTY, asserted directly: the deepest swept control
@@ -4531,6 +4572,27 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
             "### Child one\n\nzzchild\n\n## Next\n\n### Child two\n\nbeta\n")})
         assert set(self._reference(root)) == {
             "docs/HOOKS.md :: Kept", "docs/HOOKS.md :: Next", "docs/HOOKS.md :: Child two"}
+
+    def test_the_shipped_guides_carry_no_skip_marker(self):
+        """The marker is the author's switch for a pointer section, and in a
+        shipped guide it would take the section, and a ``##``'s ``###`` sections
+        with it, out of every adopter's recall, where "why did a hook deny or
+        block me" lands. Read with the engine's own splitter and rule. Dies to: a
+        skip marker added to a section of either shipped copy (driven 2026-11-16:
+        one under the hooks guide's write_guard section reds it beside the
+        write_guard question above; one under the troubleshooting guide's
+        "Hooks aren't firing" reds it alone in this class)."""
+        skipped = []
+        for rel in _recall.REFERENCE_DOCS:
+            shipped = REPO_ROOT / "espalier" / "assets" / "docs" / Path(rel).name
+            sections = _recall._reference_sections(shipped.read_text(encoding="utf-8"))
+            assert sections, f"no ## or ### section read in {shipped.name}"
+            skipped += [f"{rel} :: {heading}" for _level, heading, _path, body in sections
+                        if _recall._section_skipped(heading, body)]
+        assert not skipped, (
+            f"a recall skip marker in a shipped guide removes {skipped} from every "
+            "adopter's recall, where a hook's deny or block is asked about; take "
+            "the marker out")
 
     def test_a_subsection_carries_its_parent_heading(self, tmp_path, monkeypatch):
         """Dies to: the parent left out of the path (two of four ``###`` queries
