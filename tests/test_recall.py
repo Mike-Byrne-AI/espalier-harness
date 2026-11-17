@@ -2306,7 +2306,9 @@ _TASK_ARM_FILED = frozenset({
 #: that revision (the corpus grows with every memory note; the count is not pinned
 #: here because it is not the denominator). Different denominator, not drift: the
 #: rates are consistent and marginally better (83.7% -> 85.0% at elem 0).
-_PARAPHRASE_UNION_HITS = 10
+#: Re-derived to 9 on 2026-11-17 with the control below (the whole table, not one
+#: row): it already read 9 before the hooks guide joined the corpus, inside its band.
+_PARAPHRASE_UNION_HITS = 9
 
 #: The EQUAL-BUDGET control. Without this constant the headline is unearned: it is
 #: what separates "the second NORMALISATION helps" from "more SLOTS help". The
@@ -2317,7 +2319,14 @@ _PARAPHRASE_UNION_HITS = 10
 #: Not a Sandbox" rose from 3.9701 to 3.9864 (the lead 0.85% to 0.45%): the
 #: fragment marker that had diluted it by 19 tokens is no longer its text. An
 #: ordinary edit to that SHARP_EDGES entry is the likeliest next cause of 8 -> 7.
-_PARAPHRASE_CONTROL_HITS = 8
+#: ⚠ RE-DERIVED 2026-11-17, when this repository began indexing its hooks guide
+#: (27 sections; the operator's ruling of 2026-11-16): ordinary growth had already
+#: taken the count to 7 inside its band, and the guide took it to 6. The query is
+#: the one named above: "is the harness a security boundary" loses principle 2
+#: from the control's top 4 to "docs/HOOKS.md :: Governance audit log", while
+#: recall(top=6) and the union keep it (A/B'd with the family filtered out of the
+#: corpus). Both direction legs hold; the margin widens to 3.
+_PARAPHRASE_CONTROL_HITS = 6
 
 #: The control's `top`, named rather than inlined so the budget guard below and the
 #: headline cannot drift apart. 4, not 2 -- see the table.
@@ -2409,7 +2418,10 @@ _PARAPHRASE_UNION_TOP = 2
 #: fourth for "I fixed one site, where else does this live" (a CONTESTED row)
 #: and §8 seventh. The union stays at 10 under every variant, so what moved is
 #: recall()'s deep reach on one contested row, not the front door.
-_PARAPHRASE_PLATEAU = ((2, 7), (3, 7), (4, 8), (6, 8))  # (top, hits) for recall()
+#: ⚠ RE-DERIVED 2026-11-17 with the hooks guide indexed: [6, 6, 6, 7]. Its cause
+#: is on _PARAPHRASE_CONTROL_HITS; the union (9) still delivers more than
+#: recall(top=6).
+_PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall()
 
 #: union(top=_PARAPHRASE_UNION_TOP) minus recall(top=6) on the paraphrase arm --
 #: the headline's actual claim ("handed more candidates and still loses"),
