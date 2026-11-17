@@ -38,6 +38,7 @@ import tempfile
 import textwrap
 import threading
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
@@ -357,9 +358,10 @@ def _record_wired_gates(root: Path, source: str) -> None:
     its pending notice goes with it. An unreadable file leaves no snapshot,
     and config_guard judges the file's state instead (fail-closed).
 
-    A file the voiding rule reads as void is recorded as Claude Code applied
-    it, each problem set aside and kept as tolerated (DEF-2065): this hook
-    running from the file proves Claude Code applied it (2.1.321 ignores such
+    A file the voiding rule reads as void is recorded, on every start, as
+    Claude Code applied it: each problem set aside and its entry kept as
+    tolerated, by content and event, repeats counted (DEF-2065). A start this
+    hook made from the file proves Claude Code applied it (2.1.321 ignores such
     an entry outside PreToolUse and PermissionRequest, driven), and recording
     no gate left config_guard nothing to lose, so any unwire went through.
     Where another source ran this hook and the file truly loaded nothing, the
@@ -374,7 +376,7 @@ def _record_wired_gates(root: Path, source: str) -> None:
     if state == "unreadable":
         _integrity.clear_wired_gates(root)
         return
-    tolerated = frozenset(_integrity.voiding_problems(data))
+    tolerated = tuple(sorted(key for _problem, key in _integrity.voiding_problems(data)))
     _integrity.write_wired_gates(
         root, _integrity.live_governance_gates(data, root, tolerated=tolerated), tolerated=tolerated)
 
@@ -2994,38 +2996,74 @@ def _kill_switch_recheck_clause(root: Path) -> str:
         return ""
 
 
+def _shown_problems(problems: list[str]) -> str:
+    return problems[0] + (f"; {len(problems) - 1} more" if len(problems) > 1 else "")
+
+
+def _split_void_reading(root: Path, problems: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
+    """(the problems the snapshot tolerates, the rest), as wordings. The
+    snapshot is written before this runs (``main``), so at a process start it
+    holds every problem; after a clear or a compaction it keeps the start's,
+    and a problem it lacks was added after Claude Code loaded the file, which
+    config_guard reads as void. No snapshot splits nothing off."""
+    if _integrity.read_wired_gates(root) is None:
+        return [problem for problem, _key in problems], []
+    left = Counter(_integrity.read_wired_tolerated(root))
+    at_start: list[str] = []
+    since: list[str] = []
+    for problem, key in problems:
+        if left[key] > 0:
+            left[key] -= 1
+            at_start.append(problem)
+        else:
+            since.append(problem)
+    return at_start, since
+
+
 def _void_reading_warning(root: Path, data: dict, problems: list[str]) -> tuple[bool, str, dict]:
     """(proven applied, banner line, audit details) for a project settings file
     the voiding rule reads as loading no hooks, read while this hook runs
-    (DEF-2065). Claude Code applied the file -- the proven wording -- where it
-    names this hook under SessionStart and no other settings file does;
-    otherwise this hook may have come from another source, and the line says
-    it cannot tell which, with the reason. Either way the gates are judged as
-    applied (``_record_wired_gates``). Files are named by label, never path."""
-    rel, script = _integrity.PROJECT_SETTINGS_REL, _integrity.SESSION_START_SCRIPT
-    shown = problems[0] + (f"; {len(problems) - 1} more" if len(problems) > 1 else "")
-    names_here = _integrity.settings_name_hook(data, "SessionStart", script)
-    elsewhere = _integrity.other_settings_naming_hook(root, "SessionStart", script)
+    (DEF-2065), for the problems the file held when this process loaded it.
+    Claude Code applied the file -- the proven wording -- where a loadable entry
+    in it runs this hook under SessionStart and neither the local nor the user
+    settings file names this hook; otherwise this hook may have come from
+    another source, and the line says it cannot tell which, with the reason.
+    Either way the gates are judged as applied (``_record_wired_gates``). Files
+    are named by label, never path."""
+    rel, hook = _integrity.PROJECT_SETTINGS_REL, _integrity.SESSION_START_HOOK
+    names_here = _integrity.settings_name_hook(data, "SessionStart", hook, loadable_only=True)
+    elsewhere = _integrity.other_settings_naming_hook(root, "SessionStart", hook)
     details = {"problems": problems[:5], "problem_count": len(problems),
                "names_hook": names_here, "also_named_by": elsewhere}
-    lead = f"[WARN] Espalier-Harness's voiding rule reads {rel} as loading no hooks ({shown})"
+    lead = (f"[WARN] Espalier-Harness's voiding rule reads {rel} as loading no hooks "
+            f"({_shown_problems(problems)})")
     if names_here and not elsewhere:
         return True, (
-            f"{lead}, but this SessionStart hook ran from it and no other settings file names "
-            f"{script}, so Claude Code applied the file: it ignores such an entry, or knows a hook "
-            "type espalier's table does not. The gates it wires are judged as wired for this "
-            "session, so config_guard still refuses a change that unwires them. `/hooks` lists "
-            "what loaded; an entry it does not list does not run, so fix or remove it."), details
+            f"{lead}, but this SessionStart hook ran from it, and neither the local nor the user "
+            f"settings file names {hook}, so Claude Code applied the file with that entry in it. "
+            "The gates it wires are judged as wired for this session, so config_guard still "
+            "refuses a change that unwires them. `/hooks` lists what loaded; an entry it does not "
+            "list does not run, so fix or remove it."), details
     if elsewhere:
         verb = "names" if len(elsewhere) == 1 else "name"
-        why = f"{' and '.join(elsewhere)} also {verb} {script} under SessionStart"
+        why = f"{' and '.join(elsewhere)} also {verb} {hook} under SessionStart"
     else:
-        why = f"the file names no {script} under SessionStart, so another source ran this hook"
+        why = f"the file names no loadable {hook} entry under SessionStart, so another source ran this hook"
     return False, (
         f"{lead}, and this SessionStart cannot tell whether Claude Code applied it: {why}. "
         "`/hooks` lists what loaded; where it lists none of this file's hooks, every gate the "
         "file wires is dead until the entry is fixed or removed (`espalier doctor .` names it). "
         "config_guard judges a change to the file as if it loaded."), details
+
+
+def _void_since_start_line(problems: list[str]) -> str:
+    """The banner line for problems added after Claude Code loaded the file
+    (``_split_void_reading``): this hook running proves nothing of them."""
+    return (f"[WARN] Espalier-Harness's voiding rule reads {_integrity.PROJECT_SETTINGS_REL} as "
+            f"loading no hooks ({_shown_problems(problems)}), from an entry added after this "
+            "session's Claude Code loaded the file, so this hook running proves nothing of it. "
+            "config_guard reads the file as void while the entry stands, and refuses a change to "
+            "the file as unwiring the gates: fix or remove the entry, or start a new session.")
 
 
 def _report_integrity_state(root: Path) -> str:
@@ -3099,14 +3137,17 @@ def _report_integrity_state(root: Path) -> str:
     # (the plain merge fixes an absent event only; doctor names each shape).
     # A file the voiding rule reads as void is said on its own line, and its
     # gates are judged as Claude Code applied it, each problem set aside
-    # (DEF-2065): a partial drop beside such an entry is still named.
+    # (DEF-2065): a partial drop beside such an entry is still named. Each
+    # audit type is written beside its own advise call, the census's shape.
     unwired: list[str] = []
+    problems: list[tuple[str, str]] = []
     try:
         state, data = _integrity.read_project_settings(root)
         if state == "read" and isinstance(data, dict):  # unreadable: the kill-switch scan above says so
             problems = _integrity.voiding_problems(data)
-            if problems:
-                applied, line, details = _void_reading_warning(root, data, problems)
+            at_start, since = _split_void_reading(root, problems)
+            if at_start:
+                applied, line, details = _void_reading_warning(root, data, at_start)
                 if applied:
                     _integrity.append_audit(
                         root, {"event_type": "session_settings_void_applied", "details": details})
@@ -3115,10 +3156,24 @@ def _report_integrity_state(root: Path) -> str:
                     _integrity.append_audit(
                         root, {"event_type": "session_settings_void_unproven", "details": details})
                     _hook_utils.advise(line)
+            if since:
+                _integrity.append_audit(
+                    root, {"event_type": "session_settings_void_since_start",
+                           "details": {"problems": since[:5], "problem_count": len(since)}})
+                _hook_utils.advise(_void_since_start_line(since))
             unwired = _integrity.unwired_governance_gates(
-                _integrity.PROJECT_SETTINGS_REL, data, root, tolerated=frozenset(problems))
+                _integrity.PROJECT_SETTINGS_REL, data, root,
+                tolerated=tuple(key for _problem, key in problems))
     except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
         _hook_utils.advise_exc("session_start: governance wiring check failed", e)
+    # While a malformed entry stands, `--repair` and `doctor` read the file as
+    # void and refuse, so the remedy names the entry first.
+    repair = ("While the malformed hook entry named above stands, `espalier merge-settings "
+              "--repair` and `espalier doctor` read the file as void: remove the entry, run the "
+              "repair, then restore the entry, or wire the gate back by hand"
+              if problems else
+              "Run `espalier merge-settings --repair` to wire the gates back; `espalier doctor` "
+              "names each one")
     if unwired:
         _integrity.append_audit(
             root,
@@ -3130,8 +3185,7 @@ def _report_integrity_state(root: Path) -> str:
             f"[WARN] Espalier-Harness found "
             f"{_hook_utils.plural(len(unwired), 'governance wiring finding')} in "
             ".claude/settings.json during SessionStart (session continues; "
-            "SessionStart cannot block). Run `espalier merge-settings --repair` "
-            f"to wire the gates back; `espalier doctor` names each one.\n  Findings:\n  {msg}",
+            f"SessionStart cannot block). {repair}.\n  Findings:\n  {msg}",
         )
 
     try:
@@ -3186,7 +3240,8 @@ def _report_integrity_state(root: Path) -> str:
     if unwired:
         return (
             f"UNWIRED ({_hook_utils.plural(len(unwired), 'finding')})"
-            "  ->  run `espalier merge-settings --repair`"
+            + ("  ->  remove the malformed hook entry, then run `espalier merge-settings --repair`"
+               if problems else "  ->  run `espalier merge-settings --repair`")
         )
     if not ok and mismatched == [_integrity.MANIFEST_ABSENT]:
         # Not a failure: the manifest is gitignored and per-install, so a cloned

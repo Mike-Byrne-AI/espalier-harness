@@ -311,10 +311,12 @@ _ALLOWED_FLAGS = {
     # _clean_state_flags glob needs to reach it; it outlives the session the
     # way the uninstall it records does.
     "settings_write_intent.json",
-    # TP-476 A-0: the governance gates the session runs ({gates}), written by
-    # session_start where a process loads the settings file and by
-    # config_guard when it lets a project-settings change through; read by
-    # config_guard to judge a change rather than the file's state. Rewritten,
+    # TP-476 A-0: the governance gates the session runs ({gates}, and since
+    # DEF-2065 {tolerated}: the keys of the malformed entries the session's
+    # Claude Code applied the file with), written by session_start where a
+    # process loads the settings file and by config_guard when it lets a
+    # project-settings change through; read by config_guard to judge a change
+    # rather than the file's state, and by session_start's banner. Rewritten,
     # never accumulated, so no _clean_state_flags glob needs to reach it.
     "wired_gates.json",
     # TP-476 A-0: config_guard's note of a refused project-settings change

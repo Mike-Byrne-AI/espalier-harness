@@ -5024,10 +5024,10 @@ class TestTheGovernanceWiringLine:
         return summary, [line for line in mod._hook_utils.take_advisories() if "voiding rule" in line]
 
     @staticmethod
-    def _user_file(config: Path, script: str) -> None:
+    def _user_file(config: Path, script_path: str, name: str = "settings.json") -> None:
         config.mkdir(parents=True, exist_ok=True)
-        (config / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
-            {"type": "command", "command": "python3", "args": [f"/home/u/.claude/hooks/{script}"]}]}]}}),
+        (config / name).write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
+            {"type": "command", "command": "python3", "args": [script_path]}]}]}}),
             encoding="utf-8")
 
     @staticmethod
@@ -5058,25 +5058,43 @@ class TestTheGovernanceWiringLine:
         beside the tree's hook: it runs another script, so it cannot have
         run this one."""
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
-        self._user_file(tmp_path / "config", "espalier_hook_wiring_canary.py")
+        self._user_file(tmp_path / "config", "/home/u/.claude/hooks/espalier_hook_wiring_canary.py")
         mod = _load()
         root = tmp_path / "repo"
         self._tree(root, session_start=True, beside=self._IGNORED)
         _summary, lines = self._void_reading(mod, root)
         assert len(lines) == 1 and "applied the file" in lines[0], lines
 
-    def test_another_file_naming_the_hook_leaves_it_unproven(self, tmp_path, monkeypatch):
-        """The caveat the row carries: SessionStart wired from another settings
-        file may be what ran, so the line says it cannot tell, and names the
-        file by its label, never its path."""
+    def test_a_user_hook_that_shares_only_the_file_name_keeps_the_proof(self, tmp_path, monkeypatch):
+        """The name is matched as the harness's path tail, so an operator's own
+        session_start.py elsewhere names another hook."""
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
-        self._user_file(tmp_path / "config", "session_start.py")
+        self._user_file(tmp_path / "config", "/home/u/.claude/hooks/session_start.py")
         mod = _load()
         root = tmp_path / "repo"
         self._tree(root, session_start=True, beside=self._IGNORED)
         _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1 and "applied the file" in lines[0], lines
+
+    @pytest.mark.parametrize("where", ["user", "local"])
+    def test_another_file_naming_the_hook_leaves_it_unproven(self, tmp_path, monkeypatch, where):
+        """The caveat the row carries: SessionStart wired from another settings
+        file may be what ran, so the line says it cannot tell, and names the
+        file by its label, never its path."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=self._IGNORED)
+        hook = "/srv/repo/tools/cc/hooks/session_start.py"
+        if where == "user":
+            self._user_file(tmp_path / "config", hook)
+            label = "$CLAUDE_CONFIG_DIR/settings.json"
+        else:
+            self._user_file(root / ".claude", hook, name="settings.local.json")
+            label = ".claude/settings.local.json"
+        mod = _load()
+        _summary, lines = self._void_reading(mod, root)
         assert len(lines) == 1, lines
-        assert "cannot tell" in lines[0] and "$CLAUDE_CONFIG_DIR/settings.json" in lines[0], lines
+        assert "cannot tell" in lines[0] and label in lines[0], lines
         assert str(tmp_path) not in lines[0], lines
         assert "session_settings_void_unproven" in self._audit_types()
 
@@ -5086,17 +5104,58 @@ class TestTheGovernanceWiringLine:
         root = tmp_path / "repo"
         self._tree(root, beside=self._IGNORED)
         _summary, lines = self._void_reading(mod, root)
-        assert len(lines) == 1 and "cannot tell" in lines[0] and "names no session_start.py" in lines[0], lines
+        assert len(lines) == 1 and "cannot tell" in lines[0] and "names no loadable" in lines[0], lines
 
     def test_a_dropped_gate_beside_a_tolerated_entry_is_named(self, tmp_path, monkeypatch):
         """Earn-the-red: the void reading hid a partial drop beside it. The
-        gates are judged as Claude Code applied the file, the entry set aside."""
+        gates are judged as Claude Code applied the file, the entry set aside;
+        the repair reads the file as void while the entry stands, so the remedy
+        names the entry first (both reviews, driven: `--repair` refused)."""
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
         mod = _load()
         root = tmp_path / "repo"
         self._tree(root, drop="plan_guard.py", session_start=True, beside=self._IGNORED)
-        summary, _lines = self._void_reading(mod, root)
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(root)
+        lines = mod._hook_utils.take_advisories()
+        assert summary.startswith("UNWIRED (1 finding)") and "remove the malformed hook entry" in summary, summary
+        wiring = [line for line in lines if "governance wiring finding" in line]
+        assert wiring and "remove the entry, run the repair" in wiring[0], lines
+
+    def test_an_entry_added_after_the_start_is_not_claimed_as_applied(self, tmp_path, monkeypatch):
+        """The failure-mode review, driven: after a compaction the line claimed
+        proof for an entry the process never loaded, while config_guard read
+        it as void. The snapshot, kept across the compaction, splits it off."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True)
+        mod._record_wired_gates(root, "startup")
+        path = root / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["PostToolUse"] = [{"hooks": [self._IGNORED[1]]}]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mod._record_wired_gates(root, "compact")
+        _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1 and "added after" in lines[0] and "applied the file" not in lines[0], lines
+        assert "session_settings_void_since_start" in self._audit_types()
+
+    def test_a_gate_in_a_group_claude_code_drops_is_named(self, tmp_path, monkeypatch):
+        """A group whose matcher is not a string is dropped whole (driven on
+        2.1.321), so its gate is named unwired, not counted as armed."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=self._IGNORED)
+        path = root / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["ConfigChange"][0]["matcher"] = ["project_settings"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(root)
+        lines = mod._hook_utils.take_advisories()
         assert summary.startswith("UNWIRED (1 finding)"), summary
+        assert any("config_guard.py" in line for line in lines if "governance wiring finding" in line), lines
 
     def test_a_dropped_gate_is_named_with_the_wiring_fix(self, tmp_path):
         """plan_guard dropped while PreToolUse stays (write_guard's): the

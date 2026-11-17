@@ -1304,10 +1304,11 @@ def test_doctor_ci_scan_parity_on_malformed_settings(tmp_path):
         (tmp_path / ".claude" / "settings.json").write_text(raw, encoding="utf-8")
         d = len(_check_governance_event_wiring(tmp_path))
         c = len(cig._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path))
-        i = len(_load_integrity_twin().unwired_governance_gates(
+        twin = _load_integrity_twin()
+        i = len(twin.unwired_governance_gates(
             ".claude/settings.json",
-            _load_integrity_twin()._load_settings_json(tmp_path / ".claude" / "settings.json"),
-            tmp_path))
+            twin._load_settings_json(tmp_path / ".claude" / "settings.json"),
+            tmp_path, tolerated=twin.NO_TOLERATED))
         assert d == c == i == 4, f"parity/fail-closed broken on {raw!r}: doctor={d} ci={c} hook={i}"
 
 
@@ -1435,11 +1436,34 @@ class TestHookSideWiringTwin:
         shapes = [_canonical_settings(), no_config, narrow, extra, {"permissions": {}}, {"hooks": {}}, [],
                   _canonical_settings(**{"stop_gate.py": {"command": "python", "args": ["x.py"]}})]
         shapes += [_canonical_settings(**{"write_guard.py": h}) for h in self._HOOK_ENTRIES]
+        # The hook copy walks every problem (the tolerance keys need them all)
+        # where ci_guard stops at the first, so the first must stay the same
+        # one: group-level shapes, and two problems in either order, within one
+        # group and across events (the code review of DEF-2065's lane: a swap
+        # of two checks moved the answer with this population blind to it).
+        def _beside(**groups) -> dict:
+            data = _canonical_settings()
+            data["hooks"].update(groups)
+            return data
+        bad_hook, other_bad = {"type": "websocket"}, {"command": "x"}
+        shapes += [
+            _beside(PostToolUse="not a list"),
+            _beside(PostToolUse=[5]),
+            _beside(PostToolUse=[{"matcher": ["x"], "hooks": [bad_hook]}]),
+            _beside(PostToolUse=[{"matcher": 5}]),
+            _beside(PostToolUse=[{"matcher": "*"}]),
+            _beside(PostToolUse=[{"hooks": "x"}]),
+            _beside(PostToolUse=[{"hooks": [bad_hook, other_bad]}]),
+            _beside(PostToolUse=[{"hooks": [other_bad, bad_hook]}]),
+            _beside(PostToolUse=[{"hooks": [bad_hook]}], Notification=[{"matcher": 5, "hooks": []}]),
+            _beside(Notification=[{"matcher": 5, "hooks": []}], PostToolUse=[{"hooks": [bad_hook]}]),
+        ]
         seen_counts = set()
         for shape in shapes:
             target.write_text(json.dumps(shape), encoding="utf-8")
             ci = cg._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path)
-            hook = ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path)
+            hook = ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path,
+                                               tolerated=ig.NO_TOLERATED)
             assert hook == ci, shape
             seen_counts.add(len(ci))
         # The population is only a parity proof if it reaches both verdicts and the void.
@@ -1465,7 +1489,8 @@ class TestHookSideWiringTwin:
         shape["hooks"]["PostToolUse"] = [{"hooks": [beside]}]
         target.write_text(json.dumps(shape), encoding="utf-8")
         assert cg._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path) == []
-        assert ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path) == []
+        assert ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path,
+                                           tolerated=ig.NO_TOLERATED) == []
 
 
 class TestN7BomSettings:

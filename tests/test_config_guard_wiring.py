@@ -369,10 +369,13 @@ class TestTheChangeIsJudgedNotTheState:
 
 
 #: An entry Claude Code ignores where it sits: driven on Claude Code 2.1.321
-#: (DEF-2065, `claude -p`, marker hooks), an unknown type, a missing `url` or a
-#: missing `type` under PostToolUse, ConfigChange or Stop is logged "entry
-#: ignored" and the rest of the file loads, the gates included; under
-#: PreToolUse or PermissionRequest nothing in the file is applied.
+#: (DEF-2065, `claude -p`, marker hooks, one run an arm), an unknown type, a
+#: missing `url` or a missing `type` under PostToolUse, and an unknown type
+#: under ConfigChange or Stop, is logged "entry ignored" and the rest of the
+#: file loads, the gates included; under PreToolUse or PermissionRequest
+#: nothing in the file is applied. A group whose matcher is not a string is
+#: dropped whole ("matcher ignored"; its hook never ran, under Stop and under
+#: PostToolUse).
 _IGNORED_ENTRY = {"type": "websocket", "url": "ws://127.0.0.1:9/h"}
 
 
@@ -445,6 +448,7 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
         decision = _change(tree)
         _denied_naming(decision, ("stop_gate.py",))
         assert "write_guard.py" not in decision["reason"], decision["reason"]
+        assert "loads NO hooks" not in decision["reason"], "the findings are read with the entry set aside"
 
     def test_a_torn_tolerated_record_reads_the_file_strictly(self, tree):
         """Fail-closed: a record whose tolerated set cannot be read judges the
@@ -457,7 +461,7 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
         record = json.loads(snap.read_text(encoding="utf-8"))
         record["tolerated"] = "not a list"
         snap.write_text(json.dumps(record), encoding="utf-8")
-        assert ig.read_wired_tolerated(tree) == frozenset()
+        assert ig.read_wired_tolerated(tree) == ()
         data["permissions"]["allow"] = ["Bash(ls)"]
         _write(tree, data)
         _denied_naming(_change(tree), GATES)
@@ -468,6 +472,56 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
         _started(tree)
         record = json.loads(tree.joinpath(*ig.WIRED_GATES_SNAPSHOT).read_text(encoding="utf-8"))
         assert record == {"gates": sorted(GATES)}
+
+    def test_every_entry_the_start_held_is_tolerated(self, tree):
+        """The failure-mode review's mutation: keep only the first problem, and
+        a file with two ignored entries records no gate again."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        data["hooks"]["Stop"].append({"hooks": [{"type": "http"}]})
+        _write(tree, data)
+        _started(tree)
+        assert sorted(ig.read_wired_gates(tree)) == sorted(GATES)
+        assert len(ig.read_wired_tolerated(tree)) == 2
+        _write(tree, {"permissions": {}})
+        _denied_naming(_change(tree), GATES)
+
+    @pytest.mark.parametrize("added", [_IGNORED_ENTRY, {"type": "websocket"}], ids=["same", "malformed"])
+    def test_a_second_entry_beside_a_tolerated_one_is_refused(self, tree, added):
+        """A Claude Code that knows a type newer than espalier's table loads a
+        well-formed entry of it under PreToolUse; a second entry, a copy or one
+        missing a field, is not covered by the first, since a PreToolUse entry
+        Claude Code cannot load applies nothing from the file (driven)."""
+        data = _beside_the_gates(event="PreToolUse")
+        _write(tree, data)
+        _started(tree)
+        data["hooks"]["PreToolUse"].append({"hooks": [dict(added)]})
+        _write(tree, data)
+        _denied_naming(_change(tree), GATES)
+
+    def test_the_tolerance_does_not_read_the_problem_wording(self, tree, monkeypatch):
+        """An upgrade mid-session that rewords the rule (a type added to the
+        table rewrites every unknown-type sentence) still tolerates the entry
+        the session started with."""
+        ig = _integrity()
+        _write(tree, _beside_the_gates())
+        _started(tree)
+        tolerated = ig.read_wired_tolerated(tree)
+        assert tolerated and not any("websocket" in key for key in tolerated), tolerated
+        monkeypatch.setitem(ig._HOOK_TYPE_REQUIRED_STRINGS, "sixth", ("x",))
+        state, data = ig.read_project_settings(tree)
+        assert sorted(ig.live_governance_gates(data, tree, tolerated=tolerated)) == sorted(GATES)
+
+    def test_a_group_whose_matcher_is_not_a_string_wires_nothing(self, tree):
+        """Claude Code drops such a group whole (driven on 2.1.321), so the
+        gate inside it is not counted as running, the matcher set aside or not."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        data["hooks"]["ConfigChange"][0]["matcher"] = ["project_settings"]
+        _write(tree, data)
+        _started(tree)
+        assert "config_guard.py" not in ig.read_wired_gates(tree)
+        assert sorted(ig.read_wired_gates(tree)) == sorted(set(GATES) - {"config_guard.py"})
 
 
 

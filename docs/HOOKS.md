@@ -2651,16 +2651,21 @@ its hook lists merge with the project file's, so an emptied one unwires no
 gate; of the kill-switch shapes, `disableAllHooks` alone is read there. A
 well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
 does not void the file (Claude Code loads each beside the gates, driven); one
-missing its required field (`url`; `server` and `tool`; `prompt`) voids the
-whole hooks block, and the change is judged so. A session whose SessionStart ran
-from a file that reads as void is the exception: the hook running from it proves
-Claude Code applied the file (Claude Code 2.1.321 ignores such an entry outside
-`PreToolUse` and `PermissionRequest`, driven), so SessionStart records the gates
-the file wires with each such entry set aside, and keeps those entries' shapes,
-each with its event, as tolerated; a change is judged with them set aside, and any
-other malformed entry still voids. SessionStart says so on its own line, and
-says it cannot tell where another settings file also names `session_start.py`,
-or the file names none. `espalier clean-generated`'s in-session
+missing its required field (`url`; `server` and `tool`; `prompt`) reads as
+voiding the whole hooks block, and a change is judged so, though Claude Code
+2.1.321 applies nothing from such a file only where the entry sits under
+`PreToolUse` or `PermissionRequest`, and elsewhere ignores the entry alone
+(driven). So on every start SessionStart records the gates a file that reads as
+void wires with each malformed entry set aside, and keeps those entries, by
+content and event, as tolerated: a start the hook made from the file proves
+Claude Code applied it. A change is judged with exactly those entries set aside;
+any other malformed entry, a copy of one included, still voids, and a group
+whose matcher is not a string wires nothing, as Claude Code drops it (driven).
+SessionStart says so on its own line: that Claude Code applied the file where a
+loadable entry in it runs `tools/cc/hooks/session_start.py` and neither the local
+nor the user settings file names that hook, that it cannot tell otherwise, and,
+after a clear or a compaction, an entry added since the start, apart.
+`espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
 through, so its two-run flow still works.

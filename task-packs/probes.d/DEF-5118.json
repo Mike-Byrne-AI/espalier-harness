@@ -4,7 +4,7 @@
  "cmd": "python3 -c \"import sys; sys.path[:0] = ['tools/cc/hooks', 'tools/cc']; import _integrity as i; print(i._hooks_config_voided_by({'PostToolUse': [{'hooks': [{'type': 'http'}]}]}) is not None)\"",
  "open_value": "True",
  "why_not": null,
- "row_sha": "842aeb894450",
- "text_sha": "4eda0259ec98",
- "verified_2026_11_16": "OPEN (filed 2026-11-16; probe driven at filing here and in the export of HEAD 7dbcb99ad9ec)"
+ "row_sha": "eff2ffb22366",
+ "text_sha": "e54f14a57777",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD e61a1fa051a1)"
 }
