@@ -14897,6 +14897,16 @@ class TestARedirectWrittenFirstHidesNoOperand:
         assert_hook_denied(run_bash_guard("tar -xf a.tar -C 2>/dev/null cc/blueprints", tmp_path),
                            contains_reason="zone blocked")
 
+    # The word-list loop: the remove in the body with the redirect ahead of
+    # its verb. The zone reader's word-list arm binds the loop's words to the
+    # body's operand only where the body is read on the view as well.
+    @pytest.mark.parametrize("cmd", [
+        pytest.param('for f in cc/blueprints; do 2>/dev/null rm -rf "$f"; done', id="redirect-first"),
+        pytest.param('for f in cc/blueprints; do rm -rf "$f" 2>/dev/null; done', id="control-redirect-last"),
+    ])
+    def test_the_word_list_loop_binds_its_words_past_a_redirect(self, cmd):
+        assert ("delete", "cc/blueprints") in _bash_patterns_module().iter_removed_or_relocated_operands(cmd)
+
     # The view itself: each redirect and a bare operator's target blank, the
     # same length, and nothing else moved -- a statement after the redirect,
     # a group's brace, a quoted name the scan already masked, a digit no
