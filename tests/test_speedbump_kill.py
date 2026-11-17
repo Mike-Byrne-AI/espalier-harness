@@ -364,6 +364,26 @@ class TestAReadThatDidNotAnswer:
         fired = _fire(main, f"kill {theirs.pid}")
         assert fired is not None and "works in .claude/worktrees/other" in fired[1], fired
 
+    @pytest.mark.parametrize("tool, bare, redirected", [
+        ("Bash", "kill 4242", "kill 4242 2>/dev/null"),
+        ("Bash", "kill 4242", "kill 4242 2> err.txt"),
+        ("PowerShell", "Stop-Process 4242", "Stop-Process 2>$null 4242"),
+    ], ids=["bash-glued-target", "bash-spaced-target", "powershell-redirect-first"])
+    def test_a_redirects_stream_number_is_no_pid_on_an_unread_table(self, tmp_path, monkeypatch, tool, bare,
+                                                                     redirected):
+        """DEF-5119's harm, driven on WSL (air's d2896b): a Linux operator
+        with two checkouts and a process table that could not be read stops
+        a run of its own with the not-found message silenced, and was told
+        pid 2 "could not be read" where the bare stop passes. Linux's answers
+        are played here, so the row reds on every host: the table unread,
+        pid 2 alive (a kernel thread) and left out of an answered cwd read
+        (another user's), the named pid working in this checkout."""
+        main, _other = _clone(tmp_path)
+        _reads(monkeypatch, _parent_map=lambda *a, **k: None, pid_alive=lambda pid: True,
+               process_cwds=lambda pids, **k: {pid: str(main) for pid in pids if pid == 4242})
+        assert _fire(main, bare, tool) is None, "the bare control: this checkout's own run"
+        assert _fire(main, redirected, tool) is None, "the redirect's stream number is no pid"
+
     @posix_only
     def test_a_cwd_read_that_did_not_answer_is_nudged(self, tmp_path, children, monkeypatch):
         main, _other = _clone(tmp_path)
@@ -478,6 +498,29 @@ class TestTheKillWords:
         # DEF-5080: the verb in quotes reads as the bare verb, its pid after it
         ('"kill" -9 123', [123]),
         ("'pkill' -P 124", [124]),
+        # DEF-5119: a stream number glued to its redirect is the redirect's,
+        # never a pid -- a single unquoted, unescaped digit before `<` or `>`
+        # is a descriptor in bash, dash and zsh alike (bash 5.2 and dash
+        # driven); a longer run is bash's alone, and dash hands it to the
+        # program, so it is read as one; spaced, quoted, escaped or half
+        # quoted the digit is an argument, and the kill reads it
+        ("kill 125 2>/dev/null", [125]),
+        ("kill 126 2> err.txt", [126]),
+        ("kill 2>/dev/null 127", [127]),
+        ("kill 128 12>x 2<y 2>>z", [128, 12]),
+        ("kill 138>/dev/null", [138]),
+        ("sh -c 'kill 139>/dev/null'", [139]),
+        ("kill 'a' 140 2>/dev/null", [140]),
+        ('kill "$pid" 2>/dev/null', []),
+        ("kill 129 2>&1", [129]),
+        ("kill 2>&1 130", [130]),
+        ("bash -c 'kill 131 2>/dev/null'", [131]),
+        ("pkill -P 132 2>/dev/null", [132]),
+        ("taskkill //PID 133 2>/dev/null", [133]),
+        ("kill 134 2 > err.txt", [134, 2]),
+        ('kill 135 "2">err.txt', [135, 2]),
+        ("kill 136 \\2>err.txt", [136, 2]),
+        ("kill 137 2'2'>x", [137, 22]),
     ])
     def test_the_bash_tool_reads_each_spelling(self, command, pids):
         assert _speedbump._named_kill_pids("Bash", {"command": command}) == pids
@@ -496,12 +539,44 @@ class TestTheKillWords:
         # DEF-5080: the verb in quotes behind the call operator
         ("& 'Stop-Process' -Id 211", [211]),
         ('& "kill" 212', [212]),
+        # DEF-5119: PowerShell 5.1's parser, driven, takes a bare 1 to 6 before
+        # `>` at a word's start as a stream; spaced or quoted, the digit is the
+        # -Id it binds
+        ("Stop-Process 2>$null 213", [213]),
+        ("Stop-Process 214 2>$null", [214]),
+        ("Stop-Process 2> err.txt 215", [215]),
+        ("Stop-Process 3>$null -Id 216", [216]),
+        ("kill 2>$null 217", [217]),
+        ("Stop-Process 2 >$null", [2]),
+        ("Stop-Process '2'>$null", [2]),
     ])
     def test_the_powershell_tool_reads_each_spelling(self, command, pids):
         assert _speedbump._named_kill_pids("PowerShell", {"command": command}) == pids
 
     def test_another_tool_reads_nothing(self):
         assert _speedbump._named_kill_pids("Edit", {"command": "kill 301"}) == []
+
+    @pytest.mark.parametrize("bash, text, operands, plain", [
+        # bash, dash and zsh: a single unquoted, unescaped digit before `<` or
+        # `>` is a descriptor; a longer run (bash's alone), a quoted digit or
+        # a spaced one is a word
+        (True, "1 7>x 12<y '2'>z 2 >w",
+         ["1", ">", "x", "12", ">", "y", "2", ">", "z", "2", ">", "w"],
+         ["1", "7", ">", "x", "12", ">", "y", "2", ">", "z", "2", ">", "w"]),
+        # PowerShell 5.1's parser, driven: a bare 1 to 6 before `>` alone is a
+        # stream; `7>x`, `12>y`, `2<v` and `0>t` are each one argument there
+        (False, "1 7>x 12>y 2<v 3>z '2'>w 6>u 0>t",
+         ["1", "7", ">", "x", "12", ">", "y", "2", ">", "v", ">", "z", "2", ">", "w", ">", "u", "0", ">", "t"],
+         ["1", "7", ">", "x", "12", ">", "y", "2", ">", "v", "3", ">", "z", "2", ">", "w", "6", ">", "u", "0", ">",
+          "t"]),
+    ], ids=["bash", "powershell"])
+    def test_an_operand_reader_drops_the_stream_number_its_shell_reads(self, bash, text, operands, plain):
+        """DEF-5119: the kill's pid reader asks `_statement` for operands, so
+        a stream number glued to its redirect is no word there; the flag
+        readers (push, release, clean) pass False and read the words they
+        read before."""
+        assert _speedbump._statement(text, 0, bash=bash, operands=True)[0] == operands
+        assert _speedbump._statement(text, 0, bash=bash, operands=False)[0] == plain
 
 
 class TestTheRegistryRow:

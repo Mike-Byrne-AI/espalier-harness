@@ -249,7 +249,7 @@ _GH_RELEASE_OPTIONS = ("dp", "nFtR", frozenset({
 _WORDS_END = "\n;|&(){}"
 
 
-def _statement(text: str, start: int, *, bash: bool) -> tuple[list[str | None], int]:
+def _statement(text: str, start: int, *, bash: bool, operands: bool) -> tuple[list[str | None], int]:
     """``(words, end)``: the words of the statement that runs on from
     ``start`` (just after a subcommand), as its shell splits them, and the
     index where it ends (the end character's, or the text's length).
@@ -261,31 +261,49 @@ def _statement(text: str, start: int, *, bash: bool) -> tuple[list[str | None], 
     None; a redirect operator is a word of its own, ``>``, so `_given_flags`
     skips its target; the words end at an unquoted `_WORDS_END` character, a
     Bash backtick, or a comment (``#`` at a word's start, and PowerShell's
-    ``<#``). One pass over the text, no backtracking."""
+    ``<#``). One pass over the text, no backtracking.
+
+    ``operands`` has no default, so each caller says which reader it is.
+    True is a reader of the operands themselves, the kill's pids (DEF-5119):
+    a stream number glued to its redirect is the redirect's, never a word,
+    in the one form every shell the reading stands for agrees on. On Bash
+    that is a single unquoted, unescaped digit met by ``<`` or ``>``
+    (``2>``, ``0<``), which bash, dash and zsh all read as a descriptor
+    (bash 5.2 and dash driven on WSL; zsh read from its manual). bash alone
+    also takes a longer run (``12>``), and dash hands that run to the
+    program, so a longer run stays a word: on bash it over-reads, which costs
+    a nudge and never misses a pid. On PowerShell it is a bare ``1`` to
+    ``6`` met by ``>`` (5.1's parser, driven: ``12>$null``, ``0>$null``
+    and ``2<x`` are each one argument there; pwsh 7 not driven). Spaced,
+    quoted or escaped, the digit is an argument and stays a word. The flag
+    readers pass False: a digit is never a flag, and their words stay as
+    they were. The redirect view (`_with_redirect_views`) blanks by the
+    wider grammar of `_bash_patterns._redirect_words`, and the kill reads
+    the union of the two readings, so neither one alone decides a pid."""
     escape = "\\" if bash else "`"
     ends = _WORDS_END + ("`" if bash else "")
     words: list[str | None] = []
     cur: list[str] = []
-    open_word = unknown = False
+    open_word = unknown = literal = False   # literal: a quote or an escape made part of the word
     i, n = start, len(text)
 
     def flush() -> None:
-        nonlocal open_word, unknown
+        nonlocal open_word, unknown, literal
         if open_word:
             words.append(None if unknown else "".join(cur))
         cur.clear()
-        open_word = unknown = False
+        open_word = unknown = literal = False
 
     while i < n:
         c = text[i]
         if c == escape:
             if i + 1 < n and text[i + 1] != "\n":
                 cur.append(text[i + 1])
-                open_word = True
+                open_word = literal = True
             i += 2
             continue
         if c in "'\"":
-            open_word = True
+            open_word = literal = True
             i += 1
             while i < n:
                 d = text[i]
@@ -310,7 +328,13 @@ def _statement(text: str, start: int, *, bash: bool) -> tuple[list[str | None], 
         if c.isspace():
             flush()
         elif c in "<>":
-            flush()
+            stream = "".join(cur) if operands and open_word and not literal else ""
+            if len(stream) == 1 and stream.isascii() and stream.isdigit() and (
+                    bash or (c == ">" and stream in "123456")):
+                cur.clear()   # the redirect's own stream number, never an operand
+                open_word = unknown = False
+            else:
+                flush()
             words.append(">")
         else:
             if c == "$":
@@ -373,7 +397,7 @@ def _pushes_for_real(head: re.Pattern[str], tail: re.Pattern[str], text: str, *,
     subcommand on, so a wrapper's `-n` (`sudo -n`) is not its dry run and a
     rehearsal beside a real push in one command still bumps."""
     for m in head.finditer(text):
-        words, end = _statement(text, m.end(), bash=bash)
+        words, end = _statement(text, m.end(), bash=bash, operands=False)
         if tail.search(text, m.end(), end) and not _rehearsal(words, _PUSH_OPTIONS):
             return True
     return False
@@ -682,7 +706,7 @@ def _drafts(words: list[str | None]) -> bool:
 def _pred_release(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
     for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
         gh = _GH_RELEASE_CREATE_RE if is_bash else _PS_GH_RELEASE_CREATE_RE
-        if any(not _drafts(_statement(text, m.end(), bash=is_bash)[0]) for m in gh.finditer(text)):
+        if any(not _drafts(_statement(text, m.end(), bash=is_bash, operands=False)[0]) for m in gh.finditer(text)):
             return True
         if _pushes_for_real(_PUSH_HEAD_RE if is_bash else _PS_PUSH_HEAD_RE, _TAGPUSH_TAIL_RE, text,
                             bash=is_bash):
@@ -946,7 +970,7 @@ def _pred_gitclean(tool_name: str, tool_input: dict, root: Path, cwd: Path | Non
         # rides in a real force cluster such as `-fdX`; `-e` takes a pattern, so
         # `-e -n` excludes a file named `-n` and is no preview).
         for m in (_GITCLEAN_RE if is_bash else _PS_GITCLEAN_RE).finditer(cmd):
-            flags = _given_flags(_statement(cmd, m.start(1), bash=is_bash)[0], _CLEAN_OPTIONS)
+            flags = _given_flags(_statement(cmd, m.start(1), bash=is_bash, operands=False)[0], _CLEAN_OPTIONS)
             # A dry run only LISTS -- never fire (`-n` wins even if `-f` is also present).
             if "-n" in flags or "--dry-run" in flags:
                 continue
@@ -2380,12 +2404,15 @@ def _named_kill_targets(tool_name: str, tool_input: dict) -> list[tuple[int, boo
     quoted or commented MENTION is data -- and each text again with its
     redirects blanked (`_with_redirect_views`, DEF-2087), so a pid after a
     redirect is named (`Stop-Process 2>$null -Id <pid>` named only the
-    stream's digit before the view)."""
+    stream's digit before the view). Its words are an operand reader's
+    (`_statement`'s ``operands``), so a stream number glued to a redirect
+    is never a pid (DEF-5119: `kill 4242 2>/dev/null` named pid 2 beside
+    it)."""
     found: list[tuple[int, bool]] = []
     for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
         head = _KILL_HEAD_RE if is_bash else _PS_KILL_HEAD_RE
         for m in head.finditer(text):
-            words, _end = _statement(text, m.end(), bash=is_bash)
+            words, _end = _statement(text, m.end(), bash=is_bash, operands=True)
             named = {pid for pid, _parent in found}
             found += [t for t in _kill_targets(m.group("kill_verb"), words, bash=is_bash) if t[0] not in named]
     return found[:_KILL_PID_CAP]

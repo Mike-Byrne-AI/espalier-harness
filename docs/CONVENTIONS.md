@@ -290,7 +290,8 @@ discipline applies in spirit, not just to that directory.
   the same test file refuses the raw form by file and line. A child that is
   itself a tree (a pytest, a script that runs one) takes `run_tree_bounded`
   beside it, whose timeout ends the whole tree on POSIX too (the suite takes it
-  from `tests/_tree_spawn.py`, and
+  from `tests/_tree_spawn.py`, the engine from its twin in `espalier/_spawn.py`
+  with `stdin=subprocess.DEVNULL` given at the call, and
   `tests/test_contracts.py::TestEveryTimedPytestEndsItsWholeTree` refuses a
   timed pytest without it). A module that may
   load without its siblings imports it behind `except ImportError` with a

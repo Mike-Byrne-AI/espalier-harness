@@ -39,7 +39,7 @@ from espalier.external_diff import (
 )
 from espalier.external_fetch import FetchResult, fetch_url
 from espalier.external_pins import ExternalPin, _frontmatter_block, list_pins
-from espalier._spawn import run_no_stdin
+from espalier._spawn import run_tree_bounded
 from espalier._text import os_error_text
 
 
@@ -138,8 +138,10 @@ def run_bound_tests(repo_root: Path, pins: list[ExternalPin] | None = None) -> t
         return "skipped", note
     cmd = [sys.executable, "-m", "pytest", *present, "-q", "--tb=short"]
     try:
-        result = run_no_stdin(
-            cmd, cwd=str(repo_root),
+        # A pytest is a tree: its timeout ends the whole tree on every OS
+        # (DEF-5090), and its stdin is closed here, as run_no_stdin would (DEF-928).
+        result = run_tree_bounded(
+            cmd, cwd=str(repo_root), stdin=subprocess.DEVNULL,
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, ValueError) as e:

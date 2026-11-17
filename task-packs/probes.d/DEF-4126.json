@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4126",
+ "subject": "tests/test_hooks.py",
+ "cmd": "python3 -c \"import ast; h=lambda p,n:(lambda d:any((isinstance(y,ast.Constant) and y.value=='interpreter_version_unanswered') or (isinstance(y,ast.Attribute) and y.attr=='interpreter_version_unanswered') for y in ast.walk(d)))(next(x for x in ast.walk(ast.parse(open(p,encoding='utf-8').read())) if isinstance(x,(ast.FunctionDef,ast.ClassDef)) and x.name==n)); print(not (h('tests/test_hooks.py','test_host_orientation_parenthetical_never_contradicts') and h('tests/test_hook_entry_argv.py','TestSessionStartWarnsAboutTheArgvItRuns')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/test_hook_entry_argv.py"
+ ],
+ "row_sha": "bed61ec42bfd",
+ "text_sha": "71e2a20e7cbc",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD 225eaaba1a88)"
+}
