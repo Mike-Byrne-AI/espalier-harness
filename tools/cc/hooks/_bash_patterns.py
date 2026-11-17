@@ -7624,6 +7624,147 @@ def _ps_redirect_free(tokens: list[str]) -> list[str]:
     return kept
 
 
+#: What a blanked redirect's target never takes: a statement boundary or a
+#: group's bracket, so the view's statements and nesting are the scan's own
+#: (`2>$null;Move-Item ...` keeps its second statement, `{... 2>$null}`
+#: its closing brace).
+_REDIRECT_VIEW_KEEP = frozenset(";|&\n(){}")
+#: The first characters a redirect token can open with (`_redirect_words`):
+#: a stream number, the `*` stream, Bash's `&>`, the operator itself. A
+#: token opening with anything else is passed over without the pair's two
+#: pattern reads.
+_REDIRECT_OPENERS = frozenset("0123456789*&<>")
+
+
+def _redirects_blanked(scan: str, *, powershell: bool) -> str:
+    """``scan`` with each redirect blanked, the same length: every token
+    `_redirect_words` reads as a redirect on that tool, and a bare
+    operator's target with it (`2> err.txt`, the scan's spaced merge `2>
+    1`), become blanks. The readers that take an operand by its PLACE --
+    the PowerShell write verbs' first positional and path-flag value, copy
+    and move's positional pair and flag values, git's subcommand after its
+    global options and checkout and restore's path, git's listing head into
+    a remove and its loop forms, tar's extraction directory, the speed
+    bump's discard, force-push, release, clean and kill checkpoints --
+    match on this view AS
+    WELL AS on the scan (`_scan_and_view_matches`; the view supplements
+    the scan and never replaces it, air's ruling f03cb7 and note f19d8d),
+    and read each operand from the raw text at the match's offsets, so a
+    redirect written ahead of the operands no longer hides them (DEF-2087:
+    `Set-Content 2>$null <hook> x`, `Move-Item 2> err.txt .env b.txt`, `git
+    2>/dev/null rm cc/x.json` and `git 2>/dev/null ls-files | xargs rm -f`
+    were each allowed, where the same command with the redirect last was
+    refused), and every match the scan made is still made. The readers
+    that read a redirect itself (the redirect write leg, a listing's
+    success-stream test, a heredoc's opener) keep the plain scan alone,
+    and the spans the view's matches select are read from the raw text,
+    where the redirects still stand.
+
+    The operator is blanked whole, a glued `&` or `|` after its angle run
+    included (`2>&1`, `>|o` on the scan that keeps a merge's ampersand);
+    its target stops at a statement separator or a group's bracket
+    (`_REDIRECT_VIEW_KEEP`), a quoted target is blanked whole, and on
+    PowerShell a word after a backtick-escaped blank is the escaped word's
+    own (``a` >x``, DEF-5108's second review). A process substitution
+    (`<(git ls-files ...)`, `>(git rm ...)`) is a command, never a
+    redirect, and is left whole: `_redirect_words` reads `<(git` as one.
+    One that is a bare operator's target is left whole with its operator
+    (`done < <(git ls-files)`, the tail-fed loop's feed), so the loop it
+    feeds reads on the view as on the scan. The scan itself comes back, no
+    copy, when it holds no ``<`` or ``>``: a call with no redirect pays one
+    membership test, and one with a
+    redirect builds its view once a reading (`_redirects_blanked_built`),
+    however many readers ask. No pattern of its own: the one tokenizer and
+    the one redirect reading the token readers use (`_OPERAND_TOKEN_RE`,
+    `_redirect_words`)."""
+    if ">" not in scan and "<" not in scan:
+        return scan
+    return _redirects_blanked_built(scan, powershell)
+
+
+@reading_cache(maxsize=16)
+def _redirects_blanked_built(scan: str, powershell: bool) -> str:
+    """`_redirects_blanked` for a scan holding ``<`` or ``>``, remembered:
+    the write leg, the effect leg, the hard tier's sweeps and the speed
+    bump's git checkpoints each ask for one call's view."""
+    chars: list[str] | None = None
+    skip = 0
+    bare: tuple[int, int] | None = None     # the bare operator whose target is next
+    for m in _OPERAND_TOKEN_RE.finditer(scan):
+        start, end = m.span()
+        if skip:
+            skip -= 1
+            at = start
+            if bare is not None and chars is not None and scan[start:start + 2] in ("<(", ">("):
+                # the target is a process substitution: a command the loop
+                # reads from or writes to, so it and its operator stay as
+                # the scan has them (`done < <(git 2>/dev/null ls-files)`
+                # keeps its tail-fed loop on the view)
+                for i in range(*bare):
+                    chars[i] = scan[i]
+                bare = None
+                continue
+            bare = None
+        else:
+            tok = m.group()
+            if tok[0] not in _REDIRECT_OPENERS:
+                continue
+            if tok[1:2] == "(" and tok[0] in "<>":
+                continue      # a process substitution is a command (note f19d8d (a))
+            if powershell and start >= 2 and scan[start - 1] in " \t" and scan[start - 2] == "`":
+                continue
+            words = _redirect_words(tok, powershell=powershell)
+            if not words:
+                continue
+            skip = words - 1
+            if chars is None:
+                chars = list(scan)
+            # the operator: a stream (`2`, `*`), Bash's `&>`, the angle run,
+            # one glued `&` or `|` (a merge's, noclobber's)
+            at = start + (1 if scan[start] in "&*" else 0)
+            while at < end and scan[at].isdigit():
+                at += 1
+            while at < end and scan[at] in "<>":
+                at += 1
+            if at < end and scan[at] in "&|":
+                at += 1
+            for i in range(start, at):
+                chars[i] = " "
+            if at >= end:
+                bare = (start, at)
+                continue      # a bare operator: its target is the next token
+        if chars is None:
+            chars = list(scan)
+        if scan[at] in "\"'":
+            for i in range(at, end):
+                chars[i] = " "
+            continue
+        for i in range(at, end):
+            if scan[i] in _REDIRECT_VIEW_KEEP:
+                break
+            chars[i] = " "
+    return scan if chars is None else "".join(chars)
+
+
+def _scan_and_view_matches(rx: "re.Pattern[str]", scan: str, view: str) -> list["re.Match[str]"]:
+    """``rx``'s matches on ``scan``, then those on ``view`` (the same text
+    with its redirects blanked, `_redirects_blanked`) whose group spans no
+    scan match repeats, in offset order: the view supplements the scan, so
+    every match a reader made on the scan it still makes (air's note
+    f19d8d (a): a view that replaced the scan would lose a match a blanked
+    token held). A view that is the scan costs one pass. Each match's
+    ``string`` is the text it ran on; its readers take spans from the raw
+    text by offset, so a match of either text reads the same operand."""
+    found = list(rx.finditer(scan))
+    if view is scan or view == scan:
+        return found
+    seen = {m.regs for m in found}
+    extra = [m for m in rx.finditer(view) if m.regs not in seen]
+    if not extra:
+        return found
+    return sorted(found + extra, key=lambda m: m.start())
+
+
 def _ps_success_stream_to_file(tok: str) -> bool:
     """True when ``tok`` opens a redirect that sends PowerShell's success
     stream to a file (`>`, `>>`, `1>`, `*>`, `*>>`, glued or bare), never
@@ -10885,7 +11026,10 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
     for m in _DD_OF_RE.finditer(scan):
         paths.append(raw_operand(command, m, word=True))
 
-    for m in _TAR_C_RE.finditer(scan):
+    # the extraction directory is `-C`'s value by its place, so it matches
+    # with the redirects blanked as well (a redirect between `-C` and the
+    # directory was read as the directory)
+    for m in _scan_and_view_matches(_TAR_C_RE, scan, _redirects_blanked(scan, powershell=False)):
         paths.append(raw_operand(command, m, word=True))
 
     # install / rsync / truncate -- last non-flag positional. `install -t DIR`
@@ -10922,14 +11066,15 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
         paths.extend(_permission_targets(raw_span(command, m, 2, through_quotes=True),
                                          _verb_key(m.group(1))))
 
-    for m in _GIT_CHECKOUT_DASHDASH_RE.finditer(scan):
-        paths.append(raw_operand(command, m, word=True))
-
-    for m in _GIT_CHECKOUT_BARE_RE.finditer(scan):
-        paths.append(raw_operand(command, m, word=True))
-
-    for m in _GIT_RESTORE_RE.finditer(scan):
-        paths.append(raw_operand(command, m, word=True))
+    # git's arms take the subcommand after git's global options and the path
+    # by its place, so they match with the redirects blanked as well as on
+    # the scan (DEF-2087: `git 2>/dev/null checkout -- <hook>` and `git
+    # checkout 2>/dev/null <hook>` read the redirect as an option the head
+    # does not know, and as the path)
+    git_view = _redirects_blanked(scan, powershell=False)
+    for rx in (_GIT_CHECKOUT_DASHDASH_RE, _GIT_CHECKOUT_BARE_RE, _GIT_RESTORE_RE):
+        for m in _scan_and_view_matches(rx, scan, git_view):
+            paths.append(raw_operand(command, m, word=True))
 
     # Inline interpreter source bodies (`-c` / `-e`), and the same interpreters
     # fed their program on stdin (heredoc / here-string). Both arms: opener on
@@ -11591,6 +11736,11 @@ def _removed_or_relocated_cached(command: str, _depth: int) -> tuple[tuple[str, 
 def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tuple[str, str]]:
     command, scan = _extractor_pair(command)
     out: list[tuple[str, str]] = []
+    # git's arms, and the listing head a pipeline into a remove opens with,
+    # match with the redirects blanked as well as on the scan (DEF-2087: `git
+    # 2>/dev/null rm cc/x.json` hid the subcommand); every span is read from
+    # the raw text
+    view = _redirects_blanked(scan, powershell=False)
     for m in _DESTROY_RE.finditer(scan):
         out.extend(("delete", p) for p in _positional_operands(raw_span(command, m, through_quotes=True)))
     # DEF-1151: cmd.exe's own deletes in a program cmd runs, recursive or not,
@@ -11622,7 +11772,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         if not target_dirs or ambiguous:
             sources.extend(positionals[:-1])
         out.extend(("move", p) for p in dict.fromkeys(sources))
-    for m in _GIT_RM_MV_RE.finditer(scan):
+    for m in _scan_and_view_matches(_GIT_RM_MV_RE, scan, view):
         effect = "delete" if m.group(1).lower() == "rm" else "move"
         out.extend((effect, p) for p in _positional_operands(raw_span(command, m, 2, through_quotes=True)))
     for m in _RENAME_RE.finditer(scan):
@@ -11634,7 +11784,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     # enumerator's roots are the operands (a narrowed one is a `sweep`, its
     # root judged by itself as the find arm's is), and an explicit operand
     # beside the stdin ones is removed too.
-    for m in _PIPED_REMOVE_RE.finditer(scan):
+    for m in _scan_and_view_matches(_PIPED_REMOVE_RE, scan, view):
         roots, narrowed, _wipe, effect, extra = _bash_pipeline_reading(command, m)
         # narrowing wins over the verb, as `_find_delete_roots` has it: a
         # narrowed enumerator's root is judged by itself whether the verb
@@ -11653,16 +11803,19 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     # -- each opener spelled by name, as every arm here is, so the roster
     # census (`_MUTATION_ARMS`, pinned by an AST walk over these calls) sees
     # it; gated on the witness as the two tiers are (the review)
+    # -- and each opener matches with the redirects blanked as well, as the
+    # piped carrier does (a redirect between git and its listing hid the
+    # tracked tree's head from the loop forms too)
     if _loop_carrier_witnessed(command):
-        for m in _LOOP_REMOVE_RE.finditer(scan):
+        for m in _scan_and_view_matches(_LOOP_REMOVE_RE, scan, view):
             _extend_loop_operands(out, command, m)
-        for m in _FOR_SUBST_REMOVE_RE.finditer(scan):
+        for m in _scan_and_view_matches(_FOR_SUBST_REMOVE_RE, scan, view):
             _extend_loop_operands(out, command, m)
-        for m in _TAIL_LOOP_REMOVE_RE.finditer(scan):
+        for m in _scan_and_view_matches(_TAIL_LOOP_REMOVE_RE, scan, view):
             _extend_loop_operands(out, command, m)
-        for m in _FOR_WORDS_REMOVE_RE.finditer(scan):
+        for m in _scan_and_view_matches(_FOR_WORDS_REMOVE_RE, scan, view):
             _extend_loop_operands(out, command, m)
-    for m in _GIT_CLEAN_RE.finditer(scan):
+    for m in _scan_and_view_matches(_GIT_CLEAN_RE, scan, view):
         out.extend(("clean", p) for p in _git_clean_operands(raw_span(command, m, through_quotes=True)))
     for m in _TAR_CREATE_RE.finditer(scan):
         out.extend(("archive", p) for p in _tar_create_inputs(raw_span(command, m, through_quotes=True)))
@@ -19640,8 +19793,11 @@ def _iter_piped_sweeps(raw: str, scan: str, *, wipes_only: bool) -> Iterator[tup
     xargs into a remove verb on the pair (DEF-826), in offset order; the
     roots carry any explicit operand beside the stdin ones. ``wipes_only``
     keeps the pipelines that take every file under the root (the hard
-    tier's); the soft tier reads them all."""
-    for m in _PIPED_REMOVE_RE.finditer(scan):
+    tier's); the soft tier reads them all. The opener is found on the scan
+    and with the redirects blanked (DEF-2087: `git 2>/dev/null ls-files |
+    xargs rm -f` hid the tracked listing's head), the two merged in offset
+    order; the pipeline is read from ``raw``."""
+    for m in _scan_and_view_matches(_PIPED_REMOVE_RE, scan, _redirects_blanked(scan, powershell=False)):
         roots, narrowed, wipe, effect, extra = _bash_pipeline_reading(raw, m)
         if effect != "delete" or narrowed or (wipes_only and not wipe):
             continue
@@ -19797,9 +19953,10 @@ def iter_placed_loop_removals(
     if not _loop_carrier_witnessed(capped):
         return
     raw, scan = _bash_scan_pair(capped)
+    view = _redirects_blanked(scan, powershell=False)
     found: list[tuple[int, list[str]]] = []
     for rx, _shape in _LOOP_OPENERS:
-        for m in rx.finditer(scan):
+        for m in _scan_and_view_matches(rx, scan, view):
             read = _loop_removal_paths(raw, m)
             if read is None or read.effect != "delete":
                 continue
@@ -19826,7 +19983,10 @@ def _iter_loop_sweeps(raw: str, scan: str, *, wipes_only: bool) -> Iterator[tupl
     (DEF-830), in offset order across the four openers; the offset is the
     head's (the tail-fed loop's enumerator sits after `done`, in the
     statement whose directory it runs in; the word list's head is its `for`
-    keyword). ``wipes_only`` as `_iter_piped_sweeps` has it -- except that
+    keyword); each opener is found on the scan and with the redirects
+    blanked, as `_iter_piped_sweeps` finds its own (DEF-2087's sibling: a
+    redirect between git and its listing hid the tracked tree's head from
+    the loop forms). ``wipes_only`` as `_iter_piped_sweeps` has it -- except that
     the word-list head (DEF-837) yields ONLY a wipe, whatever the caller
     asks. The soft tier's sweep pass exists for an enumerator's unseen tree
     and its roster fires on `*` and `*.pyc`, so an un-gated word list would
@@ -19834,9 +19994,10 @@ def _iter_loop_sweeps(raw: str, scan: str, *, wipes_only: bool) -> Iterator[tupl
     own remove, leaves alone -- as it leaves the direct remove of the same
     words."""
     found: list[tuple[int, list[str]]] = []
+    view = _redirects_blanked(scan, powershell=False)
     for rx, shape in _LOOP_OPENERS:
         only_wipes = wipes_only or shape == "words"
-        for m in rx.finditer(scan):
+        for m in _scan_and_view_matches(rx, scan, view):
             roots, narrowed, wipe, effect, extra = _bash_loop_reading(raw, m)
             if effect != "delete" or narrowed or (only_wipes and not wipe):
                 continue
@@ -20341,20 +20502,45 @@ def _ps_piped_remove_matches(
     blocks on one line (`if ($c) { gci build | ri -r -fo } else { gci dist
     | ri -r -fo }`) read the first remove's span across the brace into the
     second block, so the second listing opened no match and its remove had
-    no feed (the record's wall, where the `;` twin passes)."""
-    pos = 0
-    while True:
-        m = _PS_PIPED_REMOVE_RE.search(text, pos)
-        if m is None:
-            return
-        fed = _ps_header_feed(text, m)
-        own = fed is m
-        close = _ps_unmatched_closer(m.group("rmargs") or "")
-        cut = m.start("rmargs") + close if close >= 0 else -1
-        if cut >= 0 and fed is not None:
-            fed = fed.cut("rmargs", cut) if isinstance(fed, _CutPipe) else _CutPipe(m, {"rmargs": cut})
-        yield m, fed
-        pos = (cut if cut >= 0 else m.end()) if own else m.end("head")
+    no feed (the record's wall, where the `;` twin passes).
+
+    DEF-2087: the search runs on the text and again with the redirects
+    blanked (`_redirects_blanked`), so a redirect in git's global-option
+    slot no longer hides the tracked listing's head (`git 2>$null ls-files
+    | Remove-Item -Force` was allowed, its plain twin walled). The view
+    supplements the text (air's note f19d8d (a)): every match and feed the
+    text gives is given as before, and a view match is added only for a
+    remove the text neither matched nor fed, since one feed binds a remove
+    (`_ps_fed_removes`) and a feed can lower its verdict; the two merge in
+    offset order. Every reader of a match takes its spans from the raw text
+    by offset, where a listing's own redirect still stands for the
+    success-stream test. One loop walks both texts, the text first, so this
+    function stays the regex's one search site."""
+    view = _redirects_blanked(text, powershell=True)
+    found: list[tuple[re.Match[str], re.Match[str] | _CutPipe | None]] = []
+    extra: list[tuple[re.Match[str], re.Match[str] | _CutPipe | None]] = []
+    bound: set[int] = set()
+    for on in ((text,) if view is text or view == text else (text, view)):
+        pos = 0
+        while True:
+            m = _PS_PIPED_REMOVE_RE.search(on, pos)
+            if m is None:
+                break
+            fed = _ps_header_feed(text, m)
+            own = fed is m
+            close = _ps_unmatched_closer(m.group("rmargs") or "")
+            cut = m.start("rmargs") + close if close >= 0 else -1
+            if cut >= 0 and fed is not None:
+                fed = fed.cut("rmargs", cut) if isinstance(fed, _CutPipe) else _CutPipe(m, {"rmargs": cut})
+            if on is text:
+                found.append((m, fed))
+            elif m.start("rmargs") not in bound and (fed is None or fed.start("rmargs") not in bound):
+                extra.append((m, fed))
+            pos = (cut if cut >= 0 else m.end()) if own else m.end("head")
+        if on is text:
+            bound = {m.start("rmargs") for m, _fed in found} | {
+                fed.start("rmargs") for _m, fed in found if fed is not None}
+    yield from (sorted(found + extra, key=lambda pair: pair[0].start()) if extra else found)
 
 
 def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
@@ -21067,10 +21253,18 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     # A separator or a flag inside a value's group is not the verb's own: the
     # write verbs and the copy and move destination are read on the scan and
     # on its view at each nesting level (`_ps_level_view`), a read two passes
-    # share taken once, keyed by its pattern (DEF-4029).
-    depths = _ps_group_depths(command)
-    top = min(max(depths, default=0), _PS_LEVELS_READ - 1)
-    scans = [command] + ([_ps_level_view(command, depths, lv) for lv in range(top + 1)] if top else [])
+    # share taken once, keyed by its pattern (DEF-4029). Those readers, and
+    # every other one below that takes an operand by its place, also match
+    # with the redirects blanked (`_redirects_blanked`, DEF-2087): `Set-Content
+    # 2>$null <hook> x` read `2>$null` as the path. The view and its levels
+    # join the scan's, never replace them (air's note f19d8d (a)). The
+    # redirect leg and the program readers keep the plain scan alone.
+    view = _redirects_blanked(command, powershell=True)
+    scans: list[str] = []
+    for text in ((command,) if view is command or view == command else (command, view)):
+        depths = _ps_group_depths(text)
+        top = min(max(depths, default=0), _PS_LEVELS_READ - 1)
+        scans += [text] + ([_ps_level_view(text, depths, lv) for lv in range(top + 1)] if top else [])
     read: set[tuple["re.Pattern[str]", int, int]] = set()
     for scan in scans:
         for rx in (_PS_PATH_FLAG_RE, _PS_FILE_VERB_PATH_FLAG_RE, _PS_POSITIONAL_RE):
@@ -21086,7 +21280,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     # the three Bash tails on the PowerShell head, the operand from the raw
     # text at the match's offsets and unquoted the PowerShell way.
     for rx in (_PS_GIT_CHECKOUT_DASHDASH_RE, _PS_GIT_CHECKOUT_BARE_RE, _PS_GIT_RESTORE_RE):
-        for m in rx.finditer(command):
+        for m in _scan_and_view_matches(rx, command, view):
             paths.append(_ps_unquote(raw_operand(raw, m, keep_quotes=True, powershell=True)))
     for scan in scans:
         for m in _PS_COPY_MOVE_DEST_RE.finditer(scan):
@@ -21104,7 +21298,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
             if src_flag:
                 src = raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]
                 paths.extend(p for p in (_ps_landed_path(s, dst) for s in _ps_list_targets(src)) if p)
-    for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(command):
+    for m in _scan_and_view_matches(_PS_COPY_MOVE_POSITIONAL_RE, command, view):
         src, dst = raw_span(raw, m, 2), _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb (§C52)
         paths.append(dst)
         paths.extend(p for p in (_ps_landed_path(s, dst) for s in _ps_list_targets(src)) if p)
@@ -21216,6 +21410,11 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     raw, scan = powershell_scan_pair(command)
     raw, scan = _cap_for_scan(raw), _cap_for_scan(scan)
     out: list[tuple[str, str]] = []
+    # the arms that take an operand by its place match with the redirects
+    # blanked (DEF-2087: `Move-Item 2> err.txt .env b.txt` read the log as
+    # the source, `git 2>$null rm cc/x.json` hid the subcommand); the token
+    # readers drop a redirect themselves (`_ps_redirect_free`)
+    view = _redirects_blanked(scan, powershell=True)
 
     def named_targets(m: "re.Match[str] | _CutPipe") -> list[str]:
         args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
@@ -21258,12 +21457,12 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         for _at, targets in iter_cmd_recursive_removes(
                 raw, scan, bash=False, recursive_only=False):
             out.extend(("delete", t) for t in targets)
-    for m in _PS_GIT_CLEAN_RE.finditer(scan):
+    for m in _scan_and_view_matches(_PS_GIT_CLEAN_RE, scan, view):
         out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args"), powershell=True))
-    for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(scan):
+    for m in _scan_and_view_matches(_PS_COPY_MOVE_POSITIONAL_RE, scan, view):
         if m.group("verb").lower() in _PS_MOVE_VERB_NAMES:
             out.extend(("move", p) for p in _ps_list_targets(raw_span(raw, m, 2)))
-    for m in _PS_COPY_MOVE_DEST_RE.finditer(scan):
+    for m in _scan_and_view_matches(_PS_COPY_MOVE_DEST_RE, scan, view):
         if m.group("verb").lower() not in _PS_MOVE_VERB_NAMES:
             continue
         pre = _named_span(raw, m, "pre")
@@ -21271,8 +21470,9 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
             pre, tokens=_ps_operand_tokens(pre), unknown_takes_value=False,
         ) for p in _ps_list_targets(t)]   # a comma list, each element (DEF-4029)
         # The source flag may sit AFTER the destination flag: the write arm's
-        # statement-segment search, scan for the offsets, raw for the text.
-        segment = re.split(r"[|;&\n]", scan[m.start():], maxsplit=1)[0]
+        # statement-segment search, the matched text for the offsets, raw for
+        # the text.
+        segment = re.split(r"[|;&\n]", m.string[m.start():], maxsplit=1)[0]
         src_flag = _PS_COPY_MOVE_SRC_FLAG_RE.search(segment)
         if src_flag:
             sources.extend(_ps_list_targets(raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]))
@@ -21282,7 +21482,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         # protected, and the pick of a "first" would miss a source that sits
         # after `-NewName` (over-yield is the fail-safe direction)
         out.extend(("move", p) for p in named_targets(m))
-    for m in _PS_GIT_RM_MV_RE.finditer(scan):
+    for m in _scan_and_view_matches(_PS_GIT_RM_MV_RE, scan, view):
         effect = "delete" if m.group(1).lower() == "rm" else "move"
         # a redirect and its target out first (DEF-5108's review: `git mv
         # notes.txt b.txt 2> .env.err` read the log as a renamed file on the

@@ -537,6 +537,24 @@ class TestEachFirstUseCompileWaitsForItsGate:
             assert name in row["missed"], f"{tool} {command!r} did not compile {name}: the row opens no gate"
 
 
+class TestTheRedirectKindsTimeTheRedirectView:
+    @pytest.mark.parametrize("kind, builds", [
+        ("bash_redirect", True), ("powershell_redirect", True), ("bash", False), ("powershell", False),
+    ])
+    def test_a_redirect_kind_builds_the_view_and_a_plain_kind_does_not(self, tmp_path, kind, builds):
+        """The census's two redirect kinds time the call that builds the
+        redirect view (`_bash_patterns._redirects_blanked_built`, DEF-2087),
+        which the plain kinds never build: a tidy-up that dropped either kind,
+        or gave it a command with no redirect, would time a reading the view
+        never runs on, and nothing else reds (DEF-2087's failure-mode review,
+        N4)."""
+        assert kind in census.KINDS, f"the census lost its {kind} kind"
+        got = census._child(f"ROWS = {json.dumps([census.COMMANDS[kind]])}\n" + GATE_CHILD,
+                            HOOKS, tmp_path, "-I", "-B")
+        assert got[0]["rc"] == 0 and "deny" not in got[0]["said"], got
+        assert ("_redirects_blanked_built" in got[0]["missed"]) is builds, got
+
+
 def _bash_patterns_copy() -> types.ModuleType:
     """A fresh copy of the hooks' `_bash_patterns`, under a name of its own, so
     its first-use patterns are read cold whatever another test compiled."""

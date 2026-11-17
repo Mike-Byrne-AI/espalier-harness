@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5121",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import _bash_patterns as b; c = \"while read f; do rm -f \\\"$f\\\"; done <<< \\\"$(git 2>/dev/null ls-files)\\\"\"; print(list(b.iter_unnarrowed_loop_remove_roots(c, wipes_only=True)), (\"delete\", \".\") in b.iter_removed_or_relocated_operands(c))'",
+ "open_value": "[] False",
+ "why_not": null,
+ "row_sha": "96e518340b1c",
+ "text_sha": "0ab752f5ff4e",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD e369b3f56c23)"
+}

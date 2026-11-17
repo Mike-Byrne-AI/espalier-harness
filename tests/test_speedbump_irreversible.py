@@ -4991,3 +4991,91 @@ class TestTheBumpsReadACarriersProgram:
         cmd = "find . -exec rm -rf src ';'"
         assert _bash_patterns.has_catastrophic_bash_sweep(cmd, str(tmp_path), cwd=tmp_path)
         assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, tmp_path)
+
+
+# ── A redirect in git's global-option slot (DEF-2087) ─────────────────────────
+
+#: ``(label, predicate name, the command after `git <redirect>`, bumps)``:
+#: each is driven with the redirect in git's global-option slot on both
+#: tools, in the spellings each shell takes.
+_REDIRECT_SLOT_ROWS = [
+    ("force-push", "_pred_forcepush", "push --force origin main", True),
+    ("force-push-glued", "_pred_forcepush", "push -f origin main", True),
+    ("release-tag", "_pred_release", "push origin v1.2.3", True),
+    ("clean", "_pred_gitclean", "clean -fd", True),
+    ("reset-hard", "_pred_discard", "reset --hard", True),
+    ("checkout-dashdash", "_pred_discard", "checkout -- src/x.py", True),
+    ("stash-drop", "_pred_discard", "stash drop", True),
+    ("plain-push", "_pred_forcepush", "push origin main", False),
+    ("dry-run-clean", "_pred_gitclean", "clean -n -f", False),
+    ("status", "_pred_discard", "status", False),
+]
+_SLOT_REDIRECTS = {"Bash": ("2>/dev/null", "2>&1", ">/dev/null 2>&1"), "PowerShell": ("2>$null", "2>&1", "*>$null")}
+
+
+class TestARedirectInGitsOptionSlotDrawsTheCheckpoint:
+    """DEF-2087 (air's ruling f03cb7): the git checkpoints met a redirect in
+    git's global-option slot as an option the head does not know, so `git
+    2>/dev/null push --force origin main`, `git 2>/dev/null reset --hard`
+    and `git 2>/dev/null clean -fd` drew no nudge on either tool, where the
+    same command with the redirect last bumps. Each git checkpoint's
+    readings now carry the text again with its redirects blanked
+    (`_speedbump._with_redirect_views`), beside the text itself, so every
+    bump main gave stays. Every bumping row was silent at main fda7160 and
+    every quiet row was quiet there. The named user: an operator whose agent
+    silences git's errors in front of the subcommand and force-pushes over
+    the remote, or discards uncommitted work, with no re-issue prompt."""
+
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize("label, predicate, tail, bumps", _REDIRECT_SLOT_ROWS,
+                             ids=[row[0] for row in _REDIRECT_SLOT_ROWS])
+    def test_the_checkpoint_reads_past_the_redirect(self, tmp_path, tool, label, predicate, tail, bumps):
+        pred = getattr(_speedbump, predicate)
+        for redirect in _SLOT_REDIRECTS[tool]:
+            assert pred(tool, {"command": f"git {redirect} {tail}"}, tmp_path) is bumps, redirect
+
+    @pytest.mark.parametrize("tool, redirect", [("Bash", "2>/dev/null"), ("PowerShell", "2>$null")])
+    def test_the_redirect_last_still_bumps(self, tmp_path, tool, redirect):
+        assert _speedbump._pred_forcepush(tool, {"command": f"git push --force origin main {redirect}"}, tmp_path)
+
+    def test_a_process_substitution_keeps_its_push(self, tmp_path):
+        assert _speedbump._pred_forcepush("Bash", {"command": "cat <(git push --force origin main)"}, tmp_path)
+
+    def test_git_is_asked_about_one_pathspec_once(self, tmp_path, monkeypatch):
+        """The bare-checkout arm asks git whether the path holds uncommitted
+        work; the text and its redirect view find the same pathspec at the
+        same place, and git is asked once (the view doubled the readings)."""
+        asked: list[str] = []
+        monkeypatch.setattr(_speedbump, "_destroys_uncommitted_work",
+                            lambda root, operand, dirs: asked.append(operand) or False)
+        assert not _speedbump._pred_discard("Bash", {"command": "git checkout src/x.py 2>/dev/null"}, tmp_path)
+        assert asked == ["src/x.py"]
+
+    def test_git_is_asked_again_where_the_view_reads_another_directory(self, tmp_path, monkeypatch):
+        """Once per pathspec AND set of statement directories: the scan reads
+        `cd 2>/dev/null sub` as a cd to the redirect, the view as a cd to
+        `sub`, and the probe the key skipped was the one asked about `sub`
+        (DEF-2087's code review)."""
+        (tmp_path / "sub").mkdir()
+        asked: list[list[str]] = []
+        monkeypatch.setattr(_speedbump, "_destroys_uncommitted_work",
+                            lambda root, operand, dirs: asked.append([d.name for d in dirs]) or False)
+        _speedbump._pred_discard("Bash", {"command": "cd 2>/dev/null sub && git checkout f"}, tmp_path, tmp_path)
+        assert ["sub"] in asked and len(asked) == 2, asked
+
+    def test_a_powershell_stop_behind_a_redirect_names_its_pid(self):
+        """The kill checkpoint reads the texts the force-push, release and
+        clean checkpoints read (`_git_checkpoint_readings`), so it reads the
+        redirect view too: a redirect between the stop and its pid named only
+        the stream's digit until the view, and names the pid beside it now
+        (the digit itself is a ledger row of its own, the kill reader's)."""
+        for command in ("Stop-Process -Id 2>$null 4242", "Stop-Process 2>$null 4242", "kill 2>$null 4242"):
+            pids = _speedbump._named_kill_pids("PowerShell", {"command": command})
+            assert 4242 in pids, (command, pids)
+
+    def test_a_kept_pattern_module_without_the_view_reads_the_text_alone(self, tmp_path, monkeypatch):
+        """An upgrade that kept an older `_bash_patterns` without the view
+        leaves every checkpoint reading the text as before."""
+        monkeypatch.delattr(_bash_patterns, "_redirects_blanked")
+        assert _speedbump._pred_forcepush("Bash", {"command": "git push --force origin main 2>/dev/null"}, tmp_path)
+        assert not _speedbump._pred_forcepush("Bash", {"command": "git 2>/dev/null push --force origin main"}, tmp_path)
