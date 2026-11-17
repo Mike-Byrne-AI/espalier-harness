@@ -1059,6 +1059,34 @@ def _scratch_env(scratch: Path) -> dict[str, str]:
     return env
 
 
+def _bash_reading(argv: list[str], text: str, feed_dir: str, scratch: str, env: dict[str, str], timeout: float):
+    """``argv`` run with ``text`` on its standard input, from a file of its
+    own in ``feed_dir`` holding the text's UTF-8 bytes exactly (strict: a
+    text UTF-8 cannot carry stops the run rather than parse as another).
+    Never one argument: a 100 KB text passed Windows' 32,767-character
+    command line and the syntax pass's `bash -n -c` stopped on WinError 206
+    (post-merge-windows run 44168215720). Never a pipe either: a text-mode
+    one writes each newline as CRLF on Windows (the Git Bash runs read the
+    batch right through it; bash 3.2 gives every form None), and bash reads
+    any pipe a byte at a time where it reads a file in blocks (a 1.2 MB
+    batch, median 0.338 s piped against 0.035 s from a file on the Air, the
+    code review). ``feed_dir`` is a directory apart from ``scratch``, the
+    parse's PATH and cwd, so that PATH stays empty; one file a spawn, so no
+    two spawns share one."""
+    fd, name = tempfile.mkstemp(dir=feed_dir)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(text.encode("utf-8"))
+        with open(name, "rb") as handle:
+            return run_bounded(argv, stdin=handle, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout, cwd=scratch, env=env)
+    finally:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass  # the directory's own cleanup takes what is left
+
+
 def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = None) -> list[str | None]:
     """Each text's form as bash prints it after parsing, or None where bash
     rejects it. Syntax-only first (`bash -n`, one text per run, so a reject is
@@ -1074,14 +1102,16 @@ def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = Non
     below refuses is no form, and its index joins ``drops`` where the caller
     gives one, so a batch that goes wrong in a new shape is counted rather
     than read as a place that is not null (the second failure-mode review's
-    N-5: the census reds only at zero null places)."""
+    N-5: the census reds only at zero null places). Every text, and every
+    batch's script, reaches bash on its standard input from a file
+    (``_bash_reading``)."""
     out: list[str | None] = [None] * len(texts)
-    with tempfile.TemporaryDirectory(prefix="gm-r4-bash-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="gm-r4-bash-") as scratch, \
+            tempfile.TemporaryDirectory(prefix="gm-r4-feed-") as feed_dir:
         env = _scratch_env(Path(scratch))
         accepted = []
         for idx, text in enumerate(texts):
-            proc = run_bounded([bash, "-n", "-c", text], capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=15, cwd=scratch, env=env)
+            proc = _bash_reading([bash, "-n"], text, feed_dir, scratch, env, timeout=15)
             if proc.returncode == 0:
                 accepted.append(idx)
         sep = "__R4_FORM_END__"
@@ -1095,10 +1125,9 @@ def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = Non
                 return
             script = "".join(f"__r4_{idx}() {{\n{texts[idx]}\n}}\n" for idx in batch)
             script += "".join(f"declare -f __r4_{idx}\nprintf '%s\\n' {sep}\n" for idx in batch)
-            # on standard input, never one argument: R4's full population
-            # passed the platform's argument limit (DEF-5122's first full run)
-            proc = run_bounded([bash, "-r"], input=script, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=60, cwd=scratch, env=env)
+            # never one argument: R4's full population passed the platform's
+            # argument limit (DEF-5122's first full run)
+            proc = _bash_reading([bash, "-r"], script, feed_dir, scratch, env, timeout=60)
             forms = proc.stdout.split(sep + "\n") if proc.returncode == 0 else []
             if len(forms) == len(batch) + 1:
                 for idx, form in zip(batch, forms):
