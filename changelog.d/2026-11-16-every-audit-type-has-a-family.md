@@ -8,8 +8,9 @@
   type a hook writes belongs to any family, so a new record with no other
   channel, written under a name outside the voice-only family, would have
   reached neither reader. The harness's own tests now read every type the
-  hooks can hand the audit writer, through each wrapper and composed name,
-  and fail on a type in no family or in two. The records that already speak
+  hooks hand the audit writer, through each wrapper, alias and composed
+  name. They name each site they cannot read, and they fail on a type in no
+  family or in two. The records that already speak
   where they happen (the SessionStart warnings, the PostToolUse notices told
   to Claude, the handoff hold the prompt router names) are declared as
   channelled advisories, and `action_justification_missing` as the one type
