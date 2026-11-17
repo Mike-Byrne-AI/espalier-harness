@@ -1,0 +1,14 @@
+{
+ "id": "DEF-3098",
+ "subject": "tools/cc/seat.py",
+ "cmd": "python -c 'import os, subprocess as sp, sys, tempfile; from pathlib import Path; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc\"]; import seat; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); r = Path(t.name) / \"r\"; r.mkdir(); w = [r / \".claude\" / \"worktrees\" / \"a\", Path(t.name) / \"outside\"]; g = lambda c, *a: sp.run([\"git\", \"-C\", str(c), *a], check=True, capture_output=True); g(r, \"init\", \"-q\"); g(r, \"-c\", \"user.name=p\", \"-c\", \"user.email=p@p.invalid\", \"commit\", \"-q\", \"--allow-empty\", \"-m\", \"p\"); g(r, \"config\", \"espalier.machine\", \"box\"); g(r, \"config\", \"extensions.worktreeConfig\", \"true\"); [g(r, \"worktree\", \"add\", \"-q\", \"--detach\", str(p)) for p in w]; [g(p, \"config\", \"--worktree\", \"espalier.machine\", \"box-x\") for p in w]; sys.excepthook = lambda k, v, b: print(\"refused\" if issubclass(k, seat.Refused) else k.__name__); print(seat.resolve(r, \"box-x\").path.name)'",
+ "open_value": "a",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/mail.py",
+  "tools/cc/checkout_sync.py"
+ ],
+ "row_sha": "71afa3f1f462",
+ "text_sha": "659fa432ebd5",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD cd43180d9005)"
+}
