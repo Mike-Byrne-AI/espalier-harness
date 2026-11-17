@@ -36,6 +36,7 @@ import ast
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -440,6 +441,7 @@ class TestASlowJudgmentIsRefused:
         assert details == {
             "hook": "write_guard", "tool": tool, "budget_s": _TINY_BUDGET_S,
             "chars": len(command) if command else 0, "start_up_s": 0.0, "began": True, "spent": None,
+            "short": True,
         }
 
     def test_maintenance_mode_does_not_lift_the_budget(self, monkeypatch, slow):
@@ -1021,6 +1023,10 @@ _SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE = textwrap.dedent('''
 #: loaded box's interpreter start, so the mark is written before the kill.
 _PRE_MARK_SLEEP_S = 1.0
 
+#: A long generated command, past the re-issue's gate (DEF-2097): a ``git add``
+#: of 300 paths, 8,107 characters, air bd4b29's measured case.
+_LONG_COMMAND = "git add " + " ".join(f"src/package_{i:03d}/mod_{i:03d}.py" for i in range(300))
+
 #: A ``sitecustomize`` that holds the judging child in its start-up for
 #: ``_PRE_MARK_SLEEP_S`` and then, inside `_run_main`'s own work, past the
 #: deadline: the kill-switch scan's parse of the project settings, which the
@@ -1071,15 +1077,22 @@ _SLOW_PATTERN_IMPORT_SITE = textwrap.dedent('''
 #: A ``sitecustomize`` that puts the judging child in DEF-2097's band: its
 #: start held ``BAND_DELAY`` s, so the parent's deadline answers before the
 #: child's own budget where it is set; its begun mark held until ``BAND_MARK_AT``
-#: s after this file ran, in the pattern module's exec (start-up, at a time no
-#: load moves); then a stall past every bound at ``BAND_STALL``: the call's
+#: s after this file ran in the child, or in the hook's own process where
+#: ``BAND_ANCHOR`` is ``parent`` (the parent hands its start down, so the mark
+#: keeps its distance from the parent's deadline whatever the spawn took: the
+#: failure-mode review's #7), in the pattern module's exec (start-up, at a time
+#: no load moves); then a stall past every bound at ``BAND_STALL``: the call's
 #: first first-use compile (``compile``), or the spent mark's write as a
 #: checkpoint is about to spend its one-shot (``spent``). The time goes to the
 #: module's exec, never ``find_spec``, which holds the global import lock (#691).
 _BAND_SITE = textwrap.dedent('''
     import importlib.machinery, os, sys, time
     _ran = time.monotonic()
-    if sys.argv[1:2] == ["--judge"]:
+    if sys.argv[1:2] != ["--judge"]:
+        os.environ["BAND_T0"] = repr(_ran)
+    else:
+        if os.environ.get("BAND_ANCHOR") == "parent":
+            _ran = float(os.environ["BAND_T0"])
         time.sleep(float(os.environ["BAND_DELAY"]))
         _stall = os.environ["BAND_STALL"]
         if _stall == "spent":
@@ -1186,7 +1199,8 @@ class TestTheDeadlineRefusalSaysWhatSpentTheTime:
         assert [(d.get("bound"), d.get("began"), d.get("spent")) for d in refusals] == [
             ("child", True, False)], (refusals, err)
         start_up, judged = refusals[0]["start_up_s"], refusals[0]["judged_s"]
-        assert ("Do: split it into shorter commands" in reason) is (judged >= start_up), (reason, refusals)
+        if abs(start_up - judged) > 0.01:  # the record rounds to 2 places; the rule reads the clock (the code review's #5)
+            assert ("Do: split it into shorter commands" in reason) is (start_up < judged), (reason, refusals)
         assert start_up >= _PRE_MARK_SLEEP_S, refusals
         assert start_up + judged == pytest.approx(write_guard.HARD_DEADLINE_S, abs=0.02), refusals
 
@@ -1212,22 +1226,24 @@ class TestTheMarkFollowsThePatternImport:
         assert refusals, err
         assert all(d.get("bound") in (None, "child") and d.get("began") is False for d in refusals), (refusals, err)
 
-    @pytest.mark.parametrize(("marking", "mark_after_s", "spent", "began", "start_up_s", "re_issue"), [
-        (True, None, None, False, 3.5, True),
-        (True, 1.0, False, True, 1.0, False),
-        (True, 2.5, False, True, 2.5, True),
-        (True, 2.5, True, True, 2.5, False),
-        (False, None, None, True, 0.25, False),
-    ], ids=["child-before-the-mark", "child-past-the-mark", "start-up-took-more", "a-one-shot-spent",
-            "in-place"])
-    def test_the_child_budget_reads_the_begun_mark(self, monkeypatch, guard_root, capsys,
-                                                   marking, mark_after_s, spent, began, start_up_s, re_issue):
+    @pytest.mark.parametrize(("marking", "mark_after_s", "spent", "command", "began", "start_up_s", "re_issue"), [
+        (True, None, None, "git status", False, 3.5, True),
+        (True, 1.0, False, "git status", True, 1.0, False),
+        (True, 2.5, False, "git status", True, 2.5, True),
+        (True, 2.5, False, _LONG_COMMAND, True, 2.5, False),
+        (True, 2.5, True, "git status", True, 2.5, False),
+        (False, None, None, "git status", True, 0.25, False),
+    ], ids=["child-before-the-mark", "child-past-the-mark", "start-up-took-more", "a-long-command",
+            "a-one-shot-spent", "in-place"])
+    def test_the_child_budget_reads_the_begun_mark(self, monkeypatch, guard_root, capsys, marking, mark_after_s,
+                                                   spent, command, began, start_up_s, re_issue):
         """The child's own budget refusal, driven on `_verdict_for` with no
         process and no race: a judging child before its mark asks for the
         re-issue, start-up all of the budget; one past it splits the budget at
-        the mark, and asks for the re-issue where start-up took more and no
-        checkpoint spent its one-shot (DEF-2097); the hook judging in place,
-        whose spends are unread, splits it where `main` began."""
+        the mark, and asks for the re-issue where start-up took at least
+        judging's share, no checkpoint spent its one-shot and the command is
+        under the gate (DEF-2097); the hook judging in place, whose spends are
+        unread, splits it where `main` began."""
         clock = time.monotonic() - 10.0  # the deadline is past, so the wait returns at once
         monkeypatch.setattr(write_guard, "_MARK_THE_JUDGING", marking)
         monkeypatch.setattr(write_guard, "_JUDGING_BEGAN_AT",
@@ -1236,7 +1252,7 @@ class TestTheMarkFollowsThePatternImport:
         monkeypatch.setattr(write_guard, "_SPENDS_CLOSED", False, raising=False)
         rc = write_guard._verdict_for(
             write_guard._Verdict(), write_guard._HeldStreams(), threading.Event(),
-            clock + write_guard.JUDGMENT_BUDGET_S, [_payload("Bash", {"command": "git status"})],
+            clock + write_guard.JUDGMENT_BUDGET_S, [_payload("Bash", {"command": command})],
             exit_on_budget=False, begun=clock + 0.25, clock=clock)
         assert int(rc) == 0
         decisions = _decisions(capsys.readouterr().out)
@@ -1249,8 +1265,9 @@ class TestTheMarkFollowsThePatternImport:
         else:
             assert "had not begun judging" in reason, reason
         records = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [(d.get("began"), d.get("spent"), d.get("start_up_s"), d.get("judged_s")) for d in records] == [
-            (began, spent if marking else None, round(start_up_s, 2),
+        assert [(d.get("began"), d.get("spent"), d.get("short"), d.get("start_up_s"), d.get("judged_s"))
+                for d in records] == [
+            (began, spent if marking else None, command != _LONG_COMMAND, round(start_up_s, 2),
              round(write_guard.JUDGMENT_BUDGET_S - start_up_s, 2))], records
         if marking:
             # The refusal read the spends once and closed them (DEF-2097).
@@ -1312,33 +1329,116 @@ class TestTheRemedyReadsTheSpendAndTheShares:
     code, and the first-use compiles a call pays come after it, so a loaded
     box's deadline that lands in them read as judging and asked an ordinary
     command to split, where each shorter command pays the same compiles in its
-    own process. The refusal now asks for the re-issue where start-up took
-    more of the bound and no checkpoint spent its one-shot (the child says a
-    spend as it is about to happen), and keeps the split where one did."""
+    own process. The refusal now asks for the re-issue where start-up took at
+    least judging's share, no checkpoint spent its one-shot (the child says a
+    spend as it is about to happen) and the command is under the gate (air
+    bd4b29's R5), and keeps the split where one was spent or the command is
+    long, at both bounds."""
 
-    @pytest.mark.parametrize(("delay", "mark_at", "stall", "command", "spent", "re_issue"), [
-        ("0", "2.6", "compile", "ls -la", False, True),
-        ("0.8", "2.8", "compile", "ls -la", False, True),
-        ("0", "2.6", "spent", "git push --force origin main", True, False),
-        ("0.8", "2.8", "spent", "git push --force origin main", True, False),
+    @pytest.mark.parametrize(("delay", "mark_at", "stall", "command", "re_issue"), [
+        ("0", "2.6", "compile", "ls -la", True),
+        ("0.8", "2.8", "compile", "ls -la", True),
+        ("0", "2.6", "spent", "git push --force origin main", False),
+        ("0.8", "2.8", "spent", "git push --force origin main", False),
+        ("0", "2.6", "compile", _LONG_COMMAND, False),
+        ("0.8", "2.8", "compile", _LONG_COMMAND, False),
     ], ids=["a-first-use-compile", "a-first-use-compile-at-the-parents-deadline", "a-one-shot-spent",
-            "a-one-shot-spent-at-the-parents-deadline"])
-    def test_a_refusal_in_the_band(self, tmp_path, delay, mark_at, stall, command, spent, re_issue):
+            "a-one-shot-spent-at-the-parents-deadline", "a-long-command", "a-long-command-at-the-parents-deadline"])
+    def test_a_refusal_in_the_band(self, tmp_path, delay, mark_at, stall, command, re_issue):
         site = _site(tmp_path, _BAND_SITE)
         code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": command}), site=site, extra_env={
-            "BAND_DELAY": delay, "BAND_MARK_AT": mark_at, "BAND_STALL": stall})
+            "BAND_DELAY": delay, "BAND_MARK_AT": mark_at, "BAND_STALL": stall,
+            "BAND_ANCHOR": "child" if delay == "0" else "parent"})
         assert code == 0, (code, err)
         reason = TestTheDeadlineRefusalSaysWhatSpentTheTime()._refused(out)
-        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [(d.get("began"), d.get("spent")) for d in refusals] == [(True, spent)], (refusals, err)
-        # The band: start-up took more of whichever bound answered. Held at the
-        # parent's start, the child's own budget falls past the parent's deadline.
-        assert refusals[0]["start_up_s"] > refusals[0]["judged_s"], refusals
-        if delay != "0":
-            assert refusals[0].get("bound") == "child", refusals
+        # The band, read from the deny the agent sees: start-up took more of
+        # whichever bound answered. Held at the parent's start, the child's own
+        # budget falls past the parent's deadline.
+        shares = re.search(r"(\d+\.\d) s went to start-up and (\d+\.\d) s to judging", reason)
+        assert shares, reason
+        assert float(shares[1]) > float(shares[2]), reason
         assert ("re-issue the same command once" in reason) is re_issue, reason
         assert ("Do: split it into shorter commands" in reason) is (not re_issue), reason
         assert write_guard._SPENT_MARK.decode() not in err.decode("utf-8", "replace"), err
+        # The record, where it lands: the parent's gets only what its exit
+        # leaves, which a loaded box eats (the code review's WARN; DEF-2092).
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert len(refusals) <= 1, refusals
+        for details in refusals:
+            assert (details.get("began"), details.get("spent"), details.get("short")) == (
+                True, stall == "spent", command != _LONG_COMMAND), (refusals, err)
+            if delay != "0":
+                assert details.get("bound") == "child", refusals
+
+
+class TestEveryOneShotFollowsTheSpend:
+    """The failure-mode review of DEF-2097's build (its #2): a refusal at a
+    time bound asks for the identical re-issue only where no checkpoint spent
+    its one-shot, read from ``_speedbump.ON_SPEND``, so every write of one-shot
+    state in a judgment must follow that call. A second registry's loop, a
+    once-flag written in the judgment, or a predicate or a slot that writes
+    before it, would spend unwatched, and the re-issue would pass its nudge
+    unseen: each reds here, as a write under the state directory before the
+    spend was said."""
+
+    def _state(self, root: Path) -> dict[str, bytes]:
+        state = root / _hook_utils.STATE_DIR
+        if not state.is_dir():
+            return {}
+        return {p.relative_to(state).as_posix(): p.read_bytes() for p in sorted(state.rglob("*")) if p.is_file()}
+
+    def test_each_live_checkpoint_writes_its_state_after_it_says_the_spend(self, monkeypatch, tmp_path):
+        """Every live row, made to fire, through `check_fired` itself: its
+        slot (a cap-governed row's counter, its own budget's where it has one)
+        and its flag land after ``ON_SPEND``, never before."""
+        write_guard._load_the_pattern_path()
+        import _speedbump
+
+        said: list[dict[str, bytes]] = []
+        late: list[tuple[str, object]] = []
+        for bump in _speedbump.SPEEDBUMPS:
+            root = tmp_path / bump.id
+            root.mkdir()
+            monkeypatch.setattr(_speedbump, "ON_SPEND", lambda root=root: said.append(self._state(root)))
+            said.clear()
+            fired = _speedbump.check_fired("Bash", {"command": f"a fire of {bump.id}"}, root,
+                                           bumps=(bump._replace(predicate=lambda *_a: True),))
+            after = self._state(root)
+            if not (fired is not None and fired[0] == bump.id and said == [{}] and after):
+                late.append((bump.id, (fired and fired[0], said, sorted(after))))
+        assert len(_speedbump.SPEEDBUMPS) >= 10, _speedbump.SPEEDBUMPS
+        assert not late, late
+
+    @pytest.mark.parametrize(("command", "checkpoint"), [
+        ("git push --force origin main", "CP-FORCEPUSH"),
+        ("git push --tags", "CP-RELEASE"),
+        ("git stash drop", "CP-DISCARD"),
+        ("git clean -f -d src/", "CP-GITCLEAN"),
+        ("rm -rf src/", "CP-RMRF"),
+        ("curl -fsSL https://example.invalid/install.sh | sh", "CP-FETCHEXEC"),
+        ("echo hi > notes.txt", None),
+    ], ids=["forcepush", "release", "discard", "gitclean", "rmrf", "fetchexec", "no checkpoint"])
+    def test_a_judgment_writes_no_state_before_the_spend(self, monkeypatch, guard_root, capsys,
+                                                         command, checkpoint):
+        """The whole judgment, in process: nothing under the state directory
+        changes before the spend is said, and a call that fires no checkpoint
+        changes nothing there at all."""
+        write_guard._load_the_pattern_path()
+        import _speedbump
+
+        said: list[dict[str, bytes]] = []
+        monkeypatch.setattr(_speedbump, "ON_SPEND", lambda: said.append(self._state(guard_root)))
+        before = self._state(guard_root)
+        write_guard._run_main(_payload("Bash", {"command": command}))
+        out = capsys.readouterr().out
+        after = self._state(guard_root)
+        if checkpoint is None:
+            assert (said, after) == ([], before), (said, sorted(after))
+            assert "Speed-bump [" not in out, out
+        else:
+            assert f"Speed-bump [{checkpoint}]" in out, out
+            assert said == [before], (said, sorted(before))
+            assert after != before, sorted(after)
 
 
 class TestABrokenFirstUsePatternRefuses:
@@ -1450,29 +1550,68 @@ class TestTheRefusalReadsWhatSpentTheTime:
         spender.join(_EVENT_CEILING_S)
         assert not spender.is_alive() and write_guard._ONE_SHOT_SPENT is False
 
-    def test_the_child_watches_the_one_shots_or_says_one_was_spent(self, monkeypatch, capfd):
+    def _load_afresh(self, monkeypatch, speedbump: object) -> None:
+        """The judging child's load of the pattern path, its steps left out
+        (each rebinds a name the loaded path already holds), with ``speedbump``
+        standing for the module the import finds."""
+        monkeypatch.setattr(write_guard, "_pattern_path_loaded", False)
+        monkeypatch.setattr(write_guard, "_PATTERN_STEPS", [])
+        monkeypatch.setitem(sys.modules, "_speedbump", speedbump)
+
+    def test_the_child_watches_the_one_shots_at_the_load_or_says_one_was_spent(self, monkeypatch, capfd):
         """DEF-2097: the judging child has the speed-bump say a spend
-        (``ON_SPEND``); a kept, older ``_speedbump.py`` without it leaves the
-        spends unwatched, and the child says one was spent, so both bounds keep
-        the split as before."""
+        (``ON_SPEND``) from the pattern import on, wherever the path loads
+        (the failure-mode review's #4: a load `_loads_the_pattern_path` did
+        not foresee is watched too); a kept, older ``_speedbump.py`` without
+        it leaves the spends unwatched, and the child says one was spent, so
+        both bounds keep the split as before. The begun mark after it keeps
+        the reading; outside the judging child the load watches nothing."""
         import _speedbump
 
         write_guard._load_the_pattern_path()
+        monkeypatch.setattr(write_guard, "_speedbump", _speedbump)  # put back after the stand-in's load
         monkeypatch.setattr(_speedbump, "ON_SPEND", None)
-        monkeypatch.setattr(write_guard, "_ONE_SHOT_SPENT", None)
+        monkeypatch.setattr(write_guard, "_ONE_SHOT_SPENT", False)
         monkeypatch.setattr(write_guard, "_SPENDS_CLOSED", False)
         monkeypatch.setattr(write_guard, "_JUDGING_BEGAN_AT", None)
-        payload = _payload("Bash", {"command": "git status"})
-        write_guard._begin_judging(payload)
+        self._load_afresh(monkeypatch, _speedbump)
+        write_guard._load_the_pattern_path()
+        assert _speedbump.ON_SPEND is None, "a load outside the judging child watched the spends"
+        monkeypatch.setattr(write_guard, "_MARK_THE_JUDGING", True)
+        self._load_afresh(monkeypatch, _speedbump)
+        write_guard._load_the_pattern_path()
         assert _speedbump.ON_SPEND is write_guard._say_one_shot_spent
         assert write_guard._ONE_SHOT_SPENT is False
-        err = capfd.readouterr().err.encode("utf-8")
-        assert err.startswith(write_guard._BEGUN_MARK) and write_guard._SPENT_MARK not in err, err
-        monkeypatch.setattr(write_guard, "_speedbump", types.SimpleNamespace())
-        write_guard._begin_judging(payload)
+        assert capfd.readouterr().err == ""
+        self._load_afresh(monkeypatch, types.SimpleNamespace())
+        write_guard._load_the_pattern_path()
         assert write_guard._ONE_SHOT_SPENT is True
-        err = capfd.readouterr().err.encode("utf-8")
-        assert err.startswith(write_guard._BEGUN_MARK) and err.endswith(write_guard._SPENT_MARK), err
+        assert capfd.readouterr().err.encode("utf-8") == write_guard._SPENT_MARK
+        write_guard._begin_judging(_payload("Read", {"file_path": "notes.txt"}))
+        assert write_guard._ONE_SHOT_SPENT is True, "the begun mark took back a spend said at the import"
+        assert capfd.readouterr().err.encode("utf-8").startswith(write_guard._BEGUN_MARK)
+
+    def test_the_spends_close_before_the_mark_is_read(self, monkeypatch, guard_root, capsys):
+        """The code and failure-mode reviews' close-order finding: the child's
+        refusal reads the spends, closing them, before it reads the mark, so a
+        mark and a spend landing between the two readings cannot read as not
+        begun and spent."""
+        clock = time.monotonic() - 10.0
+        order: list[str] = []
+        real_close, real_read = write_guard._close_the_spends, write_guard._how_the_judgment_spent_it
+        monkeypatch.setattr(write_guard, "_MARK_THE_JUDGING", True)
+        monkeypatch.setattr(write_guard, "_ONE_SHOT_SPENT", False)
+        monkeypatch.setattr(write_guard, "_SPENDS_CLOSED", False)
+        monkeypatch.setattr(write_guard, "_JUDGING_BEGAN_AT", None)
+        monkeypatch.setattr(write_guard, "_close_the_spends", lambda: order.append("close") or real_close())
+        monkeypatch.setattr(write_guard, "_how_the_judgment_spent_it",
+                            lambda *a: order.append("read the mark") or real_read(*a))
+        write_guard._verdict_for(
+            write_guard._Verdict(), write_guard._HeldStreams(), threading.Event(),
+            clock + write_guard.JUDGMENT_BUDGET_S, [_payload("Bash", {"command": "git status"})],
+            exit_on_budget=False, begun=clock + 0.25, clock=clock)
+        capsys.readouterr()
+        assert order == ["close", "read the mark"], order
 
     @pytest.mark.parametrize(("heard", "expected"), [
         ([], (None, None, None)),
@@ -1494,28 +1633,39 @@ class TestTheRefusalReadsWhatSpentTheTime:
         assert start_up == pytest.approx(3.0, abs=1e-5)
         assert judged == pytest.approx(write_guard.HARD_DEADLINE_S - 3.0, abs=1e-5)
 
-    @pytest.mark.parametrize(("began", "spent", "start_up", "judged", "re_issue"), [
-        (False, None, 4.0, 0.0, True),
-        # DEF-2097: a child that had begun, where no checkpoint spent its
-        # one-shot and start-up took more of the bound, asks for the re-issue:
-        # a shorter command pays the same start-up and the same first-use
-        # compiles in its own process.
-        (True, False, 3.2, 0.8, True),
+    @pytest.mark.parametrize(("began", "spent", "start_up", "judged", "short", "re_issue"), [
+        (False, None, 4.0, 0.0, None, True),
+        (False, False, 4.0, 0.0, False, True),
+        # A spend read beside "not begun": a kept, older _speedbump said spent
+        # at its import, ahead of the mark (the code review's #2).
+        (False, True, 4.0, 0.0, True, False),
+        # DEF-2097 (air bd4b29's R5): a child that had begun, where no
+        # checkpoint spent its one-shot, start-up took at least judging's
+        # share and the call is short, asks for the re-issue: a shorter
+        # command pays the same start-up and the same first-use compiles in
+        # its own process.
+        (True, False, 3.2, 0.8, True, True),
+        (True, False, 2.0, 2.0, True, True),
+        # A long command keeps the split: its length, not the compiles, is
+        # what a split shortens (the failure-mode review's #1).
+        (True, False, 3.2, 0.8, False, False),
+        (True, False, 3.2, 0.8, None, False),
         # A spent one-shot keys its nudge on the command, which the identical
         # re-issue would pass unseen; an unread spend may be one.
-        (True, True, 3.2, 0.8, False),
-        (True, None, 3.2, 0.8, False),
-        (True, False, 0.3, 3.7, False),
-        (True, False, 2.0, 2.0, False),
-        (True, False, None, None, False),
-        (None, None, None, None, False),
-    ], ids=["not begun", "start-up took more", "a one-shot spent", "the spends unread", "judging took more",
-            "an even split", "begun, unread", "unread"])
+        (True, True, 3.2, 0.8, True, False),
+        (True, None, 3.2, 0.8, True, False),
+        (True, False, 0.3, 3.7, True, False),
+        (True, False, 1.99, 2.01, True, False),
+        (True, False, None, None, True, False),
+        (None, None, None, None, None, False),
+    ], ids=["not begun", "not begun, nothing spent", "not begun, a one-shot spent",
+            "start-up took more", "an even split", "a long command", "the length unread", "a one-shot spent",
+            "the spends unread", "judging took more", "judging took more by a hair", "begun, unread", "unread"])
     def test_the_re_issue_is_asked_where_start_up_spent_it_and_no_one_shot_was_spent(
-            self, began, spent, start_up, judged, re_issue):
-        assert write_guard._start_up_spent_it(began, spent, start_up, judged) is re_issue
+            self, began, spent, start_up, judged, short, re_issue):
+        assert write_guard._start_up_spent_it(began, spent, start_up, judged, short) is re_issue
         reason = write_guard._budget_reason(_denial_reasons, 4.0, write_guard._PARENT_BOUND, began, start_up, judged,
-                                            spent)
+                                            spent, short)
         assert ("re-issue the same command once" in reason) is re_issue, reason
         assert ("Do: split it into shorter commands" in reason) is (not re_issue), reason
         assert write_guard._PARENT_BOUND in reason and reason.isascii()
@@ -1532,6 +1682,34 @@ class TestTheRefusalReadsWhatSpentTheTime:
         reason = write_guard._budget_reason(kept, 4.0, write_guard._PARENT_BOUND, False, 4.0, 0.0)
         assert reason.startswith("Command blocked: write_guard could not finish judging"), reason
         assert "Do: split it into shorter commands" in reason, reason
+
+    @pytest.mark.parametrize(("tool_input", "short"), [
+        ({"file_path": "notes.txt"}, True),
+        ({"command": 7}, True),
+        ("not a dict", True),
+        ({"command": ""}, True),
+        ({"command": "x" * 1499}, True),
+        ({"command": "x" * 1500}, False),
+        ({"command": "git add " + " ".join(f"src/package_{i:03d}/mod_{i:03d}.py" for i in range(300))}, False),
+    ], ids=["no command", "a command that is no string", "no input", "an empty command", "one under the gate",
+            "at the gate", "a 300-path git add"])
+    def test_a_short_call_has_no_command_or_one_under_the_gate(self, tool_input, short):
+        """DEF-2097 (air bd4b29): the re-issue past the begun mark is asked
+        only of a call with no command, or one under the gate, whose judging
+        is mostly the first-use compiles every call pays."""
+        assert write_guard._RE_ISSUE_GATE_CHARS == 1500
+        assert write_guard._short_enough(tool_input) is short
+
+    @pytest.mark.parametrize(("payload", "short"), [
+        (b'{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}', True),
+        (b'{"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}}', True),
+        (json.dumps({"tool_name": "Bash", "tool_input": {"command": "x" * 1500}}).encode(), False),
+        (b"not json", None),
+        (b"[1, 2]", None),
+        (b"", None),
+    ], ids=["a short command", "no command", "a long command", "not json", "no call", "nothing"])
+    def test_the_parent_reads_the_length_from_the_payload_it_holds(self, payload, short):
+        assert write_guard._a_short_call(payload) is short
 
 
 class TestTheParentReadsItsRunnerAndItsFault:

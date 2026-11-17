@@ -270,35 +270,70 @@ def _spent(began: bool | None, start_up: float | None, judged: float | None) -> 
     return f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging"
 
 
-def _start_up_spent_it(began: bool | None, spent: bool | None = None,
-                       start_up: float | None = None, judged: float | None = None) -> bool:
+#: The longest command a refusal past the begun mark may ask to re-issue
+#: (DEF-2097, air bd4b29): past it the command's length, not the first-use
+#: compiles every call pays, is what a split would shorten. Measured on the
+#: Windows box (3.11.9, 2026-11-17, 7 rounds of fresh interpreters, the
+#: judgment past the mark): the compiles are a fixed 73 to 76 ms, and the rest
+#: reaches them at about 1,550 characters for a delete list (``rm -f`` of N
+#: paths, about 1.1 ms a path) and about 6,200 for a ``git add`` of the same
+#: paths (about 0.33 ms a path); the gate sits under the lower of the two.
+_RE_ISSUE_GATE_CHARS = 1500
+
+
+def _short_enough(tool_input: object) -> bool:
+    """Whether a call is short enough for a refusal past the begun mark to ask
+    for the re-issue (DEF-2097): it carries no command (a Read, a Write, an
+    MCP call), or one under ``_RE_ISSUE_GATE_CHARS``."""
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    return not isinstance(command, str) or len(command) < _RE_ISSUE_GATE_CHARS
+
+
+def _a_short_call(payload: bytes) -> bool | None:
+    """At the parent's deadline: `_short_enough` of the payload it holds, read
+    only there, so a call answered in time pays nothing for it (40ec7f);
+    ``None`` where the payload does not read as a call."""
+    try:
+        data = json.loads(payload.decode("utf-8", errors="replace"))
+    except ValueError:  # fail-open: ok deliberate -- an unread payload is no short call: the refusal asks for the split
+        return None
+    return _short_enough(data.get("tool_input")) if isinstance(data, dict) else None
+
+
+def _start_up_spent_it(began: bool | None, spent: bool | None = None, start_up: float | None = None,
+                       judged: float | None = None, short: bool | None = None) -> bool:
     """Whether the refusal asks for the re-issue rather than the split
     (DEF-2091, DEF-2097): the judging child had not begun judging, so no
     judgment ran and nothing it keeps was spent; or it had begun, no
-    checkpoint spent its one-shot state (``spent`` False), and start-up took
-    more of the bound than judging, where a shorter command pays the same
-    start-up and the same first-use compiles in its own process. A checkpoint
-    that spent its one-shot keys it on the command (the discard and kill
-    checkpoints), and the identical re-issue would pass that nudge unseen; so
-    there, and where the spend or a share is unread or the split is even, the
-    split is asked, as before DEF-2097. ``_spent`` says how the time split."""
+    checkpoint spent its one-shot state (``spent`` False), start-up took at
+    least judging's share of the bound, and the call is short
+    (`_short_enough`), where a shorter command would pay the same start-up and
+    the same first-use compiles in its own process. A checkpoint that spent
+    its one-shot keys it on the command (the discard and kill checkpoints),
+    and the identical re-issue would pass that nudge unseen; so there, for a
+    long command, and where the spend, a share or the length is unread, the
+    split is asked, as before DEF-2097. A spend read beside "not begun" (a
+    kept, older ``_speedbump`` said spent at its import) keeps the split too.
+    ``_spent`` says how the time split."""
     if began is False:
-        return True
-    return (began is True and spent is False and start_up is not None and judged is not None
-            and start_up > judged)
+        return spent is not True
+    return (began is True and spent is False and short is True and start_up is not None
+            and judged is not None and start_up >= judged)
 
 
 def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool | None,  # noqa: N803
-                   start_up: float | None, judged: float | None, spent: bool | None = None) -> str:
+                   start_up: float | None, judged: float | None, spent: bool | None = None,
+                   short: bool | None = None) -> str:
     """The time budget's refusal from its two templates: the re-issue where
-    start-up alone spent the time, the split otherwise (DEF-2091). The
+    start-up spent the time (`_start_up_spent_it`), the split otherwise
+    (DEF-2091, DEF-2097). The
     reasons module comes in as a parameter (the parent builds it on a thread
     of its own), named as the module it is, so the template census reads its
     two uses (``tests/test_denial_reasons.py``). A kept, older reasons module
     that predates the start-up template gives the split, as before it, never a
     raise (in the judging child an exit 1, which lets the call through)."""
     template = _denial_reasons.WRITE_GUARD_TIME_BUDGET
-    if _start_up_spent_it(began, spent, start_up, judged):
+    if _start_up_spent_it(began, spent, start_up, judged, short):
         try:
             template = _denial_reasons.WRITE_GUARD_START_UP_BUDGET
         except AttributeError:  # fail-open: ok text-fallback -- a kept, older _denial_reasons: the split's text, the refusal it gave before DEF-2091
@@ -309,10 +344,10 @@ def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool 
     return rendered
 
 
-def _plain_remedy(began: bool | None, spent: bool | None = None,
-                  start_up: float | None = None, judged: float | None = None) -> str:
+def _plain_remedy(began: bool | None, spent: bool | None = None, start_up: float | None = None,
+                  judged: float | None = None, short: bool | None = None) -> str:
     """The parent's plain-words fallback's remedy, by the same rule."""
-    if _start_up_spent_it(began, spent, start_up, judged):
+    if _start_up_spent_it(began, spent, start_up, judged, short):
         return "Re-issue the same command once: the time went to starting the guard on a busy machine."
     return "Split it into shorter commands, each judged on its own."
 
@@ -373,12 +408,13 @@ class _DeadlineRefusal:
             done.set()
 
     def reason(self, began: bool | None, start_up: float | None, judged: float | None,
-               spent: bool | None = None) -> str:
+               spent: bool | None = None, short: bool | None = None) -> str:
         """The deny's reason from the built reasons; raises where none were
         built in time, and the caller words it in plain words."""
         if self.reasons is None:
             raise LookupError("the refusal's reasons were not built before the deadline")
-        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged, spent)
+        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged, spent,
+                              short)
 
     def record(self, details: dict, *, by: float, event: str = "pretooluse_blocked_time_budget") -> None:
         """Hand the record (``event``, ``details``) to the build once the deny
@@ -588,17 +624,18 @@ def _answer_from_a_judging_child() -> None:
     # its reasons and its record were built while the parent waited (DEF-2092).
     began, start_up, judged = _how_the_child_spent_it(heard)
     spent = _spent_a_one_shot(heard)
+    short = _a_short_call(payload)
     try:
-        reason = refusal.reason(began, start_up, judged, spent)
+        reason = refusal.reason(began, start_up, judged, spent, short)
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
         reason = (f"Command blocked: write_guard ran out of its {HARD_DEADLINE_S} s time budget before it had"
                   f" judged this command ({_spent(began, start_up, judged)}), so the call is refused rather"
-                  f" than let through unjudged. {_plain_remedy(began, spent, start_up, judged)}")
+                  f" than let through unjudged. {_plain_remedy(began, spent, start_up, judged, short)}")
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()
     details: dict[str, object] = {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child",
-                                  "bytes": len(payload), "began": began, "spent": spent}
+                                  "bytes": len(payload), "began": began, "spent": spent, "short": short}
     if start_up is not None and judged is not None:
         details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
     refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S)
@@ -640,9 +677,10 @@ def _say_judging_began() -> None:
 #: importer (the tests) and the hook process judging in place write none.
 _MARK_THE_JUDGING = False
 #: Whether a speed-bump checkpoint began spending its one-shot state in this
-#: judging child (DEF-2097): ``None`` until `_begin_judging` watches the
-#: checkpoints (and anywhere else: the hook judging in place, an importer),
-#: then ``False``, then ``True`` from `_say_one_shot_spent`.
+#: judging child (DEF-2097): ``False`` from the child's start (the ``__main__``
+#: block), since no checkpoint runs before the pattern import that watches them
+#: (`_load_the_pattern_path`), then ``True`` from `_say_one_shot_spent`;
+#: ``None`` anywhere else (the hook judging in place, an importer).
 _ONE_SHOT_SPENT: bool | None = None
 #: Held while a spend is said or the child's own budget refusal reads it, so no
 #: spend lands between that reading and the refusal (`_close_the_spends`).
@@ -687,11 +725,11 @@ def _close_the_spends() -> bool | None:
 
 
 def _watch_the_one_shots() -> bool:
-    """The judging child, with the pattern path loaded: have the speed-bump
+    """The judging child, as the pattern path imports ``_speedbump``: have it
     say when a checkpoint is about to spend its one-shot state (DEF-2097).
     False where a kept, older ``_speedbump.py`` has no ``ON_SPEND``: the
-    spends are then unwatched, and `_begin_judging` says one was spent, so
-    both bounds keep the split as before DEF-2097."""
+    spends are then unwatched, and `_load_the_pattern_path` says one was
+    spent, so both bounds keep the split as before DEF-2097."""
     if not hasattr(_speedbump, "ON_SPEND"):
         return False
     _speedbump.ON_SPEND = _say_one_shot_spent
@@ -735,16 +773,11 @@ def _begin_judging(data: dict) -> None:
     going asks for the re-issue, not the split. A module that cannot import
     raises here, inside `_judge`'s crash guard, which names its file and line
     as the load in `_run_main` would; no mark is written then, and the deny
-    is the child's answer."""
-    global _ONE_SHOT_SPENT
-    watched = True
+    is the child's answer. The load watches the speed-bump's spends, here or
+    wherever else the path loads (DEF-2097)."""
     if _loads_the_pattern_path(data):
         _load_the_pattern_path()
-        watched = _watch_the_one_shots()
-    _ONE_SHOT_SPENT = False
     _say_judging_began()
-    if not watched:
-        _say_one_shot_spent()
 
 
 # The hard bound: the hook process answers through a judging child (or, where
@@ -864,10 +897,17 @@ def _load_the_pattern_path() -> None:
 
     The done flag is set after the last step, so an import or a step that
     raises leaves the path unloaded and the next call raises again (into
-    `main`'s crash guard, or the importer's own traceback)."""
+    `main`'s crash guard, or the importer's own traceback).
+
+    In the judging child the speed-bump's spends are watched from its import
+    on (`_watch_the_one_shots`, DEF-2097), wherever the path loads, before
+    the begun mark or after it: no checkpoint can run before this import. An
+    older ``_speedbump`` that cannot be watched is said spent once the lock is
+    let go, since a spend said after the child's refusal waits for the exit."""
     global _bash_patterns, _speedbump, _pattern_path_loaded, _pattern_path_loading
     if _pattern_path_loaded:
         return
+    unwatched = False
     with _PATTERN_PATH_LOCK:
         if _pattern_path_loaded or _pattern_path_loading:
             return
@@ -881,11 +921,14 @@ def _load_the_pattern_path() -> None:
                 sys.path.insert(0, here)
             import _bash_patterns
             import _speedbump
+            unwatched = _MARK_THE_JUDGING and not _watch_the_one_shots()
             for step in _PATTERN_STEPS:
                 step()
             _pattern_path_loaded = True
         finally:
             _pattern_path_loading = False
+    if unwatched:
+        _say_one_shot_spent()
 
 
 def __getattr__(name: str) -> Any:
@@ -5419,10 +5462,11 @@ def _verdict_for(
     verdict: the judgment's (replayed), or the refusal. ``begun`` and
     ``clock`` are when the judgment and the budget's clock started: the
     refusal says how the budget split between start-up and judging (DEF-2091),
-    read by `_how_the_judgment_spent_it`, and asks for the split where judging
-    had begun, since it may have spent a one-shot nudge
-    (``_start_up_spent_it``), and for the re-issue where a judging child was
-    still before its begun mark."""
+    read by `_how_the_judgment_spent_it`, and asks for the re-issue where a
+    judging child was still before its begun mark, or past it where no
+    checkpoint spent its one-shot, start-up took at least judging's share and
+    the call is short (DEF-2097), and for the split otherwise
+    (``_start_up_spent_it``)."""
     try:
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment
@@ -5438,18 +5482,21 @@ def _verdict_for(
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
-        began, start_up, judged = _how_the_judgment_spent_it(begun, clock, deadline)
+        # The spends close before the mark is read: a mark and a spend that
+        # land between the two readings would read as not begun and spent.
         spent = _close_the_spends() if _MARK_THE_JUDGING else None
+        began, start_up, judged = _how_the_judgment_spent_it(begun, clock, deadline)
         split = ({"start_up_s": round(start_up, 2), "judged_s": round(judged, 2)}
                  if start_up is not None and judged is not None else {})
         # Metadata only: the tool, the budget, the command's length, whether
         # judging had begun and how the budget split, never the command's text.
         rc = _audit_deny(
             _root_or_dot(), "pretooluse_blocked_time_budget",
-            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged, spent),
+            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged, spent,
+                           _short_enough(tool_input)),
             hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
             budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, began=began,
-            spent=spent, **split,
+            spent=spent, short=_short_enough(tool_input), **split,
         )
         _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc
@@ -5900,8 +5947,9 @@ if __name__ == "__main__":
     _start_refusal.body_done()
     if sys.argv[1:2] == [_JUDGE_FLAG]:
         # The mark is `_judge`'s to write, past the pattern import where the
-        # call loads it (`_begin_judging`).
+        # call loads it (`_begin_judging`); no checkpoint has spent yet.
         _MARK_THE_JUDGING = True
+        _ONE_SHOT_SPENT = False
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0

@@ -3163,7 +3163,11 @@ def snapshot_discard(
 #: it, so a refusal at a time bound knows whether the identical re-issue would
 #: pass a nudge unseen. ``None``, the default and every other importer's, calls
 #: nothing. The callee must not raise: a raise leaves this check, and
-#: write_guard reads it as the speed-bump's fault (fail-open, said once).
+#: write_guard reads it as the speed-bump's fault (fail-open, said once). It
+#: may block until the process ends (write_guard holds a spend said after its
+#: refusal read them), so it is never called under a lock: a refusal's exit
+#: takes the state-write lock. Every write of one-shot state in a judgment
+#: follows it (tests/test_write_guard_time_budget.py::TestEveryOneShotFollowsTheSpend).
 ON_SPEND: Callable[[], None] | None = None
 
 
