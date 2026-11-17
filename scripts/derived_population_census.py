@@ -2189,9 +2189,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
     ),
-    # 1 row(s), shapes: comprehension
+    # 3 row(s), shapes: comprehension, for-plain
     "tests/test_write_guard_time_budget.py": (
-        1, "90e8e94308a20286c43703509f2aea6bde3a5474e556aea6888718f7b0d54136",
+        3, "9ee9b834698551f13a23fa0095e14e5ef04ef7f82ecf37c1f6c21eec78198456",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-16 (DEF-2084, the review fix F1): one comprehension over _bash_patterns' globals "
         "read by type (type(value) is bp._FirstUse) names every first-use pattern, and each is broken in "
@@ -2200,7 +2200,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "open. Blind to an empty or narrowed walk, and the remedy is both sides: a floor of 200 names in "
         "the same test, and one file over the same type predicate is held equal to an AST count of the "
         "source's _first_use( calls at tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so "
-        "a pattern the walk cannot reach reds there.",
+        "a pattern the walk cannot reach reds there. GROWN 2026-11-17 (DEF-2097, the delta's reviews), "
+        "two rows. The for-plain loop over _speedbump.SPEEDBUMPS makes every live checkpoint fire through "
+        "check_fired and asserts its slot and flag land after ON_SPEND: the population is the defect, "
+        "since any one checkpoint that writes first spends a one-shot the re-issue passes unseen. Blind "
+        "to an empty or narrowed registry; the remedy is the len(SPEEDBUMPS) >= 10 floor in the same "
+        "test. The comprehension over _reinject.REINJECTS is a tripwire that the PreToolUse subset is "
+        "empty, since check()'s once-flags never say ON_SPEND. Blind to an empty registry or a renamed "
+        "event; the remedy is the len(REINJECTS) >= 10 floor and the assertion that the judgment's call "
+        "site passes the literal \"PreToolUse\" that check() compares by equality.",
     ),
     "tests/test_zone_watch.py": (
         6, "6d5ef563128ca626a097dada93fbe939fa4f1fa177fb760238d85042b32150a9",
