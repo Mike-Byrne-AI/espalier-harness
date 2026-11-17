@@ -44,12 +44,19 @@ session) and every channel fact from ``mail.py``'s local refs:
 * ``brief <seat>`` -- print the seat's first message, the one ``launch`` passes:
   a worker's (its dispatcher, the reads to start with, its jobs, the worker
   loop) or the dispatcher's (its duties, the board loop), as the ``dispatcher``
-  line of ``espalier.toml`` decides, so no operator pastes it.
+  line of ``espalier.toml`` decides, so no operator pastes it. Run inside a
+  checkout answering ``<seat>``, it is composed from that checkout.
 * ``tick [<seat>] [--role worker|dispatcher]`` -- print a seat's tick, which
   its loop's command has this verb print at each tick (a worker's tick, the
   default, or with ``--role dispatcher`` the board tick), refused for a seat
   of the other role: the seat this checkout answers when none is named,
   composed from the checkout as ``brief`` composes it.
+
+A seat name two or more checkouts answer (a stale twin of a live seat, a
+worktree named back to the clone's own name) is refused by every verb that
+takes one, naming each checkout with its branch, head and sessions, and the
+rename for each but the live one where exactly one holds a session; ``brief``
+and ``tick`` run inside one of them compose from it instead (DEF-3097).
 * ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
   removal first (``checkout_sync``'s rules for that one worktree: clean,
   merged, no plan in progress, nothing ignored it would lose), so a seat that
@@ -67,6 +74,7 @@ Verbs::
     python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--no-brief] [--no-mod]
                                           [--print [--shell S]] [-- <claude args>]
     python tools/cc/seat.py brief <seat>
+    python tools/cc/seat.py tick [<seat>] [--role worker|dispatcher]
     python tools/cc/seat.py retire <seat> [--dry-run] [--return-jobs] [--unchecked] [--no-fetch]
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); imports
@@ -438,6 +446,60 @@ class Target:
     is_clone: bool
 
 
+def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, str]]]) -> str:
+    """Why ``seat`` resolves to none of the checkouts that answer it, with the
+    one remedy the driver can stand behind (DEF-3097). Where exactly one holds
+    a session and who is in each could be told, that one is the seat: each
+    other one, a linked worktree, gets the one ``--worktree`` command that
+    renames it, spelled ``git -C "<path>"`` so it renames that worktree
+    wherever it is pasted, and one command, never a pair chained with ``&&``,
+    which Windows PowerShell 5.1 does not parse. Anything else is the
+    operator's call and gets no command, only each checkout's branch, head and
+    sessions: none holds a session or several do, one's occupancy cannot be
+    told, the clone itself is among the ones to rename (its name is the one
+    every derived seat name is built on), or per-worktree config is off or
+    unread (a ``--worktree`` set then fails, and turning it on is
+    ``mail.naming_steps``' to say, a bare clone's one change included)."""
+    head = (f"seat {seat!r} is answered by {len(answering)} checkouts, which write one mail ref, so none of "
+            "them is picked")
+    occupied: list[Path] = []
+    told = True
+    words: list[str] = []
+    for path, block in answering:
+        occ = sync.occupancy(path)
+        if occ.sessions is None:
+            told, who = False, f"who is in it cannot be told ({occ.note})"
+        elif occ.sessions:
+            occupied.append(path)
+            who = f"{len(occ.sessions)} live session(s)"
+        else:
+            who = "no session"
+        branch = block.get("branch", "").replace("refs/heads/", "") or "a detached HEAD"
+        words.append(f"{path} on {branch} at {block.get('HEAD', '')[:7]}, {who}")
+    others = [path for path, _ in answering if not occupied or sync._norm(path) != sync._norm(occupied[0])]
+    clone_among = any(sync._norm(path) == sync._norm(root) for path in others)
+    on, unread = mail._worktree_config(root)
+    if told and len(occupied) == 1 and not clone_among and on:
+        renames = "; ".join(f'{path}: git -C "{path.as_posix()}" config --worktree {mail.MACHINE_KEY} <name>'
+                            for path in others)
+        return f"{head}: the live session is in {occupied[0]}, so name each other one, then run this again: {renames}"
+    if not told:
+        reason = "who is in each could not be told"
+    elif not occupied:
+        reason = "none of them holds a session"
+    elif len(occupied) > 1:
+        reason = f"{len(occupied)} of them hold sessions"
+    elif clone_among:
+        reason = ("the live session is in a worktree that took the clone's own name, and renaming the clone "
+                  "moves every seat name derived from it")
+    elif on is None:
+        reason = f"whether per-worktree config is on could not be read ({unread})"
+    else:
+        reason = "per-worktree config is off in this clone, so no worktree here can hold a name of its own yet"
+    return (f"{head}, and which one is the seat is the operator's call ({reason}), so no command is given: "
+            f"{'; '.join(words)}; `seat.py list` shows the sessions in each")
+
+
 def resolve(root: Path, seat: str) -> Target:
     """The checkout a seat name means: the clone's own name, a worktree whose
     own name is ``seat``, one whose derived name is (it has none of its own
@@ -446,44 +508,43 @@ def resolve(root: Path, seat: str) -> Target:
 
     Every worktree is read before any answer (DEF-3097): the first match
     returned in listing order handed ``launch``, ``brief``, ``tick <seat>``
-    and ``retire`` a stale twin of the live seat (DEF-4125's shape). A name
-    two or more worktrees answer, or a match beside a worktree whose name
-    could not be read, is :class:`Undecided`, naming each checkout and the
-    board's rename for it."""
+    and ``retire`` a stale twin of the live seat (DEF-4125's shape). The
+    clone's own name is read the same way, the clone counted among the
+    checkouts answering it, so a worktree named back to it is a twin too. A
+    name two or more checkouts answer, or a match beside a worktree whose name
+    could not be read, is :class:`Undecided`, naming each checkout
+    (:func:`_twins_refusal` says what the remedy can be). An empty name is
+    refused first: it would match every worktree that answers none."""
+    if not seat:
+        raise Refused("no seat named: a seat name is lowercase letters, digits and hyphens (`seat.py list` shows "
+                      "this clone's)")
     clone, clone_how = mail.clone_machine(root)
     if not clone:
         if clone_how.startswith(mail.MACHINE_UNREAD):
             raise Refused(f"{clone_how}, so no seat of this clone can be resolved; {mail.RETRY_HINT}")
         raise Refused(f"this clone names no machine, so it has no seats: `git config {mail.MACHINE_KEY} <name>` "
                       "names it (lowercase letters, digits and hyphens)")
-    if seat == clone:
-        return Target(seat, root, True, True)
+    blocks = _blocks(root)
     registered: dict[str, tuple[Path, str]] = {}
     unread: list[str] = []
-    answering: list[Path] = []
-    for block in _blocks(root)[1:]:
+    answering: list[tuple[Path, dict[str, str]]] = [(root, blocks[0] if blocks else {})] if seat == clone else []
+    for block in blocks[1:]:
         path = Path(block.get("worktree", ""))
         if not sync.within(path, _home(root)):
             continue
         name, how, why = _seat_name(clone, path) if path.is_dir() else ("", "gone", "")
         if name == seat:
-            answering.append(path)
+            answering.append((path, block))
         elif how == "unread":
             unread.append(f"{path} ({why})")
         registered[sync._norm(path)] = (path, name)
     if len(answering) > 1:
-        # The board's remedy for the same collision (DEF-4125), from its one
-        # owner, read for each checkout: which one is live is the operator's
-        # read, and `seat.py list` shows the sessions in each.
-        renames = "; ".join(f"{path}: name it: {mail.naming_steps(path, at=str(path))}" for path in answering)
-        raise Undecided(f"seat {seat!r} is answered by {len(answering)} checkouts, which write one mail ref, so "
-                        f"none of them is picked: give each but the live one a name of its own (`seat.py list` "
-                        f"shows the sessions in each), then run this again. {renames}")
+        raise Undecided(_twins_refusal(root, seat, answering))
     if unread:
         raise Undecided(f"the seat name of {'; '.join(unread)} could not be read, so whether it is {seat!r} cannot "
                         f"be told: nothing is resolved; {mail.RETRY_HINT}")
     if answering:
-        return Target(seat, answering[0], True, False)
+        return Target(seat, answering[0][0], True, seat == clone)
     prefix = f"{clone}-"
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
@@ -1229,9 +1290,59 @@ def brief_line(role: str, seat: str, python: str = "", source: str = "") -> str:
     return f"run /inbox, then /inbox board, then start {what} (/loop {every}){tail}"
 
 
+def _this_checkout(root: Path) -> tuple[Path, str]:
+    """``(the checkout this process runs in, the seat name it answers)``: the
+    clone's name in the main checkout, a linked worktree's own (one with none
+    answers its clone's, so it is refused as nameless). Refused outside a
+    checkout, for a checkout answering no name, and where the name could not
+    be read."""
+    top = _git(Path.cwd(), "rev-parse", "--show-toplevel")
+    if not top:
+        raise Refused(f"{Path.cwd()} is not inside a git checkout")
+    checkout = Path(top)
+    if checkout.resolve() != root.resolve():
+        # A linked worktree with no name of its own answers its clone's,
+        # which can be the dispatcher's: refused as nameless, where
+        # /dispatcher-tick's body keeps its tick to the board and
+        # /worker-tick's says the refusal.
+        own, state, why = _own_name(checkout)
+        if state == "unread":
+            raise Refused(f"the tick is composed for this checkout's seat, and {why}; {mail.RETRY_HINT}")
+        if not own:
+            raise Refused("the tick is a seat's, and this checkout answers no seat name: this worktree has no "
+                          f"name of its own ({why}), so it would answer its clone's")
+        return checkout, own
+    name, how = mail.machine_setting(checkout)
+    if name is None:
+        if how.startswith(mail.MACHINE_UNREAD):
+            raise Refused(f"the tick is composed for this checkout's seat, and {how}; {mail.RETRY_HINT}")
+        raise Refused(f"the tick is a seat's, and this checkout answers no seat name: {how}")
+    return checkout, name
+
+
+def _here_answering(root: Path, seat: str) -> Path | None:
+    """The checkout this process runs in, where the name it answers
+    (:func:`_this_checkout`) is ``seat``; else None, and the caller resolves
+    ``seat`` as from anywhere (``main`` reads ``root`` from the same working
+    directory, so the checkout is always one of its clone's). ``brief <seat>`` and ``tick
+    <seat>`` read it first: the live seat runs ``brief <seat>`` from inside its
+    own checkout (``/handoff``'s re-prime step, the banner's ``Orders:``
+    line), where a stale twin answering the same name would refuse it
+    (DEF-3097). ``launch`` and ``retire`` never read it: they act on a seat
+    from outside it, and a twin there is what they must not pick."""
+    try:
+        checkout, name = _this_checkout(root)
+    except (Refused, mail.Unresolvable):
+        return None
+    return checkout if name == seat else None
+
+
 def cmd_brief(root: Path, seat: str) -> int:
-    target = resolve(root, seat)
-    print(compose_brief(root, seat, target.path if target.exists else None).text)
+    here = _here_answering(root, seat)
+    if here is None:
+        target = resolve(root, seat)
+        here = target.path if target.exists else None
+    print(compose_brief(root, seat, here).text)
     return 0
 
 
@@ -1251,38 +1362,20 @@ def cmd_tick(root: Path, seat: str | None, role: str = "worker") -> int:
     tick (:data:`DISPATCHER_COMMAND`, since job 20261116T105110Z-air-5154dc).
     It is composed for ``seat`` from that seat's own checkout, as ``brief``
     composes it, or, with no seat named, for the seat this checkout answers,
-    from this checkout. Refused for a seat whose role is not ``role`` (each
-    body runs the verb for its own role, :data:`TICK_ROLES`, so neither loop
-    runs the other's tick) and for a checkout whose seat name is not set or
-    could not be read."""
+    from this checkout; a seat named that this checkout answers is composed
+    from it too (:func:`_here_answering`). Refused for a seat whose role is
+    not ``role`` (each body runs the verb for its own role,
+    :data:`TICK_ROLES`, so neither loop runs the other's tick) and for a
+    checkout whose seat name is not set or could not be read."""
     if seat is None:
-        top = _git(Path.cwd(), "rev-parse", "--show-toplevel")
-        if not top:
-            raise Refused(f"{Path.cwd()} is not inside a git checkout")
-        checkout = Path(top)
-        if checkout.resolve() != root.resolve():
-            # A linked worktree with no name of its own answers its clone's,
-            # which can be the dispatcher's: refused as nameless, where
-            # /dispatcher-tick's body keeps its tick to the board and
-            # /worker-tick's says the refusal.
-            own, state, why = _own_name(checkout)
-            if state == "unread":
-                raise Refused(f"the tick is composed for this checkout's seat, and {why}; {mail.RETRY_HINT}")
-            if not own:
-                raise Refused("the tick is a seat's, and this checkout answers no seat name: this worktree has no "
-                              f"name of its own ({why}), so it would answer its clone's")
-            name: str | None = own
-        else:
-            name, how = mail.machine_setting(checkout)
-            if name is None:
-                if how.startswith(mail.MACHINE_UNREAD):
-                    raise Refused(f"the tick is composed for this checkout's seat, and {how}; {mail.RETRY_HINT}")
-                raise Refused(f"the tick is a seat's, and this checkout answers no seat name: {how}")
-        brief = compose_brief(root, name, checkout)
-        seat = name
+        checkout, seat = _this_checkout(root)
+        brief = compose_brief(root, seat, checkout)
     else:
-        target = resolve(root, seat)
-        brief = compose_brief(root, seat, target.path if target.exists else None)
+        here = _here_answering(root, seat)
+        if here is None:
+            target = resolve(root, seat)
+            here = target.path if target.exists else None
+        brief = compose_brief(root, seat, here)
     if brief.role != role:
         _, tick_name = TICK_ROLES[role]
         what = "the dispatcher seat" if brief.role == "dispatcher" else "a worker seat"
