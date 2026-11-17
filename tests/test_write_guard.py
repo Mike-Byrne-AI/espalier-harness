@@ -24065,9 +24065,10 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         "python3 2>/dev/null - 2> o<<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "python3 - <f <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "python3 - 2>&1>/dev/null <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - <<'PY' <f\nimport os; os.system('rm -rf /')\nPY",
     ], ids=["before-dash", "before-flag", "between-flag-and-dash", "herestring-before-dash",
             "glued-to-a-target", "glued-to-a-merge", "glued-to-a-bare-operators-target",
-            "input-before-the-heredoc", "glued-chain"])
+            "input-before-the-heredoc", "glued-chain", "input-after-the-heredoc-over-read"])
     def test_a_redirect_before_the_dash_or_a_flag_does_not_hide_a_stdin_program(self, tmp_path, cmd):
         """The stdin opener matches on the redirect view with the heredoc or
         here-string operator kept (DEF-5120's R4, which closed this limit,
@@ -24076,7 +24077,11 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         redirect's target is put back alone, the scan's neutralised `2> 1<<`
         included (the batch's second code review, S1: allowed until then). An
         input redirect before the heredoc and a glued chain after the `-` are
-        read on that view too (its S2 and the failure-mode review's N-7)."""
+        read on that view too, since the first batch: pinned here, not fixed
+        here (its S2 and the failure-mode review's N-7). An input redirect
+        AFTER the heredoc is read as if the heredoc were the program, where
+        bash feeds the file: the declared over-read toward friction (the
+        `_INTERP_STDIN_RE` comment; the third failure-mode review's N-5)."""
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
     @pytest.mark.parametrize("redirect", ["2>&1 ", ">o ", "-x 2>/dev/null ", ">&2"])

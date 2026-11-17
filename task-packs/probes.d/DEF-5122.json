@@ -1,7 +1,7 @@
 {
  "id": "DEF-5122",
  "subject": "tools/cc/hooks/_bash_patterns.py",
- "cmd": "python3 -c \"import os, sys, tempfile, pathlib\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nfrom tests.test_write_guard import run_guard_tool as g\nsys.path.insert(0, 'tools/cc/hooks')\nimport _speedbump\nbump = _speedbump._REASON_TEMPLATE.split('{')[0]\ndef v(tool, cmd):\n    with tempfile.TemporaryDirectory() as d:\n        s = g(tool, {'command': cmd}, pathlib.Path(d)).stdout or ''\n    return 'bump' if bump in s else 'deny' if '\\\"deny\\\"' in s else 'allow'\nrows = [\n    ('Bash', 'cd cc 2>&1 && rm notes.md', 'cd cc && rm notes.md'),\n    ('Bash', 'ln 2>/dev/null -s x cc/z.json', 'ln -s x cc/z.json'),\n    ('PowerShell', \\\"Start-Process 2>$null bash -ArgumentList '-c','rm -rf cc'\\\", \\\"Start-Process bash -ArgumentList '-c','rm -rf cc'\\\"),\n    ('PowerShell', 'iex 2>$null \\\"Remove-Item cc -Recurse -Force\\\"', 'iex \\\"Remove-Item cc -Recurse -Force\\\"'),\n    ('Bash', 'find / -exec 2>/dev/null rm -rf {} +', 'find / -exec rm -rf {} +'),\n]\nprint([v(t, k) == v(t, n) for t, k, n in rows])\"",
+ "cmd": "python3 -c \"import os, sys, tempfile, pathlib\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nfrom tests.test_write_guard import run_guard_tool as g\nsys.path.insert(0, 'tools/cc/hooks')\nimport _speedbump\nbump = _speedbump._REASON_TEMPLATE.split('{')[0]\ndef v(tool, cmd):\n    with tempfile.TemporaryDirectory() as d:\n        s = g(tool, {'command': cmd}, pathlib.Path(d)).stdout or ''\n    return 'bump' if bump in s else 'deny' if '\\\"deny\\\"' in s else 'allow'\nrows = [\n    ('Bash', 'cd cc 2>&1 && rm notes.md', 'cd cc && rm notes.md'),\n    ('Bash', 'ln 2>/dev/null -s x cc/z.json', 'ln -s x cc/z.json'),\n    ('PowerShell', \\\"Start-Process 2>$null bash -ArgumentList '-c','rm -rf cc'\\\", \\\"Start-Process bash -ArgumentList '-c','rm -rf cc'\\\"),\n    ('PowerShell', 'iex 2>$null \\\"Remove-Item cc -Recurse -Force\\\"', 'iex \\\"Remove-Item cc -Recurse -Force\\\"'),\n    ('Bash', 'find / -exec 2>/dev/null rm -rf {} +', 'find / -exec rm -rf {} +'),\n]\nprint([v(t, k) == v(t, n) == 'deny' for t, k, n in rows])\"",
  "open_value": "[False, False, False, False, False]",
  "why_not": null,
  "inputs": [
@@ -11,5 +11,5 @@
  ],
  "row_sha": "1d529b774778",
  "text_sha": "0d1cc14a09f9",
- "verified_2026_11_17": "STILL_OPEN (re-pinned \"['allow', 'allow', 'allow', 'allow', 'bump']\" -> '[False, False, False, False, False]' on 2026-11-17: the probe compares each spelling's verdict with its redirect-free control's, where it printed absolute verdicts keyed on the nudge's wording, and hands the guard `2>$null` with no backslash (DEF-5120's second failure-mode review, N-8); the claim stands, every control denies) [changed: probe, open value, text]"
+ "verified_2026_11_17": "STILL_OPEN (re-pinned value unchanged on 2026-11-17: each element is True only where the spelling and its control both deny, so a control's own regression never reads as the row's fix (DEF-5120's third failure-mode review, N-2); the claim stands, every control denies) [changed: probe, open value, text]"
 }

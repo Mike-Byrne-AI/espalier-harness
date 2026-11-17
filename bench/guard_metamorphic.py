@@ -861,7 +861,8 @@ R4_REMEDY = (
     "next: match the reader that takes this operand by its place on the redirect view as well "
     f"(`{R4_REMEDY_HELPERS[0]}`, `{R4_REMEDY_HELPERS[1]}` in tools/cc/hooks/_bash_patterns.py; "
     "the row's arm names the class's reader); R4 holds no exclusion, so a red no reader fix "
-    "meets goes to the dispatcher as a ledger row and the run stays red until R4 itself changes"
+    "meets goes to the dispatcher as a ledger row and the run stays red: never a skip by key "
+    "written into R4"
 )
 
 
@@ -1289,7 +1290,11 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         if others:
             more = check_r4(quick=False, pwsh=pwsh, rows=others)
             violations += more["violations"]
-            dead += more["dead_separators"]
+            undenied += more["undenied_originals"]
+            # the inner run's census covers the red rows alone, so a tool
+            # with none reads dead there: only its dropped forms carry over
+            # (the third code review, S1)
+            dead += [d for d in more["dead_separators"] if "dropped" in d]
             rejudged = len(others)
     return {
         "relation": "R4",

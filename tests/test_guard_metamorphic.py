@@ -678,6 +678,25 @@ class TestR4RedsAReaderOffTheView:
         assert kinds == {r["kind"] for r in rows}, kinds
         assert any(not k.startswith("tools") for k in kinds), kinds
 
+    def test_a_quick_reds_rejudge_reads_no_tool_dead(self, gm, monkeypatch):
+        """The re-judge covers the red rows alone, so a tool it holds none of
+        read dead there, and a Bash-only red printed a false "judge is dead"
+        line for PowerShell (the third code review's S1, driven with pwsh)."""
+        pwsh = _pwsh_or_skip()
+        real = gm.operand_rows
+        keep = {("Bash", "bash-delete-git-rm"), ("PowerShell", "ps-delete-find-file")}
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
+            r for r in real(quick) if (r["tool"], r["key"]) in keep])
+        assert {(r["tool"], r["key"]) for r in gm.operand_rows(quick=True)} == keep, "an anchor row is gone"
+        bp = gm._bash_patterns
+        view = bp._redirects_blanked
+        monkeypatch.setattr(bp, "_redirects_blanked",
+                            lambda scan, *, powershell: view(scan, powershell=True) if powershell else scan)
+        report = gm.check_r4(quick=True, pwsh=pwsh)
+        assert {v["tool"] for v in report["violations"]} == {"Bash"}, report["violations"]
+        assert report["rejudged_kinds"], report
+        assert not report["dead_separators"], report["dead_separators"]
+
 
 @_needs_bash
 class TestR4TheStdinProgramRowHoldsOnEveryKind:

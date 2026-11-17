@@ -8385,7 +8385,10 @@ def _heredoc_opener_view(scan: str) -> str:
 def _heredoc_opener_view_built(scan: str, view: str) -> str:
     """`_heredoc_opener_view` for a scan holding ``<<`` and its redirect
     view, remembered: keyed on the view as well, so a view built another way
-    (a test that blinds `_redirects_blanked`) is never served this one's."""
+    (a test that blinds `_redirects_blanked`) is never served this one's. A
+    test that blinds what the loop below reads (`_redirect_words`, the
+    tokenizer) clears it (`cache_clear`) first: the key cannot see those
+    (the third failure-mode review's N-3)."""
     chars: list[str] | None = None
     keep_next = False
     target_next = False
