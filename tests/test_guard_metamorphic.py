@@ -24,7 +24,9 @@ so the verdict path is seen non-empty rather than assumed.
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
+import io
 import shutil
 import sys
 from pathlib import Path
@@ -653,14 +655,59 @@ class TestR4TheBashParserIsTheOracle:
         assert gm.bash_parsed_forms(texts, bash) == alone
 
     def test_a_batch_past_the_argument_limit_still_prints(self, gm):
-        """The batch's script reaches bash on its standard input, never as one
-        argument: R4's full population, with the merge spelling and its twins,
-        passed the platform's argument limit and the full run stopped on a
-        traceback (DEF-5122's first full run). Twelve texts of 100 KB each fit
-        one argument apiece on Linux and pass macOS's 1 MB limit together."""
-        texts = [f"printf %s {chr(97 + i) * 100_000}" for i in range(12)]
+        """Each text and each batch's script reach bash on its standard input,
+        never as one argument: R4's full population, with the merge spelling
+        and its twins, passed the platform's argument limit and the full run
+        stopped on a traceback (DEF-5122's first full run). Twelve texts of
+        140 KB each pass macOS's 1 MB limit together, and one apiece passes
+        Linux's 128 KB for one argument and Windows' 32,767 characters, where
+        the syntax pass's `bash -n -c <text>` stopped on WinError 206
+        (post-merge-windows run 44168215720)."""
+        texts = [f"printf %s {chr(97 + i) * 140_000}" for i in range(12)]
         forms = gm.bash_parsed_forms(texts, shutil.which("bash"))
         assert all(forms), [i for i, f in enumerate(forms) if not f]
+
+    def test_no_text_is_an_argument_and_bash_reads_its_own_bytes(self, gm, monkeypatch):
+        """The channel, on every platform: no spawn's argv holds a text, no
+        spawn has a pipe for stdin, the parse's PATH directory is empty at
+        every spawn, and the syntax pass feeds bash each text's own UTF-8
+        bytes. Every text-mode write here is made as Windows makes it (each
+        newline as CRLF), so a feed written in text mode reds on every
+        platform, not on the Windows leg alone (the reviews' shared finding)."""
+        real_open = io.open
+        names = ("buffering", "encoding", "errors", "newline", "closefd", "opener")
+
+        def windows_open(file, mode="r", *args, **kwargs):
+            kwargs.update(zip(names, args))
+            if "b" not in mode and set(mode) & set("wax+") and kwargs.get("newline") is None:
+                kwargs["newline"] = "\r\n"
+            return real_open(file, mode, **kwargs)
+
+        calls = []
+        real = gm.run_bounded
+
+        def recording(argv, **kwargs):
+            handle = kwargs.get("stdin")
+            fed = None
+            if handle is not None:
+                fed = handle.read()
+                handle.seek(0)  # read() drained the whole file, so 0 is where bash must start
+            empty_path = not any(Path(kwargs["env"]["PATH"]).iterdir())
+            calls.append((list(argv), fed, kwargs.get("input"), empty_path))
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(io, "open", windows_open)
+        monkeypatch.setattr(builtins, "open", windows_open)
+        monkeypatch.setattr(gm, "run_bounded", recording)
+        texts = ["printf %s 'é marker-a'", "cat <<'EOF'\nmarker-b\nEOF", "printf %s ( marker-c"]
+        forms = gm.bash_parsed_forms(texts, shutil.which("bash"))
+        assert calls, "the parse spawned nothing"
+        assert forms[0] and forms[1] and forms[2] is None, forms
+        assert all(given is None for _argv, _fed, given, _empty in calls), "a pipe carried a text"
+        assert not [argv for argv, _fed, _given, _empty in calls if any("marker" in part for part in argv)]
+        assert all(empty for _argv, _fed, _given, empty in calls), "the parse's PATH directory held a file"
+        assert [fed for argv, fed, _given, _empty in calls if "-n" in argv] == [t.encode("utf-8") for t in texts]
+        assert all(fed is not None and b"\r" not in fed for _argv, fed, _given, _empty in calls)
 
     def test_no_text_is_run(self, gm, tmp_path):
         marker = tmp_path / "ran"
