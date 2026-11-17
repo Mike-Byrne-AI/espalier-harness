@@ -888,7 +888,10 @@ class TestMaskControlsAndFailClosed:
         for name in helpers:
             helper = _source_of(name)
             delegates = [s for s in spans if f"{s}(command, scan" in helper]
-            assert ".finditer(scan)" in helper or delegates, (
+            # or the scan and a view built from it, both the masked string's
+            # (`_scan_and_view_matches`, DEF-2087 and DEF-5120)
+            on_view = re.search(r"_scan_and_view_matches\(\w+, scan, ", helper)
+            assert ".finditer(scan)" in helper or delegates or on_view, (
                 f"{name}: the opener must be matched on the MASKED string"
             )
             assert "command[" in helper, (
@@ -900,7 +903,10 @@ class TestMaskControlsAndFailClosed:
         h0 = src.index("def _stdin_program_bodies")
         h1 = src.index("\ndef ", h0 + 1)
         helper = src[h0:h1]
-        assert "_INTERP_STDIN_RE.finditer(scan)" in helper, (
+        # on the scan and on the opener view built from it (DEF-5120): both
+        # are the MASKED string's, the view with its redirects blanked
+        assert ("_INTERP_STDIN_RE.finditer(scan)" in helper
+                or "_scan_and_view_matches(_INTERP_STDIN_RE, scan, _heredoc_opener_view(scan))" in helper), (
             "the stdin-program opener must be matched on the MASKED string"
         )
         assert "command[" in helper and "command.find(" in helper, (

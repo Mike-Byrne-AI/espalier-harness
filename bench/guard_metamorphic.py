@@ -870,8 +870,13 @@ def _operand_class():
     """`TestRemovedOrRelocatedOperandIsAMutation`, imported from the suite.
 
     Read from the class so a row the class gains joins R4 with no edit here
-    (§14); `bench/` is dev-only and runs where pytest is installed."""
-    from tests.test_write_guard import TestRemovedOrRelocatedOperandIsAMutation
+    (§14); `bench/` is dev-only and runs where pytest is installed. A tree
+    without tests/ (an adopter's, the wheel's) has no population: R4's
+    instrument is broken there, never a pass."""
+    try:
+        from tests.test_write_guard import TestRemovedOrRelocatedOperandIsAMutation
+    except ImportError as exc:
+        raise InstrumentBroken(f"R4 reads its rows from tests/test_write_guard.py, absent here: {exc}") from exc
     return TestRemovedOrRelocatedOperandIsAMutation
 
 

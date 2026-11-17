@@ -607,6 +607,11 @@ class TestShippedRootsDoNotImportTests:
     #: hurt, the MANIFEST.in line that ships what it loads, or None when its
     #: file ships nowhere)``, and the claim is read back, never trusted.
     _SANCTIONED: dict[tuple[str, str], tuple[str, "str | None"]] = {
+        ("bench/guard_metamorphic.py", "tests.test_write_guard"): (
+            "R4 reads its population from TestRemovedOrRelocatedOperandIsAMutation itself, never a "
+            "copy (STANDING_PRINCIPLES section 14); the import sits in a try that reads its absence as "
+            "a broken instrument, and bench/guard_metamorphic.py ships in neither the sdist nor the "
+            "wheel", None),
         ("scripts/final_release_matrix.py", "test_release_archive_filtering"): (
             "the release matrix's artifact-cleanliness stage reads FORBIDDEN_SHAPES from the one home "
             "docs/CONVENTIONS.md gives that regex denylist (\"Derive from canonical SoT, not from a "

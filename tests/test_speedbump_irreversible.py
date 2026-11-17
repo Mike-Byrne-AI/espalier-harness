@@ -5052,16 +5052,18 @@ class TestARedirectInGitsOptionSlotDrawsTheCheckpoint:
         assert asked == ["src/x.py"]
 
     def test_git_is_asked_again_where_the_view_reads_another_directory(self, tmp_path, monkeypatch):
-        """Once per pathspec AND set of statement directories: the scan reads
+        """Once per pathspec AND set of statement directories: the scan read
         `cd 2>/dev/null sub` as a cd to the redirect, the view as a cd to
         `sub`, and the probe the key skipped was the one asked about `sub`
-        (DEF-2087's code review)."""
+        (DEF-2087's code review). Since DEF-5120 the directory walk reads the
+        cd on the view too, so both readings name `sub` and git is asked
+        about it once: never skipped, never asked twice for one key."""
         (tmp_path / "sub").mkdir()
         asked: list[list[str]] = []
         monkeypatch.setattr(_speedbump, "_destroys_uncommitted_work",
                             lambda root, operand, dirs: asked.append([d.name for d in dirs]) or False)
         _speedbump._pred_discard("Bash", {"command": "cd 2>/dev/null sub && git checkout f"}, tmp_path, tmp_path)
-        assert ["sub"] in asked and len(asked) == 2, asked
+        assert ["sub"] in asked and len(asked) == len({tuple(a) for a in asked}), asked
 
     def test_a_powershell_stop_behind_a_redirect_names_its_pid(self):
         """The kill checkpoint reads the texts the force-push, release and
