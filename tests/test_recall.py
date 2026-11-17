@@ -77,18 +77,40 @@ def _two_candidate_corpus(tmp_path, monkeypatch) -> Path:
 
 # ── live-corpus smoke (the §6 pass-criteria) ──────────────────────────────────
 
+#: The topical pin's least lead, as (top1 - top2) / top1, _MUST_RANK's one formula.
+#: Until 2026-11-16 the pin asserted only top1 > top2, and its lead fell from 16.7% to
+#: 0.83% unseen when docs/HOOKS.md joined this repository's corpus: a review measured
+#: it by chance. With a floor the next decay reds at the commit that causes it.
+_TOPICAL_PIN_LEAD_FLOOR = 0.10
+
+
 def test_live_corpus_recalls_a_topical_memory_doc_top1():
     """A real topical query returns the right memory/ doc as the top hit, won by a
     score MARGIN (not a reverse=True source tie-break). 'speedbump cap exemption'
     used to tie at the top (gap 0.0); 'speedbump chokepoint' gave a clear gap so
     the assertion proves ranking, not tie ordering (TP-168 168-F). Re-anchored
     2026-09-26: the speedbump atlas stayed in the archive at the 2026-09-25 seed,
-    and 'speedbump chokepoint' now ties two SHARP_EDGES sections within 0.001;
-    'action justification protocol' wins its memo by 1.19 (measured)."""
-    hits = _recall.recall("action justification protocol", REPO_ROOT, top=2)
+    and 'speedbump chokepoint' now ties two SHARP_EDGES sections within 0.001.
+
+    Re-anchored 2026-11-16: 'action justification protocol' led its memo by 16.7%
+    without the hooks guide and by 0.83% with it, over docs/HOOKS.md :: Governance
+    audit log, and lost top-1 to that section at 2 of 12 guide versions sampled
+    from origin/main since 2026-10-16 (10-31 and 11-01). 'choose the artifact by
+    where the risk lives' leads by 37.7% at its least across the guide on and off,
+    those 12 versions, and the root CLAUDE.md cut drafted for job 9587e7, and its
+    runner-up is a memory/ note, not a guide that moves weekly."""
+    hits = _recall.recall("choose the artifact by where the risk lives", REPO_ROOT, top=2)
     assert hits, "expected a hit for a clearly topical query"
-    assert hits[0].source == "memory/action-justification-protocol.md"
+    assert hits[0].source == "memory/choose-the-artifact-by-where-the-risk-lives.md"
     assert len(hits) > 1 and hits[0].score > hits[1].score, "top-1 must win by margin"
+    lead = (hits[0].score - hits[1].score) / hits[0].score
+    assert lead >= _TOPICAL_PIN_LEAD_FLOOR, (
+        f"the topical pin leads {hits[1].source!r} by {lead:.2%}, under the "
+        f"{_TOPICAL_PIN_LEAD_FLOOR:.0%} floor (37.7% at its least when measured, "
+        "2026-11-16). A grown or new document is crowding it: re-anchor to a query "
+        "whose lead has headroom across the crowding document's history, and never "
+        "lower the floor to fit."
+    )
 
 
 def test_live_corpus_suppresses_pure_nonsense():
@@ -2296,9 +2318,10 @@ _TASK_ARM_FILED = frozenset({
 #: was corrected, the control constant did not move off 4 -- purely because recall's
 #: paraphrase curve was then FLAT at 4/16 across top=2/3/4. Had it not been flat,
 #: draft 2's headline would have been wrong as well as unearned: it survived on a
-#: property of the corpus, not on the method. (The curve has since moved to 7 -> 8 -> 8
-#: and the constant to 8, which is exactly why leaving the reasoning here rather than
-#: only the number matters.) docs/FAILURE_MODES.md §5.15.
+#: property of the corpus, not on the method. (The curve has moved many times since,
+#: most recently to [6, 6, 6, 7] and the constant to 6 on 2026-11-16, which is exactly
+#: why leaving the reasoning here rather than only the number matters.)
+#: docs/FAILURE_MODES.md §5.15.
 #:
 #: ⚠ DENOMINATOR NOTE, so the naming column is not read as a regression. 274 is the
 #: heading-derived label set built the way tests/test_recall_calibration.py builds it.
@@ -2306,7 +2329,13 @@ _TASK_ARM_FILED = frozenset({
 #: that revision (the corpus grows with every memory note; the count is not pinned
 #: here because it is not the denominator). Different denominator, not drift: the
 #: rates are consistent and marginally better (83.7% -> 85.0% at elem 0).
-_PARAPHRASE_UNION_HITS = 10
+#: ⚠ RE-DERIVED 2026-11-16 to 9, with every figure in this table (not two
+#: constants), and its two causes dated apart. (1) Drift since 2026-09-24: the 10
+#: was a private-tree reading, and from the public tree's first commit (d00f6de4,
+#: v0.8.0b1) on the union read 9 at every commit air's verifier sampled (ack
+#: 9c1b49), inside its band, so nothing red. (2) The hooks guide joining this
+#: repository's corpus (the operator's ruling of 2026-11-16) left it unchanged at 9.
+_PARAPHRASE_UNION_HITS = 9
 
 #: The EQUAL-BUDGET control. Without this constant the headline is unearned: it is
 #: what separates "the second NORMALISATION helps" from "more SLOTS help". The
@@ -2317,7 +2346,18 @@ _PARAPHRASE_UNION_HITS = 10
 #: Not a Sandbox" rose from 3.9701 to 3.9864 (the lead 0.85% to 0.45%): the
 #: fragment marker that had diluted it by 19 tokens is no longer its text. An
 #: ordinary edit to that SHARP_EDGES entry is the likeliest next cause of 8 -> 7.
-_PARAPHRASE_CONTROL_HITS = 8
+#: ⚠ RE-DERIVED 2026-11-16 to 6, two causes dated apart. (1) Drift since
+#: 2026-09-24: from the public tree's first commit (d00f6de4) on, the control read
+#: 7 against the pinned 8, inside its band (air's verifier, ack 9c1b49). (2) The
+#: hooks guide (27 sections, the operator's ruling of 2026-11-16): control 7 to 6
+#: on one row (DEF-679's query: principle 2 from rank 4 to 5, behind HOOKS.md's
+#: Governance audit log); union unchanged at 9; the margin widens on the
+#: control's side only, 2 to 3. A/B'd at this lane's head with the family
+#: filtered out of the corpus. Rows by name, union(top=2) against this control:
+#: union-only, rows 2 ("is the harness a security boundary", new), 7 ("how do I
+#: know my new test would actually catch the bug") and 8 ("I fixed one site,
+#: where else does this live", contested); control-only, none, before and after.
+_PARAPHRASE_CONTROL_HITS = 6
 
 #: The control's `top`, named rather than inlined so the budget guard below and the
 #: headline cannot drift apart. 4, not 2 -- see the table.
@@ -2409,7 +2449,21 @@ _PARAPHRASE_UNION_TOP = 2
 #: fourth for "I fixed one site, where else does this live" (a CONTESTED row)
 #: and §8 seventh. The union stays at 10 under every variant, so what moved is
 #: recall()'s deep reach on one contested row, not the front door.
-_PARAPHRASE_PLATEAU = ((2, 7), (3, 7), (4, 8), (6, 8))  # (top, hits) for recall()
+#: ⚠ RE-DERIVED 2026-11-16 to [6, 6, 6, 7], two causes dated apart. (1) Drift
+#: since 2026-09-24: the pinned [7, 7, 8, 8] read [6, 6, 7, 7] from the public
+#: tree's first commit (d00f6de4) on (air's verifier, ack 9c1b49), one under at
+#: every slot and inside every band. Re-pinning only the two headline constants
+#: would have recorded a curve that falls from slot 3 to slot 4, which recall()
+#: cannot produce. (2) The hooks guide took slot 4 from 7 to 6 on one row,
+#: DEF-679's (its cause is on _PARAPHRASE_CONTROL_HITS). The curve's only climb,
+#: slot 4 to slot 6, now rests on that one row: principle 2 at rank 5, 0.018
+#: ahead of "Local Hooks Are Not a Sandbox". Driven by the lane's failure-mode
+#: review: one "not a security boundary" sentence in any HOOKS.md section takes
+#: it to rank 6 with no red; two such sentences, or one plus a 0.45% nudge to
+#: that SHARP_EDGES entry, flatten the curve and red its unbanded climb. Fourteen
+#: HOOKS.md versions over the month before all read [6, 6, 6, 7], so ordinary
+#: growth does not move it. The union (9) still delivers more than recall(top=6) (7).
+_PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall()
 
 #: union(top=_PARAPHRASE_UNION_TOP) minus recall(top=6) on the paraphrase arm --
 #: the headline's actual claim ("handed more candidates and still loses"),
@@ -2420,7 +2474,10 @@ _PARAPHRASE_PLATEAU = ((2, 7), (3, 7), (4, 8), (6, 8))  # (top, hits) for recall
 #: union did not move, so the headline is parity at under four lines against
 #: six (the test's docstring carries the re-derivation). 2026-09-22: 10 - 8 = 2
 #: -- the single ranker's deep reach fell one hit on one contested row (the
-#: fold recorded on the plateau above); the union did not move.
+#: fold recorded on the plateau above); the union did not move. 2026-11-16:
+#: 9 - 7 = 2 before and after the hooks guide joined the corpus (the pinned 10
+#: and 8 had both drifted one under since 2026-09-24, so the margin held); the
+#: guide moved DEF-679's principle from rank 4 to 5, still inside six slots.
 _PARAPHRASE_UNION_OVER_DEEP_CONTROL = 2
 
 #: Rows 8 and 13 are contested (see the arm comment). Pinned separately so revising
@@ -2447,6 +2504,23 @@ def _arm_hits(fn, skip=(), *, top=2):
         and any(h.source.startswith(f"docs/STANDING_PRINCIPLES.md :: {want}")
                 for h in fn(query, REPO_ROOT, top=top))
     )
+
+
+def _arm_rows_past(seen, *, depth=10):
+    """For each arm row ``recall(top=seen)`` misses: (row number, principle, its
+    rank within ``depth`` or None, the sources ranked after slot ``seen`` and
+    above it). Read only by a failure message, so the green run pays nothing: the
+    curve's one climb has rested on a single row since 2026-11-16, and a flat
+    curve should name the row that slipped and what now outranks it."""
+    rows = []
+    for number, (query, want) in enumerate(_PARAPHRASE_ARM, 1):
+        hits = _recall.recall(query, REPO_ROOT, top=depth)
+        rank = next((k for k, h in enumerate(hits, 1)
+                     if h.source.startswith(f"docs/STANDING_PRINCIPLES.md :: {want}")), None)
+        if rank is not None and rank <= seen:
+            continue
+        rows.append((number, want, rank, [h.source for h in hits[seen:(rank or 1) - 1]]))
+    return rows
 
 
 def _arm_candidates(fn, top):
@@ -2566,6 +2640,12 @@ def test_the_union_beats_a_six_slot_control():
     _PARAPHRASE_PLATEAU; the four-slot control stayed at 8, where ordinary
     growth since 09-12 had already put it). Direction unchanged, margin
     re-recorded at 2.
+
+    ⚠ STILL 2, 2026-11-16. The hooks guide joined this repository's corpus and
+    DEF-679's principle fell from rank 4 to 5 in recall(): out of the four-slot
+    control, still inside six. recall(top=6) reads 7 and the union 9, as both
+    had read since 2026-09-24's drift; the curve's one climb now rests on that
+    row (the record is on _PARAPHRASE_PLATEAU).
     """
     # Non-vacuity FIRST: the sweep reads its own `top` values out of the pin, so an
     # emptied or narrowed pin measures nothing and compares equal to itself. Measured:
@@ -2682,7 +2762,9 @@ def test_the_union_beats_a_six_slot_control():
     assert curve[-1] > curve[0], (
         f"recall()'s paraphrase curve is flat from slot 2 to slot 6 ({curve}): more "
         "slots buy nothing, which the union's reach-per-line headline below assumes "
-        "is false. Re-derive the headline."
+        "is false. Re-derive the headline. The rows recall(top=2) misses, as (row, "
+        "principle, rank within ten or None, the sources between slot 2 and it): "
+        f"{_arm_rows_past(2)}"
     )
     del steps  # computed for the message history above; the shape is the claim now
     # THE HEADLINE'S OWN PROPERTY, asserted directly: the deepest swept control
@@ -4396,9 +4478,11 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
     convergence-review protocol first for every "why did a hook deny or block me"
     question. The hooks guide and the troubleshooting guide now index per ``##``
     and ``###`` section on a tree that is not this repository. On this one the
-    family stays off: with every seeded reference doc it moved 14 recall pins,
-    four of them headline claims. The rows read the shipped copies init deploys,
-    beside the seeded memory note and sharp-edges notes that won before."""
+    hooks guide alone indexes, read without the stamp it never carries here
+    (operator ruling, 2026-11-16: root CLAUDE.md's hook rows point into it); the
+    troubleshooting guide stays off, since every seeded reference doc together
+    moved 14 recall pins here on 2026-10-18. The rows read the shipped copies init
+    deploys, beside the seeded memory note and sharp-edges notes that won before."""
 
     _STAMP = "<!-- espalier:seed-version v0 sha256:0 -->\n"
 
@@ -4459,10 +4543,12 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         root = self._adopter(tmp_path, monkeypatch)
         assert _recall.recall("zzqx florp nonsense", root, top=4) == []
 
-    def test_the_family_stays_off_on_this_repository(self):
-        """Dies to: the self-host gate dropped, which moves 14 pins here."""
-        assert not [d for d in _recall._load_corpus(REPO_ROOT)
-                    if d.source.startswith(("docs/HOOKS.md :: ", "docs/TROUBLESHOOTING.md :: "))]
+    def test_this_repository_indexes_its_hooks_guide_alone(self):
+        """Dies to: the self-host branch dropped (no hooks-guide section here), or
+        the troubleshooting guide let in beside it."""
+        sources = [d.source for d in _recall._load_corpus(REPO_ROOT) if d.family == _recall.REFERENCE_FAMILY]
+        assert sources, "no hooks-guide section indexed on this repository"
+        assert all(s.startswith("docs/HOOKS.md :: ") for s in sources), sources
 
     def test_a_fenced_heading_is_no_section(self, tmp_path, monkeypatch):
         """Dies to: a splitter that reads headings inside fenced code."""
@@ -4486,6 +4572,27 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
             "### Child one\n\nzzchild\n\n## Next\n\n### Child two\n\nbeta\n")})
         assert set(self._reference(root)) == {
             "docs/HOOKS.md :: Kept", "docs/HOOKS.md :: Next", "docs/HOOKS.md :: Child two"}
+
+    def test_the_shipped_guides_carry_no_skip_marker(self):
+        """The marker is the author's switch for a pointer section, and in a
+        shipped guide it would take the section, and a ``##``'s ``###`` sections
+        with it, out of every adopter's recall, where "why did a hook deny or
+        block me" lands. Read with the engine's own splitter and rule. Dies to: a
+        skip marker added to a section of either shipped copy (driven 2026-11-16:
+        one under the hooks guide's write_guard section reds it beside the
+        write_guard question above; one under the troubleshooting guide's
+        "Hooks aren't firing" reds it alone in this class)."""
+        skipped = []
+        for rel in _recall.REFERENCE_DOCS:
+            shipped = REPO_ROOT / "espalier" / "assets" / "docs" / Path(rel).name
+            sections = _recall._reference_sections(shipped.read_text(encoding="utf-8"))
+            assert sections, f"no ## or ### section read in {shipped.name}"
+            skipped += [f"{rel} :: {heading}" for _level, heading, _path, body in sections
+                        if _recall._section_skipped(heading, body)]
+        assert not skipped, (
+            f"a recall skip marker in a shipped guide removes {skipped} from every "
+            "adopter's recall, where a hook's deny or block is asked about; take "
+            "the marker out")
 
     def test_a_subsection_carries_its_parent_heading(self, tmp_path, monkeypatch):
         """Dies to: the parent left out of the path (two of four ``###`` queries
@@ -4521,13 +4628,22 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         bags = self._reference(root)
         assert bags["docs/HOOKS.md :: Same"]["zzone"] and bags["docs/HOOKS.md :: Second / Same"]["zztwo"]
 
-    def test_the_self_host_gate_holds_even_over_stamped_docs(self, tmp_path, monkeypatch):
-        """This repository's own docs carry no stamp, so the stamp check alone would
-        keep the family off here; the gate is what holds when one does. Dies to:
-        the gate dropped (a mutant this repository's tree cannot see)."""
+    def test_this_repository_reads_its_hooks_guide_without_a_stamp(self, tmp_path, monkeypatch):
+        """This repository's hooks guide is the seed's source and never carries the
+        stamp init writes at deploy. Dies to: the stamp check applied here too,
+        which leaves the family empty on this repository."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## A\n\nalpha\n"}, stamp=False)
+        monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
+        assert set(self._reference(root)) == {"docs/HOOKS.md :: A"}
+
+    def test_the_troubleshooting_guide_stays_off_here_even_stamped(self, tmp_path, monkeypatch):
+        """Dies to: the self-host branch reading both reference docs. The
+        live-tree test above catches that mutant on this tree too; this one
+        holds it where both docs carry the stamp."""
         root = self._adopter(tmp_path, monkeypatch)
         monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
-        assert self._reference(root) == {}
+        sources = set(self._reference(root))
+        assert sources and all(s.startswith("docs/HOOKS.md :: ") for s in sources), sources
 
     def test_a_stamp_after_a_byte_order_mark_still_counts(self, tmp_path, monkeypatch):
         """Dies to: the stamp read without the mark stripped."""

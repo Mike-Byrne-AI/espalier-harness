@@ -192,15 +192,15 @@ def _index_tokens(text: str) -> list[str]:
 #: more than three points from a fresh sweep. The first version of this
 #: table was typed from a one-off script on a 246-heading corpus and nothing
 #: regenerated it, so every number aged silently for forty documents (DEF-679's
-#: closure records the gap). Corpus 335 docs, 2026-10-12; heading arm 320
-#: queries, stripped arm 282 (df > 0.15n removed, >= 2 tokens kept):
+#: closure records the gap). Corpus 368 docs, 2026-11-16; heading arm 345
+#: queries, stripped arm 295 (df > 0.15n removed, >= 2 tokens kept):
 #:
 #:     alpha  heading@1  stripped@1   heading@4  lost-to-a-BIGGER-doc
-#:      0.00      83.4%       79.8%       97.5%      3   <- shipped for a long time (with the path-name tie-break: 60.2% / 62.2% / 94.8% / 108)
-#:      0.05      83.8%       81.6%       97.8%      0   <- CHOSEN
-#:      0.15      81.9%       80.5%       97.8%      0
-#:      0.50      74.7%       77.0%       93.4%      0   <- the naive sqrt guess
-#:      1.00      53.8%       54.3%       80.9%      0
+#:      0.00      81.7%       78.3%       96.5%      4   <- shipped for a long time (with the path-name tie-break: 60.2% / 62.2% / 94.8% / 108)
+#:      0.05      82.0%       80.3%       96.8%      0   <- CHOSEN
+#:      0.15      80.3%       79.3%       96.8%      0
+#:      0.50      72.5%       73.9%       91.3%      0   <- the naive sqrt guess
+#:      1.00      48.4%       49.1%       76.8%      0
 #:
 #: The last column was the bias this exponent was calibrated against -- heading
 #: queries whose named document lost top-1 to a document with a LARGER
@@ -224,12 +224,12 @@ def _index_tokens(text: str) -> list[str]:
 #: tests/test_recall_eval.py's
 #: test_alpha_zero_shows_the_bias_the_exponent_corrects requires, against a
 #: fresh sweep, that the shipped alpha beats alpha 0 on stripped@1 and ties or
-#: wins on heading@1 (2026-10-12: +1.8pp and +0.4pp; earlier readings are in
+#: wins on heading@1 (2026-11-16: +2.0pp and +0.3pp; earlier readings are in
 #: this block's history, not repeated here). tests/test_recall_eval.py keeps
 #: the shipped regression reproducible by putting the old key back.
 #:
 #: Both label tiers peak at the same value. 0.05 over 0.15 is ~2pp on the
-#: heading arm and ~1pp on the stripped arm (2026-10-12) -- real but small;
+#: heading arm and ~1pp on the stripped arm (2026-11-16) -- real but small;
 #: the value is taken at the measured peak rather than nudged, because "pick
 #: by the measurement" is the whole point. The
 #: heading@4 column is NOT flat across the range any more (it was ~96.7% at
@@ -877,11 +877,16 @@ def corpus_summary(root: Path) -> dict:
 
 
 #: The seeded reference docs recall indexes on a tree that is not this
-#: repository: the two `init` deploys that answer "why did a hook deny or block
-#: me". The deny texts cite docs/HOOKS.md sections by heading. The rest of the
+#: repository (this one indexes SELF_HOST_REFERENCE_DOCS below): the two `init`
+#: deploys that answer "why did a hook deny or block me". The deny texts cite docs/HOOKS.md sections by heading. The rest of the
 #: deployed reference docs stay out: with all of them the deny answers measured
 #: no better, and this repository's corpus moved 14 pins (2026-10-18).
 REFERENCE_DOCS = ("docs/HOOKS.md", "docs/TROUBLESHOOTING.md")
+#: The one this repository indexes: its own hooks guide, the source init's seed
+#: is copied from, so it carries no seed stamp and is read without one. Hook
+#: detail that leaves the root CLAUDE.md hook table for it stays recallable
+#: here (operator ruling, 2026-11-16); docs/TROUBLESHOOTING.md stays off.
+SELF_HOST_REFERENCE_DOCS = ("docs/HOOKS.md",)
 REFERENCE_FAMILY = "seeded reference docs"
 #: The first line `init` writes on every seed it deploys. A file of one of those
 #: names without it is the adopter's own (deleting the stamp is how a seed
@@ -1072,42 +1077,57 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
     # On an init'd Node tree recall indexed four documents and gave the
     # convergence-review protocol first for every such question (measured
     # 2026-10-07 and 2026-10-18), though each deny text cites its docs/HOOKS.md
-    # section by heading. Gated OFF on this repository, measured, not assumed:
-    # its corpus already answers hook questions, and every seeded reference doc
-    # moved 14 of its recall pins, four of them headline claims; the two docs on
-    # an adopter tree add 39 sections and move nothing here. The cost, stated:
+    # section by heading. On this repository the hooks guide alone indexes
+    # (SELF_HOST_REFERENCE_DOCS), read without the stamp its source never
+    # carries: the operator's ruling of 2026-11-16, so hook detail moved out of
+    # the root CLAUDE.md hook table stays recallable. Measured that day, its 27
+    # sections cost: one hit from the paraphrase arm's recall(top=4) (DEF-679's
+    # query: principle 2 from rank 4 to 5, behind the audit-log section); on the
+    # front door, which kept all nine paraphrase hits, that principle from 2nd
+    # of 4 to 4th, behind the guide's Configuration summary (pass 2's winner)
+    # and its audit-log section; "hook exit codes channel xor" losing its
+    # docs/sharp-edges/ note (its SHARP_EDGES twin still leads); the stripped
+    # "maintenance launch" losing first place to the guide's Friction bypass;
+    # and 4 of the guide's own 19 heading queries missing their section. The
+    # troubleshooting guide stays off here, since every seeded reference doc
+    # together moved 14 recall pins, four of them headline claims (2026-10-18).
+    # The two docs on an adopter tree add 40 sections. The cost there, stated:
     # the four-document corpus already answered 26 of the suppression arm's 29
     # off-topic English queries with a wrong neighbour, and answers 28 now; what
     # changes is WHICH neighbour, and on a Node tree the word "hook" reaches the
     # harness's hook sections ("why does my useEffect hook run twice" finds
     # post_write_check), a wrong match that looks relevant (the pull-recall
-    # suppression entry in docs/SHARP_EDGES.md is the engine's limit). A stamp is
-    # required (REFERENCE_SEED_STAMP), a skipped ## takes its ### with it, and the
+    # suppression entry in docs/SHARP_EDGES.md is the engine's limit). There a
+    # stamp is required (REFERENCE_SEED_STAMP), a skipped ## takes its ### with it, and the
     # fold-here corpus leaves the family out (_load_full_corpus).
-    if not is_self_host_repo(root):
-        for rel in REFERENCE_DOCS:
-            p = root / rel
-            if not p.is_file() or _resolved(p) in seen:
-                continue  # absent, or declared by the adopter and indexed above
-            text = _read(p)
-            if not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
-                continue  # the adopter's own file of that name, not the seed
-            doc_title = _first_heading(text) or p.stem
-            sources: set[str] = set()
-            skipped_parent = False
-            for level, heading, heading_path, body in _reference_sections(text):
-                if level == 2:
-                    skipped_parent = _section_skipped(heading, body)
-                if skipped_parent or _section_skipped(heading, body):
-                    continue  # a pointer section, by the author's own mark
-                source = f"{rel} :: {heading}"
-                if source in sources:  # one heading under two parents
-                    source = f"{rel} :: {heading_path}"
-                sources.add(source)
-                yield _Doc(source,
-                           heading,
-                           Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
-                           family=REFERENCE_FAMILY)
+    self_host = is_self_host_repo(root)
+    for rel in SELF_HOST_REFERENCE_DOCS if self_host else REFERENCE_DOCS:
+        p = root / rel
+        if not p.is_file() or _resolved(p) in seen:
+            continue  # absent, or declared by the adopter and indexed above
+        text = _read(p)
+        # The self-host arm skips the stamp check: this repository's docs/HOOKS.md
+        # is the seed's source, byte-identical to espalier/assets/docs/HOOKS.md
+        # (tests/test_deploy_doc_parity.py), and init writes the stamp only on the
+        # copy it deploys, so the source never carries one.
+        if not self_host and not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
+            continue  # the adopter's own file of that name, not the seed
+        doc_title = _first_heading(text) or p.stem
+        sources: set[str] = set()
+        skipped_parent = False
+        for level, heading, heading_path, body in _reference_sections(text):
+            if level == 2:
+                skipped_parent = _section_skipped(heading, body)
+            if skipped_parent or _section_skipped(heading, body):
+                continue  # a pointer section, by the author's own mark
+            source = f"{rel} :: {heading}"
+            if source in sources:  # one heading under two parents
+                source = f"{rel} :: {heading_path}"
+            sources.add(source)
+            yield _Doc(source,
+                       heading,
+                       Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
+                       family=REFERENCE_FAMILY)
 
     # Two self-host-only sources, deliberately gated by TWO conditions rather
     # than one. They are suppressed for different reasons and a single `if`
