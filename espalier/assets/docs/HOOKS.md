@@ -3659,7 +3659,17 @@ SubagentStop, ConfigChange) -- and `config_guard`'s
 its stderr routed to the debug log, so for those the record is the voice; the
 family is declared once (`_integrity.is_voice_only_event`), and the next
 SessionStart names what was written since the previous start, past the UTC
-day.)
+day. The other advisory records copy something said where it happened: the
+four `session_*` types each sit beside a banner warning, `post_write_integrity_drift`,
+`post_shell_zone_change`, `posttooluse_frontmatter_not_strict` and
+`posttooluse_incident_driver_shape` are told to Claude (a zone change between
+calls to the operator), and the prompt router names `stop_held_handoff` while
+the hold stands (`_integrity.CHANNELLED_ADVISORY_EVENT_TYPES`);
+`action_justification_missing` is the raw log's copy of a stderr line
+(`_integrity.RAW_LOG_ONLY_EVENT_TYPES`). Neither reader counts these. Every
+type a hook writes sits in exactly one of these families or a tier of the
+table below, and the harness's own tests fail on a type in none of them, or
+in two.)
 
 The records come in two tiers. A **refusal** is a call that did not run. A
 **pause** is once-then-continue: a speed-bump fire lets the re-issued command
