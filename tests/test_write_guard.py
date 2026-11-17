@@ -24048,6 +24048,19 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         cmd = "python3 - " + redirect + "<<'PY'\nimport os; os.system('rm -rf /')\nPY"
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
+    @pytest.mark.parametrize("cmd", [
+        "python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null -u - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 -u >o - << PY\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - <<< \"import os; os.system('rm -rf /')\"",
+    ], ids=["before-dash", "before-flag", "between-flag-and-dash", "herestring-before-dash"])
+    def test_a_redirect_before_the_dash_or_a_flag_does_not_hide_a_stdin_program(self, tmp_path, cmd):
+        """The stdin opener matches on the redirect view with the heredoc or
+        here-string operator kept (DEF-5120's R4, which closed this limit,
+        declared until then): bash hands the interpreter the same stdin
+        program wherever the redirect stands."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
     @pytest.mark.parametrize("redirect", ["2>&1 ", ">o ", "-x 2>/dev/null ", ">&2"])
     def test_a_redirect_before_a_here_string_does_not_hide_its_program(self, tmp_path, redirect):
         cmd = "bash " + redirect + "<<< 'rm -rf /'"
@@ -24216,18 +24229,15 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
 
     @pytest.mark.parametrize("cmd, verdict", [
         ("echo 'rm -rf /' | bash 2>&1>/dev/null", "allow"),
-        ("python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY", "allow"),
         ("bash <<<x -c 'rm -rf /'", "allow"),
         ("python3 -c > -x \"import os; os.system('rm -rf /')\"", "allow"),
         ("echo 'rm -rf /' | bash > \"o u t\" x.sh", "wall"),
-    ], ids=["glued-chain", "heredoc-redirect-before-dash", "herestring-before-c", "dash-target-after-c",
-            "pipe-quoted-blank-target"])
+    ], ids=["glued-chain", "herestring-before-c", "dash-target-after-c", "pipe-quoted-blank-target"])
     def test_the_redirect_units_declared_limits_draw_their_declared_verdict(self, tmp_path, cmd, verdict):
         """The limits docs/HOOKS.md declares in one sentence, and the unit's
         comments beside them (both reviews), each at its declared verdict. The
         allows: a glued chain ends the run at its second operator (a glued
-        unit would give its digits two parses); the heredoc reader reads a
-        redirect after the `-` operand, not before it or a flag; a here-string
+        unit would give its digits two parses); a here-string
         before `-c` is stdin the `-c` reader does not step over; after `-c` a
         spaced target opening on `-` is read as no target -- bash or CPython
         runs the program behind each. The wall, an over-read toward friction:
@@ -24255,6 +24265,17 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         shell's `-c` reader and the inline-program reader)."""
         out = run_guard_tool("PowerShell", {"command": cmd}, tmp_path).stdout or ""
         assert '"permissionDecision": "deny"' in out and reason in out, out
+
+    @pytest.mark.parametrize("cmd", [
+        'powershell 2>/dev/null -Command "Remove-Item tools/cc/hooks/x.py"',
+        'pwsh -NoProfile 2>&1 -Command "Move-Item .env x"',
+    ], ids=["zone-delete", "secret-move"])
+    def test_the_bash_tools_powershell_opener_reads_a_redirect_among_its_switches(self, tmp_path, cmd):
+        """The Bash tool's PowerShell opener (`_shell_program_bodies`) matches
+        on the redirect view too (DEF-5120): only R4's full run reached it
+        before, never the suite's quick sample (the code review's finding 4)."""
+        out = run_guard_tool("Bash", {"command": cmd}, tmp_path).stdout or ""
+        assert '"permissionDecision": "deny"' in out, out
 
 
 class TestTheCoverageContract:

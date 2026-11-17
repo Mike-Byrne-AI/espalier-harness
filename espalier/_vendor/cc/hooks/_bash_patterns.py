@@ -7640,13 +7640,10 @@ def _redirects_blanked(scan: str, *, powershell: bool) -> str:
     """``scan`` with each redirect blanked, the same length: every token
     `_redirect_words` reads as a redirect on that tool, and a bare
     operator's target with it (`2> err.txt`, the scan's spaced merge `2>
-    1`), become blanks. The readers that take an operand by its PLACE --
-    the PowerShell write verbs' first positional and path-flag value, copy
-    and move's positional pair and flag values, git's subcommand after its
-    global options and checkout and restore's path, git's listing head into
-    a remove and its loop forms, tar's extraction directory, the speed
-    bump's discard, force-push, release, clean and kill checkpoints --
-    match on this view AS
+    1`), become blanks. The readers that take an operand by its PLACE
+    (every caller of this function and of `_scan_and_view_matches`, which
+    grep lists; no roster is kept here, since one went stale by nine
+    readers in DEF-5120) match on this view AS
     WELL AS on the scan (`_scan_and_view_matches`; the view supplements
     the scan and never replaces it, air's ruling f03cb7 and note f19d8d),
     and read each operand from the raw text at the match's offsets, so a
@@ -7656,9 +7653,10 @@ def _redirects_blanked(scan: str, *, powershell: bool) -> str:
     were each allowed, where the same command with the redirect last was
     refused), and every match the scan made is still made. The readers
     that read a redirect itself (the redirect write leg, a listing's
-    success-stream test, a heredoc's opener) keep the plain scan alone,
-    and the spans the view's matches select are read from the raw text,
-    where the redirects still stand.
+    success-stream test) keep the plain scan alone, the stdin opener reads
+    a view with its heredoc operator kept (`_heredoc_opener_view`), and the
+    spans the view's matches select are read from the raw text, where the
+    redirects still stand.
 
     The operator is blanked whole, a glued `&` or `|` after its angle run
     included (`2>&1`, `>|o` on the scan that keeps a merge's ampersand);
@@ -8357,6 +8355,39 @@ def _inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]
             yield interp, _bash_word_text(command[m.start("word"):m.end("word")])
 
 
+def _heredoc_opener_view(scan: str) -> str:
+    """The redirect view (`_redirects_blanked`) with each heredoc and
+    here-string operator as the scan has it, a bare operator's delimiter or
+    word with it: the stdin opener ends at the `<<` the view blanks, and
+    stops at a redirect before the `-` operand or a flag, where bash hands
+    the interpreter its stdin program all the same (DEF-5120's R4: `python3
+    2>/dev/null - <<'EOF'` read no program, where `python3 - 2>/dev/null
+    <<'EOF'` was read since DEF-3077). The scan itself comes back when it
+    holds no `<<`, so a call with no heredoc pays one membership test; the
+    view is the shared one, never rebuilt here."""
+    if "<<" not in scan:
+        return scan
+    view = _redirects_blanked(scan, powershell=False)
+    if view is scan:
+        return scan
+    chars: list[str] | None = None
+    keep_next = False
+    for m in _OPERAND_TOKEN_RE.finditer(scan):
+        tok = m.group()
+        if keep_next:
+            keep_next = False
+        elif tok.lstrip("0123456789").startswith("<<"):
+            keep_next = _redirect_words(tok) == 2
+        else:
+            continue
+        start, end = m.span()
+        if view[start:end] != tok:
+            if chars is None:
+                chars = list(view)
+            chars[start:end] = tok
+    return view if chars is None else "".join(chars)
+
+
 def _stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:
     """Yield ``(interpreter, program_text)`` for every interpreter fed its
     program on stdin -- a heredoc body or a here-string word (see
@@ -8367,13 +8398,19 @@ def _stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:
     command, because bash warns and RUNS it -- stopping short would be the
     fail-open. If the two strings ever disagree in length the raw command is
     searched instead: a false match there costs a denial, a missed one a write.
+    The opener matches on :func:`_heredoc_opener_view` as well, so a redirect
+    before the `-` operand or a flag no longer hides the program.
     """
     if len(scan) != len(command):
         scan = command
     n = len(command)
-    for m in _INTERP_STDIN_RE.finditer(scan):
-        interp = m.group(1).lower()
+    read: set[int] = set()
+    for m in _scan_and_view_matches(_INTERP_STDIN_RE, scan, _heredoc_opener_view(scan)):
         op = m.end() - 2                       # index of `<<` in both strings
+        if op in read:
+            continue                           # the scan's and the view's match of one opener
+        read.add(op)
+        interp = m.group(1).lower()
         if command[op:op + 3] == "<<<":        # here-string: one word is the program
             j = op + 3
             while j < n and command[j] in " \t":
@@ -11768,8 +11805,7 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     # reads them through the cmdlet's word roster (`cmd` is a re-parsing
     # wrapper there); this tool had no arm, so a zone directory removed
     # through cmd met the nudge and then nothing on the re-issue.
-    # the gate reads the view too, as the opener reader does (DEF-5120)
-    if _CMD_REMOVE_OPENER_RE.search(scan) or (view is not scan and _CMD_REMOVE_OPENER_RE.search(view)):
+    if _CMD_REMOVE_OPENER_RE.search(scan):
         for _at, targets in iter_cmd_recursive_removes(
                 command, scan, bash=True, recursive_only=False):
             out.extend(("delete", t) for t in targets)

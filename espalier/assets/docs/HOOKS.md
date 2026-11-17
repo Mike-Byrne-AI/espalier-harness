@@ -1796,12 +1796,12 @@ live -- a here-string, a heredoc body or the stage piped in -- and awk's
 program on a POSIX shell's stdin by here-string or pipe (`bash <<< "..."`,
 `sh<<<'...'`, `echo "..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
 read the same way, behind the shell's own output redirects as well (`echo
-"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`) and
+"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`, and
+before the `-` or a flag, `python3 2>&1 - <<'PY'`) and
 with its head in capitals or with `.exe` (`| BASH.exe`); an input redirect
 after the head (`| bash < f`) or a script operand gives it another program,
 and the piped text is data. Declared limits, each pinned: a glued redirect
-chain (`2>&1>/dev/null`; the spaced spelling is read), a redirect before an
-interpreter's heredoc operand or flag (`python3 2>&1 - <<EOF`), and on the
+chain (`2>&1>/dev/null`; the spaced spelling is read), and on the
 pipe a quoted target with a blank, which the pipe scan blanks, so the word
 after it reads as the target (`| bash > "o u t" x.sh` walls: toward
 friction)

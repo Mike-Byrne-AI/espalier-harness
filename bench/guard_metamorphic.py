@@ -63,13 +63,14 @@ everything around it.
 ``R4`` — **a stderr redirect among the operands (must-deny).** Each denied row of
 ``tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`` stays
 denied with a stderr redirect written at any blank between its tokens after the
-command word. Each tool's own parser is the oracle that a place is null for what
+command word, or on Bash before it. Each tool's own parser is the oracle that a place is null for what
 the verb is handed (no row is executed), and the class's own judges give the
 verdict, so a reader that takes an operand by its place and misses the redirect
 view reds here without anyone naming it (DEF-5120; the job DEF-5107, DEF-5108,
-DEF-2088 and DEF-2087 fixed one reader set at a time). A row whose job the
-coverage contract gives the after-check is held out by name (``R4_EXCLUDED``),
-still judged and reported apart, and reds again the day its places all hold.
+DEF-2088 and DEF-2087 fixed one reader set at a time). A red names its next
+step (``R4_REMEDY``): put the reader that takes the operand by its place on
+the redirect view, or, where the coverage contract gives the row's job to
+the after-check, take it to the dispatcher for the sort.
 
 RUNNING IT
 ----------
@@ -850,23 +851,16 @@ def check_r3(quick: bool = False) -> dict:
 #: verb is handed wherever the parser accepts it.
 R4_REDIRECT: dict[str, str] = {"Bash": "2>/dev/null", "PowerShell": "2>$null"}
 
-#: The quick sample: every Nth spelled form, so `--quick` (the suite's only
-#: path) still crosses both tools and both tables.
-R4_QUICK_STRIDE = 7
-
-#: The rows R4 holds out of its relation by name, each with the coverage
-#: contract's reason (the dispatcher's sort of R4's reds by job, DEF-5120): a
-#: write into a zone `post_write_check.py` watches is that after-check's job,
-#: so no reader is grown for it. An excluded row is still judged and its reds
-#: are reported apart; one whose every null place holds its deny is itself a
-#: violation, so the day a reader closes it the entry goes and the row rejoins.
-R4_EXCLUDED: dict[str, str] = {
-    "bash-delete-python-stdin": (
-        "a file under tools/cc/ removed by a stdin program behind a redirect "
-        "before its `-` operand: the stdin reader's declared limit (a redirect "
-        "before the operand or a flag), in a zone post_write_check.py watches"
-    ),
-}
+#: What a red asks next, printed under R4's violations: the two routes the
+#: dispatcher's sort of R4's reds by job named (DEF-5120). A reader fix is the
+#: first; the second is a ruling, never an exclusion written here, since a row
+#: held out by name hid the kinds no after-check watches (both reviews).
+R4_REMEDY = (
+    "next: match the reader that takes this operand by its place on the redirect view as well "
+    "(`_redirects_blanked`, `_scan_and_view_matches` in tools/cc/hooks/_bash_patterns.py); where "
+    "the coverage contract gives the row's job to post_write_check.py's after-check (a zone it "
+    "watches, docs/HOOKS.md), ask the dispatcher to sort the red by job"
+)
 
 
 def _operand_class():
@@ -880,26 +874,37 @@ def _operand_class():
 
 def operand_rows(quick: bool = False) -> list[dict]:
     """Every denied row of the two tables, spelled under the plain root, one
-    entry per (row, kind): ``table``, ``key``, ``tool``, ``kind``, ``command``."""
+    entry per (row, kind): ``table``, ``key``, ``tool``, ``kind``, ``command``.
+    ``quick`` (the suite's only path) keeps each row's first kind, so every
+    row is judged in CI and a row added moves no other row's sample: a stride
+    over the forms left 72 of 252 rows unjudged there, two of the lane's
+    readers could leave the view with the suite green, and a red left in an
+    unsampled row surfaced on the next lane to shift the stride (the
+    failure-mode review's F1)."""
     cls = _operand_class()
     rows = []
     for table in ("_ZONE_ROWS", "_SECRET_ROWS"):
         for key, (tool, expect, _arm, command) in getattr(cls, table).items():
             if expect != "deny":
                 continue
-            for kind, spelled in cls._plain_forms(command):
+            forms = cls._plain_forms(command)
+            for kind, spelled in forms[:1] if quick else forms:
                 rows.append({"table": table, "key": key, "tool": tool,
                              "kind": kind, "command": spelled})
-    return rows[::R4_QUICK_STRIDE] if quick else rows
+    return rows
 
 
 def _token_blanks(command: str, tool: str) -> list[int]:
-    """The offsets where R4 writes the redirect: the start of each run of
-    blanks between two tokens after the command word, the end of each line
-    after it, and the end of the command. Only places outside every quote,
-    escape and bracket (a subexpression, a group, a script block, a brace
-    expansion) are offered; the parser decides which of them are null, so
-    this scan errs toward offering a place, never toward deciding one."""
+    """The offsets where R4 writes the redirect: on Bash the start of the
+    command word, then the start of each run of blanks between two tokens
+    after the command word, the end of each line after it, and the end of
+    the command. Only places outside every quote, escape and bracket (a
+    subexpression, a group, a script block, a brace expansion) are offered;
+    the parser decides which of them are null, so this scan errs toward
+    offering a place, never toward deciding one. The place before the
+    command word is Bash's alone: PowerShell's parser read none of its 594
+    null, and on Bash it is the one a command-position prefix reads past
+    (the failure-mode review's F6: 639 of 660 null, none offered)."""
     powershell = tool == "PowerShell"
     escape = "`" if powershell else "\\"
     points: list[int] = []
@@ -963,11 +968,18 @@ def _token_blanks(command: str, tool: str) -> list[int]:
         i += 1
     if first_word_done or in_word:
         points.append(n)
+        lead = n - len(command.lstrip(" \t"))
+        if not powershell and lead < n:
+            points.append(lead)
     return sorted(set(points))
 
 
 def insert_redirect(command: str, tool: str, at: int) -> str:
-    """``command`` with the tool's stderr redirect written at offset ``at``."""
+    """``command`` with the tool's stderr redirect written at offset ``at``:
+    after a blank before a blank or the end, and before a blank at a word's
+    start (the place before the command word), so it never glues to a word."""
+    if at < len(command) and command[at] not in " \t\n":
+        return command[:at] + R4_REDIRECT[tool] + " " + command[at:]
     return command[:at] + " " + R4_REDIRECT[tool] + command[at:]
 
 
@@ -988,7 +1000,12 @@ def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
     the text's own); the accepted ones are then each defined as a function and
     printed with `declare -f` in one restricted run (`bash -r`, an empty PATH
     and cwd). Defining a function runs none of its body, and a text `bash -n`
-    accepted is a complete list, so it cannot close the function early."""
+    accepted is a complete list, so it cannot close the function early. A
+    text holding a heredoc is printed in a run of its own: one left open in a
+    batch (R4's place after its terminator) took the closing brace and the
+    next text's definition up to that text's own terminator, and the batch
+    still printed, so the open text got its neighbour's form and the
+    neighbour an empty one (the code review, driven)."""
     out: list[str | None] = [None] * len(texts)
     with tempfile.TemporaryDirectory(prefix="gm-r4-bash-") as scratch:
         env = _scratch_env(Path(scratch))
@@ -1015,13 +1032,19 @@ def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
             if len(forms) == len(batch) + 1:
                 for idx, form in zip(batch, forms):
                     # the function's name is the one thing two texts' forms must not share
-                    out[idx] = form.replace(f"__r4_{idx} ()", "__r4 ()", 1)
+                    named = form.replace(f"__r4_{idx} ()", "__r4 ()", 1)
+                    # an empty form, or one holding another text's definition,
+                    # is a batch that went wrong past bash's notice: no form
+                    out[idx] = named if named.strip() and "__r4_" not in named else None
             elif len(batch) > 1:
                 half = len(batch) // 2
                 print_forms(batch[:half])
                 print_forms(batch[half:])
 
-        print_forms(accepted)
+        for idx in accepted:
+            if "<<" in texts[idx]:
+                print_forms([idx])
+        print_forms([idx for idx in accepted if "<<" not in texts[idx]])
     return out
 
 
@@ -1184,8 +1207,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                 null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text])
 
     census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
-    violations, undenied, excluded = [], [], []
-    judged_excluded: dict[str, str] = {}      # an excluded row judged here, by its tool
+    violations, undenied = [], []
     saved = os.environ.pop("ESPALIER_MAINTENANCE_MODE", None)
     try:
         import powershell_guard_rehearsal as rehearsal
@@ -1210,14 +1232,12 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                     undenied.append(f"{row['key']} on {row['kind']}")
                     continue
                 stats["originals_denied"] += 1
-                if row["key"] in R4_EXCLUDED:
-                    judged_excluded[row["key"]] = row["tool"]
                 for _row, _at, text in mine:
                     if not null_by_text[text]:
                         continue
                     stats["null"] += 1
                     if not denied(row, text):
-                        (excluded if row["key"] in R4_EXCLUDED else violations).append({
+                        violations.append({
                             "relation": "R4",
                             "key": row["key"],
                             "tool": row["tool"],
@@ -1228,16 +1248,6 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         if saved is not None:
             os.environ["ESPALIER_MAINTENANCE_MODE"] = saved
 
-    held = {e["key"] for e in excluded}
-    for key, tool in sorted(judged_excluded.items()):
-        if key not in held:
-            violations.append({
-                "relation": "R4",
-                "key": key,
-                "tool": tool,
-                "detail": (f"{key} ({tool}): excluded by R4_EXCLUDED, yet every place the parser "
-                           f"proves null keeps its deny -- drop the exclusion so the row rejoins R4"),
-            })
     dead = [f"{tool}: no denied row has a place the parser proves null -- R4 vouches for nothing there"
             for tool, stats in census.items() if tools_run[tool] and stats["null"] == 0]
     dead += [f"{tool}: no original row is denied on the class's own projects -- the judge is dead"
@@ -1253,7 +1263,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                         for tool, s in census.items() if tools_run[tool]},
         "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
         "undenied_originals": undenied,
-        "excluded": excluded,
+        "remedy": R4_REMEDY,
     }
 
 
@@ -1332,14 +1342,12 @@ def main(argv: list[str] | None = None) -> int:
             if rep.get("undenied_originals"):
                 print(f"  {len(rep['undenied_originals'])} original row(s) not denied here "
                       f"(the class's own pin, not R4's): {', '.join(rep['undenied_originals'][:5])}")
-            if rep.get("excluded"):
-                keys = sorted({e["key"] for e in rep["excluded"]})
-                print(f"  {len(rep['excluded'])} place(s) on {len(keys)} excluded row(s), "
-                      f"not counted (R4_EXCLUDED): {', '.join(keys)}")
             if not rep["violations"]:
                 print("  no violations")
             for v in rep["violations"]:
                 print(f"  ✗ [{v['relation']}] {v['detail']}")
+            if rep["violations"] and rep.get("remedy"):
+                print(f"  {rep['remedy']}")
         total = sum(len(r["violations"]) for r in reports)
         print(f"\ntotal violations: {total}")
 
