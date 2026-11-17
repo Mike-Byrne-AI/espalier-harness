@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4125",
+ "subject": "tools/cc/board.py",
+ "cmd": "python3 -c \"import sys; sys.path.insert(0, 'tools/cc'); import board; m={'x': [{'id': 'a', 'type': 'note', 'at': '2026-11-17T00:00:00Z'}]}; c=[{'path': '/r', 'main': True, 'seat': 'm', 'sessions': [{'pid': 1}]}, {'path': '/r/w/stale', 'seat': 'x', 'sessions': []}, {'path': '/r/w/live', 'seat': 'x', 'sessions': [{'pid': 2}]}]; rows=board.seat_rows(m, {'clone': 'm', 'checkouts': c}); print([r.get('sessions') for r in rows if r['seat'] == 'x'][0] == [])\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "37ae51a8a66e",
+ "text_sha": "3ea31367c4c0",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD fda71601f1b8)"
+}
