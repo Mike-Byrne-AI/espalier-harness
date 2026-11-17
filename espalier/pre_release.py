@@ -23,7 +23,7 @@ from espalier._safe_walk import is_own_git_repo, safe_rglob, visible
 from espalier.release_noise import SECRET_FILES
 from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, _tree_walk, create_release_zip
 from espalier.scan_composition import REPORT_FILES
-from espalier._spawn import run_no_stdin
+from espalier._spawn import run_no_stdin, run_tree_bounded
 from espalier._text import os_error_text
 
 
@@ -773,10 +773,13 @@ def _run_command(
 ) -> dict[str, Any]:
     t0 = _now()
     try:
+        # The test leg is a pytest, a tree of hooks, git and xdist workers: its
+        # timeout ends the whole tree on every OS (DEF-5090), and the child's
+        # stdin is closed here, as run_no_stdin would (DEF-928).
         # subprocess-contract: ok generic-command-runner-callers-pin-each-CLI-surface
-        result = run_no_stdin(
-            command, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=False, timeout=timeout_seconds,
+        result = run_tree_bounded(
+            command, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False, timeout=timeout_seconds,
         )
         return {
             "command": " ".join(command),

@@ -1890,9 +1890,11 @@ _BOUNDED_SPAWN_HOMES = (
     "espalier/scanners/freshness.py",
 )
 #: The bounded spawn's entry points. Each is compared, closed over, in every
-#: home that defines it: ``run_bounded`` is in all three; the tree-ending pair
-#: is in ``tools/cc`` alone until the engine takes its copy, which this then
-#: holds equal the day it lands (a home may lack an entry, never differ in it).
+#: home that defines it: ``run_bounded`` is in all three; ``run_tree_bounded``
+#: is in ``tools/cc`` and the engine (DEF-5090); ``communicate_tree_bounded``
+#: is in ``tools/cc`` alone until an engine site holds a ``Popen`` of its own,
+#: and this holds the engine's equal the day it lands (a home may lack an
+#: entry, never differ in it).
 _BOUNDED_SPAWN_ENTRIES = ("run_bounded", "run_tree_bounded", "communicate_tree_bounded")
 _BOUNDED_SPAWN_ENTRY = _BOUNDED_SPAWN_ENTRIES[0]
 _BUILTIN_NAMES = frozenset(dir(__import__("builtins")))
@@ -2003,6 +2005,45 @@ class TestTheBoundedSpawnTwins:
                     f"_BOUNDED_SPAWN_HOMES together (docstrings may differ, code may not)"
                 )
 
+    def test_every_own_body_outside_tools_cc_is_compared(self):
+        """A body the timed-spawn census exempts by name outside ``tools/cc``
+        (``_BOUNDED_SPAWN_OWN_NAMES``) is one this class compares to the
+        ``tools/cc`` copy, in every home that defines it: an exemption for a
+        body no twin holds equal would let a raw timed spawn stand in code
+        nobody checks. A name no home outside ``tools/cc`` defines is a stale
+        exemption."""
+        defined_anywhere: set[str] = set()
+        for rel in _BOUNDED_SPAWN_HOMES[1:]:
+            tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+            defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            defined_anywhere |= defined
+            reached: set[str] = set()
+            for entry in _BOUNDED_SPAWN_ENTRIES:
+                if entry in defined:
+                    reached |= set(_bounded_spawn_parts(rel, entry))
+            unheld = sorted((set(_BOUNDED_SPAWN_OWN_NAMES) & defined) - reached)
+            assert not unheld, (
+                f"{rel} defines {unheld}, which the census exempts as the bounded spawn's own body, but no "
+                f"entry in _BOUNDED_SPAWN_ENTRIES reaches it there, so no twin holds it equal")
+        stale = sorted(set(_BOUNDED_SPAWN_OWN_NAMES) - defined_anywhere)
+        assert not stale, f"_BOUNDED_SPAWN_OWN_NAMES names {stale}, which no home outside tools/cc defines"
+
+    def test_the_own_body_pin_reads_an_unreached_body_and_a_stale_name(self, tmp_path, monkeypatch):
+        """The pin's own control: an engine home that defines an exempt-named
+        body no entry reaches reds, and so does a roster name no home outside
+        ``tools/cc`` defines."""
+        (tmp_path / "espalier" / "scanners").mkdir(parents=True)
+        (tmp_path / "espalier" / "scanners" / "freshness.py").write_bytes(
+            b"def run_bounded():\n    return _end_tree()\ndef _end_tree():\n    pass\n")
+        (tmp_path / "espalier" / "_spawn.py").write_bytes(
+            b"def run_bounded():\n    pass\ndef _process_table():\n    pass\n")
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+        with pytest.raises(AssertionError, match=r"espalier/_spawn\.py defines \['_process_table'\]"):
+            self.test_every_own_body_outside_tools_cc_is_compared()
+        (tmp_path / "espalier" / "_spawn.py").write_bytes(b"def run_bounded():\n    pass\n")
+        with pytest.raises(AssertionError, match=r"which no home outside tools/cc defines"):
+            self.test_every_own_body_outside_tools_cc_is_compared()
+
     def test_a_home_that_takes_a_tree_entry_is_compared(self, tmp_path, monkeypatch):
         """The per-entry walk's own control: an engine home that defines
         ``run_tree_bounded`` with a body one token apart from the ``tools/cc``
@@ -2049,13 +2090,21 @@ class TestTheBoundedSpawnTwins:
         assert set(_bounded_spawn_parts("m.py")) == {"run_bounded", "_helper", "time", "GRACE"}
 
 
+#: The bounded spawn's own bodies outside ``tools/cc``, by name: the functions
+#: whose raw calls ARE the spawn -- ``run_bounded`` and its tree kill, and the
+#: tree run with its wait and its table read (the engine's since DEF-5090).
+#: ``tests/test_spawn_chokepoint.py::BOUNDED_HOME`` is the ``tools/cc`` roster;
+#: ``TestTheBoundedSpawnTwins::test_every_own_body_outside_tools_cc_is_compared``
+#: holds each name here to a body the parity test compares.
+_BOUNDED_SPAWN_OWN_NAMES = ("run_bounded", "_end_tree", "run_tree_bounded", "_communicate_or_end_the_tree",
+                            "_process_table")
 #: Where a raw timed spawn may stand outside ``tools/cc``: inside the bounded
-#: spawn's own two functions, in each copy, and nowhere else by name. Any other
+#: spawn's own functions, in each copy, and nowhere else by name. Any other
 #: raw timed spawn needs the ``# spawn: ok <reason>`` marker on the call line or
 #: the line above, and holds no pipe.
 _BOUNDED_SPAWN_OWN = frozenset(
     (rel, name) for rel in _BOUNDED_SPAWN_HOMES if not rel.startswith("tools/cc/")
-    for name in ("run_bounded", "_end_tree"))
+    for name in _BOUNDED_SPAWN_OWN_NAMES)
 #: Timed calls through ``run_bounded`` at the reroute (DEF-3004, 2026-10-14):
 #: 43 in the engine, 18 in scripts/, 14 in bench/, 2 in tools/. A walk that
 #: finds fewer broke, or sites went back to ``subprocess.run``.
@@ -2200,6 +2249,11 @@ _ENGINE_SPAWN_OWN = _BOUNDED_SPAWN_OWN | {("espalier/_spawn.py", "run_no_stdin")
 _ENGINE_STDLIB_SPAWNER = "espalier/scanners/freshness.py"
 #: The ``stdin=`` values that hand a child no stdin of the parent's.
 _CLOSED_STDIN = frozenset({"subprocess.DEVNULL", "subprocess.PIPE", "DEVNULL", "PIPE"})
+#: The engine's tree run (``espalier/_spawn.py``, DEF-5090): an engine call for
+#: a child that is itself a tree may go through it in place of ``run_no_stdin``,
+#: and hands the child a closed stdin at the call, since the tree run is held
+#: equal to the ``tools/cc`` copy, which closes none.
+_ENGINE_TREE_RUNS = frozenset({"run_tree_bounded"})
 #: ``run_no_stdin`` calls at the reroute (DEF-928, 2026-10-18): the 35 engine
 #: calls that went through ``run_bounded`` and the 13 raw sites. A walk that
 #: finds fewer broke, or sites went around the wrapper.
@@ -2210,10 +2264,11 @@ def _engine_spawns_that_inherit_stdin(root: Path, rels: list[str]) -> list[str]:
     """Each engine spawn in ``rels`` that may hand its child the parent's
     standard input, with why. An engine spawn calls ``run_no_stdin``; else it
     hands its child a closed stdin itself (``stdin=`` one of ``_CLOSED_STDIN``,
-    or an ``input=`` that is not ``None``) and is the freshness scanner's own
-    ``run_bounded`` or a raw call marked ``# spawn: ok``. A ``stdin=None`` is the
-    parent's stdin, as the wrapper reads it. The spawn's own bodies
-    (``_ENGINE_SPAWN_OWN``) are the mechanism and are not read."""
+    or an ``input=`` that is not ``None``) and is the engine's tree run
+    (``_ENGINE_TREE_RUNS``), the freshness scanner's own ``run_bounded`` or a
+    raw call marked ``# spawn: ok``. A ``stdin=None`` is the parent's stdin, as
+    the wrapper reads it. The spawn's own bodies (``_ENGINE_SPAWN_OWN``) are the
+    mechanism and are not read."""
     out = []
     for site in _spawn_sites_in(root, rels):
         if site["no_stdin"] or (site["path"], site["function"]) in _ENGINE_SPAWN_OWN:
@@ -2221,11 +2276,17 @@ def _engine_spawns_that_inherit_stdin(root: Path, rels: list[str]) -> list[str]:
         where = f"{site['path']}:{site['lineno']} in {site['function']}"
         values = site["values"]
         fed = values.get("stdin") in _CLOSED_STDIN or values.get("input", "None") != "None"
+        tree_run = site["bounded"] and site["callee"] in _ENGINE_TREE_RUNS
+        if tree_run and fed:
+            continue
         if site["bounded"] and site["path"] == _ENGINE_STDLIB_SPAWNER and fed:
             continue
         if site["raw"] and site["declared"] and fed:
             continue
-        if site["bounded"] and site["path"] == _ENGINE_STDLIB_SPAWNER:
+        if tree_run:
+            out.append(f"{where}: calls the tree run with the parent's stdin: pass stdin=subprocess.DEVNULL "
+                       "at the call (run_tree_bounded closes none, as the tools/cc copy it is held equal to)")
+        elif site["bounded"] and site["path"] == _ENGINE_STDLIB_SPAWNER:
             out.append(f"{where}: the stdlib-only scanner's own spawn hands on the parent's stdin: "
                        "pass stdin=subprocess.DEVNULL (it cannot import run_no_stdin)")
         elif site["raw"] and site["declared"]:
@@ -2246,8 +2307,9 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
     invalid`` after writing its seed docs (DEF-928). ``espalier/_spawn.py::
     run_no_stdin`` closes the child's stdin unless the caller feeds it, and it
     is the engine's one spawn chokepoint (DEF-985): every engine spawn calls it,
-    or feeds its child and is one of the two shapes it cannot reach (the
-    stdlib-only scanner's own copy, a raw call marked ``# spawn: ok``). The
+    or feeds its child and is one of the three shapes it does not cover (the
+    engine's tree run for a child that is itself a tree, DEF-5090; the
+    stdlib-only scanner's own copy; a raw call marked ``# spawn: ok``). The
     ``tools/cc`` copy's callers, the hooks among them, keep inheriting stdin;
     that sweep is not this census's."""
 
@@ -2260,7 +2322,8 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
         assert not stray, (
             "an engine spawn that hands its child the parent's stdin dies on Windows when that "
             "handle is closed (WinError 6, DEF-928): call espalier._spawn.run_no_stdin, or pass "
-            "stdin= or input= on a call marked `# spawn: ok <reason>`:\n  " + "\n  ".join(stray)
+            "stdin= or input= on a call to espalier._spawn.run_tree_bounded or a call marked "
+            "`# spawn: ok <reason>`:\n  " + "\n  ".join(stray)
         )
 
     def test_the_wrapper_population_holds_its_floor(self):
@@ -2282,7 +2345,10 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
             "def marked_fed():\n    subprocess.run(['git', 'log'], stdin=subprocess.DEVNULL)  # spawn: ok holds no pipe at all\n"
             "def routed():\n    run_no_stdin(['git', 'log'], timeout=5)\n"
             "def marked_none():\n    subprocess.run(['git', 'log'], stdin=None)  # spawn: ok holds no pipe at all\n"
-            "def marked_fed_none():\n    subprocess.run(['git', 'log'], input=None)  # spawn: ok holds no pipe at all\n",
+            "def marked_fed_none():\n    subprocess.run(['git', 'log'], input=None)  # spawn: ok holds no pipe at all\n"
+            "def tree_fed():\n    run_tree_bounded(['pytest'], stdin=subprocess.DEVNULL, timeout=5)\n"
+            "def tree_unfed():\n    run_tree_bounded(['pytest'], timeout=5)\n"
+            "def tree_none():\n    _spawn.run_tree_bounded(['pytest'], stdin=None, timeout=5)\n",
             encoding="utf-8")
         (tmp_path / "espalier" / "scanners").mkdir()
         (tmp_path / "espalier" / "scanners" / "freshness.py").write_text(
@@ -2292,12 +2358,16 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
             encoding="utf-8")
         stray = _engine_spawns_that_inherit_stdin(tmp_path, ["espalier/m.py", "espalier/scanners/freshness.py"])
         hands_on = "marked `# spawn: ok` but hands on the parent's stdin (no stdin=subprocess.DEVNULL or PIPE, no input=)"
+        tree_hands_on = ("calls the tree run with the parent's stdin: pass stdin=subprocess.DEVNULL at the call "
+                         "(run_tree_bounded closes none, as the tools/cc copy it is held equal to)")
         assert stray == [
             "espalier/m.py:4 in bounded: calls the bounded spawn around run_no_stdin",
             "espalier/m.py:6 in raw: a raw spawn, unmarked",
             f"espalier/m.py:8 in marked_unfed: {hands_on}",
             f"espalier/m.py:14 in marked_none: {hands_on}",
             f"espalier/m.py:16 in marked_fed_none: {hands_on}",
+            f"espalier/m.py:20 in tree_unfed: {tree_hands_on}",
+            f"espalier/m.py:22 in tree_none: {tree_hands_on}",
             "espalier/scanners/freshness.py:3 in unfed: the stdlib-only scanner's own spawn hands on the "
             "parent's stdin: pass stdin=subprocess.DEVNULL (it cannot import run_no_stdin)",
         ], stray
@@ -2445,15 +2515,11 @@ _TREE_SITE_SPAWNS = frozenset({"run", "Popen", "call", "check_output", "check_ca
 #: timeout, by ``path::function``, with the ledger row that retires it and why
 #: it is not routed yet. An entry that names no such site any more reds below:
 #: re-key it to where the spawn went, and drop it only once that site ends its
-#: tree.
-_TREE_SITE_DEBT = {
-    "espalier/pre_release.py::run_pre_release_check": (
-        "DEF-5090: the engine cannot import tools/cc, so its tree-ending twin goes in "
-        "espalier/_spawn.py beside run_bounded, and this leg (the whole not-heavy suite) takes it then"),
-    "espalier/refresh_externals.py::run_bound_tests": (
-        "DEF-5090: the engine cannot import tools/cc; the bound pins' pytest takes espalier/_spawn.py's "
-        "tree-ending twin with the same row"),
-}
+#: tree. Empty since DEF-5090 gave the engine its tree run
+#: (``espalier/_spawn.py::run_tree_bounded``): the two engine sites it named
+#: (``pre_release.py::run_pre_release_check``, ``refresh_externals.py::
+#: run_bound_tests``) take it.
+_TREE_SITE_DEBT: dict[str, str] = {}
 
 
 def _call_name(fn: ast.expr) -> str | None:
@@ -2530,7 +2596,8 @@ class TestEveryTimedPytestEndsItsWholeTree:
     workers, hooks and git ran on at parent 1 (DEF-1179:
     ``scripts/verify_pins.py``'s inner pytest left them beside its temp
     clone). Each site calls ``run_tree_bounded`` (``tools/cc/_json_safe.py``,
-    loaded by path; ``tests/_tree_spawn.py`` in the suite), or a function of
+    loaded by path; ``tests/_tree_spawn.py`` in the suite; ``espalier/_spawn.py``
+    in the engine, since DEF-5090), or a function of
     its module that does, or is named debt in ``_TREE_SITE_DEBT`` with the
     ledger row that retires it. The ratchet is keyed on the string
     ``"pytest"`` and reads one module at a time, so the shapes
@@ -2550,7 +2617,8 @@ class TestEveryTimedPytestEndsItsWholeTree:
         assert not stray, (
             "a timed spawn of a pytest kills only the child at its timeout on POSIX, and the "
             "pytest's workers, hooks and git run on at parent 1: call run_tree_bounded "
-            "(tools/cc/_json_safe.py loaded by path; tests/_tree_spawn.py in the suite), or name "
+            "(tools/cc/_json_safe.py loaded by path; tests/_tree_spawn.py in the suite; "
+            "espalier/_spawn.py in the engine, with stdin=subprocess.DEVNULL), or name "
             "the site in _TREE_SITE_DEBT with why:\n  " + "\n  ".join(stray))
 
     def test_every_named_debt_is_a_live_site(self):

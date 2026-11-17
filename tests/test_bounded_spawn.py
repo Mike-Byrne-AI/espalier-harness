@@ -455,7 +455,10 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
 
 
 class TestTheTreeBoundedRunEndsTheWholeTree:
-    """``_json_safe.run_tree_bounded``: ``run_bounded`` whose timeout, and any
+    """``_json_safe.run_tree_bounded`` (and, through the engine's command
+    runner, its twin ``espalier/_spawn.py::run_tree_bounded``, held equal in
+    code by ``tests/test_contracts.py::TestTheBoundedSpawnTwins``):
+    ``run_bounded`` whose timeout, and any
     exception while it waits, ends the child's whole tree on every OS, while
     the child starts in the caller's own process group so an ancestor's group
     kill still reaches it. On POSIX ``run`` kills the child alone and leaves
@@ -487,6 +490,30 @@ class TestTheTreeBoundedRunEndsTheWholeTree:
         assert returned_first, "the call waited for the holder's sleep: the grandchild set the bound"
         assert gone, "the call raised but the grandchild outlived the tree kill"
         assert caught.value.timeout == CAP_SECONDS
+
+    def test_the_engines_command_runner_ends_the_grandchild_at_its_cap(self, tmp_path):
+        """DEF-5090 at the engine's own site: ``espalier pre-release`` runs the
+        not-heavy suite through ``espalier/pre_release.py::_run_command``, which
+        takes the engine's tree run (``espalier/_spawn.py::run_tree_bounded``),
+        so at its cap the holder the child started is gone too. With the
+        runner on ``run_no_stdin`` this reds on POSIX, where ``run`` kills the
+        child alone (driven under WSL on 2026-11-17: the grandchild outlived
+        the cap 3 of 3 times at ``origin/main``, 0 of 3 on the lane); on
+        Windows ``run_bounded``'s ``taskkill /T`` ended it there too, so the red
+        is the POSIX cells'."""
+        from espalier import pre_release
+
+        argv, pidfile, done = _holder(tmp_path)
+        try:
+            result = pre_release._run_command(argv, tmp_path, timeout_seconds=int(CAP_SECONDS))
+            returned_first = not done.exists()
+            gone = self._gone(pidfile)
+        finally:
+            _end_holder(pidfile)
+        assert result["timed_out"], result
+        assert returned_first, "the engine's command runner waited for the holder's sleep"
+        assert gone, ("the engine's command runner timed out but the grandchild outlived it: the cap "
+                      "killed the child alone, and what it started runs on at parent 1")
 
     @pytest.mark.parametrize("middle", ["a tree-bounded run of its own", "a child in a session of its own"])
     def test_a_nested_run_is_ended_with_the_outer_one(self, tmp_path, middle):
