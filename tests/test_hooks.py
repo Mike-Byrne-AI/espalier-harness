@@ -4060,6 +4060,12 @@ class TestHookUtils:
             # A `yes` also needs a start (DEF-1145); every name here starts, so
             # this test reads the identity states alone.
             monkeypatch.setattr(_hook_utils, "interpreter_start_failure", lambda name: None)
+            # And every probe answered (DEF-4126): a `no` field reads the
+            # unanswered seam, a real `--version` probe that a loaded runner
+            # can time out, turning an asserted `no` into `?` (post-merge-
+            # windows, 2 of 12 runs). The `?` state has its own pin in
+            # tests/test_hook_utils.py.
+            monkeypatch.setattr(_hook_utils, "interpreter_version_unanswered", lambda name: False)
 
         # py3-only host (stock macOS, the majority platform) — the original contradiction.
         _state(py3=True, py=False)

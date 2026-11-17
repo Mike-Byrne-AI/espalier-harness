@@ -256,6 +256,10 @@ class TestSessionStartWarnsAboutTheArgvItRuns:
         said: list[str] = []
         monkeypatch.setattr(hu, "interpreter_meets_floor", accepts)
         monkeypatch.setattr(hu, "interpreter_is_python3", accepts)
+        # Every probe answered (DEF-4126): the warning reads the unanswered
+        # seam before the floor, a real `--version` probe a loaded runner can
+        # time out, which names an accepted spelling as unconfirmed.
+        monkeypatch.setattr(hu, "interpreter_version_unanswered", lambda _spelling: False)
         monkeypatch.setattr(hu, "advise", lambda line, **_kw: said.append(line))
 
         def run(*entries):
