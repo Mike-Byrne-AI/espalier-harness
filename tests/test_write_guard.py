@@ -14809,8 +14809,8 @@ class TestARedirectWrittenFirstHidesNoOperand:
         pytest.param("Bash", "2>/dev/null git rm cc/x.json", id="bash-git-rm"),
     ])
     def test_a_redirect_before_the_command_word_was_read_past_already(self, tool, cmd, tmp_path):
-        run = run_bash_guard if tool == "Bash" else _run_ps_guard
-        assert_hook_denied(run(cmd, tmp_path), contains_reason="zone blocked")
+        guard = run_bash_guard if tool == "Bash" else _run_ps_guard
+        assert_hook_denied(guard(cmd, tmp_path), contains_reason="zone blocked")
 
     @pytest.mark.parametrize("cmd", [
         pytest.param("Set-Content 2>$null notes.txt x", id="set-content"),
