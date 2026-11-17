@@ -149,6 +149,20 @@ class TestADeadPopulationGatesTheExitCode:
         monkeypatch.setattr(gm, "check_r2", lambda quick=False: _report())
         assert gm.main(["--relation", "R2"]) == 0
 
+    def test_a_refused_row_is_no_verdict_never_a_fail_open(self, gm, monkeypatch, capsys):
+        """A row R1's confinement set refuses stops the run before bash sees
+        it: exit 3, never the violations' 1 a traceback reads as (air's be8e74
+        (3); the sibling differentials' test of the same name). The class is
+        the one `bash_reaches` raises, read from its module."""
+        from bench.reachability_differential import UnsafeToExecute
+
+        def refused(quick=False):
+            raise UnsafeToExecute("driven: a refused row")
+
+        monkeypatch.setattr(gm, "check_r2", refused)
+        assert gm.main(["--relation", "R2"]) == 3
+        assert "a row the confinement set refuses" in capsys.readouterr().err
+
 
 class TestTheHeadAxisDerivesFromTheGuard:
     """`HEADS` is read out of the guard, not copied beside it."""

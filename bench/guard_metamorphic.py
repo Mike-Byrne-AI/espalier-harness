@@ -1416,6 +1416,10 @@ def main(argv: list[str] | None = None) -> int:
     # guard_tier (a test) gets plain again.
     global ROOT_SHAPE
     ROOT_SHAPE = args.root_shape
+    # R1's real-shell oracle (`bash_reaches`) refuses a row its confinement set
+    # cannot prove confined, before bash sees it: the class it raises, read from
+    # the module that raises it (the sibling differential's DEF-5085 rule).
+    from bench.reachability_differential import UnsafeToExecute
     try:
         assert_instrument_is_live()
 
@@ -1444,6 +1448,11 @@ def main(argv: list[str] | None = None) -> int:
     except BudgetMiss as exc:
         # A judgment that never finished: exit 3, never the violations' 1.
         print(f"NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+    except UnsafeToExecute as exc:
+        # A row never run is no verdict either: a traceback's exit 1 reads as
+        # violations (air's be8e74 (3)).
+        print(f"NO VERDICT -- a row the confinement set refuses: {exc}", file=sys.stderr)
         return 3
     finally:
         ROOT_SHAPE = "plain"
