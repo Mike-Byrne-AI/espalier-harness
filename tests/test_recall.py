@@ -4396,9 +4396,11 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
     convergence-review protocol first for every "why did a hook deny or block me"
     question. The hooks guide and the troubleshooting guide now index per ``##``
     and ``###`` section on a tree that is not this repository. On this one the
-    family stays off: with every seeded reference doc it moved 14 recall pins,
-    four of them headline claims. The rows read the shipped copies init deploys,
-    beside the seeded memory note and sharp-edges notes that won before."""
+    hooks guide alone indexes, read without the stamp it never carries here
+    (operator ruling, 2026-11-16: root CLAUDE.md's hook rows point into it); the
+    troubleshooting guide stays off, since every seeded reference doc together
+    moved 14 recall pins here on 2026-10-18. The rows read the shipped copies init
+    deploys, beside the seeded memory note and sharp-edges notes that won before."""
 
     _STAMP = "<!-- espalier:seed-version v0 sha256:0 -->\n"
 
@@ -4459,10 +4461,12 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         root = self._adopter(tmp_path, monkeypatch)
         assert _recall.recall("zzqx florp nonsense", root, top=4) == []
 
-    def test_the_family_stays_off_on_this_repository(self):
-        """Dies to: the self-host gate dropped, which moves 14 pins here."""
-        assert not [d for d in _recall._load_corpus(REPO_ROOT)
-                    if d.source.startswith(("docs/HOOKS.md :: ", "docs/TROUBLESHOOTING.md :: "))]
+    def test_this_repository_indexes_its_hooks_guide_alone(self):
+        """Dies to: the self-host branch dropped (no hooks-guide section here), or
+        the troubleshooting guide let in beside it."""
+        sources = [d.source for d in _recall._load_corpus(REPO_ROOT) if d.family == _recall.REFERENCE_FAMILY]
+        assert any(s.startswith("docs/HOOKS.md :: 4. `write_guard.py`") for s in sources), sources
+        assert all(s.startswith("docs/HOOKS.md :: ") for s in sources), sources
 
     def test_a_fenced_heading_is_no_section(self, tmp_path, monkeypatch):
         """Dies to: a splitter that reads headings inside fenced code."""
@@ -4521,13 +4525,21 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         bags = self._reference(root)
         assert bags["docs/HOOKS.md :: Same"]["zzone"] and bags["docs/HOOKS.md :: Second / Same"]["zztwo"]
 
-    def test_the_self_host_gate_holds_even_over_stamped_docs(self, tmp_path, monkeypatch):
-        """This repository's own docs carry no stamp, so the stamp check alone would
-        keep the family off here; the gate is what holds when one does. Dies to:
-        the gate dropped (a mutant this repository's tree cannot see)."""
+    def test_this_repository_reads_its_hooks_guide_without_a_stamp(self, tmp_path, monkeypatch):
+        """This repository's hooks guide is the seed's source and never carries the
+        stamp init writes at deploy. Dies to: the stamp check applied here too,
+        which leaves the family empty on this repository."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## A\n\nalpha\n"}, stamp=False)
+        monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
+        assert set(self._reference(root)) == {"docs/HOOKS.md :: A"}
+
+    def test_the_troubleshooting_guide_stays_off_here_even_stamped(self, tmp_path, monkeypatch):
+        """Dies to: the self-host branch reading both reference docs (a mutant
+        this repository's tree cannot see, since its copy carries no stamp)."""
         root = self._adopter(tmp_path, monkeypatch)
         monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
-        assert self._reference(root) == {}
+        sources = set(self._reference(root))
+        assert sources and all(s.startswith("docs/HOOKS.md :: ") for s in sources), sources
 
     def test_a_stamp_after_a_byte_order_mark_still_counts(self, tmp_path, monkeypatch):
         """Dies to: the stamp read without the mark stripped."""

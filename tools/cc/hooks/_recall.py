@@ -882,6 +882,11 @@ def corpus_summary(root: Path) -> dict:
 #: deployed reference docs stay out: with all of them the deny answers measured
 #: no better, and this repository's corpus moved 14 pins (2026-10-18).
 REFERENCE_DOCS = ("docs/HOOKS.md", "docs/TROUBLESHOOTING.md")
+#: The one this repository indexes: its own hooks guide, the source init's seed
+#: is copied from, so it carries no seed stamp and is read without one. Hook
+#: detail that leaves the root CLAUDE.md hook table for it stays recallable
+#: here (operator ruling, 2026-11-16); docs/TROUBLESHOOTING.md stays off.
+SELF_HOST_REFERENCE_DOCS = ("docs/HOOKS.md",)
 REFERENCE_FAMILY = "seeded reference docs"
 #: The first line `init` writes on every seed it deploys. A file of one of those
 #: names without it is the adopter's own (deleting the stamp is how a seed
@@ -1072,42 +1077,48 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
     # On an init'd Node tree recall indexed four documents and gave the
     # convergence-review protocol first for every such question (measured
     # 2026-10-07 and 2026-10-18), though each deny text cites its docs/HOOKS.md
-    # section by heading. Gated OFF on this repository, measured, not assumed:
-    # its corpus already answers hook questions, and every seeded reference doc
-    # moved 14 of its recall pins, four of them headline claims; the two docs on
-    # an adopter tree add 39 sections and move nothing here. The cost, stated:
+    # section by heading. On this repository the hooks guide alone indexes
+    # (SELF_HOST_REFERENCE_DOCS), read without the stamp its source never
+    # carries: the operator's ruling of 2026-11-16, so hook detail moved out of
+    # the root CLAUDE.md hook table stays recallable. Measured that day: its 27
+    # sections took one hit from the paraphrase arm's recall(top=4) (DEF-679's
+    # query lost its principle to the audit-log section) while the front door
+    # kept all nine. The troubleshooting guide stays off here, since every seeded
+    # reference doc together moved 14 recall pins, four of them headline claims
+    # (2026-10-18); the two docs on an adopter tree add 39 sections and move
+    # nothing here. The cost on an adopter tree, stated:
     # the four-document corpus already answered 26 of the suppression arm's 29
     # off-topic English queries with a wrong neighbour, and answers 28 now; what
     # changes is WHICH neighbour, and on a Node tree the word "hook" reaches the
     # harness's hook sections ("why does my useEffect hook run twice" finds
     # post_write_check), a wrong match that looks relevant (the pull-recall
-    # suppression entry in docs/SHARP_EDGES.md is the engine's limit). A stamp is
-    # required (REFERENCE_SEED_STAMP), a skipped ## takes its ### with it, and the
+    # suppression entry in docs/SHARP_EDGES.md is the engine's limit). There a
+    # stamp is required (REFERENCE_SEED_STAMP), a skipped ## takes its ### with it, and the
     # fold-here corpus leaves the family out (_load_full_corpus).
-    if not is_self_host_repo(root):
-        for rel in REFERENCE_DOCS:
-            p = root / rel
-            if not p.is_file() or _resolved(p) in seen:
-                continue  # absent, or declared by the adopter and indexed above
-            text = _read(p)
-            if not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
-                continue  # the adopter's own file of that name, not the seed
-            doc_title = _first_heading(text) or p.stem
-            sources: set[str] = set()
-            skipped_parent = False
-            for level, heading, heading_path, body in _reference_sections(text):
-                if level == 2:
-                    skipped_parent = _section_skipped(heading, body)
-                if skipped_parent or _section_skipped(heading, body):
-                    continue  # a pointer section, by the author's own mark
-                source = f"{rel} :: {heading}"
-                if source in sources:  # one heading under two parents
-                    source = f"{rel} :: {heading_path}"
-                sources.add(source)
-                yield _Doc(source,
-                           heading,
-                           Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
-                           family=REFERENCE_FAMILY)
+    self_host = is_self_host_repo(root)
+    for rel in SELF_HOST_REFERENCE_DOCS if self_host else REFERENCE_DOCS:
+        p = root / rel
+        if not p.is_file() or _resolved(p) in seen:
+            continue  # absent, or declared by the adopter and indexed above
+        text = _read(p)
+        if not self_host and not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
+            continue  # the adopter's own file of that name, not the seed
+        doc_title = _first_heading(text) or p.stem
+        sources: set[str] = set()
+        skipped_parent = False
+        for level, heading, heading_path, body in _reference_sections(text):
+            if level == 2:
+                skipped_parent = _section_skipped(heading, body)
+            if skipped_parent or _section_skipped(heading, body):
+                continue  # a pointer section, by the author's own mark
+            source = f"{rel} :: {heading}"
+            if source in sources:  # one heading under two parents
+                source = f"{rel} :: {heading_path}"
+            sources.add(source)
+            yield _Doc(source,
+                       heading,
+                       Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
+                       family=REFERENCE_FAMILY)
 
     # Two self-host-only sources, deliberately gated by TWO conditions rather
     # than one. They are suppressed for different reasons and a single `if`

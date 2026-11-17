@@ -167,6 +167,7 @@ CONDITIONAL: dict[str, tuple[str, tuple[str, ...]]] = {
          "docs/STANDING_PRINCIPLES.md", "docs/FAILURE_MODES.md",
          "CLAUDE.md", ".claude/rules/",  # the default roster: the root file and the rules
          "espalier.toml",  # recall_sources / recall_records can reach any root
+         "docs/HOOKS.md",  # the hooks guide, indexed here since 2026-11-16
          "tools/cc/hooks/_recall.py", "scripts/recall_eval.py",
          ".claude/commands/recall.md"),
     ),
