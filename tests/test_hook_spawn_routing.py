@@ -650,9 +650,9 @@ def test_the_run_summary_counts_the_retried_rows(monkeypatch):
     ])
     report_hook_spawn_retries(reporter)
     assert reporter.lines == [
-        "hook spawn retries: 1 row(s) missed once and answered on the retry:",
+        "hook spawn retries: 1 row(s) missed and answered on a retry:",
         "  tests/test_a.py::T::one",
-        "::warning::hook spawn retries: 1 row(s) missed once and answered on the retry: tests/test_a.py::T::one",
+        "::warning::hook spawn retries: 1 row(s) missed and answered on a retry: tests/test_a.py::T::one",
     ]
     quiet = _Reporter([_Warned("tests/test_b.py::two", "PytestRemovedIn10Warning: ...")])
     report_hook_spawn_retries(quiet)
@@ -671,4 +671,4 @@ def test_a_row_with_a_spent_retry_fits_every_per_test_ceiling():
                      (TESTS.parent / ".github" / "workflows" / "portability.yml").read_text(encoding="utf-8"))
     assert ini and cell, "a ceiling moved: re-read where it is set"
     for ceiling in (int(ini.group(1)), int(cell.group(1))):
-        assert 3 * hs.HOOK_S <= ceiling - 10, (hs.HOOK_S, ceiling)
+        assert 3 * hs.HOOK_S <= ceiling - hs.RETRY_TEARDOWN_S, (hs.HOOK_S, ceiling)

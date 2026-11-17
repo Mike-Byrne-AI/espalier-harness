@@ -39,7 +39,9 @@ that lock first (:func:`dropping_the_lock`). The second comes after
 unconfigure, by when pytest has dropped it.
 
 On every method it stashes the ceiling it armed and names the running test
-(:func:`armed`), which tests/_wait_budget.py::scaled reads (DEF-5067).
+(:func:`armed`), which tests/_wait_budget.py::scaled reads (DEF-5067), and
+when it armed it, so :func:`left` reads the seconds still under it, which
+tests/_hook_spawn.py reads before it spends another attempt (DEF-2093).
 
 Inert where pytest-timeout is absent or lacks an internal this plugin calls
 (``missing_internals``; one named row reds then), where the method is ``thread`` (Windows,
@@ -53,6 +55,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -85,6 +88,15 @@ _FIRED = pytest.StashKey[bool]()
 #: The ceiling the test was armed with, in seconds, on either method (for the
 #: verdict's wording, and for tests/_wait_budget.py::scaled).
 _CEILING = pytest.StashKey[float]()
+
+#: When the ceiling's clock started (``_now``), on either method: the seconds
+#: under it that are left (``left``) bound how many more attempts
+#: tests/_hook_spawn.py spends on a start-up refusal (DEF-2093).
+_ARMED_AT = pytest.StashKey[float]()
+
+#: The clock the arming and ``left`` read: pytest-timeout's own timers count
+#: on the monotonic clock too, and a row stands one in for this name.
+_now = time.monotonic
 
 #: The test whose ceiling is armed now; None between tests' protocols.
 _ARMED: Any = None
@@ -212,8 +224,10 @@ class TimeoutBackstop:
         # runs instead of the plugin's and calls it.
         pytest_timeout.pytest_timeout_set_timer(item=item, settings=settings)
         # Every method's ceiling, before the backstop's own stand-downs: a wait
-        # budget scales with it on the thread method too (DEF-5067).
+        # budget scales with it on the thread method too (DEF-5067), and the
+        # hook-spawn helper reads what is left of it (DEF-2093).
         item.stash[_CEILING] = float(settings.timeout)
+        item.stash[_ARMED_AT] = _now()
         _ARMED = item
         if (settings.method != "signal" or getattr(settings, "func_only", False)
                 or threading.current_thread() is not threading.main_thread()
@@ -263,6 +277,19 @@ def armed() -> tuple[Any, float] | None:
         return None
     ceiling = item.stash.get(_CEILING, None)
     return None if ceiling is None else (item, ceiling)
+
+
+def left() -> float | None:
+    """The seconds of the running test's armed ceiling not yet spent, counted
+    from its arming (pytest-timeout's own start of the clock); None where
+    ``armed`` is None. Can be negative: a test past its ceiling on the thread
+    method runs on until the timer ends the process."""
+    found = armed()
+    if found is None:
+        return None
+    item, ceiling = found
+    at = item.stash.get(_ARMED_AT, None)
+    return None if at is None else ceiling - (_now() - at)
 
 
 def timeout_hooks_present(config: Any) -> bool:

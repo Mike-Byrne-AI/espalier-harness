@@ -3338,8 +3338,9 @@ _HOOK_RETRIES_SHOWN = 20
 
 
 def report_hook_spawn_retries(terminalreporter) -> None:
-    """The hook rows whose first attempt missed and whose retry answered
-    (tests/_hook_spawn.py, DEF-2014), read from the warnings the run kept
+    """The hook rows where an attempt missed and a retry answered
+    (tests/_hook_spawn.py, DEF-2014; past the one retry, a start-up refusal's,
+    DEF-2093), read from the warnings the run kept
     (xdist ships each worker's to this process), so a slow runner's rate is
     on every run's last screen, and under GitHub Actions on the checks page
     as a warning annotation too."""
@@ -3350,7 +3351,7 @@ def report_hook_spawn_retries(terminalreporter) -> None:
     })
     if not rows:
         return
-    head = f"hook spawn retries: {len(rows)} row(s) missed once and answered on the retry"
+    head = f"hook spawn retries: {len(rows)} row(s) missed and answered on a retry"
     terminalreporter.write_line(head + ":")
     for nodeid in rows[:_HOOK_RETRIES_SHOWN]:
         terminalreporter.write_line(f"  {nodeid}")
