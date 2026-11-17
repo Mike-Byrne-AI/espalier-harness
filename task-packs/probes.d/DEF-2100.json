@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2100",
+ "subject": "bench/reachability_differential.py",
+ "cmd": "python3 -c \"import importlib.util as u,pathlib as p,tempfile as t,sys;ld=lambda n,f:[s:=u.spec_from_file_location(n,f),m:=u.module_from_spec(s),sys.modules.__setitem__(n,m),s.loader.exec_module(m),m][-1];rd=ld('rd','bench/reachability_differential.py');d=p.Path(t.gettempdir()).resolve()/'blind-spot-probe'/'sb';v=d/'victim';c=['find '+str(v)+' / -'+'delete','echo / | xargs '+rd._RM+' '+str(v),'/bin/'+rd._RM+' '+str(v)+' ~'];n=[0];exec(chr(10).join(['for x in c:',' try:','  rd.assert_safe_to_execute(x,v,d,env={});n[0]+=1',' except rd.UnsafeToExecute:pass']));print(n[0])\"",
+ "open_value": "3",
+ "why_not": null,
+ "inputs": [
+  "bench/real_shell_confinement.py"
+ ],
+ "row_sha": "a7900801e721",
+ "text_sha": "f9ea270306ce",
+ "verified_2026_11_17": "STILL_OPEN (re-pinned '2' -> '3' on 2026-11-17: the remainder widens to every head the readers do not read as a literal word, on both shells (DEF-2100's reviews), and the probe drives a head spelled by path too) [changed: probe, open value, anchor, text, subject, inputs]"
+}
