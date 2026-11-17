@@ -1,0 +1,14 @@
+{
+ "id": "DEF-5123",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import os, sys, tempfile, pathlib\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nfrom tests.test_write_guard import run_guard_tool as g\nsys.path.insert(0, 'tools/cc/hooks')\nimport _bash_patterns as b\nt = '.' + 'env'\nlink = 'New-Item -ItemType SymbolicLink -Path link -Target ' + t\nwith tempfile.TemporaryDirectory() as d:\n    s = g('PowerShell', {'command': link}, pathlib.Path(d)).stdout or ''\nprint([('alias', t) in b.iter_ps_removed_or_relocated_operands(link), '\\\"deny\\\"' in s])\"",
+ "open_value": "[False, False]",
+ "why_not": null,
+ "row_sha": "ccd38a33c0d9",
+ "text_sha": "a76839d25b2f",
+ "verified_2026_11_17": "STILL_OPEN (re-pinned '[]' -> '[False, False]'; inputs None -> ['tests/test_write_guard.py', 'tools/cc/hooks/write_guard.py'] on 2026-11-17: the probe reads the alias the fix adds and the hook's verdict on the link, where an empty operand list turned non-empty on any New-Item reading (DEF-5120's second failure-mode review, N-9); the claim stands, the link is allowed) [changed: probe, open value, text, inputs]",
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tools/cc/hooks/write_guard.py"
+ ]
+}

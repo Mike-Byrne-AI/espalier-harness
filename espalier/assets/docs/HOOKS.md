@@ -1814,13 +1814,16 @@ live -- a here-string, a heredoc body or the stage piped in -- and awk's
 program on a POSIX shell's stdin by here-string or pipe (`bash <<< "..."`,
 `sh<<<'...'`, `echo "..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
 read the same way, behind the shell's own output redirects as well (`echo
-"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`) and
+"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`, and
+before the `-` or a flag, `python3 2>&1 - <<'PY'`, glued to the operator,
+`python3 - >o<<'PY'`, or an input redirect before the heredoc, `python3 - <f
+<<'PY'`) and
 with its head in capitals or with `.exe` (`| BASH.exe`); an input redirect
 after the head (`| bash < f`) or a script operand gives it another program,
-and the piped text is data. Declared limits, each pinned: a glued redirect
-chain (`2>&1>/dev/null`; the spaced spelling is read), a redirect before an
-interpreter's heredoc operand or flag (`python3 2>&1 - <<EOF`), and on the
-pipe a quoted target with a blank, which the pipe scan blanks, so the word
+and the piped text is data. Declared limits, each pinned, both on the pipe:
+a glued redirect chain (`| bash 2>&1>/dev/null`; the spaced spelling is
+read, and a heredoc's opener reads the glued one), and a quoted target with
+a blank, which the pipe scan blanks, so the word
 after it reads as the target (`| bash > "o u t" x.sh` walls: toward
 friction)
 (`tests/test_write_guard.py::TestAPipedShellReadsItsRedirectAndExeHead::test_the_redirect_units_declared_limits_draw_their_declared_verdict`).
@@ -1886,9 +1889,8 @@ shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
 the cluster on the `+` sign, which runs its program as `-c` does (`bash +c
 '...'`, `bash +xc '...'`). A redirect
 word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
-`python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
-tool's openers take none, since PowerShell's redirect set is its own
-(declared, pinned).
+`python3 2>&1 -c "..."`) is read on both tools, on the PowerShell tool by
+PowerShell's own redirect set.
 On the PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
 '...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
 call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or

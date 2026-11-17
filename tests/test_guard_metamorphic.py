@@ -35,6 +35,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "bench" / "guard_metamorphic.py"
+#: The file R4's population is read from (`_operand_class`), named so the
+#: proof tier's reader map brings this file with a change to it alone.
+R4_POPULATION_SOURCE = "tests/test_write_guard.py"
+#: The bench R4's judges build the class's projects from (`check_r4` imports
+#: it by module name, which the reader map cannot read), named for the same
+#: reason (the second failure-mode review's N-3).
+R4_PROJECTS_SOURCE = "bench/powershell_guard_rehearsal.py"
 
 
 def _load():
@@ -408,3 +415,302 @@ class TestReachCensusIsAlwaysReported:
              {"separator": "semicolon", "reaches": True}]
         )
         assert census == {"and": "1/2", "semicolon": "1/1"}
+
+
+# ── R4: a stderr redirect among the operands (DEF-5120) ─────────────────────
+
+_needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="R4's Bash half reads bash's own parser")
+
+
+def _pwsh_or_skip() -> str:
+    from bench.powershell_reachability_differential import find_powershell
+    found = find_powershell()
+    if found is None:
+        pytest.skip("R4's PowerShell half reads PowerShell's own parser, and none is here")
+    return found[0]
+
+
+class TestR4ThePopulationIsTheClasssDeniedRows:
+    """R4's rows are read from the class, never copied (STANDING_PRINCIPLES
+    §14): a row the class gains joins R4 with no edit in the bench."""
+
+    @staticmethod
+    def _tables(gm):
+        cls = gm._operand_class()
+        return cls, {name: getattr(cls, name) for name in ("_ZONE_ROWS", "_SECRET_ROWS")}
+
+    def test_every_denied_form_of_both_tables_is_a_row(self, gm):
+        cls, tables = self._tables(gm)
+        expected = sum(len(cls._plain_forms(command)) for table in tables.values()
+                       for _tool, expect, _arm, command in table.values() if expect == "deny")
+        rows = gm.operand_rows()
+        assert len(rows) == expected
+        assert {r["table"] for r in rows} == set(tables)
+        assert {r["tool"] for r in rows} == {"Bash", "PowerShell"}
+
+    def test_no_allowed_row_joins(self, gm):
+        _cls, tables = self._tables(gm)
+        allowed = {key for table in tables.values() for key, v in table.items() if v[1] != "deny"}
+        assert allowed, "the class holds no allowed row: the filter below would test nothing"
+        assert not allowed & {r["key"] for r in gm.operand_rows()}
+
+    def test_the_quick_sample_keeps_both_tools_and_both_tables(self, gm):
+        rows = gm.operand_rows(quick=True)
+        assert {r["tool"] for r in rows} == {"Bash", "PowerShell"}
+        assert {r["table"] for r in rows} == {"_ZONE_ROWS", "_SECRET_ROWS"}
+
+    def test_the_quick_sample_judges_every_row_once(self, gm):
+        """One form per row, every row: CI judges each denied row, and a row
+        added moves no other row's sample, since each row's entry is its own
+        first form (the failure-mode review's F1; the second code review's N3
+        for the second claim)."""
+        sample = gm.operand_rows(quick=True)
+        quick = [r["key"] for r in sample]
+        assert len(quick) == len(set(quick))
+        assert set(quick) == {r["key"] for r in gm.operand_rows()}
+        first: dict[tuple, str] = {}
+        for r in gm.operand_rows():
+            first.setdefault((r["table"], r["key"]), r["command"])
+        assert [r["command"] for r in sample] == [first[(r["table"], r["key"])] for r in sample]
+
+    def test_the_population_source_is_named_for_the_tier(self, gm):
+        """The class R4 reads its rows from is named here as a literal, so a
+        change to that file alone brings this file to the proof tier's own
+        line (`scripts/proof_tier.py::path_readers` reads names, never an
+        import; the failure-mode review's F2): a row added there with a
+        tests-only diff is judged by R4 before it merges."""
+        module = sys.modules[gm._operand_class().__module__]
+        assert Path(module.__file__).resolve().relative_to(REPO_ROOT).as_posix() == R4_POPULATION_SOURCE
+        spec = importlib.util.spec_from_file_location("proof_tier_r4", REPO_ROOT / "scripts" / "proof_tier.py")
+        pt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pt)
+        assert "tests/test_guard_metamorphic.py" in pt.own_tests([R4_POPULATION_SOURCE], REPO_ROOT)
+        # the projects' bench, imported by module name inside `check_r4`
+        assert "import " + Path(R4_PROJECTS_SOURCE).stem in SCRIPT.read_text(encoding="utf-8")
+        assert (REPO_ROOT / R4_PROJECTS_SOURCE).is_file()
+        assert "tests/test_guard_metamorphic.py" in pt.own_tests([R4_PROJECTS_SOURCE], REPO_ROOT)
+
+    def test_the_test_that_runs_r4_whole_rides_the_own_line(self, gm):
+        """The one test that runs R4 over the whole quick population is the
+        one the own line's `-m 'not heavy_e2e'` must keep: marked heavy, it
+        would leave the literal above naming a file whose R4 never runs (the
+        second failure-mode review's N-2). The mark is conftest's, by name."""
+        conftest = next(m for m in list(sys.modules.values())
+                        if getattr(m, "__file__", None)
+                        and Path(m.__file__).resolve() == REPO_ROOT / "tests" / "conftest.py")
+        name = TestTheGateRunsEndToEnd.test_quick_matrix_exits_clean_against_head.__name__
+        assert name not in conftest._HEAVY_E2E_TESTS
+        marks = [*getattr(TestTheGateRunsEndToEnd.test_quick_matrix_exits_clean_against_head, "pytestmark", []),
+                 *getattr(TestTheGateRunsEndToEnd, "pytestmark", []),
+                 *getattr(sys.modules[__name__], "pytestmark", [])]
+        assert "heavy_e2e" not in {m.name for m in marks}
+
+
+class TestR4OffersEachBlankAfterTheCommandWord:
+    """The scan offers places; the parser decides which are null. These pin
+    what is offered: each blank between tokens after the command word, each
+    line's end after it, the end, and on Bash the command word's start, never
+    inside a quote or a bracket."""
+
+    def test_each_blank_after_the_command_word_and_the_end(self, gm):
+        assert gm._token_blanks("rm -f x", "Bash") == [0, 2, 5, 7]
+
+    def test_the_command_words_start_on_bash_and_nothing_inside_a_quote(self, gm):
+        cmd = "  rm 'a b' \"c d\""
+        assert gm._token_blanks(cmd, "Bash") == [2, 4, 10, len(cmd)]
+        assert gm._token_blanks(cmd, "PowerShell") == [4, 10, len(cmd)]
+
+    def test_a_powershell_escape_is_a_backtick(self, gm):
+        cmd = "Remove-Item a` b c"
+        assert gm._token_blanks(cmd, "PowerShell") == [11, 16, len(cmd)]
+
+    def test_a_bracketed_span_offers_nothing_inside(self, gm):
+        cmd = "Remove-Item (Join-Path a b) c"
+        assert gm._token_blanks(cmd, "PowerShell") == [11, 27, len(cmd)]
+
+    def test_the_redirect_is_written_at_the_place(self, gm):
+        assert gm.insert_redirect("rm -f x", "Bash", 2) == "rm 2>/dev/null -f x"
+        assert gm.insert_redirect("rm x", "PowerShell", 4) == "rm x 2>$null"
+        assert gm.insert_redirect("rm -f x", "Bash", 0) == "2>/dev/null rm -f x"
+
+
+@_needs_bash
+class TestR4TheBashParserIsTheOracle:
+    """bash's own parse decides that a place is null: syntax-only, then each
+    text defined as a function and printed, never called."""
+
+    def test_a_redirect_among_the_words_is_null_and_a_quoted_one_is_not(self, gm):
+        bash = shutil.which("bash")
+        form = gm.assert_parsers_are_live(bash, None)
+        texts = ["printf %s a b", "printf %s 2>/dev/null a b", "printf %s 'a b'", "printf %s 'a 2>/dev/null b'",
+                 "cat <<'EOF'\na b\nEOF", "cat <<'EOF'\na 2>/dev/null b\nEOF"]
+        plain, moved, quoted, quoted_moved, body, body_moved = gm.bash_parsed_forms(texts, bash)
+        assert gm.bash_insertion_is_null(plain, moved, form)
+        assert not gm.bash_insertion_is_null(quoted, quoted_moved, form)
+        assert not gm.bash_insertion_is_null(body, body_moved, form), "a heredoc body is data, not a place"
+
+    def test_a_rejected_text_gets_no_form_and_its_neighbours_keep_theirs(self, gm):
+        forms = gm.bash_parsed_forms(["printf %s a", "printf %s (", "cat <<EOF\nno end", "printf %s b"],
+                                     shutil.which("bash"))
+        assert forms[0] is not None and forms[3] is not None
+        assert forms[1] is None, "a syntax error is the text's own"
+        assert forms[2] is None, "a heredoc left open takes the function's brace: one text's reject, not the batch's"
+
+    def test_an_open_heredoc_never_takes_a_neighbours_form(self, gm):
+        """A heredoc left open by R4's place after its terminator, between two
+        heredoc texts that each close: in one batch it took the closing brace
+        and the next text up to that text's terminator, so it got that form
+        and the next text an empty one (the code review's first finding)."""
+        bash = shutil.which("bash")
+        texts = ["cat <<'EOF'\na\nEOF", "cat <<'EOF'\nb\nEOF 2>/dev/null", "cat <<'EOF'\nc\nEOF"]
+        alone = [gm.bash_parsed_forms([text], bash)[0] for text in texts]
+        assert alone[0] is not None and alone[1] is None and alone[2] is not None, alone
+        assert gm.bash_parsed_forms(texts, bash) == alone
+
+    def test_no_text_is_run(self, gm, tmp_path):
+        marker = tmp_path / "ran"
+        forms = gm.bash_parsed_forms([f"touch '{marker}'", f"printf x > '{marker}'"], shutil.which("bash"))
+        assert all(forms)
+        assert not marker.exists()
+
+
+class TestR4ThePowerShellParserIsTheOracle:
+    """PowerShell's `Parser::ParseInput` decides that a place is null: the
+    commands' elements are unchanged and the one redirection more is the one
+    written. It executes nothing."""
+
+    def test_the_parse_reads_null_and_not_null_and_runs_nothing(self, gm, tmp_path):
+        pwsh = _pwsh_or_skip()
+        gm.assert_parsers_are_live(None, pwsh)
+        marker = tmp_path / "ran"
+        texts = ["Remove-Item a b", "Remove-Item a 2>$null b", "Remove-Item 'a b'", "Remove-Item 'a 2>$null b'",
+                 "Remove-Item (", f"New-Item -ItemType File -Path '{marker}'"]
+        plain, moved, quoted, quoted_moved, broken, new_item = gm.powershell_parsed_forms(texts, pwsh)
+        assert gm.powershell_insertion_is_null(plain, moved)
+        assert not gm.powershell_insertion_is_null(quoted, quoted_moved)
+        assert broken is None
+        assert new_item is not None and not marker.exists()
+
+
+@_needs_bash
+class TestR4ADeadOracleOrJudgeGates:
+    """Each way R4 could report no violation while judging nothing reds:
+    a parser calibration that cannot tell null from not, a population with
+    no null place, and a judge that denies no original."""
+
+    def test_a_parser_that_reads_every_place_null_is_caught(self, gm, monkeypatch):
+        monkeypatch.setattr(gm, "bash_insertion_is_null", lambda *_a: True)
+        with pytest.raises(gm.InstrumentBroken):
+            gm.assert_parsers_are_live(shutil.which("bash"), None)
+
+    def test_a_parser_that_reads_no_place_null_is_caught(self, gm, monkeypatch):
+        monkeypatch.setattr(gm, "bash_insertion_is_null", lambda *_a: False)
+        with pytest.raises(gm.InstrumentBroken):
+            gm.assert_parsers_are_live(shutil.which("bash"), None)
+
+    @staticmethod
+    def _rows(gm):
+        rows = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"] == "bash-delete-plain"]
+        assert rows, "the class's plain Bash delete row is gone: pick another anchor"
+        return rows
+
+    def test_a_population_with_no_null_place_reads_dead(self, gm, monkeypatch):
+        monkeypatch.setattr(gm, "_token_blanks", lambda _command, _tool: [])
+        report = gm.check_r4(rows=self._rows(gm))
+        assert any("Bash" in d and "null" in d for d in report["dead_separators"]), report
+
+    def test_a_judge_that_denies_no_original_reads_dead(self, gm, monkeypatch):
+        cls = gm._operand_class()
+        monkeypatch.setattr(cls, "_zone_denied", staticmethod(lambda *_a: False))
+        report = gm.check_r4(rows=self._rows(gm))
+        assert any("judge is dead" in d for d in report["dead_separators"]), report
+        assert report["undenied_originals"]
+
+
+@_needs_bash
+class TestR4RedsAReaderOffTheView:
+    """The relation's purpose: with the redirect view blinded, the readers
+    DEF-2087 put on it lose their operands, and R4 names their rows; on the
+    tree as it is, those rows are clean."""
+
+    def test_a_blinded_view_reds_the_rows_it_hid(self, gm, monkeypatch):
+        rows = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"].startswith("bash-delete-git-rm")]
+        assert rows, "the class's git-rm rows are gone: pick another reader the view feeds"
+        assert not gm.check_r4(rows=rows)["violations"]
+        monkeypatch.setattr(gm._bash_patterns, "_redirects_blanked", lambda scan, *, powershell: scan)
+        blinded = gm.check_r4(rows=rows)
+        assert blinded["violations"], "a blinded view left every git-rm row denied: R4 cannot see the job"
+
+    def test_a_red_names_its_next_step(self, gm, monkeypatch, capsys):
+        """The red prints its next step: the mechanism a reader goes on, the
+        row's arm, and that a red no reader fix meets goes to the dispatcher
+        (the failure-mode review's F5: a bare `assert 1 == 0` over a row name
+        sent the next session to an exclusion map). The helpers it names are
+        the hooks module's own (the second failure-mode review's N-4)."""
+        for helper in gm.R4_REMEDY_HELPERS:
+            assert callable(getattr(gm._bash_patterns, helper, None)), helper
+        import bench.powershell_reachability_differential as differential
+        rows = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"].startswith("bash-delete-git-rm")]
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: rows)
+        monkeypatch.setattr(differential, "find_powershell", lambda: None)
+        monkeypatch.setattr(gm._bash_patterns, "_redirects_blanked", lambda scan, *, powershell: scan)
+        assert gm.main(["--relation", "R4"]) == 1
+        out = capsys.readouterr().out
+        assert "✗ [R4]" in out, out
+        assert "_scan_and_view_matches" in out and "dispatcher" in out, out
+        assert f"arm {rows[0]['arm']}" in out, out
+
+    def test_a_quick_red_lists_every_kind_of_its_row(self, gm, monkeypatch):
+        """A quick run judges each row on its first kind, a `tools/` path the
+        after-check watches; a red there is re-judged on the row's other
+        kinds before it reports, so the kinds no after-check watches show
+        too, and a red is never read as the after-check's job from the
+        sample (the second failure-mode review's SF-1)."""
+        real = gm.operand_rows
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
+            r for r in real(quick) if r["tool"] == "Bash" and r["key"] == "bash-delete-git-rm"])
+        rows = gm.operand_rows()
+        assert len(rows) > 1 and rows[0]["kind"].startswith("tools/"), rows
+        monkeypatch.setattr(gm._bash_patterns, "_redirects_blanked", lambda scan, *, powershell: scan)
+        report = gm.check_r4(quick=True)
+        kinds = {v["kind"] for v in report["violations"]}
+        assert report["rejudged_kinds"] == len(rows) - 1, report
+        assert kinds == {r["kind"] for r in rows}, kinds
+        assert any(not k.startswith("tools") for k in kinds), kinds
+
+    def test_a_quick_reds_rejudge_reads_no_tool_dead(self, gm, monkeypatch):
+        """The re-judge covers the red rows alone, so a tool it holds none of
+        read dead there, and a Bash-only red printed a false "judge is dead"
+        line for PowerShell (the third code review's S1, driven with pwsh)."""
+        pwsh = _pwsh_or_skip()
+        real = gm.operand_rows
+        keep = {("Bash", "bash-delete-git-rm"), ("PowerShell", "ps-delete-find-file")}
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
+            r for r in real(quick) if (r["tool"], r["key"]) in keep])
+        assert {(r["tool"], r["key"]) for r in gm.operand_rows(quick=True)} == keep, "an anchor row is gone"
+        bp = gm._bash_patterns
+        view = bp._redirects_blanked
+        monkeypatch.setattr(bp, "_redirects_blanked",
+                            lambda scan, *, powershell: view(scan, powershell=True) if powershell else scan)
+        report = gm.check_r4(quick=True, pwsh=pwsh)
+        assert {v["tool"] for v in report["violations"]} == {"Bash"}, report["violations"]
+        assert report["rejudged_kinds"], report
+        assert not report["dead_separators"], report["dead_separators"]
+
+
+@_needs_bash
+class TestR4TheStdinProgramRowHoldsOnEveryKind:
+    """The row the stdin reader missed on every kind, three of them no
+    after-check watches (`cc/` and the two settings files): a redirect before
+    the `-` operand hid the heredoc program, until the opener matched on the
+    redirect view with the heredoc operator kept (DEF-5120). Judged here
+    whole, since the quick sample crosses it on one kind at most."""
+
+    def test_every_kind_holds_its_deny_under_every_null_place(self, gm):
+        rows = [r for r in gm.operand_rows() if r["key"] == "bash-delete-python-stdin"]
+        assert len(rows) >= 7, "the class's stdin-program row lost kinds: re-read which ones R4 judges"
+        report = gm.check_r4(rows=rows)
+        assert not report["violations"], report["violations"]
+        # each kind has a null place of its own: a total over the kinds would
+        # pass with one kind judged on none (the second code review's N6)
+        assert {r["kind"] for r in rows} == {k for k, n in report["null_by_kind"].items() if n}, report

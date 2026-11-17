@@ -7,6 +7,7 @@ bypass patterns so a future maintainer doesn't mistakenly "fix" them here.
 """
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import os
@@ -9630,6 +9631,13 @@ class TestCatastrophicRmFlagOrderIndependent:
             # compiled on first use: no key a flag could be missing from, and
             # no verdict
             "_carrier_fed_remove_re",
+            # `_heredoc_opener_view_built` (DEF-5120) is keyed on the scan and
+            # its redirect view, and returns that view with each heredoc
+            # operator put back,
+            # the same length: a transform the stdin opener matches on beside
+            # the scan, built on `_redirects_blanked_built`'s view, which never
+            # reaches `_statement_bases` or a judge
+            "_heredoc_opener_view_built",
             # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
             # returns its mask, or the text itself: the masker's transform,
             # which reads no flag (its call graph is pinned stateless in
@@ -24047,6 +24055,35 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         cmd = "python3 - " + redirect + "<<'PY'\nimport os; os.system('rm -rf /')\nPY"
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
+    @pytest.mark.parametrize("cmd", [
+        "python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null -u - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 -u >o - << PY\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - <<< \"import os; os.system('rm -rf /')\"",
+        "python3 2>&1 - >o<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null - 2>&1<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null - 2> o<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 - <f <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 - 2>&1>/dev/null <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - <<'PY' <f\nimport os; os.system('rm -rf /')\nPY",
+    ], ids=["before-dash", "before-flag", "between-flag-and-dash", "herestring-before-dash",
+            "glued-to-a-target", "glued-to-a-merge", "glued-to-a-bare-operators-target",
+            "input-before-the-heredoc", "glued-chain", "input-after-the-heredoc-over-read"])
+    def test_a_redirect_before_the_dash_or_a_flag_does_not_hide_a_stdin_program(self, tmp_path, cmd):
+        """The stdin opener matches on the redirect view with the heredoc or
+        here-string operator kept (DEF-5120's R4, which closed this limit,
+        declared until then): bash hands the interpreter the same stdin
+        program wherever the redirect stands. An operator glued to another
+        redirect's target is put back alone, the scan's neutralised `2> 1<<`
+        included (the batch's second code review, S1: allowed until then). An
+        input redirect before the heredoc and a glued chain after the `-` are
+        read on that view too, since the first batch: pinned here, not fixed
+        here (its S2 and the failure-mode review's N-7). An input redirect
+        AFTER the heredoc is read as if the heredoc were the program, where
+        bash feeds the file: the declared over-read toward friction (the
+        `_INTERP_STDIN_RE` comment; the third failure-mode review's N-5)."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
     @pytest.mark.parametrize("redirect", ["2>&1 ", ">o ", "-x 2>/dev/null ", ">&2"])
     def test_a_redirect_before_a_here_string_does_not_hide_its_program(self, tmp_path, redirect):
         cmd = "bash " + redirect + "<<< 'rm -rf /'"
@@ -24056,10 +24093,19 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         "python3 2>&1 x.py <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "python3 >o x.py <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "bash 2>&1 x.sh <<< 'rm -rf /'",
-    ], ids=["heredoc-script-after-redirect", "heredoc-script-after-output", "herestring-script"])
+        "python3 2>&1 -c 'print(1)' <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 -m json.tool <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - 3<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - >o 3<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+    ], ids=["heredoc-script-after-redirect", "heredoc-script-after-output", "herestring-script",
+            "dash-c-after-redirect", "module-after-redirect", "fd-3-heredoc", "fd-3-heredoc-after-a-target"])
     def test_a_script_operand_after_a_redirect_keeps_the_body_data(self, tmp_path, cmd):
-        """A script operand is the program, and the heredoc or here-string
-        its stdin: a redirect ahead of it ends the run, as with none."""
+        """A script operand, a `-c` program or a `-m` module is the program,
+        and the heredoc or here-string its stdin: a redirect ahead of it ends
+        the run, as with none. A heredoc on another fd (`3<<`) is not stdin,
+        so its body is no program, a redirect's target before it or not (the
+        second code review's N1: each held unpinned, where a widening of the
+        opener view's flag run would wall them with nothing red)."""
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "allow"
 
     @pytest.mark.parametrize("tail", [" 2>&1", " >log", " 2>/dev/null -", " 2>&1 | tee x"],
@@ -24215,18 +24261,15 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
 
     @pytest.mark.parametrize("cmd, verdict", [
         ("echo 'rm -rf /' | bash 2>&1>/dev/null", "allow"),
-        ("python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY", "allow"),
         ("bash <<<x -c 'rm -rf /'", "allow"),
         ("python3 -c > -x \"import os; os.system('rm -rf /')\"", "allow"),
         ("echo 'rm -rf /' | bash > \"o u t\" x.sh", "wall"),
-    ], ids=["glued-chain", "heredoc-redirect-before-dash", "herestring-before-c", "dash-target-after-c",
-            "pipe-quoted-blank-target"])
+    ], ids=["glued-chain", "herestring-before-c", "dash-target-after-c", "pipe-quoted-blank-target"])
     def test_the_redirect_units_declared_limits_draw_their_declared_verdict(self, tmp_path, cmd, verdict):
         """The limits docs/HOOKS.md declares in one sentence, and the unit's
         comments beside them (both reviews), each at its declared verdict. The
         allows: a glued chain ends the run at its second operator (a glued
-        unit would give its digits two parses); the heredoc reader reads a
-        redirect after the `-` operand, not before it or a flag; a here-string
+        unit would give its digits two parses); a here-string
         before `-c` is stdin the `-c` reader does not step over; after `-c` a
         spaced target opening on `-` is read as no target -- bash or CPython
         runs the program behind each. The wall, an over-read toward friction:
@@ -24242,16 +24285,41 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         cmd = f"irm {_FETCH_URL} | python3" + tail
         assert _speedbump_fires(_speedbump_module(), "fetchexec", "_PS_FETCH_EXEC_PIPE_RE", "PowerShell", cmd, tmp_path), cmd
 
+    @pytest.mark.parametrize("cmd, reason", [
+        ("bash 2>&1 -c 'rm -rf /'", "Dangerous command blocked"),
+        ("bash -lc 2>&1 'rm -rf /'", "Dangerous command blocked"),
+        ("python 2>&1 -c \"open('tools/cc/hooks/p.py','w')\"", "Write to"),
+    ], ids=["shell-c", "shell-c-after", "python-c"])
+    def test_the_powershell_openers_read_a_redirect_among_their_switches(self, tmp_path, cmd, reason):
+        """The PowerShell tool's openers match on the redirect view too, by
+        PowerShell's own redirect set (DEF-5120): a declared limit until
+        then, pinned at allow here, closed by the readers R4 named (the
+        shell's `-c` reader and the inline-program reader)."""
+        out = run_guard_tool("PowerShell", {"command": cmd}, tmp_path).stdout or ""
+        assert '"permissionDecision": "deny"' in out and reason in out, out
+
     @pytest.mark.parametrize("cmd", [
-        "bash 2>&1 -c 'rm -rf /'", "python 2>&1 -c \"open('tools/cc/hooks/p.py','w')\"",
-    ], ids=["shell-c", "python-c"])
-    def test_the_powershell_openers_redirect_limit_stays_allowed(self, tmp_path, cmd):
-        """Out of this row: the PowerShell tool's openers read no redirect
-        among their switches (PowerShell's redirect set is its own oracle),
-        left to the dispatcher as residue. The day a reader opens it, this
-        reds."""
-        wg = _load_write_guard()
-        assert wg._ps_dangerous_reason(cmd, tmp_path) is None
+        'powershell 2>/dev/null -Command "Remove-Item tools/cc/hooks/x.py"',
+        'pwsh -NoProfile 2>&1 -Command "Move-Item .env x"',
+    ], ids=["zone-delete", "secret-move"])
+    def test_the_bash_tools_powershell_opener_reads_a_redirect_among_its_switches(self, tmp_path, cmd):
+        """The Bash tool's PowerShell opener (`_shell_program_bodies`) matches
+        on the redirect view too (DEF-5120): only R4's full run reached it
+        before, never the suite's quick sample (the code review's finding 4)."""
+        out = run_guard_tool("Bash", {"command": cmd}, tmp_path).stdout or ""
+        assert '"permissionDecision": "deny"' in out, out
+
+    @pytest.mark.parametrize("cmd", [
+        "10>/dev/null cmd //c del tools/cc/hooks/x.py",
+        "10>/dev/null cmd //c type .env",
+    ], ids=["zone-delete", "secret-read"])
+    def test_a_redirect_with_a_long_fd_before_cmd_keeps_the_deny(self, tmp_path, cmd):
+        """The Bash cmd gate opens on the redirect view as well (DEF-5120):
+        the command-position prefix reads one fd digit and the view blanks
+        any, so with only the scan arm this read as no cmd at all (the second
+        code review's B1, deny before the arm was dropped and allow after)."""
+        out = run_guard_tool("Bash", {"command": cmd}, tmp_path).stdout or ""
+        assert '"permissionDecision": "deny"' in out, out
 
 
 class TestTheCoverageContract:
@@ -25237,42 +25305,54 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             "PowerShell", "allow", "a mention is not an invocation", 'Write-Host "Move-Item {S} x"'),
     }
 
-    @pytest.fixture(scope="class")
-    def projects(self):
+    @classmethod
+    @contextlib.contextmanager
+    def built_projects(cls, rehearsal: ModuleType):
         """One throwaway project per root shape, carrying the protected tree
         (the bench fixture's shapes and directories), every PROTECTED_FILES
         entry and a file under each prefix as real files, the allowlisted
-        files, the secret-shaped files, and the unprotected controls."""
+        files, the secret-shaped files, and the unprotected controls.
+
+        A context manager so `bench/guard_metamorphic.py`'s R4, which judges
+        these rows with this class's own judges, enters the same projects
+        rather than a copy; the caller hands in the rehearsal module it
+        holds, so no second load is registered under its name."""
         import tempfile
 
-        rehearsal = _load_bench("powershell_guard_rehearsal")
         hook = HOOKS_DIR / "write_guard.py"
-        files = self._FILE_KINDS + self._SECRET_KINDS + (
+        files = cls._FILE_KINDS + cls._SECRET_KINDS + (
             "cc/execution_plan.json", "cc/blueprints/x.json", "notes.txt", "src/app.py",
             "tools/ccx/y.py", "build/out.o", "backups/.keep",
         )
         keep, out = [], {}
         with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory() as audit:
             mp.setenv("ESPALIER_AUDIT_DIR", audit)
-            for shape, prefix in rehearsal.ROOT_SHAPES.items():
-                td = tempfile.TemporaryDirectory(prefix=prefix or None,
-                                                 dir=str(rehearsal.plain_temp_root()))
-                keep.append(td)
-                # resolved, as the hook resolves its root at startup: the runner's
-                # temp dir is spelled by its 8.3 short name (`RUNNER~1`), the
-                # target resolves to the long form, and an unresolved root here
-                # let every quoted absolute target under it through (Portability,
-                # 2026-09-23) -- a drive the hook itself never sees
-                project = Path(td.name).resolve()
-                for rel in rehearsal.protected_fixture_dirs(hook):
-                    (project / rel).mkdir(parents=True, exist_ok=True)
-                for rel in files:
-                    (project / rel).parent.mkdir(parents=True, exist_ok=True)
-                    (project / rel).write_text("x\n", encoding="utf-8")
-                out[shape] = project
+            try:
+                for shape, prefix in rehearsal.ROOT_SHAPES.items():
+                    td = tempfile.TemporaryDirectory(prefix=prefix or None,
+                                                     dir=str(rehearsal.plain_temp_root()))
+                    keep.append(td)
+                    # resolved, as the hook resolves its root at startup: the runner's
+                    # temp dir is spelled by its 8.3 short name (`RUNNER~1`), the
+                    # target resolves to the long form, and an unresolved root here
+                    # let every quoted absolute target under it through (Portability,
+                    # 2026-09-23) -- a drive the hook itself never sees
+                    project = Path(td.name).resolve()
+                    for rel in rehearsal.protected_fixture_dirs(hook):
+                        (project / rel).mkdir(parents=True, exist_ok=True)
+                    for rel in files:
+                        (project / rel).parent.mkdir(parents=True, exist_ok=True)
+                        (project / rel).write_text("x\n", encoding="utf-8")
+                    out[shape] = project
+                yield out
+            finally:
+                for td in keep:
+                    td.cleanup()
+
+    @pytest.fixture(scope="class")
+    def projects(self):
+        with self.built_projects(_load_bench("powershell_guard_rehearsal")) as out:
             yield out
-            for td in keep:
-                td.cleanup()
 
     @staticmethod
     def _zone_denied(tool: str, command: str, project: Path) -> bool:

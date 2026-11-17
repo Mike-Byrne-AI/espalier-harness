@@ -535,6 +535,16 @@ def bench_deny_readers(path: Path) -> list[tuple[str, bool]]:
         for fn in sorted(readers.values(), key=lambda f: f.lineno)]
 
 
+#: Bench functions whose ``deny`` is a row's EXPECTED verdict, a label the
+#: suite writes, never write_guard's answer: no budget can refuse a label.
+#: Keyed (bench-relative file, function), each with why.
+_NOT_A_DECISION_READ: dict[tuple[str, str], str] = {
+    ("guard_metamorphic.py", "operand_rows"): (
+        "keeps TestRemovedOrRelocatedOperandIsAMutation's rows whose expected verdict is deny; R4's "
+        "judges are the class's own, run in-process, never a spawned guard (DEF-5120)"),
+}
+
+
 def test_every_bench_reader_of_a_deny_reads_the_budgets_refusal_apart():
     """DEF-5071: the second pin's class outside tests/. Five bench readers of
     write_guard's decision channel read the budget's refusal as a judged deny,
@@ -547,11 +557,16 @@ def test_every_bench_reader_of_a_deny_reads_the_budgets_refusal_apart():
     stray = {
         path.relative_to(BENCH).as_posix(): rows
         for path in checkout_rglob(BENCH, "*.py")
-        if (rows := [row for row, reads in bench_deny_readers(path) if not reads])
+        if (rows := [row for row, reads in bench_deny_readers(path) if not reads
+                     and (path.relative_to(BENCH).as_posix(), row.split()[1]) not in _NOT_A_DECISION_READ])
     }
     assert not stray, (
         "spawn write_guard through judged_within_budget, or read its answer with "
         f"budget_refused, in the function that reads the deny (DEF-5071): {stray}")
+    live = {(path.relative_to(BENCH).as_posix(), row.split()[1])
+            for path in checkout_rglob(BENCH, "*.py") for row, _reads in bench_deny_readers(path)}
+    assert set(_NOT_A_DECISION_READ) <= live, (
+        f"a label reader no longer reads a deny, drop its entry: {set(_NOT_A_DECISION_READ) - live}")
 
 
 def test_the_bench_reader_population_is_not_empty():

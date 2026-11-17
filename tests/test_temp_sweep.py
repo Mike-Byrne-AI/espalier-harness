@@ -274,6 +274,12 @@ _MAKERS_AT_PIN = 47  # 2026-11-02 (DEF-811's shared fixture builder), aliases in
 _CM_SMALL = "a context manager, removed at exit; a kill leaves "
 _IN_BASETEMP = "made inside the test's tmp_path, removed with the session's basetemp"
 _UNLOCKED_MAKERS: dict[str, str] = {
+    "bench/guard_metamorphic.py::bash_parsed_forms": _CM_SMALL + (
+        "one gm-r4-bash-* folder, the empty cwd of R4's syntax-only bash parses; nothing is "
+        "written in it"),
+    "bench/guard_metamorphic.py::powershell_parsed_forms": _CM_SMALL + (
+        "one gm-r4-pwsh-* folder, the scratch of R4's PowerShell parse; its texts are parsed, "
+        "never run"),
     "scripts/guard_cost_census.py::main": _CM_SMALL + (
         "one guard-cost-census-* folder: the spawns' empty temp projects, an archive of tools/cc "
         "and its audit records; a hand-run census, so a kill is the operator's"),
