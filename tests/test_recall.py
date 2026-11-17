@@ -2296,9 +2296,10 @@ _TASK_ARM_FILED = frozenset({
 #: was corrected, the control constant did not move off 4 -- purely because recall's
 #: paraphrase curve was then FLAT at 4/16 across top=2/3/4. Had it not been flat,
 #: draft 2's headline would have been wrong as well as unearned: it survived on a
-#: property of the corpus, not on the method. (The curve has since moved to 7 -> 8 -> 8
-#: and the constant to 8, which is exactly why leaving the reasoning here rather than
-#: only the number matters.) docs/FAILURE_MODES.md §5.15.
+#: property of the corpus, not on the method. (The curve has moved many times since,
+#: most recently to [6, 6, 6, 7] and the constant to 6 on 2026-11-17, which is exactly
+#: why leaving the reasoning here rather than only the number matters.)
+#: docs/FAILURE_MODES.md §5.15.
 #:
 #: ⚠ DENOMINATOR NOTE, so the naming column is not read as a regression. 274 is the
 #: heading-derived label set built the way tests/test_recall_calibration.py builds it.
@@ -2306,8 +2307,12 @@ _TASK_ARM_FILED = frozenset({
 #: that revision (the corpus grows with every memory note; the count is not pinned
 #: here because it is not the denominator). Different denominator, not drift: the
 #: rates are consistent and marginally better (83.7% -> 85.0% at elem 0).
-#: Re-derived to 9 on 2026-11-17 with the control below (the whole table, not one
-#: row): it already read 9 before the hooks guide joined the corpus, inside its band.
+#: ⚠ RE-DERIVED 2026-11-17 to 9, with every figure in this table (not two
+#: constants), and its two causes dated apart. (1) Drift since 2026-09-24: the 10
+#: was a private-tree reading, and from the public tree's first commit (d00f6de4,
+#: v0.8.0b1) on the union read 9 at every commit air's verifier sampled (ack
+#: 9c1b49), inside its band, so nothing red. (2) The hooks guide joining this
+#: repository's corpus (the operator's ruling of 2026-11-16) left it unchanged at 9.
 _PARAPHRASE_UNION_HITS = 9
 
 #: The EQUAL-BUDGET control. Without this constant the headline is unearned: it is
@@ -2319,13 +2324,17 @@ _PARAPHRASE_UNION_HITS = 9
 #: Not a Sandbox" rose from 3.9701 to 3.9864 (the lead 0.85% to 0.45%): the
 #: fragment marker that had diluted it by 19 tokens is no longer its text. An
 #: ordinary edit to that SHARP_EDGES entry is the likeliest next cause of 8 -> 7.
-#: ⚠ RE-DERIVED 2026-11-17, when this repository began indexing its hooks guide
-#: (27 sections; the operator's ruling of 2026-11-16): ordinary growth had already
-#: taken the count to 7 inside its band, and the guide took it to 6. The query is
-#: the one named above: "is the harness a security boundary" loses principle 2
-#: from the control's top 4 to "docs/HOOKS.md :: Governance audit log", while
-#: recall(top=6) and the union keep it (A/B'd with the family filtered out of the
-#: corpus). Both direction legs hold; the margin widens to 3.
+#: ⚠ RE-DERIVED 2026-11-17 to 6, two causes dated apart. (1) Drift since
+#: 2026-09-24: from the public tree's first commit (d00f6de4) on, the control read
+#: 7 against the pinned 8, inside its band (air's verifier, ack 9c1b49). (2) The
+#: hooks guide (27 sections, the operator's ruling of 2026-11-16): control 7 to 6
+#: on one row (DEF-679's query: principle 2 from rank 4 to 5, behind HOOKS.md's
+#: Governance audit log); union unchanged at 9; the margin widens on the
+#: control's side only, 2 to 3. A/B'd at this lane's head with the family
+#: filtered out of the corpus. Rows by name, union(top=2) against this control:
+#: union-only, rows 2 ("is the harness a security boundary", new), 7 ("how do I
+#: know my new test would actually catch the bug") and 8 ("I fixed one site,
+#: where else does this live", contested); control-only, none, before and after.
 _PARAPHRASE_CONTROL_HITS = 6
 
 #: The control's `top`, named rather than inlined so the budget guard below and the
@@ -2418,9 +2427,16 @@ _PARAPHRASE_UNION_TOP = 2
 #: fourth for "I fixed one site, where else does this live" (a CONTESTED row)
 #: and §8 seventh. The union stays at 10 under every variant, so what moved is
 #: recall()'s deep reach on one contested row, not the front door.
-#: ⚠ RE-DERIVED 2026-11-17 with the hooks guide indexed: [6, 6, 6, 7]. Its cause
-#: is on _PARAPHRASE_CONTROL_HITS; the union (9) still delivers more than
-#: recall(top=6).
+#: ⚠ RE-DERIVED 2026-11-17 to [6, 6, 6, 7], two causes dated apart. (1) Drift
+#: since 2026-09-24: the pinned [7, 7, 8, 8] read [6, 6, 7, 7] from the public
+#: tree's first commit (d00f6de4) on (air's verifier, ack 9c1b49), one under at
+#: every slot and inside every band. Re-pinning only the two headline constants
+#: would have recorded a curve that falls from slot 3 to slot 4, which recall()
+#: cannot produce. (2) The hooks guide took slot 4 from 7 to 6 on one row,
+#: DEF-679's (its cause is on _PARAPHRASE_CONTROL_HITS). The curve's only climb,
+#: slot 4 to slot 6, now rests on that one row: principle 2 at rank 5. One more
+#: adverse document above it flattens the curve; the union (9) still delivers
+#: more than recall(top=6) (7).
 _PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall()
 
 #: union(top=_PARAPHRASE_UNION_TOP) minus recall(top=6) on the paraphrase arm --
@@ -2432,7 +2448,10 @@ _PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall
 #: union did not move, so the headline is parity at under four lines against
 #: six (the test's docstring carries the re-derivation). 2026-09-22: 10 - 8 = 2
 #: -- the single ranker's deep reach fell one hit on one contested row (the
-#: fold recorded on the plateau above); the union did not move.
+#: fold recorded on the plateau above); the union did not move. 2026-11-17:
+#: 9 - 7 = 2 before and after the hooks guide joined the corpus (the pinned 10
+#: and 8 had both drifted one under since 2026-09-24, so the margin held); the
+#: guide moved DEF-679's principle from rank 4 to 5, still inside six slots.
 _PARAPHRASE_UNION_OVER_DEEP_CONTROL = 2
 
 #: Rows 8 and 13 are contested (see the arm comment). Pinned separately so revising
@@ -2578,6 +2597,12 @@ def test_the_union_beats_a_six_slot_control():
     _PARAPHRASE_PLATEAU; the four-slot control stayed at 8, where ordinary
     growth since 09-12 had already put it). Direction unchanged, margin
     re-recorded at 2.
+
+    ⚠ STILL 2, 2026-11-17. The hooks guide joined this repository's corpus and
+    DEF-679's principle fell from rank 4 to 5 in recall(): out of the four-slot
+    control, still inside six. recall(top=6) reads 7 and the union 9, as both
+    had read since 2026-09-24's drift; the curve's one climb now rests on that
+    row (the record is on _PARAPHRASE_PLATEAU).
     """
     # Non-vacuity FIRST: the sweep reads its own `top` values out of the pin, so an
     # emptied or narrowed pin measures nothing and compares equal to itself. Measured:

@@ -1101,6 +1101,10 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
         if not p.is_file() or _resolved(p) in seen:
             continue  # absent, or declared by the adopter and indexed above
         text = _read(p)
+        # The self-host arm skips the stamp check: this repository's docs/HOOKS.md
+        # is the seed's source, byte-identical to espalier/assets/docs/HOOKS.md
+        # (tests/test_deploy_doc_parity.py), and init writes the stamp only on the
+        # copy it deploys, so the source never carries one.
         if not self_host and not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
             continue  # the adopter's own file of that name, not the seed
         doc_title = _first_heading(text) or p.stem
