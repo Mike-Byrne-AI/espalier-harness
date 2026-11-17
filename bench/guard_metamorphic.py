@@ -57,11 +57,26 @@ transformation that is semantically null by construction. That makes it the
 cheapest relation in this file and the one most likely to survive a refactor of
 everything around it.
 
+``R3`` — **a finished heredoc body is inert** whatever follows its terminator
+(must-allow), with a heredoc fed to a re-parsing shell kept denied (must-deny).
+
+``R4`` — **a stderr redirect among the operands (must-deny).** Each denied row of
+``tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`` stays
+denied with a stderr redirect written at any blank between its tokens after the
+command word. Each tool's own parser is the oracle that a place is null for what
+the verb is handed (no row is executed), and the class's own judges give the
+verdict, so a reader that takes an operand by its place and misses the redirect
+view reds here without anyone naming it (DEF-5120; the job DEF-5107, DEF-5108,
+DEF-2088 and DEF-2087 fixed one reader set at a time). A row whose job the
+coverage contract gives the after-check is held out by name (``R4_EXCLUDED``),
+still judged and reported apart, and reds again the day its places all hold.
+
 RUNNING IT
 ----------
 ::
 
-    python3 bench/guard_metamorphic.py            # both relations
+    python3 bench/guard_metamorphic.py            # every relation
+    python3 bench/guard_metamorphic.py --relation R4   # one of them
     python3 bench/guard_metamorphic.py --quick    # a sampled population, for CI
     python3 bench/guard_metamorphic.py --json     # machine-readable
 
@@ -799,12 +814,455 @@ def check_r3(quick: bool = False) -> dict:
     }
 
 
+# ── R4: a stderr redirect among the operands, DERIVED ───────────────────────
+#
+# The job four lanes fixed one reader set at a time (DEF-5107, DEF-5108,
+# DEF-2088, DEF-2087): a reader that takes a verb's operands by their place
+# must see the operands the shell hands the verb, wherever a redirect sits
+# among them. R4 is that job's oracle (DEF-5120). Its population is the
+# denied rows of `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`
+# (`_ZONE_ROWS`, `_SECRET_ROWS`), read from the class, never copied, each
+# spelled under the plain root for every protected kind the class spells it
+# for. Its transformation is a stderr redirect written at each blank between
+# tokens after the command word, and at the end. Its relation: a denied row
+# stays denied.
+#
+# The transformation is proved null per row and per place by the tool's own
+# parser, never assumed: bash parses both spellings syntax-only (`bash -n`)
+# and prints each parsed form (`declare -f` of a function holding it; the
+# function is defined and printed, never called), and the spelling is null
+# where the two printed forms differ by the redirect alone; PowerShell's
+# `Parser::ParseInput` gives each command's elements, and the spelling is null
+# where they are equal and the one redirection more is the one written. No
+# row is executed: a parser decides what a verb is handed, and a redirect is
+# never a word. A place the parser rejects, or reads as changing a word (a
+# blank inside a heredoc body, a comment), is out of the relation's domain and
+# counted apart, never judged.
+#
+# The judges are the class's own (`_zone_denied`, `_secret_denied`): the zone
+# checks and the secret check in-process on the class's own projects
+# (`built_projects`), with the speed bump and the maintenance gate out of the
+# loop, as the class pins them. In-process also lets a suite test blind the
+# redirect view and watch this relation go red.
+
+#: The stderr redirect written into each place, per tool. stderr is never
+#: where a verb reads its operands from, so the redirect is null for what the
+#: verb is handed wherever the parser accepts it.
+R4_REDIRECT: dict[str, str] = {"Bash": "2>/dev/null", "PowerShell": "2>$null"}
+
+#: The quick sample: every Nth spelled form, so `--quick` (the suite's only
+#: path) still crosses both tools and both tables.
+R4_QUICK_STRIDE = 7
+
+#: The rows R4 holds out of its relation by name, each with the coverage
+#: contract's reason (the dispatcher's sort of R4's reds by job, DEF-5120): a
+#: write into a zone `post_write_check.py` watches is that after-check's job,
+#: so no reader is grown for it. An excluded row is still judged and its reds
+#: are reported apart; one whose every null place holds its deny is itself a
+#: violation, so the day a reader closes it the entry goes and the row rejoins.
+R4_EXCLUDED: dict[str, str] = {
+    "bash-delete-python-stdin": (
+        "a file under tools/cc/ removed by a stdin program behind a redirect "
+        "before its `-` operand: the stdin reader's declared limit (a redirect "
+        "before the operand or a flag), in a zone post_write_check.py watches"
+    ),
+}
+
+
+def _operand_class():
+    """`TestRemovedOrRelocatedOperandIsAMutation`, imported from the suite.
+
+    Read from the class so a row the class gains joins R4 with no edit here
+    (§14); `bench/` is dev-only and runs where pytest is installed."""
+    from tests.test_write_guard import TestRemovedOrRelocatedOperandIsAMutation
+    return TestRemovedOrRelocatedOperandIsAMutation
+
+
+def operand_rows(quick: bool = False) -> list[dict]:
+    """Every denied row of the two tables, spelled under the plain root, one
+    entry per (row, kind): ``table``, ``key``, ``tool``, ``kind``, ``command``."""
+    cls = _operand_class()
+    rows = []
+    for table in ("_ZONE_ROWS", "_SECRET_ROWS"):
+        for key, (tool, expect, _arm, command) in getattr(cls, table).items():
+            if expect != "deny":
+                continue
+            for kind, spelled in cls._plain_forms(command):
+                rows.append({"table": table, "key": key, "tool": tool,
+                             "kind": kind, "command": spelled})
+    return rows[::R4_QUICK_STRIDE] if quick else rows
+
+
+def _token_blanks(command: str, tool: str) -> list[int]:
+    """The offsets where R4 writes the redirect: the start of each run of
+    blanks between two tokens after the command word, the end of each line
+    after it, and the end of the command. Only places outside every quote,
+    escape and bracket (a subexpression, a group, a script block, a brace
+    expansion) are offered; the parser decides which of them are null, so
+    this scan errs toward offering a place, never toward deciding one."""
+    powershell = tool == "PowerShell"
+    escape = "`" if powershell else "\\"
+    points: list[int] = []
+    depth = 0
+    quote: str | None = None
+    first_word_done = False
+    in_word = False
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote is not None:
+            if powershell and quote in ("@'", '@"'):
+                closer = "\n" + quote[1] + "@"
+                end = command.find(closer, i)
+                i = n if end < 0 else end + len(closer)
+                quote = None
+                continue
+            if ch == escape and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == escape:
+            i += 2
+            in_word = True
+            continue
+        if powershell and command.startswith(("@'\n", '@"\n'), i):
+            quote = command[i:i + 2]
+            in_word = True
+            i += 3
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            in_word = True
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if depth == 0 and ch in " \t":
+            if in_word:
+                first_word_done = True
+            if first_word_done:
+                points.append(i)
+            while i < n and command[i] in " \t":
+                i += 1
+            in_word = False
+            continue
+        if depth == 0 and ch == "\n":
+            if in_word:
+                first_word_done = True
+            if first_word_done and (not points or points[-1] != i):
+                points.append(i)
+            in_word = False
+            i += 1
+            continue
+        in_word = True
+        i += 1
+    if first_word_done or in_word:
+        points.append(n)
+    return sorted(set(points))
+
+
+def insert_redirect(command: str, tool: str, at: int) -> str:
+    """``command`` with the tool's stderr redirect written at offset ``at``."""
+    return command[:at] + " " + R4_REDIRECT[tool] + command[at:]
+
+
+def _scratch_env(scratch: Path) -> dict[str, str]:
+    """A parse's environment: nothing on PATH but an empty directory, so a
+    spelling that somehow ran would find no program (belt, not brace: the
+    parse executes no row)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "BASH_FUNC_"))}
+    env["PATH"] = str(scratch)
+    env.pop("ENV", None)
+    env.pop("BASH_ENV", None)
+    return env
+
+
+def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
+    """Each text's form as bash prints it after parsing, or None where bash
+    rejects it. Syntax-only first (`bash -n`, one text per run, so a reject is
+    the text's own); the accepted ones are then each defined as a function and
+    printed with `declare -f` in one restricted run (`bash -r`, an empty PATH
+    and cwd). Defining a function runs none of its body, and a text `bash -n`
+    accepted is a complete list, so it cannot close the function early."""
+    out: list[str | None] = [None] * len(texts)
+    with tempfile.TemporaryDirectory(prefix="gm-r4-bash-") as scratch:
+        env = _scratch_env(Path(scratch))
+        accepted = []
+        for idx, text in enumerate(texts):
+            proc = run_bounded([bash, "-n", "-c", text], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=15, cwd=scratch, env=env)
+            if proc.returncode == 0:
+                accepted.append(idx)
+        sep = "__R4_FORM_END__"
+
+        def print_forms(batch: list[int]) -> None:
+            # A text `bash -n` accepts alone can still fail inside a function
+            # body (a heredoc delimited by the end of input takes the closing
+            # brace with it), so a batch that fails is halved until each
+            # failure is one text's own, and that text gets no form.
+            if not batch:
+                return
+            script = "".join(f"__r4_{idx}() {{\n{texts[idx]}\n}}\n" for idx in batch)
+            script += "".join(f"declare -f __r4_{idx}\nprintf '%s\\n' {sep}\n" for idx in batch)
+            proc = run_bounded([bash, "-r", "-c", script], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=60, cwd=scratch, env=env)
+            forms = proc.stdout.split(sep + "\n") if proc.returncode == 0 else []
+            if len(forms) == len(batch) + 1:
+                for idx, form in zip(batch, forms):
+                    # the function's name is the one thing two texts' forms must not share
+                    out[idx] = form.replace(f"__r4_{idx} ()", "__r4 ()", 1)
+            elif len(batch) > 1:
+                half = len(batch) // 2
+                print_forms(batch[:half])
+                print_forms(batch[half:])
+
+        print_forms(accepted)
+    return out
+
+
+#: The PowerShell parse: each text's errors, its commands' elements (or a
+#: command expression's text) in tree order, and its redirections. Written
+#: for Windows PowerShell 5.1 as well as pwsh 7 (no `u{}` escape).
+_PS_PARSE = r"""
+$sep = [string][char]31
+$texts = Get-Content -Raw -LiteralPath $args[0] -Encoding UTF8 | ConvertFrom-Json
+$out = foreach ($text in $texts) {
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput([string]$text, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { [pscustomobject]@{ ok = $false; shape = @(); redirections = @() }; continue }
+    $commands = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandBaseAst] }, $true)
+    $shape = @(foreach ($c in $commands) {
+        if ($c -is [System.Management.Automation.Language.CommandAst]) {
+            'C:' + (@($c.CommandElements | ForEach-Object { $_.Extent.Text }) -join $sep)
+        } else { 'E:' + $c.Expression.Extent.Text }
+    })
+    $redirections = @(foreach ($c in $commands) { foreach ($r in $c.Redirections) { $r.Extent.Text } })
+    [pscustomobject]@{ ok = $true; shape = $shape; redirections = $redirections }
+}
+ConvertTo-Json -InputObject @($out) -Depth 5 -Compress
+"""
+
+
+def powershell_parsed_forms(texts: list[str], pwsh: str) -> list[dict | None]:
+    """Each text's parse as PowerShell reads it, or None where it rejects it:
+    ``{"shape": [...], "redirections": [...]}``. One interpreter for every
+    text; `ParseInput` executes nothing."""
+    with tempfile.TemporaryDirectory(prefix="gm-r4-pwsh-") as scratch:
+        src = Path(scratch) / "texts.json"
+        src.write_text(json.dumps(texts), encoding="utf-8")
+        script = Path(scratch) / "parse.ps1"
+        script.write_text(_PS_PARSE, encoding="utf-8")
+        env = os.environ.copy()
+        if os.name != "nt":
+            # One writer per startup cache (Core Rule 14; the differential's
+            # 2026-09-10 corruption): this run's pwsh keeps its own.
+            env["XDG_CACHE_HOME"] = str(Path(scratch) / "cache")
+        proc = run_bounded([pwsh, "-NoProfile", "-NonInteractive", "-File", str(script), str(src)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=300, cwd=scratch, env=env)
+    if proc.returncode != 0:
+        raise InstrumentBroken(
+            f"PowerShell's parser did not answer (rc={proc.returncode}): {(proc.stderr or '')[:400]}")
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError as exc:
+        raise InstrumentBroken(f"PowerShell's parse is not JSON: {exc}: {proc.stdout[:200]!r}") from exc
+    if not isinstance(parsed, list) or len(parsed) != len(texts):
+        raise InstrumentBroken(f"PowerShell parsed {len(parsed)} of {len(texts)} texts")
+    return [{"shape": p["shape"] or [], "redirections": p["redirections"] or []} if p["ok"] else None
+            for p in parsed]
+
+
+def _bash_redirect_form(bash: str) -> str:
+    """The redirect as bash prints it in a parsed form, read from bash: the
+    one difference between a calibration command and the same with the
+    redirect written among its words."""
+    plain, moved = bash_parsed_forms(["printf %s a b", f"printf %s a {R4_REDIRECT['Bash']} b"], bash)
+    if plain is None or moved is None or moved == plain:
+        raise InstrumentBroken("bash printed no redirect for the calibration command")
+    head = 0
+    while head < len(plain) and plain[head] == moved[head]:
+        head += 1
+    tail = 0
+    while tail < len(plain) - head and plain[-1 - tail] == moved[-1 - tail]:
+        tail += 1
+    form = moved[head:len(moved) - tail]
+    if R4_REDIRECT["Bash"].replace(" ", "") not in form.replace(" ", ""):
+        raise InstrumentBroken(f"bash's printed difference is not the redirect: {form!r}")
+    return form
+
+
+def bash_insertion_is_null(original: str | None, inserted: str | None, form: str) -> bool:
+    """The redirect was read as a redirect and nothing else moved: removing one
+    printed redirect from the inserted form gives the original form."""
+    if original is None or inserted is None:
+        return False
+    start = inserted.find(form)
+    while start >= 0:
+        if inserted[:start] + inserted[start + len(form):] == original:
+            return True
+        start = inserted.find(form, start + 1)
+    return False
+
+
+def powershell_insertion_is_null(original: dict | None, inserted: dict | None) -> bool:
+    """The commands' elements are unchanged and the one redirection more is
+    the one written."""
+    if original is None or inserted is None or original["shape"] != inserted["shape"]:
+        return False
+    extra = list(inserted["redirections"])
+    for r in original["redirections"]:
+        if r not in extra:
+            return False
+        extra.remove(r)
+    return extra == [R4_REDIRECT["PowerShell"]]
+
+
+def assert_parsers_are_live(bash: str | None, pwsh: str | None) -> str | None:
+    """The calibration pair per parser, so a parser that reads every place as
+    null (or none) cannot vouch: a redirect among the words is null, and the
+    same characters inside a quoted word are not. Returns bash's printed
+    redirect form (None without bash)."""
+    form = None
+    if bash:
+        form = _bash_redirect_form(bash)
+        plain, moved, quoted, quoted_moved = bash_parsed_forms(
+            ["printf %s a b", "printf %s 2>/dev/null a b",
+             "printf %s 'a b'", "printf %s 'a 2>/dev/null b'"], bash)
+        if not bash_insertion_is_null(plain, moved, form):
+            raise InstrumentBroken("bash's parse does not read a redirect among the words as null")
+        if bash_insertion_is_null(quoted, quoted_moved, form):
+            raise InstrumentBroken("bash's parse reads a quoted redirect as a redirect")
+    if pwsh:
+        plain, moved, quoted, quoted_moved = powershell_parsed_forms(
+            ["Write-Output a b", "Write-Output a 2>$null b",
+             "Write-Output 'a b'", "Write-Output 'a 2>$null b'"], pwsh)
+        if not powershell_insertion_is_null(plain, moved):
+            raise InstrumentBroken("PowerShell's parse does not read a redirect among the words as null")
+        if powershell_insertion_is_null(quoted, quoted_moved):
+            raise InstrumentBroken("PowerShell's parse reads a quoted redirect as a redirect")
+    return form
+
+
+def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | None = None) -> dict:
+    """A stderr redirect among a denied row's operands never lowers its verdict.
+
+    ``rows`` replaces the derived population (a suite test drives a few rows
+    under a blinded reader); left out, it is :func:`operand_rows`."""
+    bash = shutil.which("bash")
+    form = assert_parsers_are_live(bash, pwsh)
+    cls = _operand_class()
+    rows = operand_rows(quick) if rows is None else rows
+    tools_run = {"Bash": bash is not None, "PowerShell": pwsh is not None}
+    candidates = []        # (row, at, text)
+    for row in rows:
+        if tools_run[row["tool"]]:
+            for at in _token_blanks(row["command"], row["tool"]):
+                candidates.append((row, at, insert_redirect(row["command"], row["tool"], at)))
+
+    null_by_text: dict[str, bool] = {}
+    for tool in ("Bash", "PowerShell"):
+        if not tools_run[tool]:
+            continue
+        mine = [c for c in candidates if c[0]["tool"] == tool]
+        originals = sorted({c[0]["command"] for c in mine})
+        texts = originals + [c[2] for c in mine]
+        if tool == "Bash":
+            forms = bash_parsed_forms(texts, bash)
+            parsed = dict(zip(texts, forms))
+            for row, _at, text in mine:
+                null_by_text[text] = bash_insertion_is_null(parsed[row["command"]], parsed[text], form)
+        else:
+            forms = powershell_parsed_forms(texts, pwsh)
+            parsed = dict(zip(texts, forms))
+            for row, _at, text in mine:
+                null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text])
+
+    census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
+    violations, undenied, excluded = [], [], []
+    judged_excluded: dict[str, str] = {}      # an excluded row judged here, by its tool
+    saved = os.environ.pop("ESPALIER_MAINTENANCE_MODE", None)
+    try:
+        import powershell_guard_rehearsal as rehearsal
+        with cls.built_projects(rehearsal) as projects:
+            project = projects["plain"]
+
+            def denied(row: dict, text: str) -> bool:
+                judge = cls._zone_denied if row["table"] == "_ZONE_ROWS" else cls._secret_denied
+                return judge(row["tool"], text, project)
+
+            by_row: dict[int, list] = {}
+            for cand in candidates:
+                by_row.setdefault(id(cand[0]), []).append(cand)
+            for row in rows:
+                if not tools_run[row["tool"]]:
+                    continue
+                stats = census[row["tool"]]
+                stats["rows"] += 1
+                mine = by_row.get(id(row), [])
+                stats["places"] += len(mine)
+                if not denied(row, row["command"]):
+                    undenied.append(f"{row['key']} on {row['kind']}")
+                    continue
+                stats["originals_denied"] += 1
+                if row["key"] in R4_EXCLUDED:
+                    judged_excluded[row["key"]] = row["tool"]
+                for _row, _at, text in mine:
+                    if not null_by_text[text]:
+                        continue
+                    stats["null"] += 1
+                    if not denied(row, text):
+                        (excluded if row["key"] in R4_EXCLUDED else violations).append({
+                            "relation": "R4",
+                            "key": row["key"],
+                            "tool": row["tool"],
+                            "detail": (f"{row['key']} ({row['tool']}, {row['kind']}): a stderr redirect "
+                                       f"the parser reads as null lowers the verdict: {text!r}"),
+                        })
+    finally:
+        if saved is not None:
+            os.environ["ESPALIER_MAINTENANCE_MODE"] = saved
+
+    held = {e["key"] for e in excluded}
+    for key, tool in sorted(judged_excluded.items()):
+        if key not in held:
+            violations.append({
+                "relation": "R4",
+                "key": key,
+                "tool": tool,
+                "detail": (f"{key} ({tool}): excluded by R4_EXCLUDED, yet every place the parser "
+                           f"proves null keeps its deny -- drop the exclusion so the row rejoins R4"),
+            })
+    dead = [f"{tool}: no denied row has a place the parser proves null -- R4 vouches for nothing there"
+            for tool, stats in census.items() if tools_run[tool] and stats["null"] == 0]
+    dead += [f"{tool}: no original row is denied on the class's own projects -- the judge is dead"
+             for tool, stats in census.items() if tools_run[tool] and stats["originals_denied"] == 0]
+    return {
+        "relation": "R4",
+        "description": "a stderr redirect among a denied row's operands must not lower its verdict",
+        "rows": sum(s["rows"] for s in census.values()),
+        "violations": violations,
+        "dead_separators": dead,
+        "reach_census": {},
+        "null_census": {tool: f"{s['null']}/{s['places']} places null over {s['originals_denied']} denied rows"
+                        for tool, s in census.items() if tools_run[tool]},
+        "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
+        "undenied_originals": undenied,
+        "excluded": excluded,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--quick", action="store_true",
                         help="sampled population — for CI, not for a release gate")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--relation", choices=["R1", "R2", "R3"],
+    parser.add_argument("--relation", choices=["R1", "R2", "R3", "R4"],
                         help="run one relation")
     parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
                         help="the project root's shape (the rehearsal's ROOT_SHAPES); default plain")
@@ -833,6 +1291,12 @@ def main(argv: list[str] | None = None) -> int:
             reports.append(check_r2(args.quick))
         if args.relation in (None, "R3"):
             reports.append(check_r3(args.quick))
+        if args.relation in (None, "R4"):
+            # The parsers are R4's oracle for "the redirect is null here", one
+            # per tool; a tool without its parser sits out and is named.
+            from bench.powershell_reachability_differential import find_powershell
+            found = find_powershell()
+            reports.append(check_r4(args.quick, found[0] if found else None))
     except BudgetMiss as exc:
         # A judgment that never finished: exit 3, never the violations' 1.
         print(f"NO VERDICT -- {exc}", file=sys.stderr)
@@ -861,6 +1325,17 @@ def main(argv: list[str] | None = None) -> int:
             if rep.get("absent_heads"):
                 print(f"  absent on this platform (not counted): "
                       f"{', '.join(rep['absent_heads'])}")
+            for tool, line in rep.get("null_census", {}).items():
+                print(f"  {tool}: {line}")
+            for tool in rep.get("skipped_tools", ()):
+                print(f"  {tool} SKIPPED -- its parser is not on this host; its rows are not judged here")
+            if rep.get("undenied_originals"):
+                print(f"  {len(rep['undenied_originals'])} original row(s) not denied here "
+                      f"(the class's own pin, not R4's): {', '.join(rep['undenied_originals'][:5])}")
+            if rep.get("excluded"):
+                keys = sorted({e["key"] for e in rep["excluded"]})
+                print(f"  {len(rep['excluded'])} place(s) on {len(keys)} excluded row(s), "
+                      f"not counted (R4_EXCLUDED): {', '.join(keys)}")
             if not rep["violations"]:
                 print("  no violations")
             for v in rep["violations"]:

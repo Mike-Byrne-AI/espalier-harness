@@ -1868,9 +1868,8 @@ shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
 the cluster on the `+` sign, which runs its program as `-c` does (`bash +c
 '...'`, `bash +xc '...'`). A redirect
 word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
-`python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
-tool's openers take none, since PowerShell's redirect set is its own
-(declared, pinned).
+`python3 2>&1 -c "..."`) is read on both tools, on the PowerShell tool by
+PowerShell's own redirect set.
 On the PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
 '...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
 call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or

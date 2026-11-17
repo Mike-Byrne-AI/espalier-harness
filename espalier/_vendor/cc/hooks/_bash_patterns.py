@@ -8605,7 +8605,11 @@ def _shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     if len(scan) != len(command):
         scan = command
     read: set[str] = set()
-    for m in _POWERSHELL_DASH_COMMAND_RE.finditer(scan):
+    # the opener matches with the redirects blanked as well (DEF-5120's R4:
+    # `powershell 2>/dev/null -Command "..."` read the redirect as the bare
+    # program and hid the quoted one)
+    for m in _scan_and_view_matches(_POWERSHELL_DASH_COMMAND_RE, scan,
+                                    _redirects_blanked(scan, powershell=False)):
         # the quoted program is one bash word of adjacent segments (DEF-832),
         # its quote removal by `_bash_word_text`; a bare program verbatim
         if m.group("word") is not None:
@@ -10590,6 +10594,12 @@ def _directory_chain(
             fnmatch.fnmatchcase(p, g) for g in gone_patterns for p in ancestors)
 
     oracle = known if exists is not None else None
+    # a redirect between the verb and its directory is the shell's (DEF-5120's
+    # R4: `cd 2>/dev/null tools/cc && rm hooks/x.py` read no directory
+    # change): on a miss a statement's verb is matched on its slice of the
+    # redirect view, built once (a view per statement would flood its cache);
+    # the slice indexes the statement, so every offset below carries
+    view = _redirects_blanked(text, powershell=not bash)
     bounds = [*boundary_re.finditer(text), None]
     for idx, b in enumerate(bounds):
         end = len(text) if b is None else b.start()
@@ -10600,6 +10610,8 @@ def _directory_chain(
             if head in _CONDITIONAL_OPENERS:
                 depth += 1
             m = verb_re.search(seg)
+            if m is None and view is not text:
+                m = verb_re.search(view[pos:pos + len(seg)])
             if m:
                 verb = m.group(1).lower()
                 verb = verbs[verb] if verbs else verb
@@ -11207,6 +11219,14 @@ def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str
     span came from that tool and is tokenised by its grammar (DEF-1170)."""
     action = _FIND_DELETE_ACTION_RE.search(span)
     if not action:
+        # a redirect between `-exec` and its verb is the shell's, never a
+        # word find is handed (DEF-5120's R4: `find cc -exec 2>/dev/null rm
+        # {} \;`): on a miss the action is matched on the redirect view,
+        # whose offsets are the span's
+        view = _redirects_blanked(span, powershell=powershell)
+        if view is not span:
+            action = _FIND_DELETE_ACTION_RE.search(view)
+    if not action:
         return [], ""
     if powershell:
         # every redirect out, PowerShell's all-streams one too: `_operands`
@@ -11748,7 +11768,8 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     # reads them through the cmdlet's word roster (`cmd` is a re-parsing
     # wrapper there); this tool had no arm, so a zone directory removed
     # through cmd met the nudge and then nothing on the re-issue.
-    if _CMD_REMOVE_OPENER_RE.search(scan):
+    # the gate reads the view too, as the opener reader does (DEF-5120)
+    if _CMD_REMOVE_OPENER_RE.search(scan) or (view is not scan and _CMD_REMOVE_OPENER_RE.search(view)):
         for _at, targets in iter_cmd_recursive_removes(
                 command, scan, bash=True, recursive_only=False):
             out.extend(("delete", t) for t in targets)
@@ -11823,7 +11844,9 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
         out.extend(("archive", p) for p in _positional_operands(raw_span(command, m, through_quotes=True))[1:])
     for m in _DD_IF_RE.finditer(scan):
         out.append(("archive", raw_operand(command, m, word=True)))
-    for m in _LN_S_RE.finditer(scan):
+    # the symlink flag matches with the redirects blanked as well: a redirect
+    # between `ln` and `-s` hid the target (DEF-5120's R4)
+    for m in _scan_and_view_matches(_LN_S_RE, scan, view):
         ops = _positional_operands(raw_span(command, m, through_quotes=True))
         if len(ops) >= 2:
             out.append(("alias", ops[0]))
@@ -14160,8 +14183,11 @@ def _ps_inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, st
     `;` twin. Read alone, the over-read is the refusing direction."""
     if len(scan) != len(command):
         scan = command
+    # each opener matches with the redirects blanked as well (DEF-5120's R4:
+    # `python 2>$null -c "..."` hid the program behind the redirect)
+    view = _redirects_blanked(scan, powershell=True)
     for interp, rx in _PS_INLINE_PROGRAM_RES:
-        for m in rx.finditer(scan):
+        for m in _scan_and_view_matches(rx, scan, view):
             if m.group("sq") is not None:
                 text = _ps_unescape_program(command[m.start("sq"):m.end("sq")])
                 yield interp, text
@@ -14315,7 +14341,9 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     if "|" in scan and _PS_STDIN_POSIX_HINT_RE.search(scan):
         for _head, segment in _ps_stdin_program_bodies(command, scan, posix=True):
             yield from _ps_posix_programs_before_pipe(segment)
-    for m in _PS_BASH_DASH_C_RE.finditer(scan):
+    # the opener matches with the redirects blanked as well (DEF-5120's R4:
+    # `bash 2>$null -c "..."` hid the program behind the redirect)
+    for m in _scan_and_view_matches(_PS_BASH_DASH_C_RE, scan, _redirects_blanked(scan, powershell=True)):
         # By the literal's OWN kind, not `_ps_unescape_program`'s
         # all-four-forms fold: inside a single-quoted PowerShell string `""`
         # is two literal characters, and folding them made `bash -c 'echo ""
@@ -16164,32 +16192,37 @@ def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
     before it is stepped over with its value -- after a colon
     (``-WindowStyle:Hidden``, ``-Wait: $true``) or as the next word -- unless
     it is one of the cmdlet's switches, as PowerShell 5.1 bound each of
-    them (driven 2026-10-16), or one of the two pwsh 7 adds. Linear: one
-    pass."""
+    them (driven 2026-10-16), or one of the two pwsh 7 adds. The parameters
+    are walked on the redirect view (`_redirects_blanked`) and the list is
+    read from ``text`` at its offset: PowerShell takes a redirect out before
+    it binds a parameter, so one is never the list or a value (DEF-5120's
+    R4: `Start-Process cmd 2>$null -ArgumentList '/c ...'` read `2>$null`
+    as the list). Linear: one pass."""
     i, n = at, len(text)
+    walk = _redirects_blanked(text, powershell=True)
     while i < n:
-        while i < n and text[i] in " \t":
+        while i < n and walk[i] in " \t":
             i += 1
-        if i >= n or text[i] in ";|&\n\r":
+        if i >= n or walk[i] in ";|&\n\r":
             return None
-        if text[i] == "-" and i + 1 < n and text[i + 1].isalpha():
+        if walk[i] == "-" and i + 1 < n and walk[i + 1].isalpha():
             j = i + 1
-            while j < n and text[j].isalnum():
+            while j < n and walk[j].isalnum():
                 j += 1
-            low = text[i + 1:j].lower()
-            bound = j < n and text[j] == ":"     # `-Name:value`, or `-Name: value`
+            low = walk[i + 1:j].lower()
+            bound = j < n and walk[j] == ":"     # `-Name:value`, or `-Name: value`
             i = j + 1 if bound else j
             if "argumentlist".startswith(low) or low == "args":
                 break                            # the list follows, past a colon
             if bound or _ps_start_process_takes_value(low):
-                while i < n and text[i] in " \t":
+                while i < n and walk[i] in " \t":
                     i += 1
-                _value, i = _ps_word_at(text, i)  # the parameter's value
+                _value, i = _ps_word_at(walk, i)  # the parameter's value
             continue
         break                                  # the first positional: the argument list
     else:
         return None
-    while i < n and text[i] in " \t":
+    while i < n and walk[i] in " \t":
         i += 1
     if i >= n:
         return None
@@ -17099,7 +17132,9 @@ def iter_cmd_programs(
     if len(raw) != len(scan):
         raw = scan
     opener_re = _CMD_REMOVE_OPENER_RE if bash else _PS_CMD_REMOVE_OPENER_RE
-    openers = list(opener_re.finditer(scan))
+    # the opener matches with the redirects blanked as well (DEF-5120's R4:
+    # `Start-Process 2>$null cmd ...` opened no command position at cmd)
+    openers = _scan_and_view_matches(opener_re, scan, _redirects_blanked(scan, powershell=not bash))
     read_to = 0
     typed_to = 0                          # the as-typed text read so far
     for k, m in enumerate(openers):
@@ -17131,7 +17166,16 @@ def _cmd_opener_programs(
     cmd opener: `iter_cmd_programs` walks the openers with it, and the
     PowerShell carrier reader reads its cmd head's program with it
     (`_ps_carrier_program_bodies`, DEF-2081)."""
-    start = _cmd_program_at(raw, m.end(), "\\" if bash else "`")
+    esc = "\\" if bash else "`"
+    start = _cmd_program_at(raw, m.end(), esc)
+    if start is None:
+        # a redirect before cmd's switch is the outer shell's, never a word
+        # cmd is handed (DEF-5120's R4: `cmd 2>/dev/null //c del ...` ended
+        # the walk at the redirect): on a miss the walk reads the redirect
+        # view, whose offsets are the raw text's
+        view = _redirects_blanked(raw, powershell=not bash)
+        if view is not raw:
+            start = _cmd_program_at(view, m.end(), esc)
     if start is None:
         if not bash:
             # Start-Process hands cmd its program as an argument list, not in
@@ -21453,7 +21497,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     # program that opens with cmd's existence test or `@` is cmd's alone,
     # and its zone directory met the nudge and then nothing on the re-issue
     # (the failure-mode review).
-    if _PS_CMD_REMOVE_OPENER_RE.search(scan):
+    # the gate reads the view too, as the opener reader does (DEF-5120)
+    if _PS_CMD_REMOVE_OPENER_RE.search(scan) or (view is not scan and _PS_CMD_REMOVE_OPENER_RE.search(view)):
         for _at, targets in iter_cmd_recursive_removes(
                 raw, scan, bash=False, recursive_only=False):
             out.extend(("delete", t) for t in targets)
