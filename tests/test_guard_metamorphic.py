@@ -38,6 +38,10 @@ SCRIPT = REPO_ROOT / "bench" / "guard_metamorphic.py"
 #: The file R4's population is read from (`_operand_class`), named so the
 #: proof tier's reader map brings this file with a change to it alone.
 R4_POPULATION_SOURCE = "tests/test_write_guard.py"
+#: The bench R4's judges build the class's projects from (`check_r4` imports
+#: it by module name, which the reader map cannot read), named for the same
+#: reason (the second failure-mode review's N-3).
+R4_PROJECTS_SOURCE = "bench/powershell_guard_rehearsal.py"
 
 
 def _load():
@@ -457,10 +461,17 @@ class TestR4ThePopulationIsTheClasssDeniedRows:
 
     def test_the_quick_sample_judges_every_row_once(self, gm):
         """One form per row, every row: CI judges each denied row, and a row
-        added moves no other row's sample (the failure-mode review's F1)."""
-        quick = [r["key"] for r in gm.operand_rows(quick=True)]
+        added moves no other row's sample, since each row's entry is its own
+        first form (the failure-mode review's F1; the second code review's N3
+        for the second claim)."""
+        sample = gm.operand_rows(quick=True)
+        quick = [r["key"] for r in sample]
         assert len(quick) == len(set(quick))
         assert set(quick) == {r["key"] for r in gm.operand_rows()}
+        first: dict[tuple, str] = {}
+        for r in gm.operand_rows():
+            first.setdefault((r["table"], r["key"]), r["command"])
+        assert [r["command"] for r in sample] == [first[(r["table"], r["key"])] for r in sample]
 
     def test_the_population_source_is_named_for_the_tier(self, gm):
         """The class R4 reads its rows from is named here as a literal, so a
@@ -474,12 +485,32 @@ class TestR4ThePopulationIsTheClasssDeniedRows:
         pt = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(pt)
         assert "tests/test_guard_metamorphic.py" in pt.own_tests([R4_POPULATION_SOURCE], REPO_ROOT)
+        # the projects' bench, imported by module name inside `check_r4`
+        assert "import " + Path(R4_PROJECTS_SOURCE).stem in SCRIPT.read_text(encoding="utf-8")
+        assert (REPO_ROOT / R4_PROJECTS_SOURCE).is_file()
+        assert "tests/test_guard_metamorphic.py" in pt.own_tests([R4_PROJECTS_SOURCE], REPO_ROOT)
+
+    def test_the_test_that_runs_r4_whole_rides_the_own_line(self, gm):
+        """The one test that runs R4 over the whole quick population is the
+        one the own line's `-m 'not heavy_e2e'` must keep: marked heavy, it
+        would leave the literal above naming a file whose R4 never runs (the
+        second failure-mode review's N-2). The mark is conftest's, by name."""
+        conftest = next(m for m in list(sys.modules.values())
+                        if getattr(m, "__file__", None)
+                        and Path(m.__file__).resolve() == REPO_ROOT / "tests" / "conftest.py")
+        name = TestTheGateRunsEndToEnd.test_quick_matrix_exits_clean_against_head.__name__
+        assert name not in conftest._HEAVY_E2E_TESTS
+        marks = [*getattr(TestTheGateRunsEndToEnd.test_quick_matrix_exits_clean_against_head, "pytestmark", []),
+                 *getattr(TestTheGateRunsEndToEnd, "pytestmark", []),
+                 *getattr(sys.modules[__name__], "pytestmark", [])]
+        assert "heavy_e2e" not in {m.name for m in marks}
 
 
 class TestR4OffersEachBlankAfterTheCommandWord:
     """The scan offers places; the parser decides which are null. These pin
     what is offered: each blank between tokens after the command word, each
-    line's end after it, and the end, never inside a quote or a bracket."""
+    line's end after it, the end, and on Bash the command word's start, never
+    inside a quote or a bracket."""
 
     def test_each_blank_after_the_command_word_and_the_end(self, gm):
         assert gm._token_blanks("rm -f x", "Bash") == [0, 2, 5, 7]
@@ -611,10 +642,13 @@ class TestR4RedsAReaderOffTheView:
         assert blinded["violations"], "a blinded view left every git-rm row denied: R4 cannot see the job"
 
     def test_a_red_names_its_next_step(self, gm, monkeypatch, capsys):
-        """The red says which reader to look for and the other route, the
-        dispatcher's sort by job (the failure-mode review's F5): a bare
-        `assert 1 == 0` over a row name sent the next session to an
-        exclusion map."""
+        """The red prints its next step: the mechanism a reader goes on, the
+        row's arm, and that a red no reader fix meets goes to the dispatcher
+        (the failure-mode review's F5: a bare `assert 1 == 0` over a row name
+        sent the next session to an exclusion map). The helpers it names are
+        the hooks module's own (the second failure-mode review's N-4)."""
+        for helper in gm.R4_REMEDY_HELPERS:
+            assert callable(getattr(gm._bash_patterns, helper, None)), helper
         import bench.powershell_reachability_differential as differential
         rows = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"].startswith("bash-delete-git-rm")]
         monkeypatch.setattr(gm, "operand_rows", lambda quick=False: rows)
@@ -624,6 +658,25 @@ class TestR4RedsAReaderOffTheView:
         out = capsys.readouterr().out
         assert "✗ [R4]" in out, out
         assert "_scan_and_view_matches" in out and "dispatcher" in out, out
+        assert f"arm {rows[0]['arm']}" in out, out
+
+    def test_a_quick_red_lists_every_kind_of_its_row(self, gm, monkeypatch):
+        """A quick run judges each row on its first kind, a `tools/` path the
+        after-check watches; a red there is re-judged on the row's other
+        kinds before it reports, so the kinds no after-check watches show
+        too, and a red is never read as the after-check's job from the
+        sample (the second failure-mode review's SF-1)."""
+        real = gm.operand_rows
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
+            r for r in real(quick) if r["tool"] == "Bash" and r["key"] == "bash-delete-git-rm"])
+        rows = gm.operand_rows()
+        assert len(rows) > 1 and rows[0]["kind"].startswith("tools/"), rows
+        monkeypatch.setattr(gm._bash_patterns, "_redirects_blanked", lambda scan, *, powershell: scan)
+        report = gm.check_r4(quick=True)
+        kinds = {v["kind"] for v in report["violations"]}
+        assert report["rejudged_kinds"] == len(rows) - 1, report
+        assert kinds == {r["kind"] for r in rows}, kinds
+        assert any(not k.startswith("tools") for k in kinds), kinds
 
 
 @_needs_bash
@@ -639,5 +692,6 @@ class TestR4TheStdinProgramRowHoldsOnEveryKind:
         assert len(rows) >= 7, "the class's stdin-program row lost kinds: re-read which ones R4 judges"
         report = gm.check_r4(rows=rows)
         assert not report["violations"], report["violations"]
-        null, places = report["null_census"]["Bash"].split(" places")[0].split("/")
-        assert int(null) >= len(rows), report["null_census"]
+        # each kind has a null place of its own: a total over the kinds would
+        # pass with one kind judged on none (the second code review's N6)
+        assert {r["kind"] for r in rows} == {k for k, n in report["null_by_kind"].items() if n}, report

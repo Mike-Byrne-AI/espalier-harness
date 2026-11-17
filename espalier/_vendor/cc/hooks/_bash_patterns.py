@@ -3531,15 +3531,21 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # is excluded by the grammar itself, not by a `(?!=)` guard: after the name only
 # blanks, `-`+letters, a `-` operand or `<<` may follow, and none of them can
 # consume the `=`. Whitespace is never REQUIRED (SHARP_EDGES: exclude `=`, never
-# require whitespace -- `python3<<'PY'` is a real invocation). Known misses,
+# require whitespace -- `python3<<'PY'` is a real invocation). Known miss,
 # named rather than widened: a valued flag before the operand (`-W ignore -
-# <<EOF`) and an input redirect between the operand and the operator (`- <f
-# <<EOF`: the later stdin redirect, the heredoc, is still the program), and
-# an output redirect BEFORE the operand or a flag (`python3 2>&1 - <<EOF`,
-# `python3 >f -u <<EOF`; both reviews of DEF-3077: interleaving the unit
-# with the flags would give a redirect two parses beside the run after the
-# operand). An output redirect after the operand or the flags (`-
-# 2>/dev/null <<EOF`) is read, DEF-3077's `_OUTPUT_REDIRECT_RUN` below. Three over-captures, also named (each fails toward friction, never
+# <<EOF`). An output redirect after the operand or the flags (`-
+# 2>/dev/null <<EOF`) is read on the scan, DEF-3077's `_OUTPUT_REDIRECT_RUN`
+# below. A redirect BEFORE the operand or a flag (`python3 2>&1 - <<EOF`,
+# `python3 >f -u <<EOF`), an input redirect between the operand and the
+# operator (`- <f <<EOF`: the later stdin redirect, the heredoc, is the
+# program), a glued chain (`- 2>&1>/dev/null <<EOF`) and an operator glued
+# to a target (`- >o<<EOF`) are read on the opener view instead
+# (`_heredoc_opener_view`, DEF-5120: every redirect blank, the `<<` kept),
+# not by interleaving the unit with the flags, which would give a redirect
+# two parses beside the run after the operand (both reviews of DEF-3077).
+# An input redirect AFTER the operator (`- <<EOF <f`) is read as if the
+# heredoc were the program, where bash feeds `f`: toward friction, as the
+# scan read it with no redirect before the operand. Three over-captures, also named (each fails toward friction, never
 # open): (1) the mask relief above holds only when EVERY top-level head of the
 # command is on `_NON_REPARSING_HEADS` -- `sed <<'MD' > notes.md`, `awk`, `git`
 # or an interpreter as head leaves the whole command raw, and a documentation
@@ -8364,23 +8370,50 @@ def _heredoc_opener_view(scan: str) -> str:
     2>/dev/null - <<'EOF'` read no program, where `python3 - 2>/dev/null
     <<'EOF'` was read since DEF-3077). The scan itself comes back when it
     holds no `<<`, so a call with no heredoc pays one membership test; the
-    view is the shared one, never rebuilt here."""
+    redirect view is the shared one, never rebuilt here, and this one is
+    built once a reading however many readers ask (the second failure-mode
+    review of DEF-5120's batch measured 5 to 8 builds a judgment)."""
     if "<<" not in scan:
         return scan
     view = _redirects_blanked(scan, powershell=False)
     if view is scan:
         return scan
+    return _heredoc_opener_view_built(scan, view)
+
+
+@reading_cache(maxsize=16)
+def _heredoc_opener_view_built(scan: str, view: str) -> str:
+    """`_heredoc_opener_view` for a scan holding ``<<`` and its redirect
+    view, remembered: keyed on the view as well, so a view built another way
+    (a test that blinds `_redirects_blanked`) is never served this one's."""
     chars: list[str] | None = None
     keep_next = False
+    target_next = False
     for m in _OPERAND_TOKEN_RE.finditer(scan):
         tok = m.group()
+        start, end = m.span()
+        is_target, target_next = target_next, False
         if keep_next:
             keep_next = False
-        elif tok.lstrip("0123456789").startswith("<<"):
+        elif not is_target and tok.lstrip("0123456789").startswith("<<"):
+            keep_next = _redirect_words(tok) == 2
+        elif tok[0] not in "'\"" and (at := tok.find("<<")) > 0:
+            # a heredoc operator glued after a redirect's target, one bare
+            # token (`>o<<'PY'`, `2>&1<<EOF`, `o<<` or the scan's neutralised
+            # `1<<` after a bare `2>`): bash splits a bare word at `<`, so
+            # the `<<` on is the operator, put back alone, and the redirect
+            # or target before it stays blank. A token opening `3<<` that no
+            # bare redirect takes as its target is the branch above, whole,
+            # so a non-stdin fd's heredoc still reads no program (review of
+            # DEF-5120's batch, S1; bash refuses a literal `2> 3<<EOF`)
+            start += at
+            tok = tok[at:]
             keep_next = _redirect_words(tok) == 2
         else:
+            # a bare operator ends on its angle, `&` or `|`: the screen keeps
+            # the regex off a body's every word
+            target_next = tok[-1] in "<>&|" and _redirect_words(tok) == 2
             continue
-        start, end = m.span()
         if view[start:end] != tok:
             if chars is None:
                 chars = list(view)

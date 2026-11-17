@@ -9631,6 +9631,13 @@ class TestCatastrophicRmFlagOrderIndependent:
             # compiled on first use: no key a flag could be missing from, and
             # no verdict
             "_carrier_fed_remove_re",
+            # `_heredoc_opener_view_built` (DEF-5120) is keyed on the scan and
+            # its redirect view, and returns that view with each heredoc
+            # operator put back,
+            # the same length: a transform the stdin opener matches on beside
+            # the scan, built on `_redirects_blanked_built`'s view, which never
+            # reaches `_statement_bases` or a judge
+            "_heredoc_opener_view_built",
             # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
             # returns its mask, or the text itself: the masker's transform,
             # which reads no flag (its call graph is pinned stateless in
@@ -24053,12 +24060,23 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         "python3 2>/dev/null -u - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "python3 -u >o - << PY\nimport os; os.system('rm -rf /')\nPY",
         "python3 2>&1 - <<< \"import os; os.system('rm -rf /')\"",
-    ], ids=["before-dash", "before-flag", "between-flag-and-dash", "herestring-before-dash"])
+        "python3 2>&1 - >o<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null - 2>&1<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>/dev/null - 2> o<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 - <f <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 - 2>&1>/dev/null <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+    ], ids=["before-dash", "before-flag", "between-flag-and-dash", "herestring-before-dash",
+            "glued-to-a-target", "glued-to-a-merge", "glued-to-a-bare-operators-target",
+            "input-before-the-heredoc", "glued-chain"])
     def test_a_redirect_before_the_dash_or_a_flag_does_not_hide_a_stdin_program(self, tmp_path, cmd):
         """The stdin opener matches on the redirect view with the heredoc or
         here-string operator kept (DEF-5120's R4, which closed this limit,
         declared until then): bash hands the interpreter the same stdin
-        program wherever the redirect stands."""
+        program wherever the redirect stands. An operator glued to another
+        redirect's target is put back alone, the scan's neutralised `2> 1<<`
+        included (the batch's second code review, S1: allowed until then). An
+        input redirect before the heredoc and a glued chain after the `-` are
+        read on that view too (its S2 and the failure-mode review's N-7)."""
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
     @pytest.mark.parametrize("redirect", ["2>&1 ", ">o ", "-x 2>/dev/null ", ">&2"])
@@ -24070,10 +24088,19 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         "python3 2>&1 x.py <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "python3 >o x.py <<'PY'\nimport os; os.system('rm -rf /')\nPY",
         "bash 2>&1 x.sh <<< 'rm -rf /'",
-    ], ids=["heredoc-script-after-redirect", "heredoc-script-after-output", "herestring-script"])
+        "python3 2>&1 -c 'print(1)' <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 -m json.tool <<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - 3<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+        "python3 2>&1 - >o 3<<'PY'\nimport os; os.system('rm -rf /')\nPY",
+    ], ids=["heredoc-script-after-redirect", "heredoc-script-after-output", "herestring-script",
+            "dash-c-after-redirect", "module-after-redirect", "fd-3-heredoc", "fd-3-heredoc-after-a-target"])
     def test_a_script_operand_after_a_redirect_keeps_the_body_data(self, tmp_path, cmd):
-        """A script operand is the program, and the heredoc or here-string
-        its stdin: a redirect ahead of it ends the run, as with none."""
+        """A script operand, a `-c` program or a `-m` module is the program,
+        and the heredoc or here-string its stdin: a redirect ahead of it ends
+        the run, as with none. A heredoc on another fd (`3<<`) is not stdin,
+        so its body is no program, a redirect's target before it or not (the
+        second code review's N1: each held unpinned, where a widening of the
+        opener view's flag run would wall them with nothing red)."""
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "allow"
 
     @pytest.mark.parametrize("tail", [" 2>&1", " >log", " 2>/dev/null -", " 2>&1 | tee x"],

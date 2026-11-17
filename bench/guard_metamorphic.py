@@ -825,8 +825,8 @@ def check_r3(quick: bool = False) -> dict:
 # (`_ZONE_ROWS`, `_SECRET_ROWS`), read from the class, never copied, each
 # spelled under the plain root for every protected kind the class spells it
 # for. Its transformation is a stderr redirect written at each blank between
-# tokens after the command word, and at the end. Its relation: a denied row
-# stays denied.
+# tokens after the command word, at the end, and on Bash before the command
+# word. Its relation: a denied row stays denied.
 #
 # The transformation is proved null per row and per place by the tool's own
 # parser, never assumed: bash parses both spellings syntax-only (`bash -n`)
@@ -851,15 +851,17 @@ def check_r3(quick: bool = False) -> dict:
 #: verb is handed wherever the parser accepts it.
 R4_REDIRECT: dict[str, str] = {"Bash": "2>/dev/null", "PowerShell": "2>$null"}
 
-#: What a red asks next, printed under R4's violations: the two routes the
-#: dispatcher's sort of R4's reds by job named (DEF-5120). A reader fix is the
-#: first; the second is a ruling, never an exclusion written here, since a row
-#: held out by name hid the kinds no after-check watches (both reviews).
+#: What a red asks next, printed under R4's violations (DEF-5120). R4 holds no
+#: exclusion: a row held out by name hid the kinds no after-check watches
+#: (both reviews), and a red quick run lists every kind of its red rows
+#: (`check_r4`), so a red that shows only a watched zone is never read as the
+#: after-check's job. The helper names are pinned to the hooks module.
+R4_REMEDY_HELPERS = ("_redirects_blanked", "_scan_and_view_matches")
 R4_REMEDY = (
     "next: match the reader that takes this operand by its place on the redirect view as well "
-    "(`_redirects_blanked`, `_scan_and_view_matches` in tools/cc/hooks/_bash_patterns.py); where "
-    "the coverage contract gives the row's job to post_write_check.py's after-check (a zone it "
-    "watches, docs/HOOKS.md), ask the dispatcher to sort the red by job"
+    f"(`{R4_REMEDY_HELPERS[0]}`, `{R4_REMEDY_HELPERS[1]}` in tools/cc/hooks/_bash_patterns.py; "
+    "the row's arm names the class's reader); R4 holds no exclusion, so a red no reader fix "
+    "meets goes to the dispatcher as a ledger row and the run stays red until R4 itself changes"
 )
 
 
@@ -874,22 +876,27 @@ def _operand_class():
 
 def operand_rows(quick: bool = False) -> list[dict]:
     """Every denied row of the two tables, spelled under the plain root, one
-    entry per (row, kind): ``table``, ``key``, ``tool``, ``kind``, ``command``.
-    ``quick`` (the suite's only path) keeps each row's first kind, so every
-    row is judged in CI and a row added moves no other row's sample: a stride
-    over the forms left 72 of 252 rows unjudged there, two of the lane's
-    readers could leave the view with the suite green, and a red left in an
-    unsampled row surfaced on the next lane to shift the stride (the
-    failure-mode review's F1)."""
+    entry per (row, kind): ``table``, ``key``, ``tool``, ``arm``, ``kind``,
+    ``command``. ``quick`` (the suite's only path) keeps each row's first
+    kind, so every row is judged in CI and a row added moves no other row's
+    sample: a stride over the forms left 72 of 252 rows unjudged there, two
+    of the lane's readers could leave the view with the suite green, and a
+    red left in an unsampled row surfaced on the next lane to shift the
+    stride (the failure-mode review's F1). The first kind is a `tools/` path
+    in every table, which the after-check watches; a red quick run re-judges
+    its red rows on every kind (`check_r4`). The full population runs by hand
+    only (`--relation R4` without `--quick`, about 26 s on the Air): no CI
+    job runs it, and on the guard before DEF-5120 no row was red on only some
+    of its kinds (the second failure-mode review, measured)."""
     cls = _operand_class()
     rows = []
     for table in ("_ZONE_ROWS", "_SECRET_ROWS"):
-        for key, (tool, expect, _arm, command) in getattr(cls, table).items():
+        for key, (tool, expect, arm, command) in getattr(cls, table).items():
             if expect != "deny":
                 continue
             forms = cls._plain_forms(command)
             for kind, spelled in forms[:1] if quick else forms:
-                rows.append({"table": table, "key": key, "tool": tool,
+                rows.append({"table": table, "key": key, "tool": tool, "arm": arm,
                              "kind": kind, "command": spelled})
     return rows
 
@@ -994,7 +1001,7 @@ def _scratch_env(scratch: Path) -> dict[str, str]:
     return env
 
 
-def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
+def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = None) -> list[str | None]:
     """Each text's form as bash prints it after parsing, or None where bash
     rejects it. Syntax-only first (`bash -n`, one text per run, so a reject is
     the text's own); the accepted ones are then each defined as a function and
@@ -1005,7 +1012,11 @@ def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
     batch (R4's place after its terminator) took the closing brace and the
     next text's definition up to that text's own terminator, and the batch
     still printed, so the open text got its neighbour's form and the
-    neighbour an empty one (the code review, driven)."""
+    neighbour an empty one (the code review, driven). A form the safeguard
+    below refuses is no form, and its index joins ``drops`` where the caller
+    gives one, so a batch that goes wrong in a new shape is counted rather
+    than read as a place that is not null (the second failure-mode review's
+    N-5: the census reds only at zero null places)."""
     out: list[str | None] = [None] * len(texts)
     with tempfile.TemporaryDirectory(prefix="gm-r4-bash-") as scratch:
         env = _scratch_env(Path(scratch))
@@ -1035,7 +1046,10 @@ def bash_parsed_forms(texts: list[str], bash: str) -> list[str | None]:
                     named = form.replace(f"__r4_{idx} ()", "__r4 ()", 1)
                     # an empty form, or one holding another text's definition,
                     # is a batch that went wrong past bash's notice: no form
-                    out[idx] = named if named.strip() and "__r4_" not in named else None
+                    if named.strip() and "__r4_" not in named:
+                        out[idx] = named
+                    elif drops is not None:
+                        drops.append(idx)
             elif len(batch) > 1:
                 half = len(batch) // 2
                 print_forms(batch[:half])
@@ -1176,11 +1190,18 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
     """A stderr redirect among a denied row's operands never lowers its verdict.
 
     ``rows`` replaces the derived population (a suite test drives a few rows
-    under a blinded reader); left out, it is :func:`operand_rows`."""
+    under a blinded reader); left out, it is :func:`operand_rows`, and a
+    quick run that finds a red judges each red row's other kinds as well
+    before it reports, so the red lists the kinds the after-check does not
+    watch (`cc/`, the settings files) beside the `tools/` one the sample
+    holds (the second failure-mode review's SF-1: 94 such places on the
+    guard before DEF-5120 showed in the full run alone)."""
     bash = shutil.which("bash")
     form = assert_parsers_are_live(bash, pwsh)
     cls = _operand_class()
+    derived = rows is None
     rows = operand_rows(quick) if rows is None else rows
+    drops: list[int] = []
     tools_run = {"Bash": bash is not None, "PowerShell": pwsh is not None}
     candidates = []        # (row, at, text)
     for row in rows:
@@ -1196,7 +1217,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         originals = sorted({c[0]["command"] for c in mine})
         texts = originals + [c[2] for c in mine]
         if tool == "Bash":
-            forms = bash_parsed_forms(texts, bash)
+            forms = bash_parsed_forms(texts, bash, drops)
             parsed = dict(zip(texts, forms))
             for row, _at, text in mine:
                 null_by_text[text] = bash_insertion_is_null(parsed[row["command"]], parsed[text], form)
@@ -1207,6 +1228,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                 null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text])
 
     census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
+    null_by_kind: dict[str, int] = {}
     violations, undenied = [], []
     saved = os.environ.pop("ESPALIER_MAINTENANCE_MODE", None)
     try:
@@ -1236,13 +1258,16 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                     if not null_by_text[text]:
                         continue
                     stats["null"] += 1
+                    null_by_kind[row["kind"]] = null_by_kind.get(row["kind"], 0) + 1
                     if not denied(row, text):
                         violations.append({
                             "relation": "R4",
                             "key": row["key"],
                             "tool": row["tool"],
-                            "detail": (f"{row['key']} ({row['tool']}, {row['kind']}): a stderr redirect "
-                                       f"the parser reads as null lowers the verdict: {text!r}"),
+                            "kind": row["kind"],
+                            "detail": (f"{row['key']} ({row['tool']}, {row['kind']}, arm "
+                                       f"{row.get('arm', '?')}): a stderr redirect the parser reads as "
+                                       f"null lowers the verdict: {text!r}"),
                         })
     finally:
         if saved is not None:
@@ -1252,6 +1277,20 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
             for tool, stats in census.items() if tools_run[tool] and stats["null"] == 0]
     dead += [f"{tool}: no original row is denied on the class's own projects -- the judge is dead"
              for tool, stats in census.items() if tools_run[tool] and stats["originals_denied"] == 0]
+    if drops:
+        dead.append(f"Bash: {len(drops)} parsed form(s) dropped as empty or foreign -- a batch went "
+                    "wrong past bash's notice, and those places were never judged")
+    rejudged = 0
+    if quick and derived and violations:
+        red = {(v["key"], v["tool"]) for v in violations}
+        judged = {(r["key"], r["tool"], r["kind"]) for r in rows}
+        others = [r for r in operand_rows(quick=False)
+                  if (r["key"], r["tool"]) in red and (r["key"], r["tool"], r["kind"]) not in judged]
+        if others:
+            more = check_r4(quick=False, pwsh=pwsh, rows=others)
+            violations += more["violations"]
+            dead += more["dead_separators"]
+            rejudged = len(others)
     return {
         "relation": "R4",
         "description": "a stderr redirect among a denied row's operands must not lower its verdict",
@@ -1263,6 +1302,8 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                         for tool, s in census.items() if tools_run[tool]},
         "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
         "undenied_originals": undenied,
+        "null_by_kind": null_by_kind,
+        "rejudged_kinds": rejudged,
         "remedy": R4_REMEDY,
     }
 
@@ -1346,6 +1387,8 @@ def main(argv: list[str] | None = None) -> int:
                 print("  no violations")
             for v in rep["violations"]:
                 print(f"  ✗ [{v['relation']}] {v['detail']}")
+            if rep.get("rejudged_kinds"):
+                print(f"  the red rows' other {rep['rejudged_kinds']} kind(s) judged too, listed above")
             if rep["violations"] and rep.get("remedy"):
                 print(f"  {rep['remedy']}")
         total = sum(len(r["violations"]) for r in reports)
