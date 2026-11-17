@@ -1752,16 +1752,30 @@ class TestTheRefusalReadsWhatSpentTheTime:
         (b"not json", None),
         (b"[1, 2]", None),
         (b"", None),
-        (b'{"tool_name": "mcp__x__y", "tool_input": {"a": ' + b"[" * 5000 + b"]" * 5000 + b"}}", None),
         (b'\xef\xbb\xbf{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}', True),
     ], ids=["a short command", "no command", "a long command", "not json", "no call", "nothing",
-            "nested past the parsers depth", "a byte-order mark"])
+            "a byte-order mark"])
     def test_the_parent_reads_the_length_from_the_payload_it_holds(self, payload, short):
-        """A parse that raises anything, a payload nested past the parser's
-        depth (RecursionError) included, reads as unread: it never takes the
+        """A parse that raises anything reads as unread: it never takes the
         deadline's refusal with it, which would exit 1 with no deny (the delta's
         reviews, WARN). A byte-order mark reads as `read_stdin_safely` reads it."""
         assert write_guard._a_short_call(payload) is short
+
+    def test_a_payload_nested_past_the_parsers_depth_reads_as_unread(self):
+        """The RecursionError case, at a depth past this interpreter's own
+        parser: the depth that raises is the interpreter's and the platform's
+        (5,000 nested arrays raise on Windows 3.11 to 3.13 and parse on Linux
+        3.12 to 3.14, where the C stack is larger; #698's test-serial cells),
+        so the row nests until the parser raises, and says so if none does."""
+        for depth in (5_000, 100_000, 1_000_000):
+            payload = b'{"tool_name": "mcp__x__y", "tool_input": {"a": ' + b"[" * depth + b"]" * depth + b"}}"
+            try:
+                json.loads(payload)
+            except RecursionError:
+                break
+        else:
+            pytest.fail("no depth up to 1,000,000 raises RecursionError in this interpreter's JSON parser")
+        assert write_guard._a_short_call(payload) is None
 
     @pytest.mark.parametrize(("began", "spent", "short", "start_up", "judged", "split"), [
         (True, False, True, 2.614, 1.386, {"start_up_s": 2.61, "judged_s": 1.39}),
