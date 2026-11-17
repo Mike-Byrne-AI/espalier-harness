@@ -50,33 +50,80 @@ def _bash_patterns_module():
 #: Modules whose functions read only their arguments, for the no-state pin.
 _PURE_MODULES = frozenset({"bisect", "collections.abc", "contextlib", "fnmatch", "functools", "itertools",
                            "posixpath", "re", "shlex", "typing"})
-#: Attributes that read the process's state whatever they are reached through.
-_STATE_ATTRS = frozenset({"cwd", "environ", "expanduser", "expandvars", "getcwd", "getenv", "home", "platform"})
+#: Attributes that read the process's state whatever they are reached through:
+#: its environment and platform, and the disk (`posixpath` is pure but for
+#: these, DEF-2085's review).
+_STATE_ATTRS = frozenset({"cwd", "environ", "expanduser", "expandvars", "getcwd", "getenv", "home", "platform",
+                          "exists", "isdir", "isfile", "islink", "lexists", "listdir", "lstat", "readlink",
+                          "realpath", "resolve", "samefile", "scandir", "stat"})
 _MUTATING_METHODS = frozenset({"add", "append", "clear", "discard", "extend", "insert", "pop", "popitem",
                                "remove", "reverse", "setdefault", "sort", "update"})
 _MUTABLE_FACTORIES = frozenset({"Counter", "OrderedDict", "bytearray", "defaultdict", "deque", "dict", "list", "set"})
-#: The memos whose call graph reaches state their key does not hold, by the
-#: row that owns it: each entry reds once its reads go (shrink-only).
-_MEMOS_WITH_A_FILED_READ = {"_removed_or_relocated_cached": "DEF-2085", "_relief_applies": "DEF-2085"}
+#: The flags a memo's reading raises and never reads, by kind (DEF-2085): a
+#: hit skips the raise its miss made, which leaves the flag as that miss
+#: left it while nothing lowers it between the two, in one hook process.
+#: Each kind has its lowering witness in `TestAMemoServesWhatAFreshReadingWould`
+#: (a list flag: never lowered in the hook tree; the one context variable:
+#: lowered only as a judgment starts and ends), which reads this table, and
+#: the walk passes over exactly these (`test_the_allowances_are_the_ones_the_walk_uses`).
+_RAISED_BY_A_READING = {"FOLD_MOVED_A_QUOTE": "contextvar", "_PS_GLUED_OPENED": "list", "_PS_OPENER_ASKED": "list"}
+#: A table a memo's reading reads through its one owner, each entry the
+#: owner's answer for its key (DEF-2085), witnessed by
+#: `TestAMemoServesWhatAFreshReadingWould`'s seeded fold sample.
+_OWNED_TABLES = {"_PS_FOLDED": "fold_powershell_quotes"}
+#: Memos outside the pattern module that hold a fact of the process rather
+#: than a reading of the judged text, so the no-state pin does not walk them.
+_PER_PROCESS_MEMOS = {
+    ("_integrity", "_make_fallback_dir"): "creates the audit log's fallback directory once a process, by design",
+}
 
 
-def _memoised_readers() -> list[str]:
-    """Every top-level function in `_bash_patterns.py` under a cache decorator."""
+def _memoised_readers(module: str = "_bash_patterns") -> list[str]:
+    """Every top-level function in the hook module under a cache decorator."""
     import ast
-    tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+    tree = ast.parse((HOOKS_DIR / f"{module}.py").read_text(encoding="utf-8"))
     return [n.name for n in tree.body if isinstance(n, ast.FunctionDef)
             and any("cache" in ast.unparse(d) for d in n.decorator_list)]
 
 
-def _state_reads(source: str, root: str) -> tuple[set[str], list[tuple[str, str]]]:
+def _state_reads(
+    source: str, root: str, *, raised: "frozenset[str] | dict[str, str]" = frozenset(),
+    tables: "dict[str, str] | None" = None, keyed_vars: frozenset[str] = frozenset(),
+    used: "set[tuple[str, str]] | None" = None,
+) -> tuple[set[str], list[tuple[str, str]]]:
     """The functions and classes `root`'s call graph reaches in `source`, and
     each read of state on it: a context variable (bar the reading a
-    `reading_cache` memo keys), a module-level container the module mutates,
-    a `global`, a name from an import outside `_PURE_MODULES`, or a
-    `_STATE_ATTRS` attribute. A static superset: a name read where one shares
-    a function's or class's name is walked as a call."""
+    `reading_cache` memo keys, and ``keyed_vars``, the ones a caller's key
+    holds), a module-level container the module mutates, a `global`, a name
+    from an import outside `_PURE_MODULES`, or a `_STATE_ATTRS` attribute. A
+    static superset: a name read where one shares a function's or class's
+    name is walked as a call, and so is each such name inside a module-level
+    value (a table of readers).
+
+    What the walk passes over (DEF-2085), each added to ``used`` when given:
+    a raise of a flag in ``raised`` (``X[0] = True``, ``X.set(True)``; any
+    other touch of it is a read), a touch of a table in ``tables`` by the
+    one function that owns it, and the body of a `reading_cache` memo's
+    ``keyed_by`` key. The key is followed only as a function or a lambda
+    calling one with no argument (any other shape is a read, ``key shape
+    not followed``), that function must take no parameters, and it is a
+    leaf: the reading is walked without descending into it, so a read the
+    answer makes anywhere else, through a helper the key also calls
+    included, is reported."""
     import ast
     tree = ast.parse(source)
+    raises = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Subscript) and isinstance(node.targets[0].value, ast.Name)
+                and node.targets[0].value.id in raised
+                and isinstance(node.value, ast.Constant) and node.value.value is True):
+            raises.add(id(node.targets[0].value))
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "set"
+              and isinstance(node.func.value, ast.Name) and node.func.value.id in raised and not node.keywords
+              and len(node.args) == 1 and isinstance(node.args[0], ast.Constant) and node.args[0].value is True):
+            raises.add(id(node.func.value))
+    tables = tables or {}
     defs = {n.name: n for n in tree.body
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
     values, context_vars, impure = {}, set(), {}
@@ -104,20 +151,45 @@ def _state_reads(source: str, root: str) -> tuple[set[str], list[tuple[str, str]
     mutable = {name for name, value in values.items() if name in mutated and (
         isinstance(value, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp))
         or (isinstance(value, ast.Call) and ast.unparse(value.func).split(".")[-1] in _MUTABLE_FACTORIES))}
-    keyed = set()
+    keyed, key_roots, reads = set(keyed_vars), set(), []
     root_def = defs.get(root)
-    if root_def is not None and any("reading_cache" in ast.unparse(d) for d in getattr(root_def, "decorator_list", [])):
-        keyed = {"_PS_GLUED_OPENING"}
+    for d in getattr(root_def, "decorator_list", []):
+        if "reading_cache" in ast.unparse(d):
+            keyed.add("_PS_GLUED_OPENING")
+            for kw in getattr(d, "keywords", []):
+                if kw.arg != "keyed_by":
+                    continue
+                call = kw.value.body if isinstance(kw.value, ast.Lambda) and not kw.value.args.args else None
+                key = (kw.value.id if isinstance(kw.value, ast.Name) else call.func.id
+                       if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                       and not call.args and not call.keywords else None)
+                if key not in defs:
+                    reads.append((root, "key shape not followed: " + ast.unparse(kw.value)))
+                    continue
+                key_roots.add(key)
+                a = getattr(defs[key], "args", None)
+                if a is None or a.posonlyargs or a.args or a.vararg or a.kwonlyargs or a.kwarg:
+                    reads.append((key, "key root takes arguments"))
     # `reading_cache` itself reads the reading, which keys the memo it builds
-    seen, todo, reads = {"reading_cache"}, [root], []
+    seen, todo = {"reading_cache"}, [root]
     while todo:
         name = todo.pop()
         if name in seen or name not in defs:
             continue
         seen.add(name)
+        if name in key_roots:
+            if used is not None:
+                used.add(("keyed", name))
+            continue
         for node in ast.walk(defs[name]):
             if isinstance(node, ast.Name):
-                if node.id in context_vars and node.id not in keyed:
+                if id(node) in raises:
+                    if used is not None:
+                        used.add(("raised", node.id))
+                elif tables.get(node.id) == name:
+                    if used is not None:
+                        used.add(("table", node.id))
+                elif node.id in context_vars and node.id not in keyed:
                     reads.append((name, "context variable " + node.id))
                 elif node.id in mutable:
                     reads.append((name, "mutable module state " + node.id))
@@ -125,6 +197,10 @@ def _state_reads(source: str, root: str) -> tuple[set[str], list[tuple[str, str]
                     reads.append((name, "impure import " + impure[node.id]))
                 elif node.id in defs:
                     todo.append(node.id)
+                elif node.id in values:
+                    # a table of readers: each function it holds is reached
+                    todo.extend(x.id for x in ast.walk(values[node.id])
+                                if isinstance(x, ast.Name) and x.id in defs)
             elif isinstance(node, ast.Global):
                 reads.append((name, "global " + ", ".join(node.names)))
             elif isinstance(node, ast.Attribute) and node.attr in _STATE_ATTRS:
@@ -16406,6 +16482,38 @@ class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
 #: The typographic quotes, spelled by code point so the rows read plainly.
 _LSQ, _RSQ, _LDQ, _RDQ = chr(0x2018), chr(0x2019), chr(0x201C), chr(0x201D)
 
+#: (tool, typographic, straight, reason): each route a PowerShell program
+#: reaches the two relief gates by, a typographic row the fold takes the
+#: relief from beside its straight twin, which keeps it (DEF-2040). Read
+#: through the hook by `TestATypographicQuoteClosesAPowerShellString` and in
+#: one process, twice, by `TestAMemoServesWhatAFreshReadingWould` (DEF-2085).
+_FOLDED_QUOTE_ROUTES = [
+    ("ps", '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ,
+     '$env:ESPALIER_STOP_GATE="full"; pytest "work/Claude Code/tests"',
+     "ESPALIER_STOP_GATE"),
+    ("ps", "$hint = " + _LSQ + "gc .env" + _RSQ, "$hint = 'gc .env'", "Secret-path access blocked"),
+    ("bash", "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LSQ + "work/Claude Code/tests" + _RSQ + "'",
+     "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
+     "ESPALIER_STOP_GATE"),
+    ("bash", "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
+     "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
+     "ESPALIER_STOP_GATE"),
+    # The code review's two routes: a program `Start-Process` carries and
+    # one a Bash heredoc feeds (each denied at main, allowed at the lane's
+    # 20999849, whose raise was the dispatch's alone).
+    ("ps", "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=\"full\"; pytest "
+           + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
+     "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=''full''; pytest "
+     "''work/Claude Code/tests'''",
+     "ESPALIER_STOP_GATE"),
+    ("bash", "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest " + _LDQ
+             + "work/Claude Code/tests" + _RDQ + "\nEOF",
+     "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest \"work/Claude Code/tests\"\nEOF",
+     "ESPALIER_STOP_GATE"),
+]
+_FOLDED_QUOTE_ROUTE_IDS = ["env-prefix-test-run", "secret-read-mention", "bash-launched-pwsh",
+                           "bash-launched-powershell", "start-process-carried", "bash-heredoc"]
+
 
 class TestATypographicQuoteClosesAPowerShellString:
     """DEF-2040: PowerShell pairs each typographic quote with its straight
@@ -16530,31 +16638,8 @@ class TestATypographicQuoteClosesAPowerShellString:
     # fold takes the relief away there too (the failure-mode review drove
     # `pwsh -Command` from Bash: denied at main, allowed with the flag set at
     # the dispatch alone).
-    @pytest.mark.parametrize("tool, typographic, straight, reason", [
-        ("ps", '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ,
-         '$env:ESPALIER_STOP_GATE="full"; pytest "work/Claude Code/tests"',
-         "ESPALIER_STOP_GATE"),
-        ("ps", "$hint = " + _LSQ + "gc .env" + _RSQ, "$hint = 'gc .env'", "Secret-path access blocked"),
-        ("bash", "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LSQ + "work/Claude Code/tests" + _RSQ + "'",
-         "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
-         "ESPALIER_STOP_GATE"),
-        ("bash", "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
-         "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
-         "ESPALIER_STOP_GATE"),
-        # The code review's two routes: a program `Start-Process` carries and
-        # one a Bash heredoc feeds (each denied at main, allowed at the lane's
-        # 20999849, whose raise was the dispatch's alone).
-        ("ps", "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=\"full\"; pytest "
-               + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
-         "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=''full''; pytest "
-         "''work/Claude Code/tests'''",
-         "ESPALIER_STOP_GATE"),
-        ("bash", "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest " + _LDQ
-                 + "work/Claude Code/tests" + _RDQ + "\nEOF",
-         "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest \"work/Claude Code/tests\"\nEOF",
-         "ESPALIER_STOP_GATE"),
-    ], ids=["env-prefix-test-run", "secret-read-mention", "bash-launched-pwsh", "bash-launched-powershell",
-            "start-process-carried", "bash-heredoc"])
+    @pytest.mark.parametrize("tool, typographic, straight, reason", _FOLDED_QUOTE_ROUTES,
+                             ids=_FOLDED_QUOTE_ROUTE_IDS)
     def test_a_folded_quote_takes_the_gates_relief_away(self, tool, typographic, straight, reason, tmp_path):
         run = _run_ps_guard if tool == "ps" else run_bash_guard
         assert_hook_denied(run(typographic, tmp_path), contains_reason=reason)
@@ -20620,20 +20705,110 @@ class TestAGapAfterAPipeIsRead:
         `pathlib`, `_hook_utils`), or a process attribute (`environ`,
         `expanduser`, `getcwd`, `platform`, ...). A read added there later
         would serve a stale answer and red nothing else (the failure-mode
-        reviews). The roster is every decorated memo, never a hand list;
-        `_MEMOS_WITH_A_FILED_READ` names the two that reach state today, by
-        their row, and reds once their reads go."""
+        reviews). The roster is every decorated memo, never a hand list.
+        Since DEF-2085 a read the memo's ``keyed_by`` key makes through the
+        same code is keyed, and a raise of `_RAISED_BY_A_READING` or a touch
+        of an `_OWNED_TABLES` table by its owner is no read; until then two
+        memos stood here as filed exceptions."""
         bp = _bash_patterns_module()
         source = Path(bp.__file__).read_text(encoding="utf-8")
-        seen, reads = _state_reads(source, memo)
+        seen, reads = _state_reads(source, memo, raised=_RAISED_BY_A_READING, tables=_OWNED_TABLES)
         if memo == "mask_inert_syntax":
             # the walk reached the masker's own scanners, not just its name
             assert {"_walk_shell_roles", "_scan_head_word"} <= seen, sorted(seen)
-        if memo in _MEMOS_WITH_A_FILED_READ:
-            assert reads, (f"{memo} reads no unkeyed state now: drop it from "
-                           f"_MEMOS_WITH_A_FILED_READ and strike {_MEMOS_WITH_A_FILED_READ[memo]}")
-        else:
-            assert not reads, reads
+        if memo == "_removed_or_relocated_cached":
+            # the walk reached the temp reader through cmd's target, and its key
+            assert {"_cmd_target", "_bash_temp_var_target", "_temp_reading"} <= seen, sorted(seen)
+        assert not reads, reads
+
+    def test_the_allowances_are_the_ones_the_walk_uses(self):
+        """Each declared allowance passes over a touch on some memo's call
+        graph, and every touch passed over is declared: an allowance no
+        memo needs any more reds here instead of standing as an excuse, and
+        the keyed reads are exactly the temp reading's (DEF-2085)."""
+        bp = _bash_patterns_module()
+        source = Path(bp.__file__).read_text(encoding="utf-8")
+        used: set[tuple[str, str]] = set()
+        for memo in _memoised_readers():
+            _state_reads(source, memo, raised=_RAISED_BY_A_READING, tables=_OWNED_TABLES, used=used)
+        assert {n for kind, n in used if kind == "raised"} == set(_RAISED_BY_A_READING), used
+        assert {n for kind, n in used if kind == "table"} == set(_OWNED_TABLES), used
+        assert {n for kind, n in used if kind == "keyed"} == {"_temp_reading"}, used
+
+    def test_the_walk_passes_over_only_what_it_is_told(self):
+        """The allowances' must-trip control: a synthetic module whose memo
+        raises a declared flag, lowers it, reads it, reads a table outside
+        its owner, reads its key's state and reads state its key does not
+        hold, directly, through a helper the key also calls, and through a
+        table of readers: every one but the raise, the owner's touch and the
+        key's own body the walk must report, and a key in a shape whose value
+        could hold less than it reads is no key."""
+        source = (
+            "import contextvars, os\n"
+            "_FLAG = [False]\n"
+            "_SEEN: dict = {}\n"
+            "_V = contextvars.ContextVar('_V', default=False)\n"
+            "_STACK = [False]\n"
+            "def _up():\n    _FLAG[0] = True\n    _V.set(True)\n"
+            "def _down():\n    _FLAG[0] = False\n    _V.set(False)\n"
+            "def _look():\n    return _FLAG[0] or _V.get()\n"
+            "def _own(t):\n    _SEEN[t] = t\n    return _SEEN.get(t)\n"
+            "def _peek(t):\n    return _SEEN.get(t)\n"
+            "def _push():\n    _STACK.append(True)\n"
+            "def _env(name):\n    return os.environ.get(name)\n"
+            "def _key():\n    return (_STACK[-1], _env('A'))\n"
+            "def _home():\n    return _env('HOME')\n"
+            "def _tabled():\n    return os.getcwd()\n"
+            "_READERS = {'x': _tabled}\n"
+            "@reading_cache(maxsize=1, keyed_by=lambda: _key())\n"
+            "def memo(t):\n    return _up(), _down(), _look(), _own(t), _peek(t), _key(), _home(), _READERS['x']()\n"
+        )
+        used: set[tuple[str, str]] = set()
+        _, reads = _state_reads(source, "memo", raised=frozenset({"_FLAG", "_V"}),
+                                tables={"_SEEN": "_own"}, used=used)
+        assert {("_down", "mutable module state _FLAG"), ("_down", "context variable _V"),
+                ("_look", "mutable module state _FLAG"), ("_look", "context variable _V"),
+                ("_peek", "mutable module state _SEEN"), ("_env", "impure import os"),
+                ("_env", "state attribute .environ"), ("_tabled", "state attribute .getcwd")} <= set(reads), reads
+        assert not any(where in ("_up", "_own", "_key") for where, _ in reads), reads
+        assert {("raised", "_FLAG"), ("raised", "_V"), ("table", "_SEEN"), ("keyed", "_key")} <= used, used
+        # without the key, the key's own reads are the memo's
+        _, unkeyed = _state_reads(source.replace(", keyed_by=lambda: _key()", ""), "memo",
+                                  raised=frozenset({"_FLAG", "_V"}), tables={"_SEEN": "_own"})
+        assert ("_key", "mutable module state _STACK") in unkeyed, unkeyed
+        # a key whose value could hold less than its function read is no key
+        for shape in ("lambda: _key()[0]", "lambda: _key().count(1)", "lambda: (_key(), 1)", "lambda: _env('A')"):
+            _, narrowed = _state_reads(source.replace("lambda: _key()", shape), "memo",
+                                       raised=frozenset({"_FLAG", "_V"}), tables={"_SEEN": "_own"})
+            assert ("_key", "mutable module state _STACK") in narrowed or any(
+                "key shape not followed" in what or "takes arguments" in what for _, what in narrowed), (shape, narrowed)
+
+    def test_every_other_hook_modules_memos_read_no_state(self):
+        """The memos the other hook modules keep (DEF-2085's sister sites):
+        each, discovered by its decorator in every hook module, reaches no
+        state of its own module but the pattern module, and every pattern
+        reader it names reads nothing its key misses, under the same
+        allowances; a memo that holds a fact of the process is declared in
+        `_PER_PROCESS_MEMOS`, and every declared one is still there."""
+        import ast
+        bp_source = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
+        found = {(path.stem, memo) for path in sorted(HOOKS_DIR.glob("*.py")) if path.stem != "_bash_patterns"
+                 for memo in _memoised_readers(path.stem)}
+        assert {("_speedbump", "_ps_scan_pair"), ("_speedbump", "_ps_scan_text")} <= found, found
+        assert set(_PER_PROCESS_MEMOS) <= found, found
+        for module, memo in sorted(found - set(_PER_PROCESS_MEMOS)):
+            source = (HOOKS_DIR / f"{module}.py").read_text(encoding="utf-8")
+            defs = {n.name: n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+            keyed = any("reading_cache" in ast.unparse(d) for d in defs[memo].decorator_list)
+            seen, reads = _state_reads(source, memo)
+            assert {what for _, what in reads} <= {"impure import _bash_patterns"}, (module, memo, reads)
+            named = {node.attr for fn in seen if fn in defs for node in ast.walk(defs[fn])
+                     if isinstance(node, ast.Attribute) and getattr(node.value, "id", None) == "_bash_patterns"}
+            assert bool(named) == bool(reads), (module, memo, named)
+            for reader in named:
+                _, inner = _state_reads(bp_source, reader, raised=_RAISED_BY_A_READING, tables=_OWNED_TABLES,
+                                        keyed_vars=frozenset({"_PS_GLUED_OPENING"}) if keyed else frozenset())
+                assert not inner, (module, memo, reader, inner)
 
     def test_the_state_walk_sees_each_kind_of_read(self):
         """The no-state pin's must-trip control: a synthetic module whose
@@ -20666,6 +20841,241 @@ class TestAGapAfterAPipeIsRead:
             assert expected in kinds, (expected, reads)
         # `_TABLE` is a container nothing mutates: a table, not state
         assert not any("_TABLE" in what for _, what in reads), reads
+
+
+class TestAMemoServesWhatAFreshReadingWould:
+    """DEF-2085: the two memos whose call graph reached state their key did
+    not hold (`_removed_or_relocated_cached`, `_relief_applies`), driven in
+    one process with the state changed between two calls on one text: the
+    row's two shapes, a temp variable's value changed between two judgments,
+    and state one leg sets that the next leg reads. Each answer a memo serves
+    is held to the answer a fresh reading gives under the same state."""
+
+    @staticmethod
+    def _spy(bp, monkeypatch, name: str) -> list:
+        """Each call of the memo ``name``: its arguments, the answer it
+        served and the answer its unwrapped reader gives at once, under the
+        same state. Nested calls come through the spy too, so a stale entry
+        is caught where it is served."""
+        memo = getattr(bp, name)
+        calls: list = []
+
+        def spy(*args, **kwargs):
+            served = memo(*args, **kwargs)
+            calls.append((args, served, memo.__wrapped__(*args, **kwargs)))
+            return served
+
+        monkeypatch.setattr(bp, name, spy)
+        return calls
+
+    def test_the_operand_memo_reads_the_temp_root_the_environment_holds(self, monkeypatch):
+        """The first shape: the value of a temp variable cmd's remove names
+        (`_cmd_target`, DEF-2049) changes between two readings of one text in
+        one process, as a test that sets it does."""
+        import uuid
+        bp = _bash_patterns_module()
+        cmd = f"echo {uuid.uuid4().hex}; cmd //c rd /s /q %TEMP%"
+        monkeypatch.setenv("TEMP", "/tmp/job-a")
+        assert ("delete", "/tmp/job-a") in bp.iter_removed_or_relocated_operands(cmd)
+        monkeypatch.setenv("TEMP", "/tmp/job-b")
+        assert ("delete", "/tmp/job-b") in bp.iter_removed_or_relocated_operands(cmd)
+
+    def test_a_nested_programs_operands_are_read_under_each_legs_own_reading(self, monkeypatch, tmp_path):
+        """The second shape, in the order one judgment runs its legs: the
+        secret leg reads the command's operands, then the hard tier, whose
+        text sets a temp variable itself, reads a nested program's removals
+        through its directory walk with that variable left unread
+        (`_TEMP_VARS_SET`). Both reach the memo with the nested program's
+        text, each under its own reading."""
+        import uuid
+        bp = _bash_patterns_module()
+        monkeypatch.setenv("TEMP", "/tmp/job-a")
+        calls = self._spy(bp, monkeypatch, "_removed_or_relocated_cached")
+        cmd = (f"export TEMP=/tmp/job-{uuid.uuid4().hex}; bash -c 'cmd //c rd /s /q %TEMP%'; "
+               "cd build && rm -rf *")
+        bp.iter_removed_or_relocated_operands(cmd)
+        bp.has_catastrophic_recursive_rm(cmd, str(tmp_path), str(tmp_path))
+        nested = [c for c in calls if c[0][0] == "cmd //c rd /s /q %TEMP%"]
+        assert len(nested) >= 2, [c[0] for c in calls]
+        stale = [(args, served, fresh) for args, served, fresh in calls if served != fresh]
+        assert not stale, stale
+
+    @pytest.mark.parametrize("tool, typographic, straight, reason", _FOLDED_QUOTE_ROUTES,
+                             ids=_FOLDED_QUOTE_ROUTE_IDS)
+    def test_a_second_judgment_in_one_process_keeps_the_folds_refusal(
+            self, tool, typographic, straight, reason, monkeypatch, tmp_path):
+        """The fold's raise (`FOLD_MOVED_A_QUOTE`) is lowered as each judgment
+        starts, and a memo hit skips the raise its miss made, so an
+        in-process caller's second judgment can find it lowered: on every
+        route DEF-2040 drives, each judged twice in one process beside its
+        straight twin, a fold outside the memos raises it, and no verdict
+        moves (the witness for `_RAISED_BY_A_READING`'s fold flag; driven
+        before the lane too, where a hit skipped the raise on the Bash
+        route and the second judgment refused all the same)."""
+        import contextlib
+        import io
+        wg = _load_write_guard()
+        carry_protected_tree(tmp_path, HOOKS_DIR / "write_guard.py")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        tool_name = "PowerShell" if tool == "ps" else "Bash"
+
+        def verdict(command: str) -> str:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = wg._run_main({"tool_name": tool_name, "tool_input": {"command": command}})
+            said = out.getvalue()
+            return ("deny: " + reason if reason in said else "deny") if rc or '"deny"' in said else "allow"
+
+        bp = wg._bash_patterns if hasattr(wg, "_bash_patterns") else _bash_patterns_module()
+
+        def hits() -> int:
+            # `cache_info` reads the enclosing reading's cache: count both
+            total = 0
+            for on in (bp.glued_opening_off, bp.glued_opening_on):
+                with on():
+                    total += (bp._relief_applies.cache_info().hits
+                              + bp._removed_or_relocated_cached.cache_info().hits)
+            return total
+
+        refused = "deny: " + reason
+        first = verdict(typographic)
+        before = hits()
+        again = verdict(typographic)
+        if tool == "bash":
+            # the second judgment is served from the memos, the shape at issue
+            # (back to back: a judgment between them can evict the entries)
+            assert hits() > before, "the second judgment never hit a memo"
+        assert [first, again, verdict(straight), verdict(straight)] == [refused, refused, "allow", "allow"]
+
+    def test_a_flag_a_reading_raises_is_never_lowered_in_the_hook_tree(self):
+        """`_RAISED_BY_A_READING`'s list flags, every one the table declares:
+        each touch of one, in every hook module, by its name or through the
+        module, is a subscript of it (a read, or a store that is a raise),
+        and nothing rebinds, aliases, imports, mutates, names by string or
+        declares one `global` but its definition, so between a miss that
+        raised one and a later hit in one process nothing lowers it
+        (DEF-2085)."""
+        import ast
+        flags = {flag for flag, kind in _RAISED_BY_A_READING.items() if kind == "list"}
+        assert flags == {"_PS_GLUED_OPENED", "_PS_OPENER_ASKED"}, flags
+
+        def is_flag(node) -> bool:
+            return getattr(node, "id", None) in flags or getattr(node, "attr", None) in flags
+
+        files = sorted(HOOKS_DIR.glob("*.py"))
+        assert len(files) >= 10, files
+        defined, bad = [], []
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            parent = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Name, ast.Attribute)) and is_flag(node):
+                    up = parent.get(id(node))
+                    definition = (isinstance(up, ast.Assign) and up.targets == [node] and isinstance(node, ast.Name))
+                    if not definition and not (isinstance(up, ast.Subscript) and up.value is node):
+                        bad.append((path.name, node.lineno, "touches it whole: " + ast.unparse(up or node)))
+                elif isinstance(node, (ast.ImportFrom, ast.Import)) and flags & {a.name for a in node.names}:
+                    bad.append((path.name, node.lineno, ast.unparse(node)))
+                if isinstance(node, ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name) and t.id in flags:
+                            defined.append((path.name, t.id, ast.unparse(node.value)))
+                        elif is_flag(t) or (isinstance(t, ast.Subscript) and is_flag(t.value) and not (
+                                isinstance(node.value, ast.Constant) and node.value.value is True)):
+                            bad.append((path.name, node.lineno, ast.unparse(node)))
+                elif isinstance(node, (ast.AugAssign, ast.Delete)):
+                    targets = node.targets if isinstance(node, ast.Delete) else [node.target]
+                    bad.extend((path.name, node.lineno, ast.unparse(node)) for t in targets
+                               if is_flag(t) or is_flag(getattr(t, "value", None)))
+                elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and is_flag(node.func.value):
+                    bad.append((path.name, node.lineno, ast.unparse(node)))
+                elif isinstance(node, ast.Constant) and node.value in flags:
+                    bad.append((path.name, node.lineno, f"names {node.value} by string"))
+                elif isinstance(node, ast.Global) and flags & set(node.names):
+                    bad.append((path.name, node.lineno, "global " + ", ".join(node.names)))
+        assert sorted(defined) == [("_bash_patterns.py", "_PS_GLUED_OPENED", "[False]"),
+                                   ("_bash_patterns.py", "_PS_OPENER_ASKED", "[False]")], defined
+        assert not bad, bad
+
+    def test_the_fold_raise_is_lowered_only_as_a_judgment_starts_and_ends(self):
+        """`_RAISED_BY_A_READING`'s fold flag: the pattern module only ever
+        raises it, the guard lowers it in `_lower_the_fold` alone, which only
+        `_one_judgment` calls, and no other hook module names it, so it
+        stands raised from a miss to a later hit within one judgment, and a
+        hook process makes one (DEF-2085)."""
+        import ast
+        flag = "FOLD_MOVED_A_QUOTE"
+        # this lowering discipline is this flag's alone: a context-variable
+        # flag declared beside it needs a witness of its own
+        assert {f for f, kind in _RAISED_BY_A_READING.items() if kind == "contextvar"} == {flag}
+        assert set(_RAISED_BY_A_READING.values()) == {"contextvar", "list"}, _RAISED_BY_A_READING
+
+        def touches(path: Path) -> list[tuple[str, str]]:
+            out = []
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for top in tree.body:
+                where = getattr(top, "name", "<module>")
+                for node in ast.walk(top):
+                    if isinstance(node, ast.Call) and getattr(node.func, "attr", None) in ("set", "reset") and (
+                            getattr(node.func.value, "id", None) == flag
+                            or getattr(node.func.value, "attr", None) == flag):
+                        out.append((where, ast.unparse(node)))
+                    elif isinstance(node, ast.Constant) and node.value == flag:
+                        out.append((where, "names it by string"))
+                    elif isinstance(node, ast.Name) and node.id == "_lower_the_fold" and where != "_lower_the_fold":
+                        out.append((where, "calls _lower_the_fold"))
+            return out
+
+        by_file = {p.name: touches(p) for p in sorted(HOOKS_DIR.glob("*.py"))}
+        assert sorted(by_file["_bash_patterns.py"]) == [
+            ("<module>", "names it by string"),           # the context variable's own name
+            ("fold_powershell_quotes", "FOLD_MOVED_A_QUOTE.set(True)")], by_file["_bash_patterns.py"]
+        assert sorted(by_file["write_guard.py"]) == [   # the judgment's start and its end
+            ("_lower_the_fold", "names it by string"),
+            ("_one_judgment", "calls _lower_the_fold"), ("_one_judgment", "calls _lower_the_fold")], (
+            by_file["write_guard.py"])
+        wg_tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        (lower,) = [n for n in wg_tree.body if getattr(n, "name", None) == "_lower_the_fold"]
+        assert [ast.unparse(c) for c in ast.walk(lower) if isinstance(c, ast.Call)
+                and getattr(c.func, "attr", None) == "set"] == ["raised.set(False)"]
+        others = {name: hits for name, hits in by_file.items() if name not in ("_bash_patterns.py", "write_guard.py")}
+        assert not any(others.values()), others
+
+    def test_the_fold_table_serves_the_fold_its_key_asks(self):
+        """`_OWNED_TABLES`, every table it declares: only its owner names it
+        in the module; and for the fold table, the one there is, over a
+        seeded sample of texts drawn from the fold's own tokens (nested
+        subexpressions in strings among them), each text's answer from the
+        owner twice in a row, the second served from its entry, is the fold
+        made fresh, on each reading (DEF-2085)."""
+        import ast
+        import random
+        bp = _bash_patterns_module()
+        tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
+        for table, owner in _OWNED_TABLES.items():
+            owners = {getattr(top, "name", "<module>") for top in tree.body for node in ast.walk(top)
+                      if isinstance(node, ast.Name) and node.id == table}
+            assert owners == {"<module>", owner}, (table, owners)
+        # the sample below is this table's witness: a table declared beside it needs its own
+        assert set(_OWNED_TABLES) == {"_PS_FOLDED"}, _OWNED_TABLES
+        nested = '"$(Write-Output ' + _LSQ + "a" + _RSQ + ')"'
+        tokens = [*bp.PS_TYPOGRAPHIC_QUOTES, "'", '"', "$(", ")", "@'\n", "\n'@", '@"\n', '\n"@',
+                  "${", "}", "`", "#", "<#", "#>", "\n", "; ", "gc .env", "x", " ", nested, nested]
+        rng = random.Random(2085)
+        texts = ["".join(rng.choice(tokens) for _ in range(rng.randint(1, 14))) for _ in range(600)]
+        for on in (bp.glued_opening_off, bp.glued_opening_on):
+            with on():
+                reading = bp.glued_reading()
+                bp._PS_FOLDED.clear()
+                served = 0
+                for text in texts:
+                    fresh = bp._fold_powershell_quotes(text)
+                    assert bp.fold_powershell_quotes(text) == fresh, ascii(text)
+                    held = (reading, text) in bp._PS_FOLDED
+                    served += held
+                    assert bp.fold_powershell_quotes(text) == fresh, ascii(text)
+                assert served >= 400, served
 
 
 #: (tool, command, verdict) rows for DEF-2078: a comment that ends in a
