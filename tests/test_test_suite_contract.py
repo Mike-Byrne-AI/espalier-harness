@@ -6942,3 +6942,100 @@ class TestThePwshSpawnCensusReadsBothWays:
         assert _names_a_pwsh(ast.parse("def _find():\n    return shutil.which('pwsh')\n"))
         assert _names_a_pwsh(ast.parse("ARGV = ['C:/ps/powershell.exe', '-NonInteractive']\n"))
         assert not _names_a_pwsh(ast.parse("DOC = 'pwsh -NonInteractive -Command 1'\nX = which(name)\n"))
+
+
+# ---------------------------------------------------------------------------
+# DEF-2096: a row that reads write_guard's crash as its answer says so at its
+# spawn (the helpers' ``crash_expected``, or a file's own wrapper keyword
+# ``crash``), and is rostered here with its reason. The opt-in is a
+# suppression: a must-deny row that adds it passes on a guard that judged
+# nothing, which is the defect the row closed (the failure-mode review).
+# ---------------------------------------------------------------------------
+
+#: The spawns that take the opt-in, the shared helpers and the wrappers that
+#: hand it on.
+_CRASH_SPAWNS = frozenset({"run_hook_through", "retry_a_budget_miss", "not_a_budget_miss", "run_hook",
+                           "judged_within_budget", "_invoke_hook_stdin", "_run_payload"})
+_CRASH_KEYWORDS = frozenset({"crash_expected", "crash"})
+
+#: Every function that passes the opt-in on, keyed by path::qualname, with
+#: its reason. A wrapper handing on its own caller's keyword is not a site
+#: (its callers are). The roster only shrinks, unless a row drives the crash.
+_CRASH_EXPECTED_SITES: dict[str, str] = {
+    "tests/test_benchmark_pass_conditions.py::TestACrashIsNoVerdict.test_an_expected_crash_is_the_answer_at_once": (
+        "the bench reader's own opt-in, driven with a crash it was told to expect"),
+    "tests/test_hook_spawn.py::TestACrashIsAMissUnlessTheRowExpectsIt.test_a_row_that_expects_the_crash_reads_it_at_once": (
+        "the spawn helpers' own opt-in, driven with a stand-in child that crashes"),
+    "tests/test_hook_spawn.py::TestACrashIsAMissUnlessTheRowExpectsIt.test_the_long_bound_reads_a_crash_apart": (
+        "not_a_budget_miss's opt-in, driven with a stand-in child that crashes"),
+    "tests/test_hooks.py::TestWriteGuardTypeCoercion.test_main_umbrella_fails_closed_on_bash_non_str_command": (
+        "drives the crash guard with a non-str Bash command and asserts its internal-error deny"),
+    "tests/test_hooks_start_on_a_kept_helper.py::_run_hook": (
+        "runs each deny hook on a planted or kept tree; the planted cells assert the refusal to start, "
+        "the intact ones assert there is none"),
+    "tests/test_hooks_start_on_a_kept_helper.py::TestAFaultInTheJudgingChildsRunner.test_a_runner_that_raises_is_named_and_its_restore_passes": (
+        "plants a raise in the parent's runner and asserts its refusal of an unrelated restore"),
+    "tests/test_hooks_start_on_a_kept_helper.py::TestAWedgedGuardNamesWhatRaised.test_a_kept_reasons_module_without_the_template_keeps_the_placed_text": (
+        "asserts the crash guard's placed text under a kept, older reasons module"),
+    "tests/test_hooks_start_on_a_kept_helper.py::TestAWedgedGuardNamesWhatRaised.test_a_name_a_kept_pattern_module_lacks_names_it_on_the_first_mutation": (
+        "asserts the kept-file crash text the first mutation draws"),
+    "tests/test_hooks_start_on_a_kept_helper.py::TestTheNamedRestoreRepairsTheGuard.test_the_command_the_refusal_names_repairs_the_wedge": (
+        "reads the restore command out of the wedged guard's refusal, then asserts the restored guard judges"),
+    "tests/test_hooks_start_on_a_kept_helper.py::TestTheNamedRestoreRepairsTheGuard.test_the_last_resorts_command_repairs_it_from_any_directory": (
+        "reads the restore command out of write_guard's last resort, where _start_refusal cannot import"),
+    "tests/test_hooks_start_on_a_kept_helper.py::restores": (
+        "the pooled build of the wedged-guard rows, each run as written: the row's restore passes or "
+        "is refused, and each test reads which"),
+    "tests/test_hooks_start_on_a_kept_helper.py::restores.<locals>.one": (
+        "the one row of that pooled build, and its taker read of the wedged refusal"),
+}
+
+
+def _crash_sites(rel: str, source: str) -> list[str]:
+    """The ``path::qualname`` of every function that passes the crash opt-in
+    to a spawn: a keyword of ``_CRASH_KEYWORDS`` that is no literal False and
+    no hand-on of a same-named parameter."""
+    sites: list[str] = []
+    for qual, fn, _e in _functions_with_qualnames(ast.parse(source)):
+        for call in ast.walk(fn):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+            if callee in _CRASH_SPAWNS and any(
+                    kw.arg in _CRASH_KEYWORDS
+                    and not (isinstance(kw.value, ast.Constant) and kw.value.value is False)
+                    and not (isinstance(kw.value, ast.Name) and kw.value.id in _CRASH_KEYWORDS)
+                    for kw in call.keywords):
+                sites.append(f"{rel}::{qual}")
+                break
+    return sites
+
+
+def _live_crash_sites() -> list[str]:
+    return [site for rel, source in _contract_sources() for site in _crash_sites(rel, source)]
+
+
+class TestEveryCrashOptInIsRostered:
+    def test_every_site_is_rostered_with_its_reason(self):
+        stray = sorted(set(_live_crash_sites()) - set(_CRASH_EXPECTED_SITES))
+        assert stray == [], (
+            "these rows read write_guard's crash as their answer and are not rostered in "
+            f"_CRASH_EXPECTED_SITES: a row that drives the crash on purpose names its reason there; "
+            f"any other row is passing on a guard that judged nothing, so fix the guard: {stray}")
+
+    def test_the_roster_has_no_dead_entries(self):
+        dead = sorted(set(_CRASH_EXPECTED_SITES) - set(_live_crash_sites()))
+        assert dead == [], f"rostered but no longer opting in (renamed or removed): drop it: {dead}"
+
+    def test_the_scan_sees_an_opt_in_and_passes_a_hand_on(self):
+        """Earn-the-red for the scan: a literal opt-in at a spawn is a site; a
+        literal False, a hand-on of the caller's keyword and a reader call are
+        not."""
+        source = (
+            "def opted():\n    run_hook_through(argv, env=env, crash_expected=True)\n"
+            "def wrapped():\n    _run_payload(root, 'write_guard.py', payload, audit, crash=True)\n"
+            "def off():\n    run_hook_through(argv, env=env, crash_expected=False)\n"
+            "def hands_on(crash_expected=False):\n    run_hook_through(argv, env=env, crash_expected=crash_expected)\n"
+            "def reads():\n    holds_a_budget_refusal(out, crash_expected=True)\n")
+        assert _crash_sites("t.py", source) == ["t.py::opted", "t.py::wrapped"]

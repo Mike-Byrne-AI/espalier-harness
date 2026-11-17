@@ -174,6 +174,37 @@ def _run_deployed_write_guard(
     return proc.returncode, proc.stdout
 
 
+#: How a deny opens that write_guard gave a call it never judged because it
+#: failed itself: its crash guard's and its runner's refusals, and its refusal
+#: to start or to run below the floor (DEF-2096's sibling; the bench's
+#: ``bench/run_benchmark.py::CRASH_HEADS`` is the copy every rendering of those
+#: texts is driven through beside this one).
+_CRASH_HEADS = ("write_guard internal error", "write_guard cannot start", "write_guard cannot run here")
+
+
+def _crash_head(stdout: str) -> str | None:
+    """The head of the deny in ``stdout`` when the deployed write_guard gave
+    it as it failed itself, to the first ``;`` or sentence end; None for any
+    other answer. Such a deny judged nothing, so it proves no bypass class."""
+    try:
+        parsed = json.loads(stdout or "")
+    except (json.JSONDecodeError, ValueError):
+        return None
+    hso = parsed.get("hookSpecificOutput") if isinstance(parsed, dict) else None
+    reason = hso.get("permissionDecisionReason") if isinstance(hso, dict) else None
+    if not (isinstance(reason, str) and reason.startswith(_CRASH_HEADS)):
+        return None
+    return reason.split(";", 1)[0].split(". ", 1)[0][:200]
+
+
+def _deny_failure(label: str, returncode: int, stdout: str) -> str | None:
+    """The failure line for one bypass probe, or None where it was denied."""
+    crash = _crash_head(stdout)
+    if crash is not None:
+        return f"{label} was refused unjudged: the deployed write_guard failed itself ({crash})"
+    return None if _is_deny(returncode, stdout) else f"{label} was NOT denied"
+
+
 def _is_deny(returncode: int, stdout: str) -> bool:
     """True iff the hook emitted a protected-decision deny (exit 0 + JSON)."""
     if returncode != 0 or not stdout.strip():
@@ -218,16 +249,16 @@ def check_live_deny_path(repo_root: Path) -> CheckResult:
          "tool_input": {"file_path": ".claude/settings.json", "content": "x"}},
         repo_root,
     )
-    if not _is_deny(rc, out):
-        failures.append("protected-zone write (.claude/settings.json) was NOT denied")
+    if (failure := _deny_failure("protected-zone write (.claude/settings.json)", rc, out)) is not None:
+        failures.append(failure)
 
     # (b) dangerous bash
     rc, out = _run_deployed_write_guard(
         {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
         repo_root,
     )
-    if not _is_deny(rc, out):
-        failures.append("dangerous bash (rm -rf /) was NOT denied")
+    if (failure := _deny_failure("dangerous bash (rm -rf /)", rc, out)) is not None:
+        failures.append(failure)
 
     # (c) set kill-switch — write a temp settings.json carrying disableAllHooks
     #     and point CLAUDE_PROJECT_DIR at it (project_dir=ks_root) while still
@@ -253,8 +284,8 @@ def check_live_deny_path(repo_root: Path) -> CheckResult:
              "tool_input": {"file_path": "src/app.py", "content": "x"}},
             repo_root, project_dir=ks_root,
         )
-        if not _is_deny(rc, out):
-            failures.append("set kill-switch (disableAllHooks: true) was NOT denied")
+        if (failure := _deny_failure("set kill-switch (disableAllHooks: true)", rc, out)) is not None:
+            failures.append(failure)
 
     return CheckResult(
         "C-1 live-deny-path", passed=not failures,
