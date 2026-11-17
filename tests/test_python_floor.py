@@ -3329,6 +3329,7 @@ SESSION_START_PRE_FLOOR_IMPORTS = frozenset({
     ("__future__", "annotations"), ("enum", None), ("importlib.util", None), ("json", None),
     ("os", None), ("re", None), ("shutil", None), ("subprocess", None), ("sys", None),
     ("tempfile", None), ("textwrap", None), ("threading", None), ("time", None),
+    ("collections", "Counter"),  # DEF-2065: the banner splits the tolerated entries by count; 3.10 has it
     ("datetime", "datetime"), ("datetime", "timedelta"), ("datetime", "timezone"), ("pathlib", "Path"),
     ("typing", "Any"), ("typing", "Callable"), ("typing", "NamedTuple"),
 })

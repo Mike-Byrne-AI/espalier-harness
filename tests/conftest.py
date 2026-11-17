@@ -132,6 +132,25 @@ def _reset_speedbump_snapshot_record():
 
 
 @pytest.fixture(autouse=True)
+def _reset_the_spend_watch():
+    """DEF-2097's spend watch is per-process state: `_speedbump.ON_SPEND`,
+    which write_guard's judging child sets, and write_guard's readings of it
+    (`_ONE_SHOT_SPENT`, `_SPENDS_CLOSED`). A test that drove the child's path
+    in process and left them set would make every later speed-bump fire in
+    that worker wait on the closed spends until its timeout, in an unrelated
+    test (the failure-mode review's #3). Reset every loaded copy of both
+    modules before each test, as the snapshot record is reset above."""
+    for mod in list(sys.modules.values()):
+        path = getattr(mod, "__file__", None) or ""
+        if path.endswith("_speedbump.py") and hasattr(mod, "ON_SPEND"):
+            mod.ON_SPEND = None
+        elif path.endswith("write_guard.py") and hasattr(mod, "_SPENDS_CLOSED"):
+            mod._SPENDS_CLOSED = False
+            mod._ONE_SHOT_SPENT = None
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _restore_interpreter_warn_flag():
     """Keep ``cli._INTERPRETER_WARNING_EMITTED`` from leaking between tests.
 

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5118",
+ "subject": "tools/cc/hooks/_integrity.py",
+ "cmd": "python3 -c \"import sys; sys.path[:0] = ['tools/cc/hooks', 'tools/cc']; import _integrity as i; print(i._hooks_config_voided_by({'PostToolUse': [{'hooks': [{'type': 'http'}]}]}) is not None)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "eff2ffb22366",
+ "text_sha": "e54f14a57777",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD e61a1fa051a1)"
+}

@@ -18,7 +18,8 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypeVar
@@ -1042,37 +1043,99 @@ def _hook_object_schema_error(hook: object) -> str | None:
     return None
 
 
-def _hooks_config_voided_by(hooks_cfg: object) -> str | None:
-    """Why Claude Code would load NO hooks from this ``hooks`` block (it
-    refuses the whole block when any group or hook object is malformed), or
-    None."""
+#: No voiding problem tolerated: the voiding rule as ci_guard and doctor read
+#: it. An in-session reader names it on purpose; the readers take no default.
+NO_TOLERATED: tuple[str, ...] = ()
+
+
+def _problem_key(event: object, offending: object) -> str:
+    """A voiding problem's tolerance key: its event and a digest of the
+    offending value as JSON spells it -- never the problem's wording, which an
+    upgrade mid-session may change. So a session tolerates the very entries it
+    started with, each under its event, and no other entry of the same shape.
+    A value nested past what the encoder can spell (about 100,000 levels on
+    3.14, which the loader still reads) is keyed by its type alone."""
+    try:
+        body = json.dumps(offending, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    except RecursionError:  # fail-open: ok deliberate -- an entry no person writes keys by its type; each one still counts once
+        body = "unspellable " + type(offending).__name__
+    return "%s:%s" % (event, hashlib.sha256(body.encode("ascii")).hexdigest()[:32])
+
+
+#: The events where Claude Code applies nothing from a file holding an entry
+#: it cannot load (driven on 2.1.321: "nothing it sits in is applied").
+WHOLE_FILE_EVENTS = ("PreToolUse", "PermissionRequest")
+
+
+def problem_event(key: str) -> str:
+    """The event a tolerance key (``_problem_key``) was made under."""
+    return key.rsplit(":", 1)[0]
+
+
+def _hooks_config_problems(hooks_cfg: object) -> list[tuple[str, str]]:
+    """(wording, tolerance key) for every malformed group or hook object in
+    this ``hooks`` block, in walk order; the first wording is
+    ``_hooks_config_voided_by``'s answer. A session whose SessionStart ran from
+    a file holding some tolerates exactly those (DEF-2065: Claude Code 2.1.321
+    ignores such an entry under PostToolUse, ConfigChange or Stop and applies
+    nothing from the file for one under PreToolUse or PermissionRequest). A
+    group whose matcher is malformed still has its hooks read, so the first
+    problem in it hides none behind it."""
+    problems: list[tuple[str, str]] = []
     if not isinstance(hooks_cfg, dict):
-        return None
+        return problems
     for event, entries in hooks_cfg.items():
         if not isinstance(entries, list):
-            return ("hooks.%s is %s, not a list of hook groups"
-                    % (event, type(entries).__name__))
+            problems.append(("hooks.%s is %s, not a list of hook groups"
+                             % (event, type(entries).__name__), _problem_key(event, entries)))
+            continue
         for entry in entries:
             if not isinstance(entry, dict):
-                return ("hooks.%s: a hook group is %s, not an object"
-                        % (event, type(entry).__name__))
+                problems.append(("hooks.%s: a hook group is %s, not an object"
+                                 % (event, type(entry).__name__), _problem_key(event, entry)))
+                continue
             if "matcher" in entry and not isinstance(entry["matcher"], str):
-                return ('hooks.%s: a group\'s "matcher" is %s, not a string'
-                        % (event, type(entry["matcher"]).__name__))
+                problems.append(('hooks.%s: a group\'s "matcher" is %s, not a string'
+                                 % (event, type(entry["matcher"]).__name__), _problem_key(event, entry)))
             if "hooks" not in entry:
-                return 'hooks.%s: a group has no "hooks" list' % event
+                problems.append(('hooks.%s: a group has no "hooks" list' % event, _problem_key(event, entry)))
+                continue
             hooks_list = entry["hooks"]
             if not isinstance(hooks_list, list):
-                return ('hooks.%s: a group\'s "hooks" is %s, not a list'
-                        % (event, type(hooks_list).__name__))
+                problems.append(('hooks.%s: a group\'s "hooks" is %s, not a list'
+                                 % (event, type(hooks_list).__name__), _problem_key(event, entry)))
+                continue
             for hook in hooks_list:
                 problem = _hook_object_schema_error(hook)
                 if problem:
-                    return "hooks.%s: %s" % (event, problem)
+                    problems.append(("hooks.%s: %s" % (event, problem), _problem_key(event, hook)))
+    return problems
+
+
+def _hooks_config_voided_by(hooks_cfg: object, tolerated: Sequence[str] = NO_TOLERATED) -> str | None:
+    """Why Claude Code would load NO hooks from this ``hooks`` block (it
+    refuses the whole block when any group or hook object is malformed), or
+    None: the first problem ``tolerated`` does not cover. ``tolerated`` holds
+    tolerance keys with repeats, each covering one problem: a second copy of a
+    tolerated entry is a new one."""
+    left = Counter(tolerated)
+    for problem, key in _hooks_config_problems(hooks_cfg):
+        if left[key] > 0:
+            left[key] -= 1
+            continue
+        return problem
     return None
 
 
-def unwired_governance_gates(rel: str, data: object, repo_root: Path) -> list[str]:
+def voiding_problems(data: object) -> list[tuple[str, str]]:
+    """(wording, tolerance key) for every problem the voiding rule finds in a
+    parsed settings object's ``hooks`` block (``_hooks_config_problems``);
+    none for anything that is not an object."""
+    return _hooks_config_problems(data.get("hooks") if isinstance(data, dict) else None)
+
+
+def unwired_governance_gates(rel: str, data: object, repo_root: Path, *,
+                             tolerated: Sequence[str]) -> list[str]:
     """One finding per blocking governance hook that is on disk under
     ``tools/cc/hooks/`` but has no executable, correctly-matched wiring in
     ``data`` (the parsed settings file named ``rel``), led by a finding naming
@@ -1082,8 +1145,11 @@ def unwired_governance_gates(rel: str, data: object, repo_root: Path) -> list[st
     object -- wires nothing, so every deployed gate is reported: the caller
     decides whether an absent file counts (``config_guard`` on a mid-session
     deletion does; the CI and SessionStart readers only see a present file).
-    A tree with no hook files on disk has nothing to report."""
-    voided_by, unwired = _gate_wiring(data, repo_root)
+    A tree with no hook files on disk has nothing to report. ``tolerated``
+    holds the voiding problems this session's Claude Code applied the file
+    with (``read_wired_tolerated``); each is set aside, as Claude Code set it
+    aside, and voids nothing."""
+    voided_by, unwired = _gate_wiring(data, repo_root, tolerated)
     findings: list[str] = []
     if voided_by:
         findings.append(
@@ -1117,18 +1183,26 @@ def deployed_governance_gates(repo_root: Path) -> list[str]:
     return [s for s in sorted(_GOVERNANCE_BLOCKING_HOOKS) if (hooks_dir / s).is_file()]
 
 
-def live_governance_gates(data: object, repo_root: Path) -> list[str]:
-    """The deployed blocking gates ``data`` wires executably, sorted."""
-    _voided, unwired = _gate_wiring(data, repo_root)
+def live_governance_gates(data: object, repo_root: Path, *,
+                          tolerated: Sequence[str]) -> list[str]:
+    """The deployed blocking gates ``data`` wires executably, sorted, with the
+    ``tolerated`` voiding problems set aside (``unwired_governance_gates``)."""
+    _voided, unwired = _gate_wiring(data, repo_root, tolerated)
     return [s for s in deployed_governance_gates(repo_root) if s not in unwired]
 
 
-def _gate_wiring(data: object, repo_root: Path) -> tuple[str | None, list[str]]:
+def _gate_wiring(data: object, repo_root: Path,
+                 tolerated: Sequence[str] = NO_TOLERATED) -> tuple[str | None, list[str]]:
     """(why the whole hooks block is void or None, the deployed gates it leaves
-    unwired in roster order): the verdict ``unwired_governance_gates`` words."""
+    unwired in roster order): the verdict ``unwired_governance_gates`` words.
+    A tolerated problem voids nothing and wires no gate: a malformed hook
+    object fails the exact ``command`` form, and a group whose matcher is not
+    a string is skipped whole, as Claude Code skips it (driven on 2.1.321:
+    ``matcher ignored``, and the group's hook never ran, under Stop and under
+    PostToolUse)."""
     wirings: list[tuple[str, str, str]] = []
     hooks = data.get("hooks") if isinstance(data, dict) else None
-    voided_by = _hooks_config_voided_by(hooks)
+    voided_by = _hooks_config_voided_by(hooks, tolerated)
     if isinstance(hooks, dict) and voided_by is None:
         for event, entries in hooks.items():
             if not isinstance(entries, list):
@@ -1137,11 +1211,11 @@ def _gate_wiring(data: object, repo_root: Path) -> tuple[str | None, list[str]]:
                 if not isinstance(entry, dict):
                     continue
                 # Absent matcher reads "" (fire on all); a present non-string
-                # one is malformed and must fail the coverage check.
+                # one is reached only tolerated, and its group wires nothing.
                 if "matcher" in entry:
                     matcher = entry["matcher"]
                     if not isinstance(matcher, str):
-                        matcher = "\x00invalid"
+                        continue
                 else:
                     matcher = ""
                 inner = entry.get("hooks")
@@ -1358,10 +1432,100 @@ def read_wired_gates(repo_root: Path) -> list[str] | None:
     return gates
 
 
-def write_wired_gates(repo_root: Path, gates: list[str]) -> None:
+def read_wired_tolerated(repo_root: Path) -> tuple[str, ...]:
+    """The tolerance keys, repeats kept, of the malformed entries this
+    session's Claude Code applied the project file with: the ones the file held
+    when SessionStart recorded it (DEF-2065), which config_guard reads a
+    changed file under. Empty for no snapshot, none recorded, or a record that
+    is not a list of strings, so the file is then judged as the voiding rule
+    reads it (fail-closed)."""
+    try:
+        record = load_json_dict_safe(repo_root.joinpath(*WIRED_GATES_SNAPSHOT).read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- no snapshot tolerates nothing, so the file is judged strictly (fail-closed)
+        return NO_TOLERATED
+    tolerated = record.get("tolerated") if isinstance(record, dict) else None
+    if not isinstance(tolerated, list) or not all(isinstance(p, str) for p in tolerated):
+        return NO_TOLERATED
+    return tuple(tolerated)
+
+
+def write_wired_gates(repo_root: Path, gates: list[str], *,
+                      tolerated: Sequence[str]) -> None:
+    """The snapshot: the gates, and the tolerance keys of the voiding problems
+    the session's Claude Code applied the file with, repeats kept, where there
+    are any (a key older readers pass over; a file with none is written as it
+    always was). ``tolerated`` takes no default: a writer names
+    ``NO_TOLERATED`` on purpose, never by leaving it out."""
     path = repo_root.joinpath(*WIRED_GATES_SNAPSHOT)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _hook_utils.atomic_write_text(path, json.dumps({"gates": sorted(gates)}) + "\n")
+    record: dict[str, list[str]] = {"gates": sorted(gates)}
+    if tolerated:
+        record["tolerated"] = sorted(tolerated)
+    _hook_utils.atomic_write_text(path, json.dumps(record) + "\n")
+
+
+#: The hook a SessionStart run from the project file proves loaded, as a path
+#: a hook object's string ends a word with (``args`` or a shell command).
+SESSION_START_HOOK = "tools/cc/hooks/session_start.py"
+
+
+def _hook_names_path(hook: dict, path: str) -> bool:
+    """Does one of the hook object's strings, separators folded to ``/``, hold
+    ``path`` as a whole path tail: after the string's start, a separator, a
+    quote, whitespace, ``=`` or ``}``, and before its end, a quote, whitespace
+    or a shell operator (``; & | ) < >``)?"""
+    strings: list[str] = []
+    for value in hook.values():
+        if isinstance(value, str):
+            strings.append(value)
+        elif isinstance(value, list):
+            strings.extend(v for v in value if isinstance(v, str))
+    for text in strings:
+        text = text.replace("\\", "/")
+        at = text.find(path)
+        while at != -1:
+            end = at + len(path)
+            if (at == 0 or text[at - 1] in "/\"' \t\n=}") and (end == len(text) or text[end] in "\"' \t\n;&|)<>"):
+                return True
+            at = text.find(path, at + 1)
+    return False
+
+
+def settings_name_hook(data: object, event: str, path: str, *, loadable_only: bool) -> bool:
+    """Does a parsed settings object hold, under ``hooks.<event>``, a hook
+    object naming ``path`` (``_hook_names_path``)? With ``loadable_only``, only
+    an entry Claude Code can load counts: the voiding rule finds no problem in
+    it or its group, so an ignored entry never proves it ran. Without it, any
+    hook object counts, for a source that might have run the hook."""
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    groups = hooks.get(event) if isinstance(hooks, dict) else None
+    for group in groups if isinstance(groups, list) else ():
+        inner = group.get("hooks") if isinstance(group, dict) else None
+        if loadable_only and isinstance(group, dict) and "matcher" in group and not isinstance(group["matcher"], str):
+            continue
+        for hook in inner if isinstance(inner, list) else ():
+            if not isinstance(hook, dict) or (loadable_only and _hook_object_schema_error(hook)):
+                continue
+            if _hook_names_path(hook, path):
+                return True
+    return False
+
+
+def other_settings_naming_hook(repo_root: Path, event: str, path: str) -> list[str]:
+    """The labels of the settings files beside the project one -- the local
+    file, then the user file -- with any hook object naming ``path`` under
+    ``hooks.<event>`` (``settings_name_hook``): a source that may have run the
+    hook instead of the project file. Each is read as Claude Code loads it
+    (``_settings_object``: a byte-order mark read; absent, unreadable or not an
+    object sets nothing). A source beyond those files (managed settings, a
+    plugin, a ``--settings`` file) is not read, a declared limit (DEF-2065)."""
+    files: list[tuple[str, Path]] = [(LOCAL_SETTINGS_REL, repo_root / LOCAL_SETTINGS_REL)]
+    try:
+        files.append((user_settings_label(), user_settings_path()))
+    except RuntimeError:  # fail-open: ok deliberate -- no home directory: no user file for Claude Code to load either
+        pass
+    return [label for label, file in files
+            if settings_name_hook(_settings_object(file), event, path, loadable_only=False)]
 
 
 def clear_wired_gates(repo_root: Path) -> None:
@@ -1374,14 +1538,20 @@ def clear_wired_gates(repo_root: Path) -> None:
 UNWIRED_KINDS = ("deleted", "unreadable", "unwired")
 
 
-def record_unwired_pending(repo_root: Path, lost: list[str], *, kind: str) -> None:
+def record_unwired_pending(repo_root: Path, lost: list[str], *, kind: str,
+                           malformed: bool = False) -> None:
     """Note a refused change for the next PostToolUse to tell Claude: the
-    ConfigChange refusal itself reaches no one (the protocol pin)."""
+    ConfigChange refusal itself reaches no one (the protocol pin). ``malformed``:
+    the changed file holds an entry the voiding rule reads as malformed, so
+    the repair refuses until it is removed (DEF-2065); a key older readers
+    pass over."""
     path = repo_root.joinpath(*UNWIRED_PENDING)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _hook_utils.atomic_write_text(path, json.dumps(
-        {"lost": sorted(lost), "kind": kind if kind in UNWIRED_KINDS else "unwired",
-         "announced": False}) + "\n")
+    record: dict[str, object] = {"lost": sorted(lost), "kind": kind if kind in UNWIRED_KINDS else "unwired",
+                                 "announced": False}
+    if malformed:
+        record["malformed"] = True
+    _hook_utils.atomic_write_text(path, json.dumps(record) + "\n")
 
 
 def clear_unwired_pending(repo_root: Path) -> None:
@@ -1407,6 +1577,10 @@ def take_unwired_notice(repo_root: Path) -> str | None:
         "unreadable": ("left it unreadable as JSON, which Claude Code reads as no hooks at all",
                        "repair the file's JSON"),
     }.get(kind, ("left these governance gates unwired: " + ", ".join(lost),
+                 "remove the malformed hook entry the file holds (`espalier merge-settings "
+                 "--repair` reads the file as void while it stands), run the repair, then "
+                 "restore the entry, or wire the gates back by hand"
+                 if record.get("malformed") is True else
                  "run `espalier merge-settings --repair`"))
     return (
         f"[WARN] Espalier-Harness: a change to {PROJECT_SETTINGS_REL} {what}. "
@@ -2188,9 +2362,10 @@ DENIAL_EVENT_TYPES = frozenset({
     "pretooluse_blocked_internal_error",
     # write_guard's judgment outran its time budget and the call was refused
     # (DEF-1160); ``details.tool`` names the tool, never the command. The
-    # parent's refusal at the hard deadline (DEF-3048) never parsed the call,
-    # so its record carries ``details.bound`` ("child") and ``details.bytes``
-    # (the payload's length) in place of the tool.
+    # parent's refusal at the hard deadline (DEF-3048) judges nothing and
+    # parses the payload only there, for the command's length (DEF-2097), so
+    # its record carries ``details.bound`` ("child"), ``details.bytes`` (the
+    # payload's length) and ``details.short`` in place of the tool.
     "pretooluse_blocked_time_budget",
     "configchange_blocked_kill_switch",
     # A project settings change that unwires a governance gate the
@@ -2298,6 +2473,9 @@ CHANNELLED_ADVISORY_EVENT_TYPES = frozenset({
     "session_settings_unreadable",
     "session_kill_switch_detected",
     "session_governance_unwired",
+    "session_settings_void_applied",
+    "session_settings_void_unproven",
+    "session_settings_void_since_start",
     "session_integrity_drift",
     # post_write_check: told to Claude (advise_warn).
     "post_write_integrity_drift",

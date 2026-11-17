@@ -2302,9 +2302,20 @@ judging, and asks for the command split into shorter ones (batches of a
 hundred or two paths). Where the judging child had not begun judging at the
 parent's deadline (below), it asks instead for the same command once more,
 since a busy machine's start-up, not the command, spent the time and no
-judgment ran; a child that had begun keeps the split, since its judgment may
-have spent a one-shot nudge keyed on the command, which the identical
-re-issue would pass unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
+judgment ran. It asks the same where the child had begun, no speed-bump
+checkpoint had spent its one-shot, start-up took at least judging's share of
+the bound, and the call carries no command or one under 1,500 characters
+(`write_guard.py`'s `_RE_ISSUE_GATE_CHARS`): a shorter command would pay the
+same start-up, and the same first-use compiles of the patterns it reads, in
+its own process, and under the gate no measured command's length adds what a
+split would save. On the Windows box the gate sits under every crossing
+measured for a Bash delete list, a Bash `git add` and a PowerShell
+`Remove-Item` list, counting the compiles and the per-command cost that a
+split repeats. Past the gate the split stays, as before, whether or not it
+would pay there. Where a checkpoint
+had spent its one-shot, the command is long, or the spend, a share or the
+length is unread, it keeps the split, since that nudge is keyed on the
+command and the identical re-issue would pass it unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
 and `WRITE_GUARD_START_UP_BUDGET`; before the start-up was read, 10 ordinary
 calls in a week on a loaded Windows box were refused and each told to
 split). It writes one `pretooluse_blocked_time_budget` record that
@@ -2326,7 +2337,16 @@ start-up a busy machine spends on any command and no judgment has run
 before it; the patterns a judgment reads compile on their first use, after
 the line. The parent takes the line out of what it relays and, at its
 deadline, reads it for whether the child had begun and when, so its refusal
-says which of start-up and judging spent the time.
+says which of start-up and judging spent the time. The child writes a second
+line as a checkpoint is about to spend its one-shot, before the spend
+(`_speedbump.py`'s `ON_SPEND`, set as the pattern path imports `_speedbump`,
+wherever that load happens), and the parent reads that too, beside the
+command's length from the payload it holds, read only at its deadline. The
+child's own budget refusal reads the same facts in its own process, closing
+the spends before it reads the mark, after which a spend waits for the exit
+instead of landing. A kept, older `_speedbump.py` without `ON_SPEND` leaves
+the spends unwatched, and the child says one was spent at its import, so the
+split stands as before.
 A child still running 2.0 s after the hook's start (`_BUILD_THE_REFUSAL_AT_S`)
 has the parent build its refusal while it waits: the reasons, the audit
 helpers, the project root, the log's path and the lock's first-use imports,
@@ -2676,8 +2696,23 @@ its hook lists merge with the project file's, so an emptied one unwires no
 gate; of the kill-switch shapes, `disableAllHooks` alone is read there. A
 well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
 does not void the file (Claude Code loads each beside the gates, driven); one
-missing its required field (`url`; `server` and `tool`; `prompt`) voids the
-whole hooks block, and the change is judged so. `espalier clean-generated`'s in-session
+missing its required field (`url`; `server` and `tool`; `prompt`) reads as
+voiding the whole hooks block, and a change is judged so, though Claude Code
+2.1.321 applied nothing from such a file only where the entry sat under
+`PreToolUse` or `PermissionRequest`, and elsewhere ignored the entry alone
+(driven, one run for each shape and event tried). So at every process start
+SessionStart records the gates a file that reads as void wires with each
+malformed entry set aside, and keeps those entries, by content and event, as
+tolerated (a clear or a compaction keeps the record): a start the hook made from
+the file proves Claude Code applied it. A change is judged with exactly those
+entries set aside; any other malformed entry, a copy of one included, still
+voids, and a group whose matcher is not a string wires nothing, as Claude Code
+drops it (driven). SessionStart says so on its own line: that Claude Code applied
+the file where a loadable entry in it names `tools/cc/hooks/session_start.py`,
+neither the local nor the user settings file names that hook, and no such entry
+sits under `PreToolUse` or `PermissionRequest`; that it cannot tell otherwise;
+and, after a clear or a compaction, an entry added since the start, apart.
+`espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
 through, so its two-run flow still works.
@@ -2686,7 +2721,9 @@ The refusal is silent by protocol and the file on disk keeps the change, so the
 NEXT session would start without those gates. `config_guard` notes it, and the
 next PostToolUse tells Claude once, with the restore:
 `espalier merge-settings --repair` (or `espalier init .` when the file was
-deleted), then `espalier doctor`.
+deleted), then `espalier doctor`. Where the file holds a malformed hook entry,
+the repair reads it as void and refuses, so the restore says to remove the entry
+first, run the repair, then restore the entry.
 
 **The user settings file and a settings `env` map.** Claude Code names a change
 to `~/.claude/settings.json` (or `settings.json` under `CLAUDE_CONFIG_DIR`) by
@@ -3715,7 +3752,7 @@ inside a window of twenty.
 | `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set, or (`details.kind` `user_settings_write`) a Write or Edit of the user settings file is denied because its result would turn the hooks off or loosen a gate; `details.findings` names each switch and `details.file_path` the file by label, never the home path |
 | `pretooluse_blocked_secret_path` | refusal | a read of a secret-bearing path (a dotenv file, a `secrets/` directory, a credentials file) is denied — for Read/Edit/Grep, and for a Bash or PowerShell command that would print it |
 | `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); `details.where` is `parent` where `write_guard`'s runner of its judging child raised, with `details.file` and `details.line` where the raise was placed; one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
-| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text, and `details.start_up_s` and `details.judged_s` how the budget split; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline, `details.bytes` the payload's length, `details.began` whether the child had begun judging (`null` where its stderr was not read) and, where its clock was read, `details.start_up_s` and `details.judged_s` |
+| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text, `details.began` whether it had begun judging, `details.spent` whether a speed-bump checkpoint had spent its one-shot (`null` in the hook judging in place), `details.short` whether the call was under the re-issue's gate, and `details.start_up_s` and `details.judged_s` how the budget split; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline, `details.bytes` the payload's length, `details.began` whether the child had begun judging and `details.spent` whether it had said a spend (each `null` where its stderr was not read), `details.short` the gate's reading of the payload (`null` where it did not read as a call) and, where its clock was read, `details.start_up_s` and `details.judged_s` |
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_unwired` | refusal | a project settings change that would unwire a governance gate the session runs is denied; `details.findings` names the gates |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |
