@@ -20792,7 +20792,7 @@ class TestAGapAfterAPipeIsRead:
         `_PER_PROCESS_MEMOS`, and every declared one is still there."""
         import ast
         bp_source = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
-        found = {(path.stem, memo) for path in sorted(HOOKS_DIR.glob("*.py")) if path.stem != "_bash_patterns"
+        found = {(path.stem, memo) for path in sorted(checkout_glob(HOOKS_DIR, "*.py")) if path.stem != "_bash_patterns"
                  for memo in _memoised_readers(path.stem)}
         assert {("_speedbump", "_ps_scan_pair"), ("_speedbump", "_ps_scan_text")} <= found, found
         assert set(_PER_PROCESS_MEMOS) <= found, found
@@ -20963,7 +20963,7 @@ class TestAMemoServesWhatAFreshReadingWould:
         def is_flag(node) -> bool:
             return getattr(node, "id", None) in flags or getattr(node, "attr", None) in flags
 
-        files = sorted(HOOKS_DIR.glob("*.py"))
+        files = sorted(checkout_glob(HOOKS_DIR, "*.py"))
         assert len(files) >= 10, files
         defined, bad = [], []
         for path in files:
@@ -21027,7 +21027,7 @@ class TestAMemoServesWhatAFreshReadingWould:
                         out.append((where, "calls _lower_the_fold"))
             return out
 
-        by_file = {p.name: touches(p) for p in sorted(HOOKS_DIR.glob("*.py"))}
+        by_file = {p.name: touches(p) for p in sorted(checkout_glob(HOOKS_DIR, "*.py"))}
         assert sorted(by_file["_bash_patterns.py"]) == [
             ("<module>", "names it by string"),           # the context variable's own name
             ("fold_powershell_quotes", "FOLD_MOVED_A_QUOTE.set(True)")], by_file["_bash_patterns.py"]
