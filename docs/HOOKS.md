@@ -73,7 +73,15 @@ it does not block either.
 
 Fires once at the start of every Claude Code session. Loads repo context
 into Claude's working memory: repo name, git branch, dirty-file count,
-ESPALIER_MEMORY.md summary, active blueprint, and harness health status. Also
+ESPALIER_MEMORY.md summary, active blueprint, and harness health status. On a
+fresh session (source `startup` or `clear`) it advances the cognitive-blueprint
+chain: it starts a new node, after capturing the prior node's reasoning for the
+banner. `resume`, `compact` and an unlabeled source load the chain read-only,
+and bootstrap a node only where no blueprint file exists. It writes the
+session's start time and, on every source but `resume` and `compact`, clears
+the previous session's per-session flags (the stop-gate, speed-bump and
+reinject counters); a `compact` clears only the sync advisories' once-a-session
+flags. Also
 scans for kill-switch settings (`disableAllHooks` in either settings file, a
 governed event's hook list emptied or reduced to no-ops in the project file)
 and integrity drift, and names anything that looks wrong in the banner's
@@ -263,8 +271,8 @@ then a count, and a tail that says whose text it is and where the bodies are
 (`/inbox`). One fetch, then local reads, every one of them taking what is
 left of the mail's own share of the pull-request block's eight-second budget,
 read before the pull requests (the two blocks share one deadline under the
-hook's fifteen, and the mail goes first, so a slow `gh` costs the pull-request
-lines, which `/inbox board` also reads, and never the mail or the `Orders:`
+hook's fifteen, and the mail goes first, so a slow `gh` or fetch costs the
+pull-request lines, which `/inbox board` also reads, and never the mail or the `Orders:`
 line below); a fetch that could not be made is said in the line beside what
 was fetched before. No name, no fetch and no line -- except that a clone which
 names no machine but already holds another machine's mail ref (a plain `git
@@ -293,8 +301,8 @@ message from the seat driver (`tools/cc/seat.py`): run `/inbox`, then `/inbox
 board`, then start the worker loop (on a clear or a compaction, which the loop
 survives, start no second one where `CronList` lists it), and the command that prints the whole
 message (`<python> tools/cc/seat.py brief <seat>`, spelled with the host's
-interpreter). It reads the refs the mail line already read and spawns nothing
-of its own; on the dispatcher seat, a seat with no job, or a clone whose
+interpreter). It reads the refs the mail line already read, spawns nothing
+of its own and only reports; on the dispatcher seat, a seat with no job, or a clone whose
 dispatcher setting is unusable there is no line. `seat.py launch <seat>` passes
 that first message as the session's prompt, so a seat launched through it needs
 no paste; the line is for one started by hand.
@@ -305,7 +313,9 @@ clone's (a linked worktree reads its clone's config, so two sessions would
 otherwise share one mail ref, one set of claims and one id block). The name is
 `<clone>-<worktree directory>`, set with `git config --worktree
 espalier.machine` after turning on `extensions.worktreeConfig`, and read back.
-A `Seat:` line before `Mail:` says so. Until `espalier.toml [id_blocks]` gives
+A `Seat:` line before `Mail:` says so; where the name it derives is
+another worktree's, the naming is refused and the line prints the commands that
+name the worktree by hand. Until `espalier.toml [id_blocks]` gives
 the new name a line of its own, the worktree mints ids from its clone's
 block, through the reservation record every worktree of the clone shares.
 Only a fresh session (`startup` or `clear`) is named. A resumed or compacted
@@ -374,7 +384,7 @@ spawns then runs that engine, not this tree's (measured on a worktree seat:
 its full tier ran the main checkout's engine in every CLI test). The
 interpreter is `python3`, then `python`, on the PATH Claude Code was launched
 with, asked from an empty temporary directory where `espalier` would come
-from, without importing it: about 20 ms, capped at one second, after the
+from (`importlib.util.find_spec`), without importing it: about 20 ms, capped at one second, after the
 network reads. The line names both locations and the fix: a `.venv` of the
 checkout's own with its `bin` (`Scripts` on Windows) first on PATH, or, when
 that `.venv` exists already, to put it first. It is silent when the two agree,
@@ -387,7 +397,8 @@ with the interpreter that is really running.
 
 And on a fresh session (source `startup` or `clear`) it first catches the
 checkout up and clears the leftover worktrees beside it
-(`tools/cc/checkout_sync.py`), before anything above is read, so the branch,
+(`tools/cc/checkout_sync.py`), the one SessionStart job that changes the tree,
+before anything above is read, so the branch,
 the memory digest and the hooks themselves describe the tree the session works
 in. A lane shipped with auto-merge armed lands while nobody is watching, and
 the next session used to open on the finished branch, behind `main` by
@@ -501,7 +512,8 @@ one whose hooks had not loaded. The network reads have budgets; the local
 work around them (the zone baseline, the integrity and audit-log reads, the
 banner build) has none, and on the Windows box 13 of 95 starts ran past the
 timeout.
-So a start counts thirteen seconds from the moment the hook's module loads,
+So a start counts thirteen seconds (`_WALL_SECONDS`) from the moment the
+hook's module loads,
 and if it is still running then, it prints a short banner and ends. The
 banner's first line says where it stopped (`SessionStart (short: cut at 13.0 s
 in the zone baseline; ...)`), a `Cut:` line says the hooks are loaded and the
@@ -786,6 +798,12 @@ A `/clear` by hand ends it too. The verbs live here, never in the mod's text,
 which rides the clear's re-prime brief: a verb named there would run in the
 new window over a consumed marker. A hold beside a refusal is the newer (the
 ask takes a hold off), so the hold is said, with the refusals named after it.
+After an unfinished handoff (the marker's outcome opens `left unfinished: `)
+the verbs are the unfinished handoff's: never a commit, since a commit and the
+plain `/handoff` would push the half-built lane; `python tools/cc/ship.py
+handoff --unfinished "<what is left>"` again folds the edit, the plan or a
+moved HEAD (after `git reset --soft` back to the handoff's head) into the
+set-aside commit and re-arms the marker.
 
 **What the mod wrote at the clear into this session, once.** The banner at the
 clear's own SessionStart runs beneath the mod's handler and cannot see the
@@ -2132,7 +2150,10 @@ Reads of secret-bearing paths -- dotenv files (a dotenv TEMPLATE, the
 `.env.example`, `.env.sample`, `.env.template` or `.env.dist` a repo commits
 so a newcomer can copy it, is not one, and a copier's destination is a
 write, so `cp .env.example .env` runs), a `secrets/` directory, AWS
-and JSON credential files -- are denied on the `Read` tool and, when a
+and JSON credential files -- are denied on the `Read`, `Grep`, `Edit` and
+`NotebookEdit` tools (`_CONTENT_SURFACING_TOOLS`, checked before the guard's
+early return for a read-only tool, so a read-only tool is refused too) and,
+when a
 read verb names the path in the same statement, on Bash (`cat`, `head`,
 `cp`, `source`, ...) and on the PowerShell tool (`Get-Content`, `gc`,
 `type`, `Format-Hex`, `Copy-Item`, the dot-source, ...), each shell read
@@ -2258,7 +2279,11 @@ A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no
-longer emits (see `CLAUDE.md`'s hook table for why).
+longer emits: any `Read()` deny rule makes Claude Code prove which files a Bash
+command reads before running it, and a command whose read set it cannot
+resolve statically gets a permission prompt that bypass mode cannot suppress.
+The set is enumerated in `write_guard.check_secret_path_access`, and it is not
+a protected zone: the zone rosters and their checks are apart from it.
 
 **The time budget.** Claude Code cancels a hook at its wired `timeout` (5 s
 for this one), and a cancelled PreToolUse command hook does not block: the
@@ -2821,7 +2846,9 @@ validates the result:
   string in it holds a recursive delete of a variable beside a glob, says so
   once a session for that file and delete, with the line: the shape of the
   scratch driver behind the harness's 2026-09-17 incident, where an unset
-  variable turned the glob into the filesystem root. Claude is told to ask the
+  variable turned the glob into the filesystem root (its record,
+  `docs/incidents/2026-09-17-real-shell-fixture-wipe.md`, rules 1 and 2, is in
+  the harness's own repository, not deployed). Claude is told to ask the
   guard's classifier about such a row and never run it, and the operator is
   told on their own line. Not on an adopter's tree: the shape's calibration is
   this repository's own transcripts and files (record
@@ -3331,7 +3358,10 @@ with no message records `[subagent:<type>] completed` with no evidence.
 When the payload carries a message but names no transcript, the evidence
 is the literal `SubagentStop.last_assistant_message`: it says where the
 lead came from, and there is no file to open. It never blocks the
-subagent — a SubagentStop block would deadlock the parent turn.
+subagent — a SubagentStop block would deadlock the parent turn. Of
+`stop_gate`'s gates it runs Gate 4 alone: pytest, docs refresh and code review
+do not fire for a subagent, whose result does not carry a parent Stop's blast
+radius.
 
 **What you see:** Nothing in normal operation. The blueprint chain under
 `cc/blueprints/` gains one entry per subagent stop. The next session's

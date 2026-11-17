@@ -1,0 +1,14 @@
+{
+ "id": "DEF-3096",
+ "subject": "espalier/harness_config.py",
+ "cmd": "python3 -c \"import ast; t = ast.parse(open('espalier/harness_config.py', encoding='utf-8').read()); w = next(n.value for n in ast.walk(t) if isinstance(n, ast.AnnAssign) and getattr(n.target, 'id', '') == 'CANONICAL_HOOK_WIRING'); e = dict(zip([getattr(k, 'value', None) for k in w.keys], w.values))['post_write_check.py']; r = dict(zip([getattr(k, 'value', None) for k in e.keys], e.values))['reason'].value; print('path consistency' in r or any('JSON validity and path consistency' in open(p, encoding='utf-8').read() for p in ('espalier/cli.py', 'examples/CLAUDE.template.md')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/cli.py",
+  "examples/CLAUDE.template.md"
+ ],
+ "row_sha": "53ebd7a6a888",
+ "text_sha": "699fcabecd08",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD 5d1f3b762231)"
+}

@@ -34,7 +34,8 @@ testable, and harder to merge unnoticed**. That's it.
 git clone https://github.com/Mike-Byrne-AI/espalier-harness.git
 cd espalier-harness
 python -m venv .venv
-. .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1
+# a Windows venv keeps it in Scripts/ (Git Bash), others in bin/; PowerShell: .\.venv\Scripts\Activate.ps1
+if [ -f .venv/Scripts/activate ]; then . .venv/Scripts/activate; else . .venv/bin/activate; fi
 python -m pip install -e .
 
 # Verify install

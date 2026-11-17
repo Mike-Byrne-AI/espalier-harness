@@ -6530,7 +6530,9 @@ reap.
 whatever the child started runs on at parent 1: a pytest's xdist workers, hooks and git, a
 script's own inner pytest beside its clone. For a child that is itself a tree, call
 `run_tree_bounded` (`tools/cc/_json_safe.py`, `run_bounded`'s signature; `communicate_tree_bounded`
-for a `Popen` the caller holds; the suite takes both from `tests/_tree_spawn.py`): its timeout,
+for a `Popen` the caller holds; the suite takes both from `tests/_tree_spawn.py`, and the engine
+takes `run_tree_bounded` from its twin in `espalier/_spawn.py`, with `stdin=subprocess.DEVNULL`
+given at the call, since the twin closes none): its timeout,
 and any exception while it waits (a Ctrl-C, the per-test ceiling's), ends the whole tree on
 every OS. On Windows the child goes into the kill-on-close job object `run_tree_to_deadline`
 uses, and the kill is `taskkill /T`, then the job. The two OSes part after a normal exit too:
@@ -6552,7 +6554,10 @@ ratchet reads (`tests/test_contracts.py::TestEveryTimedPytestEndsItsWholeTree`, 
 tracked Python its census derives from git; its docstring names the shapes it does not read)
 calls it or is named debt with the ledger row that retires it (2026-11-08,
 `tests/test_bounded_spawn.py::TestTheTreeBoundedRunEndsTheWholeTree` and
-`tests/test_bounded_spawn.py::TestTheWalkSignalsOnlyItsOwnTree`).
+`tests/test_bounded_spawn.py::TestTheWalkSignalsOnlyItsOwnTree`); since the engine took its
+twin (2026-11-17), no debt stands: `espalier pre-release`'s test leg and `espalier
+refresh-externals --apply`'s bound tests end their tree too, and the grandchild a held cap
+left at parent 1 on POSIX (3 of 3 runs before, driven under WSL) is gone at it (0 of 3).
 
 ## On Windows, a child handed no stdin never starts when the parent's stdin handle is dead
 
@@ -6572,8 +6577,10 @@ no handle has (`SetStdHandle` with a never-opened value) is what the child of a 
 launcher holds, and is the deterministic drive.
 
 **How to avoid it:** in the engine, spawn through `espalier/_spawn.py::run_no_stdin`, which
-passes `stdin=subprocess.DEVNULL` unless the caller feeds the child; the stdlib-only
-freshness scanner passes it on each of its own calls.
+passes `stdin=subprocess.DEVNULL` unless the caller feeds the child; a child that is itself a
+tree (a pytest) goes through `espalier/_spawn.py::run_tree_bounded` instead, with
+`stdin=subprocess.DEVNULL` given at the call, since that twin of the `tools/cc` copy closes
+none; the stdlib-only freshness scanner passes it on each of its own calls.
 `tests/test_contracts.py::TestEveryEngineSpawnClosesItsChildsStdin` refuses an engine spawn
 that goes around it. It costs one thing: a child handed any one handle has the other two
 duplicated from the parent (with all three left alone `Popen` duplicates none), so a child

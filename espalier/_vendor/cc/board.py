@@ -1270,7 +1270,14 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
     config sets core.bare or core.worktree, the one change, that key moved into
     the main worktree's config.worktree, then a fresh session), and only
     while it holds a session: it never overwrites the
-    first. A main checkout answering other than its clone's name gets a
+    first. The checkouts holding a session are read before those holding
+    none, in the listing's order within each, so among worktrees answering
+    one name of their own, the bare row is a live one's whatever order git
+    lists them in, and a session-less one gets no row (DEF-4125: a stale
+    worktree listed first read a live seat as dark and named its live
+    checkout to rename). A worktree answering its clone's or the main
+    checkout's name is flagged in either order, as above.
+    A main checkout answering other than its clone's name gets a
     ``note``; ``name_unread`` carries why a checkout's name could not be read."""
     rows: dict[str, dict] = {}
     for machine, messages in by_machine.items():
@@ -1283,7 +1290,9 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
     clone = str(local.get("clone") or "")
     main = next((c["path"] for c in checkouts if c.get("main")), "")
     main_seat = next((c.get("seat") or "" for c in checkouts if c.get("main")), "")
-    for checkout in checkouts:
+    # Stable: two live checkouts under one name keep the listing's order, and
+    # the second keeps the held row and its remedy (a real collision).
+    for checkout in sorted(checkouts, key=lambda c: not c.get("sessions")):
         sessions = checkout.get("sessions") or []
         path = str(checkout.get("path") or "")
         name = checkout.get("seat") or ""

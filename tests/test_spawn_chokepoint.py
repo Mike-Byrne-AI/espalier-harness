@@ -122,8 +122,8 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
     every ``spawn_checked(``, ``run_bounded(`` and ``run_no_stdin(`` call, under
     ``root``. ``run_no_stdin`` is the engine's ``run_bounded`` with the child's
     stdin closed (DEF-928), so it reads as bounded; ``keywords`` names what the
-    call passes and ``values`` the source of its ``stdin=`` and ``input=``, for
-    the engine's stdin census."""
+    call passes, ``values`` the source of its ``stdin=`` and ``input=``, and
+    ``callee`` the name it calls, for the engine's stdin census."""
     out: list[dict] = []
     for f in sorted(checkout_glob(root, pattern)):
         src = f.read_text(encoding="utf-8")
@@ -169,6 +169,7 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
             out.append({
                 "file": f.relative_to(root).as_posix(), "lineno": node.lineno, "raw": raw,
                 "routed": routed, "bounded": bounded, "no_stdin": no_stdin, "declared": declared,
+                "callee": fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else None,
                 "keywords": sorted(k for k in keywords if k),
                 "values": {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg in ("stdin", "input")},
                 "timed": "timeout" in keywords or None in keywords or communicates,
