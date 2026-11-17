@@ -276,7 +276,8 @@ def _unwiring_findings(root: Path) -> list[str]:
             _integrity.clear_unwired_pending(root)
         return []
     _integrity.record_unwired_pending(
-        root, lost, kind={"absent": "deleted", "unreadable": "unreadable"}.get(state, "unwired"))
+        root, lost, kind={"absent": "deleted", "unreadable": "unreadable"}.get(state, "unwired"),
+        malformed=bool(_integrity.voiding_problems(data)))
     return [
         finding
         for finding in _integrity.unwired_governance_gates(

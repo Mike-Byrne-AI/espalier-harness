@@ -1052,9 +1052,24 @@ def _problem_key(event: object, offending: object) -> str:
     """A voiding problem's tolerance key: its event and a digest of the
     offending value as JSON spells it -- never the problem's wording, which an
     upgrade mid-session may change. So a session tolerates the very entries it
-    started with, each under its event, and no other entry of the same shape."""
-    body = json.dumps(offending, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    started with, each under its event, and no other entry of the same shape.
+    A value nested past what the encoder can spell (about 100,000 levels on
+    3.14, which the loader still reads) is keyed by its type alone."""
+    try:
+        body = json.dumps(offending, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    except RecursionError:  # fail-open: ok deliberate -- an entry no person writes keys by its type; each one still counts once
+        body = "unspellable " + type(offending).__name__
     return "%s:%s" % (event, hashlib.sha256(body.encode("ascii")).hexdigest()[:32])
+
+
+#: The events where Claude Code applies nothing from a file holding an entry
+#: it cannot load (driven on 2.1.321: "nothing it sits in is applied").
+WHOLE_FILE_EVENTS = ("PreToolUse", "PermissionRequest")
+
+
+def problem_event(key: str) -> str:
+    """The event a tolerance key (``_problem_key``) was made under."""
+    return key.rsplit(":", 1)[0]
 
 
 def _hooks_config_problems(hooks_cfg: object) -> list[tuple[str, str]]:
@@ -1457,8 +1472,8 @@ SESSION_START_HOOK = "tools/cc/hooks/session_start.py"
 def _hook_names_path(hook: dict, path: str) -> bool:
     """Does one of the hook object's strings, separators folded to ``/``, hold
     ``path`` as a whole path tail: after the string's start, a separator, a
-    quote, a space or ``}``, and before its end, a quote, a space or a shell
-    operator?"""
+    quote, whitespace, ``=`` or ``}``, and before its end, a quote, whitespace
+    or a shell operator (``; & | ) < >``)?"""
     strings: list[str] = []
     for value in hook.values():
         if isinstance(value, str):
@@ -1470,7 +1485,7 @@ def _hook_names_path(hook: dict, path: str) -> bool:
         at = text.find(path)
         while at != -1:
             end = at + len(path)
-            if (at == 0 or text[at - 1] in "/\"' }") and (end == len(text) or text[end] in "\"' ;&|)"):
+            if (at == 0 or text[at - 1] in "/\"' \t\n=}") and (end == len(text) or text[end] in "\"' \t\n;&|)<>"):
                 return True
             at = text.find(path, at + 1)
     return False
@@ -1523,14 +1538,20 @@ def clear_wired_gates(repo_root: Path) -> None:
 UNWIRED_KINDS = ("deleted", "unreadable", "unwired")
 
 
-def record_unwired_pending(repo_root: Path, lost: list[str], *, kind: str) -> None:
+def record_unwired_pending(repo_root: Path, lost: list[str], *, kind: str,
+                           malformed: bool = False) -> None:
     """Note a refused change for the next PostToolUse to tell Claude: the
-    ConfigChange refusal itself reaches no one (the protocol pin)."""
+    ConfigChange refusal itself reaches no one (the protocol pin). ``malformed``:
+    the changed file holds an entry the voiding rule reads as malformed, so
+    the repair refuses until it is removed (DEF-2065); a key older readers
+    pass over."""
     path = repo_root.joinpath(*UNWIRED_PENDING)
     path.parent.mkdir(parents=True, exist_ok=True)
-    _hook_utils.atomic_write_text(path, json.dumps(
-        {"lost": sorted(lost), "kind": kind if kind in UNWIRED_KINDS else "unwired",
-         "announced": False}) + "\n")
+    record: dict[str, object] = {"lost": sorted(lost), "kind": kind if kind in UNWIRED_KINDS else "unwired",
+                                 "announced": False}
+    if malformed:
+        record["malformed"] = True
+    _hook_utils.atomic_write_text(path, json.dumps(record) + "\n")
 
 
 def clear_unwired_pending(repo_root: Path) -> None:
@@ -1556,6 +1577,10 @@ def take_unwired_notice(repo_root: Path) -> str | None:
         "unreadable": ("left it unreadable as JSON, which Claude Code reads as no hooks at all",
                        "repair the file's JSON"),
     }.get(kind, ("left these governance gates unwired: " + ", ".join(lost),
+                 "remove the malformed hook entry the file holds (`espalier merge-settings "
+                 "--repair` reads the file as void while it stands), run the repair, then "
+                 "restore the entry, or wire the gates back by hand"
+                 if record.get("malformed") is True else
                  "run `espalier merge-settings --repair`"))
     return (
         f"[WARN] Espalier-Harness: a change to {PROJECT_SETTINGS_REL} {what}. "

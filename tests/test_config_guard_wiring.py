@@ -450,6 +450,42 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
         assert "write_guard.py" not in decision["reason"], decision["reason"]
         assert "loads NO hooks" not in decision["reason"], "the findings are read with the entry set aside"
 
+    def test_the_refusal_note_names_the_repairs_order(self, tree):
+        """The second code review, driven: the note told Claude to run
+        `--repair`, which refuses the file as void while the entry stands."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        del data["hooks"]["Stop"]
+        _write(tree, data)
+        _denied_naming(_change(tree), ("stop_gate.py",))
+        notice = ig.take_unwired_notice(tree)
+        assert notice and "remove the malformed hook entry" in notice, notice
+        assert notice.index("remove the malformed") < notice.index("run the repair"), notice
+        assert notice.isascii()
+
+    def test_a_refusal_with_no_malformed_entry_keeps_the_plain_repair(self, tree):
+        ig = _integrity()
+        data = _settings()
+        _started(tree)
+        del data["hooks"]["Stop"]
+        _write(tree, data)
+        _denied_naming(_change(tree), ("stop_gate.py",))
+        notice = ig.take_unwired_notice(tree)
+        assert notice and "run `espalier merge-settings --repair`" in notice and "malformed" not in notice, notice
+
+    def test_an_entry_nested_past_the_encoder_still_has_a_key(self):
+        """The second code review: the encoder raises on a value the loader
+        still reads (about 100,000 levels on 3.14); the key falls back to the
+        value's type rather than raising out of every reader."""
+        ig = _integrity()
+        deep: list = []
+        for _ in range(200_000):
+            deep = [deep]
+        key = ig._problem_key("PostToolUse", deep)
+        assert key.startswith("PostToolUse:") and ig.problem_event(key) == "PostToolUse"
+
     def test_a_torn_tolerated_record_reads_the_file_strictly(self, tree):
         """Fail-closed: a record whose tolerated set cannot be read judges the
         file as the voiding rule reads it."""
@@ -489,9 +525,11 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
     @pytest.mark.parametrize("added", [_IGNORED_ENTRY, {"type": "websocket"}], ids=["same", "malformed"])
     def test_a_second_entry_beside_a_tolerated_one_is_refused(self, tree, added):
         """A Claude Code that knows a type newer than espalier's table loads a
-        well-formed entry of it under PreToolUse; a second entry, a copy or one
-        missing a field, is not covered by the first, since a PreToolUse entry
-        Claude Code cannot load applies nothing from the file (driven)."""
+        well-formed entry of it under PreToolUse. A second one missing a field
+        is not covered by the first: a PreToolUse entry Claude Code cannot load
+        applies nothing from the file (driven). An exact copy is refused too,
+        conservatively: the start proved each entry it held once, and Claude
+        Code may well load the copy."""
         data = _beside_the_gates(event="PreToolUse")
         _write(tree, data)
         _started(tree)
@@ -522,6 +560,54 @@ class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
         _started(tree)
         assert "config_guard.py" not in ig.read_wired_gates(tree)
         assert sorted(ig.read_wired_gates(tree)) == sorted(set(GATES) - {"config_guard.py"})
+
+
+class TestTheHookIsNamedByItsPathTail:
+    """The second code review: the reader that decides which settings file
+    names the SessionStart hook had three fixes no test pinned -- the path
+    tail's boundaries, and the project file counting only a loadable entry."""
+
+    HOOK = "tools/cc/hooks/session_start.py"
+
+    @staticmethod
+    def _file(hook: dict, matcher: object = None) -> dict:
+        group: dict = {"hooks": [hook]}
+        if matcher is not None:
+            group["matcher"] = matcher
+        return {"hooks": {"SessionStart": [group]}}
+
+    @pytest.mark.parametrize("arg, named", [
+        ("${CLAUDE_PROJECT_DIR}/tools/cc/hooks/session_start.py", True),
+        ("C:\\repo\\tools\\cc\\hooks\\session_start.py", True),
+        ("tools/cc/hooks/session_start.py", True),
+        ("/home/u/.claude/hooks/session_start.py", False),
+        ("/srv/my_tools/cc/hooks/session_start.py", False),
+        ("/srv/repo/tools/cc/hooks/session_start.pyc", False),
+    ], ids=["project-dir", "windows", "bare", "another-hook", "longer-dir", "longer-name"])
+    def test_an_args_path_names_the_hook_by_its_whole_tail(self, arg, named):
+        hook = {"type": "command", "command": "python3", "args": [arg]}
+        assert _integrity().settings_name_hook(self._file(hook), "SessionStart", self.HOOK,
+                                               loadable_only=True) is named
+
+    @pytest.mark.parametrize("command", [
+        "python3 tools/cc/hooks/session_start.py>log",
+        "python3 tools/cc/hooks/session_start.py\t2>err",
+        "cd x && python3 tools/cc/hooks/session_start.py\n",
+    ], ids=["redirect", "tab", "newline"])
+    def test_a_shell_command_names_it_before_an_operator_or_whitespace(self, command):
+        hook = {"type": "command", "command": command}
+        assert _integrity().settings_name_hook(self._file(hook), "SessionStart", self.HOOK, loadable_only=True)
+
+    def test_an_entry_claude_code_cannot_load_names_it_only_for_another_source(self):
+        """An untyped entry, or a group whose matcher is not a string, never
+        ran this hook, so it proves nothing of the project file; in another
+        file it may still be what a source ran, so it counts there."""
+        ig = _integrity()
+        untyped = self._file({"command": "python3", "args": [self.HOOK]})
+        badly_matched = self._file({"type": "command", "command": "python3", "args": [self.HOOK]}, matcher=["x"])
+        for data in (untyped, badly_matched):
+            assert not ig.settings_name_hook(data, "SessionStart", self.HOOK, loadable_only=True), data
+            assert ig.settings_name_hook(data, "SessionStart", self.HOOK, loadable_only=False), data
 
 
 

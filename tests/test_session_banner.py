@@ -5098,6 +5098,19 @@ class TestTheGovernanceWiringLine:
         assert str(tmp_path) not in lines[0], lines
         assert "session_settings_void_unproven" in self._audit_types()
 
+    def test_an_entry_under_pretooluse_leaves_the_proof_open(self, tmp_path, monkeypatch):
+        """Claude Code 2.1.321 applies nothing from a file holding such an
+        entry under PreToolUse (driven), so this hook running beside one came
+        from a source the check does not read, or from a Claude Code newer than
+        the table: the line cannot claim the file was applied (both reviews)."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+        mod = _load()
+        root = tmp_path / "repo"
+        self._tree(root, session_start=True, beside=("PreToolUse", self._IGNORED[1]))
+        _summary, lines = self._void_reading(mod, root)
+        assert len(lines) == 1 and "cannot tell" in lines[0] and "sits under PreToolUse" in lines[0], lines
+        assert "session_settings_void_unproven" in self._audit_types()
+
     def test_a_file_that_names_no_session_start_leaves_it_unproven(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
         mod = _load()

@@ -2653,18 +2653,20 @@ well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
 does not void the file (Claude Code loads each beside the gates, driven); one
 missing its required field (`url`; `server` and `tool`; `prompt`) reads as
 voiding the whole hooks block, and a change is judged so, though Claude Code
-2.1.321 applies nothing from such a file only where the entry sits under
-`PreToolUse` or `PermissionRequest`, and elsewhere ignores the entry alone
-(driven). So on every start SessionStart records the gates a file that reads as
-void wires with each malformed entry set aside, and keeps those entries, by
-content and event, as tolerated: a start the hook made from the file proves
-Claude Code applied it. A change is judged with exactly those entries set aside;
-any other malformed entry, a copy of one included, still voids, and a group
-whose matcher is not a string wires nothing, as Claude Code drops it (driven).
-SessionStart says so on its own line: that Claude Code applied the file where a
-loadable entry in it runs `tools/cc/hooks/session_start.py` and neither the local
-nor the user settings file names that hook, that it cannot tell otherwise, and,
-after a clear or a compaction, an entry added since the start, apart.
+2.1.321 applied nothing from such a file only where the entry sat under
+`PreToolUse` or `PermissionRequest`, and elsewhere ignored the entry alone
+(driven, one run for each shape and event tried). So at every process start
+SessionStart records the gates a file that reads as void wires with each
+malformed entry set aside, and keeps those entries, by content and event, as
+tolerated (a clear or a compaction keeps the record): a start the hook made from
+the file proves Claude Code applied it. A change is judged with exactly those
+entries set aside; any other malformed entry, a copy of one included, still
+voids, and a group whose matcher is not a string wires nothing, as Claude Code
+drops it (driven). SessionStart says so on its own line: that Claude Code applied
+the file where a loadable entry in it names `tools/cc/hooks/session_start.py`,
+neither the local nor the user settings file names that hook, and no such entry
+sits under `PreToolUse` or `PermissionRequest`; that it cannot tell otherwise;
+and, after a clear or a compaction, an entry added since the start, apart.
 `espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
@@ -2674,7 +2676,9 @@ The refusal is silent by protocol and the file on disk keeps the change, so the
 NEXT session would start without those gates. `config_guard` notes it, and the
 next PostToolUse tells Claude once, with the restore:
 `espalier merge-settings --repair` (or `espalier init .` when the file was
-deleted), then `espalier doctor`.
+deleted), then `espalier doctor`. Where the file holds a malformed hook entry,
+the repair reads it as void and refuses, so the restore says to remove the entry
+first, run the repair, then restore the entry.
 
 **The user settings file and a settings `env` map.** Claude Code names a change
 to `~/.claude/settings.json` (or `settings.json` under `CLAUDE_CONFIG_DIR`) by

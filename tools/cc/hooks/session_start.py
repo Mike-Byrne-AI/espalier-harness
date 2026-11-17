@@ -3000,44 +3000,49 @@ def _shown_problems(problems: list[str]) -> str:
     return problems[0] + (f"; {len(problems) - 1} more" if len(problems) > 1 else "")
 
 
-def _split_void_reading(root: Path, problems: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
-    """(the problems the snapshot tolerates, the rest), as wordings. The
-    snapshot is written before this runs (``main``), so at a process start it
-    holds every problem; after a clear or a compaction it keeps the start's,
+def _split_void_reading(root: Path, problems: list[tuple[str, str]]
+                        ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """(the problems the snapshot tolerates, the rest), each (wording, key).
+    The snapshot is written before this runs (``main``), so at a process start
+    it holds every problem; after a clear or a compaction it keeps the start's,
     and a problem it lacks was added after Claude Code loaded the file, which
     config_guard reads as void. No snapshot splits nothing off."""
     if _integrity.read_wired_gates(root) is None:
-        return [problem for problem, _key in problems], []
+        return list(problems), []
     left = Counter(_integrity.read_wired_tolerated(root))
-    at_start: list[str] = []
-    since: list[str] = []
+    at_start: list[tuple[str, str]] = []
+    since: list[tuple[str, str]] = []
     for problem, key in problems:
         if left[key] > 0:
             left[key] -= 1
-            at_start.append(problem)
+            at_start.append((problem, key))
         else:
-            since.append(problem)
+            since.append((problem, key))
     return at_start, since
 
 
-def _void_reading_warning(root: Path, data: dict, problems: list[str]) -> tuple[bool, str, dict]:
+def _void_reading_warning(root: Path, data: dict, pairs: list[tuple[str, str]]) -> tuple[bool, str, dict]:
     """(proven applied, banner line, audit details) for a project settings file
     the voiding rule reads as loading no hooks, read while this hook runs
     (DEF-2065), for the problems the file held when this process loaded it.
     Claude Code applied the file -- the proven wording -- where a loadable entry
-    in it runs this hook under SessionStart and neither the local nor the user
-    settings file names this hook; otherwise this hook may have come from
-    another source, and the line says it cannot tell which, with the reason.
-    Either way the gates are judged as applied (``_record_wired_gates``). Files
-    are named by label, never path."""
+    in it names this hook under SessionStart, neither the local nor the user
+    settings file names this hook, and no problem sits under an event where
+    Claude Code applies nothing from such a file (``WHOLE_FILE_EVENTS``);
+    otherwise this hook may have come from another source, and the line says
+    it cannot tell which, with the reason. Either way the gates are judged as
+    applied (``_record_wired_gates``). Files are named by label, never path."""
     rel, hook = _integrity.PROJECT_SETTINGS_REL, _integrity.SESSION_START_HOOK
+    problems = [problem for problem, _key in pairs]
     names_here = _integrity.settings_name_hook(data, "SessionStart", hook, loadable_only=True)
     elsewhere = _integrity.other_settings_naming_hook(root, "SessionStart", hook)
+    whole_file = sorted({event for _problem, key in pairs
+                         if (event := _integrity.problem_event(key)) in _integrity.WHOLE_FILE_EVENTS})
     details = {"problems": problems[:5], "problem_count": len(problems),
-               "names_hook": names_here, "also_named_by": elsewhere}
+               "names_hook": names_here, "also_named_by": elsewhere, "whole_file_events": whole_file}
     lead = (f"[WARN] Espalier-Harness's voiding rule reads {rel} as loading no hooks "
             f"({_shown_problems(problems)})")
-    if names_here and not elsewhere:
+    if names_here and not elsewhere and not whole_file:
         return True, (
             f"{lead}, but this SessionStart hook ran from it, and neither the local nor the user "
             f"settings file names {hook}, so Claude Code applied the file with that entry in it. "
@@ -3047,8 +3052,13 @@ def _void_reading_warning(root: Path, data: dict, problems: list[str]) -> tuple[
     if elsewhere:
         verb = "names" if len(elsewhere) == 1 else "name"
         why = f"{' and '.join(elsewhere)} also {verb} {hook} under SessionStart"
-    else:
+    elif not names_here:
         why = f"the file names no loadable {hook} entry under SessionStart, so another source ran this hook"
+    else:
+        why = (f"the entry sits under {' and '.join(whole_file)}, where Claude Code applies "
+               "nothing from a file holding one it cannot load, so either a source this check "
+               "does not read (managed settings, a plugin, a --settings file) ran this hook, or "
+               "this Claude Code knows a hook type espalier's table does not")
     return False, (
         f"{lead}, and this SessionStart cannot tell whether Claude Code applied it: {why}. "
         "`/hooks` lists what loaded; where it lists none of this file's hooks, every gate the "
@@ -3159,8 +3169,9 @@ def _report_integrity_state(root: Path) -> str:
             if since:
                 _integrity.append_audit(
                     root, {"event_type": "session_settings_void_since_start",
-                           "details": {"problems": since[:5], "problem_count": len(since)}})
-                _hook_utils.advise(_void_since_start_line(since))
+                           "details": {"problems": [problem for problem, _key in since][:5],
+                                       "problem_count": len(since)}})
+                _hook_utils.advise(_void_since_start_line([problem for problem, _key in since]))
             unwired = _integrity.unwired_governance_gates(
                 _integrity.PROJECT_SETTINGS_REL, data, root,
                 tolerated=tuple(key for _problem, key in problems))

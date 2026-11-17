@@ -703,7 +703,9 @@ GOVERNANCE_GATES_UNWIRED = (
     "\n  Don't: remove the hooks block or delete .claude/settings.json to quiet "
     "a hook mid-session -- that switches every gate off at once."
     "\n  Do: run `espalier merge-settings --repair` to wire the gates back "
-    "(`espalier init .` instead if the file was deleted), then `espalier doctor`."
+    "(`espalier init .` instead if the file was deleted; where the file holds a "
+    "malformed hook entry, remove it first, as the repair reads the file as void "
+    "while it stands), then `espalier doctor`."
 )
 
 # Centralizing the harness-env-prefix deny message here brings it under the
