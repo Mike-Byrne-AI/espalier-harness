@@ -199,6 +199,14 @@ class Refused(Exception):
     """A named stop: the message is what the operator reads; exit 1."""
 
 
+class Undecided(Refused):
+    """:func:`resolve` could not tell which checkout a seat name means: two or
+    more worktrees answer it, or one's name could not be read (it may be the
+    twin). A caller that recovers from a plain refusal, as ``retire``'s
+    gone-worktree recipe does, lets this one through: no checkout is picked,
+    and none is called gone (DEF-3097)."""
+
+
 def say(text: str) -> None:
     print(sync._ascii(text))
 
@@ -434,7 +442,14 @@ def resolve(root: Path, seat: str) -> Target:
     """The checkout a seat name means: the clone's own name, a worktree whose
     own name is ``seat``, one whose derived name is (it has none of its own
     yet), or -- for a name of the form ``<clone>-<dir>`` -- a worktree at
-    ``.claude/worktrees/<dir>`` that does not exist yet."""
+    ``.claude/worktrees/<dir>`` that does not exist yet.
+
+    Every worktree is read before any answer (DEF-3097): the first match
+    returned in listing order handed ``launch``, ``brief``, ``tick <seat>``
+    and ``retire`` a stale twin of the live seat (DEF-4125's shape). A name
+    two or more worktrees answer, or a match beside a worktree whose name
+    could not be read, is :class:`Undecided`, naming each checkout and the
+    board's rename for it."""
     clone, clone_how = mail.clone_machine(root)
     if not clone:
         if clone_how.startswith(mail.MACHINE_UNREAD):
@@ -445,19 +460,30 @@ def resolve(root: Path, seat: str) -> Target:
         return Target(seat, root, True, True)
     registered: dict[str, tuple[Path, str]] = {}
     unread: list[str] = []
+    answering: list[Path] = []
     for block in _blocks(root)[1:]:
         path = Path(block.get("worktree", ""))
         if not sync.within(path, _home(root)):
             continue
         name, how, why = _seat_name(clone, path) if path.is_dir() else ("", "gone", "")
         if name == seat:
-            return Target(seat, path, True, False)
-        if how == "unread":
+            answering.append(path)
+        elif how == "unread":
             unread.append(f"{path} ({why})")
         registered[sync._norm(path)] = (path, name)
+    if len(answering) > 1:
+        # The board's remedy for the same collision (DEF-4125), from its one
+        # owner, read for each checkout: which one is live is the operator's
+        # read, and `seat.py list` shows the sessions in each.
+        renames = "; ".join(f"{path}: name it: {mail.naming_steps(path, at=str(path))}" for path in answering)
+        raise Undecided(f"seat {seat!r} is answered by {len(answering)} checkouts, which write one mail ref, so "
+                        f"none of them is picked: give each but the live one a name of its own (`seat.py list` "
+                        f"shows the sessions in each), then run this again. {renames}")
     if unread:
-        raise Refused(f"the seat name of {'; '.join(unread)} could not be read, so whether it is {seat!r} cannot be "
-                      f"told: nothing is resolved; {mail.RETRY_HINT}")
+        raise Undecided(f"the seat name of {'; '.join(unread)} could not be read, so whether it is {seat!r} cannot "
+                        f"be told: nothing is resolved; {mail.RETRY_HINT}")
+    if answering:
+        return Target(seat, answering[0], True, False)
     prefix = f"{clone}-"
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
@@ -1462,6 +1488,8 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
     claim_ids = [str(c.get("id")) for c in mine]
     try:
         target = resolve(root, seat)
+    except Undecided:
+        raise   # a twin or an unread name: the seat's worktree may well be there, so no recipe for a gone one
     except Refused:
         if mine:
             raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and "

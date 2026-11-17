@@ -316,6 +316,85 @@ class TestTheSeatNamesSayAFailedRead:
         assert "could not be read" in str(caught.value) and str(feat) in str(caught.value), caught.value
 
 
+class TestASeatNameTwoCheckoutsAnswer:
+    """A seat name two worktrees answer (DEF-4125's shape: a stale twin a
+    seat's process made, answering that seat's name) is refused by every verb
+    that takes a seat, naming each checkout and the board's rename remedy, so
+    none picks the one ``git worktree list`` shows first: ``launch`` would
+    start a second writer on the seat's mail ref, ``brief`` and ``tick``
+    compose from the twin, ``retire`` releases claims the live checkout works.
+    Dies to: ``resolve`` returning the first worktree whose name matches
+    without reading the rest (it refuses in neither listing order)."""
+
+    @staticmethod
+    def _twins(clone):
+        return _worktree(clone, "a", name="box-x"), _worktree(clone, "b", name="box-x")
+
+    def test_resolve_names_each_checkout_and_the_boards_rename_for_it(self, seat, clone):
+        twins = self._twins(clone)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        said = str(caught.value)
+        assert "answered by 2 checkouts" in said and "one mail ref" in said, said
+        for path in twins:
+            # The board's remedy, from its one owner, read for that checkout.
+            assert f"{path}: name it: {seat.mail.naming_steps(path, at=str(path))}" in said, said
+        assert said.isascii()
+
+    @pytest.mark.parametrize("verb", [["brief"], ["tick"], ["launch", "--print"], ["retire", "--dry-run"]],
+                             ids=["brief", "tick", "launch", "retire"])
+    def test_every_verb_that_takes_a_seat_refuses_it(self, seat, clone, registry, monkeypatch, capsys, verb):
+        self._twins(clone)
+        monkeypatch.chdir(clone)
+        assert seat.main([verb[0], "box-x", *verb[1:]]) == 1
+        err = capsys.readouterr().err
+        assert "answered by 2 checkouts" in err, err
+
+    def test_retire_releases_nothing_and_never_calls_the_worktree_gone(self, seat, clone, registry):
+        """Dies to: retire's recovery from a plain refusal (the gone-worktree
+        recipe) taking this one, which told the operator to add a third
+        checkout under the name and release the live seat's claims."""
+        a, b = self._twins(clone)
+        _send(seat, a, "box-x", "claim", "live", lane="lane/x")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.cmd_retire(clone, "box-x", dry_run=False, fetch=True)
+        said = str(caught.value)
+        assert "answered by 2 checkouts" in said and "worktree is gone" not in said, said
+        assert a.is_dir() and b.is_dir() and len(_live_claims_from(seat, clone, "box-x")) == 1
+
+    def test_the_tick_with_no_seat_named_is_composed_from_this_checkout(self, seat, clone, monkeypatch, capsys):
+        """The loop's own call: ``tick`` with no seat reads the checkout it
+        runs in, never ``resolve``, so a stale twin never stops a live seat's
+        loop. Dies to: the no-seat path routed through ``resolve``."""
+        a, _b = self._twins(clone)
+        monkeypatch.chdir(a)
+        assert seat.main(["tick"]) == 0
+        assert capsys.readouterr().out == seat.compose_brief(clone, "box-x", a).tick + "\n"
+
+    def test_a_match_beside_a_worktree_whose_name_is_unread_is_not_picked(self, seat, clone):
+        """The unread name is the same read left out: it may be the twin.
+        Dies to: the first match returned before every name was read, which
+        resolved past an unread worktree in any listing order."""
+        _worktree(clone, "a", name="box-x")
+        _worktree(clone, "b", name="box-b")
+        (clone / ".git" / "worktrees" / "b" / "config.worktree").write_bytes(b"[espalier\n")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        assert "could not be read" in str(caught.value), caught.value
+
+    def test_retire_names_an_unread_seat_name_as_unread_never_as_gone(self, seat, clone, registry):
+        """Dies to: retire's gone-worktree recipe given for a worktree that is
+        there and whose name git could not read."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        _send(seat, feat, "box-feat", "claim", "live", lane="lane/feat")
+        (clone / ".git" / "worktrees" / "feat" / "config.worktree").write_bytes(b"[espalier\n")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        said = str(caught.value)
+        assert "could not be read" in said and "worktree is gone" not in said, said
+        assert feat.is_dir()
+
+
 class TestLaunch:
     def test_an_occupied_seat_is_refused_and_a_gone_session_is_not_occupancy(self, seat, clone, registry, no_claude,
                                                                              capsys):
