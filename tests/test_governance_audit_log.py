@@ -20,11 +20,14 @@ the protected-zone and plan-required checks and would un-earn the red.
 from __future__ import annotations
 
 import ast
+import functools
+import itertools
 import json
 import os
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -700,14 +703,29 @@ class TestHooksDocDenialTableIsPinned:
     ``espalier/assets/docs/`` and its byte parity is a sibling contract."""
 
     @staticmethod
-    def _doc_rows() -> list[tuple[str, str]]:
+    def _doc_rows(tiers: str = "refusal|pause") -> list[tuple[str, str]]:
         import re
 
         text = (REPO_ROOT / "docs" / "HOOKS.md").read_text(encoding="utf-8")
         start = text.index("## Governance audit log")
         end = text.find("\n## ", start + 1)
         section = text[start:end if end != -1 else None]
-        return re.findall(r"^\| `([a-z_]+)` \| (refusal|pause) \|", section, flags=re.M)
+        return re.findall(rf"^\| `([a-z0-9_]+)` \| ({tiers}) \|", section, flags=re.M)
+
+    @pytest.mark.contract
+    def test_every_other_row_names_a_type_of_the_family_its_tier_cell_says(self):
+        """The rows in no block tier (DEF-3093): a ``report`` row names a
+        channelled advisory, a ``fail-open`` row a type the fail-open predicate
+        admits, and no row's tier cell is a word outside the four."""
+        rows = self._doc_rows("[a-z-]+")
+        assert sorted({tier for _t, tier in rows} - {"refusal", "pause", "report", "fail-open"}) == []
+        integ = _load_hook_module("_integrity")
+        channelled = getattr(integ, "CHANNELLED_ADVISORY_EVENT_TYPES", frozenset())
+        others = [(t, tier) for t, tier in rows if tier in ("report", "fail-open")]
+        assert others, "the table holds no report or fail-open row"
+        wrong = [(t, tier) for t, tier in others
+                 if not (t in channelled if tier == "report" else integ.is_fail_open_event(t))]
+        assert wrong == []
 
     @pytest.mark.contract
     def test_table_rows_equal_the_declared_tiers_both_ways(self):
@@ -1985,19 +2003,21 @@ class TestFailOpenRecordsReachTheStatusLog:
         assert not integ.is_fail_open_event("pretooluse_blocked_protected_zone")
         assert not integ.is_fail_open_event("pretooluse_bypassed_maintenance_mode")
         assert not integ.is_fail_open_event(None)
-        # Every say_once site in the hooks names a type the predicate admits.
-        import ast as _ast
-        for hook in checkout_glob(HOOKS_DIR, "*.py"):
-            tree = _ast.parse(hook.read_text(encoding="utf-8"))
-            for node in _ast.walk(tree):
-                callee = getattr(node.func, "attr", getattr(node.func, "id", "")) if isinstance(node, _ast.Call) else ""
-                if callee == "say_once":
-                    if len(node.args) >= 4 and isinstance(node.args[3], _ast.Constant):
-                        assert integ.is_fail_open_event(node.args[3].value), (hook.name, node.lineno, node.args[3].value)
-                elif callee == "say_crash":
-                    # A reporter's crash guard: (hook, event_type, exc, consequence).
-                    if len(node.args) >= 2 and isinstance(node.args[1], _ast.Constant):
-                        assert integ.is_fail_open_event(node.args[1].value), (hook.name, node.lineno, node.args[1].value)
+        # Every type that reaches say_once -- a literal, a keyword, or a
+        # wrapper's parameter (say_crash, say_bad_stdin,
+        # post_write_check._say_once_to_claude) -- is fail-open, or a
+        # channelled advisory that reaches it through _say_once_to_claude,
+        # which tells Claude before say_once records. Read through the census
+        # (DEF-3093): the pin read only a literal fourth argument of a direct
+        # call, so the wrapper's two types passed unread.
+        census = _live_audit_census()
+        reaching = census.domain_of("_hook_utils.py", "say_once", "event_type")
+        told = census.domain_of("post_write_check.py", "_say_once_to_claude", "event_type")
+        assert census.unread == []
+        assert len(reaching) >= 60, f"discovery floor: found only {sorted(reaching)}"
+        channelled = getattr(integ, "CHANNELLED_ADVISORY_EVENT_TYPES", frozenset())
+        assert [t for t in sorted(reaching)
+                if not (integ.is_fail_open_event(t) or (t in channelled and t in told))] == []
 
 
 # ---------------------------------------------------------------------------
@@ -2301,3 +2321,673 @@ class TestVoiceOnlyRecordsOutliveTheirDay:
         ss._report_voice_only_records(tmp_path)
         (line,) = ss._hook_utils.take_advisories()
         assert "(no earlier start here)" in line and "stop_failed_open_counter 1" in line, line
+
+
+# ---------------------------------------------------------------------------
+# Ledger row DEF-3093: every audit type a hook writes sits in exactly one
+# declared family -- a block tier, the maintenance-bypass set, the voice-only
+# family, or one of the two advisory sets -- so a new type with no channel
+# fails here instead of reaching neither reader.
+# ---------------------------------------------------------------------------
+
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _target_names(target: ast.AST) -> set[str]:
+    """Every plain name a binding target binds (``a``, ``a, b``, ``*rest``)."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(e) for e in target.elts))
+    return set()
+
+
+def _bindings(node: ast.AST):
+    """``(name, value)`` for each name ``node`` binds to a value the census can
+    read: a plain assignment, an annotated one, or a literal tuple unpacked
+    into a tuple of names of the same length."""
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                yield target.id, node.value
+            elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)) \
+                    and len(target.elts) == len(node.value.elts) \
+                    and not any(isinstance(e, ast.Starred) for e in (*target.elts, *node.value.elts)):
+                for sub, value in zip(target.elts, node.value.elts):
+                    if isinstance(sub, ast.Name):
+                        yield sub.id, value
+    elif isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+        yield node.target.id, node.value
+
+
+def _binders(node: ast.AST) -> set[str]:
+    """Every name ``node`` binds, by any form: the set ``_bindings`` must
+    account for, so a binding it cannot read is named, never dropped."""
+    if isinstance(node, ast.Assign):
+        return set().union(*(_target_names(t) for t in node.targets))
+    if isinstance(node, ast.AnnAssign):
+        return _target_names(node.target) if node.value is not None else set()
+    if isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor, ast.NamedExpr)):
+        return _target_names(node.target)
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return set().union(*(_target_names(i.optional_vars) for i in node.items if i.optional_vars))
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return {node.name}
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {(a.asname or a.name).split(".")[0] for a in node.names}
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return set(node.names)
+    return set()
+
+
+def _local_bindings(scope: ast.AST, ident: str) -> tuple[list[ast.expr], list[int]]:
+    """The values ``ident`` is assigned in ``scope`` itself, and the lines
+    where it is bound by a form the census does not read (a loop target, an
+    augmented assignment, a walrus, a ``with`` or ``except`` name, an unpacked
+    call); the defs, classes and lambdas inside ``scope`` are scopes of their
+    own and are left out. The values come in line order, so a rebinding that
+    reads the name (``x = "a"; x = f"{x}_b"``) reads the earlier value."""
+    values: list[tuple[int, int, ast.expr]] = []
+    other: list[int] = []
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (*_DEFS, ast.ClassDef, ast.Lambda)):
+            continue
+        read = [value for name, value in _bindings(node) if name == ident]
+        values += [(v.lineno, v.col_offset, v) for v in read]
+        if ident in _binders(node) and not read:
+            other.append(node.lineno)
+        stack.extend(ast.iter_child_nodes(node))
+    return [v for _line, _col, v in sorted(values, key=lambda t: t[:2])], sorted(other)
+
+
+def _self_attr(expr: ast.AST) -> str | None:
+    """``attr`` for ``self.attr``, else None."""
+    if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name) and expr.value.id == "self":
+        return expr.attr
+    return None
+
+
+def _ref_name(node: ast.AST) -> str | None:
+    """The name a load of ``node`` refers to: ``x`` or ``mod.x``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+class _AuditTypeCensus:
+    """Every event type the hooks can hand ``append_audit``, read backwards
+    from each of its calls: a literal, a conditional, a name bound to one in
+    its function or in a def enclosing it (a closure), a module constant, a
+    parameter (then every call of that function, or its default where a call
+    leaves the argument out), ``.lower()``/``.upper()``, and an f-string over
+    any of those. The writer set is not a roster: a new wrapper is read because
+    its parameter reaches the slot, and ``traced`` names each function read
+    that way. ``unread`` names each site the census cannot resolve, so a type it
+    cannot read is said, never dropped."""
+
+    def __init__(self, trees: dict[str, ast.Module]) -> None:
+        self.trees = trees
+        self.defs: dict[str, list[tuple[str, ast.FunctionDef]]] = {}
+        self.enclosing: dict[int, ast.FunctionDef] = {}
+        self.outer: dict[int, ast.FunctionDef] = {}
+        self.consts: dict[str, dict[str, list[ast.expr]]] = {}
+        self.calls: dict[str, list[tuple[str, ast.Call]]] = {}
+        self.class_of: dict[int, ast.ClassDef] = {}
+        for name, tree in trees.items():
+            self.consts[name] = {}
+            for node in tree.body:
+                for ident, value in _bindings(node):
+                    self.consts[name].setdefault(ident, []).append(value)
+            for node in ast.walk(tree):  # breadth first: a def before the defs inside it
+                if isinstance(node, ast.ClassDef):
+                    for item in node.body:
+                        if isinstance(item, _DEFS):
+                            self.class_of[id(item)] = node
+                if isinstance(node, _DEFS):
+                    self.defs.setdefault(node.name, []).append((name, node))
+                    for sub in ast.walk(node):
+                        self.enclosing[id(sub)] = node  # the innermost def is walked last, and wins
+                        if sub is not node and isinstance(sub, _DEFS):
+                            self.outer[id(sub)] = node
+                if isinstance(node, ast.Call) and (callee := _call_name(node)):
+                    self.calls.setdefault(callee, []).append((name, node))
+        self.unread: list[str] = []
+        self.traced: set[str] = set()
+        self._domains: dict[tuple[int, str], set[str]] = {}
+        self._names: dict[tuple[int, str], set[str]] = {}
+        self._attrs: dict[tuple[int, str], set[str]] = {}
+        self.written: dict[str, set[str]] = {}
+        # The writer's calls, and its aliases: ``x = partial(append_audit, *bound)``
+        # (or ``self.x = ...``) makes each call of ``x`` in that file, in the same
+        # form, a write whose event is the argument after the bound ones. Any
+        # other reference to the writer is named, since its calls go unread.
+        writes: list[tuple[str, ast.Call, int]] = [(n, c, 1) for n, c in self.calls.get("append_audit", [])]
+        for name, tree in trees.items():
+            aliased: set[int] = set()
+            for node in ast.walk(tree):
+                value = node.value if isinstance(node, ast.Assign) and len(node.targets) == 1 else None
+                if not (isinstance(value, ast.Call) and _call_name(value) == "partial" and value.args
+                        and _ref_name(value.args[0]) == "append_audit"):
+                    continue
+                target = node.targets[0]
+                bound = value.args[1:]
+                alias = target.id if isinstance(target, ast.Name) else _self_attr(target)
+                if alias is None or len(bound) > 1 or any(isinstance(a, ast.Starred) for a in bound):
+                    continue
+                aliased.add(id(value.args[0]))
+                for cname, call in self.calls.get(alias, []):
+                    same_form = (isinstance(target, ast.Name) and isinstance(call.func, ast.Name)) or \
+                        (_self_attr(target) is not None and _self_attr(call.func) == alias)
+                    if cname == name and same_form:
+                        writes.append((cname, call, 1 - len(bound)))
+            callees = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) \
+                        and _ref_name(node) == "append_audit" and id(node) not in callees | aliased:
+                    self.unread.append(f"{name}:{node.lineno}: append_audit is referenced, not called")
+        for name, call, index in writes:
+            site = f"{name}:{call.lineno}"
+            event = call.args[index] if len(call.args) > index else next(
+                (k.value for k in call.keywords if k.arg == "event"), None)
+            slot, slot_at = None, None
+            if isinstance(event, ast.Dict):
+                slot_at = next((i for i, k in enumerate(event.keys)
+                                if isinstance(k, ast.Constant) and k.value == "event_type"), None)
+                slot = event.values[slot_at] if slot_at is not None else None
+            if slot is None:
+                self.unread.append(f"{site}: the event is not a dict literal with an event_type key")
+                continue
+            if any(k is None for k in event.keys[slot_at + 1:]):
+                self.unread.append(f"{site}: a ** spread after event_type may replace it")
+            for value in self.values(name, slot):
+                self.written.setdefault(value, set()).add(site)
+        self._name_unread_routes()
+
+    def _name_unread_routes(self) -> None:
+        """A writer the census traced reaches the slot only through the calls
+        it reads by name: an ``import ... as`` alias of it, or a reference
+        passed on (a callback), is a route those calls miss, so each is
+        named. A name bound in the enclosing defs is a local, not the writer,
+        and a module-level ``x = mod.x`` keeps the name its calls are read by."""
+        writers = self.traced | {"append_audit"}
+        for name, tree in self.trees.items():
+            callees = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+            callees |= {id(n.value) for n in tree.body if isinstance(n, ast.Assign) and len(n.targets) == 1
+                        and isinstance(n.targets[0], ast.Name) and _ref_name(n.value) == n.targets[0].id}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.name in writers and alias.asname not in (None, alias.name):
+                            self.unread.append(f"{name}:{node.lineno}: {alias.name} is imported as {alias.asname}")
+                    continue
+                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and node.attr in writers \
+                        and node.attr != "append_audit" and id(node) not in callees \
+                        and isinstance(node.value, ast.Name) and f"{node.value.id}.py" in self.trees:
+                    self.unread.append(f"{name}:{node.lineno}: {node.value.id}.{node.attr} is passed on, not called")
+                    continue
+                if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in writers
+                        and node.id != "append_audit" and id(node) not in callees):
+                    continue
+                scope = self.enclosing.get(id(node))
+                local = False
+                while scope is not None and not local:
+                    a = scope.args
+                    local = node.id in {p.arg for p in a.posonlyargs + a.args + a.kwonlyargs} \
+                        or any(_local_bindings(scope, node.id))
+                    scope = self.outer.get(id(scope))
+                if not local and node.id in self.consts[name]:
+                    local = True
+                if not local:
+                    self.unread.append(f"{name}:{node.lineno}: {node.id} is passed on, not called")
+
+    def _targets(self, name: str, call: ast.Call) -> set[str]:
+        """The hook files whose definition ``call`` (in hook ``name``) can
+        reach: the module an attribute call names, the caller's own
+        definition, else every hook defining the name (a ``from`` import)."""
+        callee = _call_name(call)
+        func = call.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and f"{func.value.id}.py" in self.trees:
+            return {f"{func.value.id}.py"}
+        defining = {hook for hook, _fn in self.defs.get(callee or "", [])}
+        if isinstance(func, ast.Name) and name in defining:
+            return {name}
+        return defining
+
+    def param_domain(self, name: str, fn: ast.FunctionDef, param: str) -> set[str]:
+        """Every string ``param`` of ``fn`` (in hook ``name``) can hold, from
+        every call of ``fn`` the hooks make."""
+        key = (id(fn), param)
+        if key in self._domains:
+            return self._domains[key]
+        self._domains[key] = out = set()  # a cycle reads what is known so far
+        self.traced.add(fn.name)
+        args = fn.args
+        positional = [a.arg for a in args.posonlyargs + args.args]
+        defaults = dict(zip(positional[len(positional) - len(args.defaults):], args.defaults))
+        defaults.update({a.arg: d for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None})
+        index = positional.index(param) if param in positional else None
+        sites = [(cname, call) for cname, call in self.calls.get(fn.name, []) if name in self._targets(cname, call)]
+        if not sites:
+            self.unread.append(f"{name}:{fn.lineno}: no call of {fn.name}() gives {param} a value")
+        for cname, call in sites:
+            site = f"{cname}:{call.lineno}"
+            arg = next((k.value for k in call.keywords if k.arg == param), None)
+            if arg is None and index is not None and index < len(call.args):
+                if any(isinstance(a, ast.Starred) for a in call.args[: index + 1]):
+                    self.unread.append(f"{site}: {fn.name}() takes {param} from a starred argument")
+                    continue
+                arg = call.args[index]
+            if arg is None:
+                if any(k.arg is None for k in call.keywords):
+                    self.unread.append(f"{site}: {fn.name}() may take {param} from **kwargs")
+                    continue
+                if param in defaults:
+                    out |= self.values(name, defaults[param], fn)
+                    continue
+                self.unread.append(f"{site}: {fn.name}() is called without {param}")
+                continue
+            out |= self.values(cname, arg)
+        return out
+
+    def _name_values(self, name: str, scope: ast.FunctionDef, ident: str, is_param: bool) -> set[str]:
+        """Every string ``ident``, local to ``scope``, can hold: its parameter
+        domain first, then each value it is assigned (``x = x.lower()`` reads
+        the parameter's values lowered; a deeper cycle reads what is known)."""
+        key = (id(scope), ident)
+        if key in self._names:
+            return self._names[key]
+        self._names[key] = out = set()
+        if is_param:
+            out |= self.param_domain(name, scope, ident)
+        values, other = _local_bindings(scope, ident)
+        if other:
+            self.unread.append(f"{name}:{other[0]}: {ident} is bound by a form the census does not read")
+        for value in values:
+            out |= self.values(name, value)
+        return out
+
+    def _attr_values(self, name: str, fn: ast.FunctionDef, attr: str, site: str) -> set[str]:
+        """Every string ``self.attr`` can hold inside a method of ``fn``'s
+        class: each value assigned to ``self.attr`` in any of its methods, or
+        to ``attr`` in the class body."""
+        scope: ast.FunctionDef | None = fn
+        while scope is not None and id(scope) not in self.class_of:
+            scope = self.outer.get(id(scope))
+        if scope is None:
+            self.unread.append(f"{site}: self.{attr} is read outside a method")
+            return set()
+        cls = self.class_of[id(scope)]
+        key = (id(cls), attr)
+        if key in self._attrs:
+            return self._attrs[key]
+        self._attrs[key] = out = set()
+        bound: list[ast.expr] = [v for item in cls.body for ident, v in _bindings(item) if ident == attr]
+        for method in (item for item in cls.body if isinstance(item, _DEFS)):
+            for node in ast.walk(method):
+                if isinstance(node, ast.Assign) and any(_self_attr(t) == attr for t in node.targets):
+                    bound.append(node.value)
+                elif isinstance(node, ast.AnnAssign) and node.value is not None and _self_attr(node.target) == attr:
+                    bound.append(node.value)
+                elif isinstance(node, ast.AugAssign) and _self_attr(node.target) == attr:
+                    self.unread.append(f"{name}:{node.lineno}: self.{attr} is bound by a form the census does not read")
+        if not bound:
+            self.unread.append(f"{site}: self.{attr} is assigned nowhere in its class")
+        for value in bound:
+            out |= self.values(name, value)
+        return out
+
+    def values(self, name: str, expr: ast.expr, fn: ast.FunctionDef | None = None) -> set[str]:
+        """Every string ``expr`` (in hook ``name``) can evaluate to."""
+        fn = fn or self.enclosing.get(id(expr))
+        site = f"{name}:{getattr(expr, 'lineno', '?')}"
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return {expr.value}
+        if isinstance(expr, ast.IfExp):
+            return self.values(name, expr.body, fn) | self.values(name, expr.orelse, fn)
+        if isinstance(expr, ast.Name):
+            scope = fn
+            while scope is not None:  # its own def, then each def enclosing it
+                a = scope.args
+                is_param = expr.id in {p.arg for p in a.posonlyargs + a.args + a.kwonlyargs}
+                if is_param or any(_local_bindings(scope, expr.id)):
+                    return self._name_values(name, scope, expr.id, is_param)
+                scope = self.outer.get(id(scope))
+            if expr.id in self.consts[name]:
+                return set().union(*(self.values(name, v) for v in self.consts[name][expr.id]))
+            self.unread.append(f"{site}: {expr.id} is bound to nothing the census reads")
+            return set()
+        if (attr := _self_attr(expr)) is not None and fn is not None:
+            return self._attr_values(name, fn, attr, site)
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and not expr.args \
+                and not expr.keywords and expr.func.attr in ("lower", "upper"):
+            method = expr.func.attr
+            return {getattr(v, method)() for v in self.values(name, expr.func.value, fn)}
+        if isinstance(expr, ast.JoinedStr):
+            parts: list[set[str]] = []
+            for piece in expr.values:
+                if isinstance(piece, ast.Constant):
+                    parts.append({str(piece.value)})
+                elif isinstance(piece, ast.FormattedValue) and piece.conversion == -1 and piece.format_spec is None:
+                    parts.append(self.values(name, piece.value, fn))
+                else:
+                    self.unread.append(f"{site}: an f-string piece the census cannot read")
+                    return set()
+            return {"".join(p) for p in itertools.product(*parts)}
+        self.unread.append(f"{site}: {ast.unparse(expr)[:60]!r} is not a form the census reads")
+        return set()
+
+    def domain_of(self, hook: str, fn_name: str, param: str) -> set[str]:
+        """``param_domain`` of the one def named ``fn_name`` in ``hook``."""
+        (fn,) = [fn for name, fn in self.defs.get(fn_name, []) if name == hook]
+        return self.param_domain(hook, fn, param)
+
+
+@functools.lru_cache(maxsize=1)
+def _live_hook_trees() -> tuple[tuple[str, ast.Module], ...]:
+    """The hooks parsed once a process; a census reads them and never edits."""
+    return tuple((p.name, ast.parse(p.read_text(encoding="utf-8"))) for p in sorted(checkout_glob(HOOKS_DIR, "*.py")))
+
+
+def _live_audit_census(**extra: ast.Module) -> _AuditTypeCensus:
+    """A fresh census of the live hooks (plus ``extra`` trees), so no test reads
+    another's ``unread``."""
+    return _AuditTypeCensus({**dict(_live_hook_trees()), **extra})
+
+
+def _audit_families(integ) -> list[tuple[str, object]]:
+    """The declared families, each with the predicate that admits a type. The
+    two advisory sets are read by ``getattr`` so a tree without them fails the
+    partition by its assertion, never by an ``AttributeError``."""
+    channelled = getattr(integ, "CHANNELLED_ADVISORY_EVENT_TYPES", frozenset())
+    raw_log_only = getattr(integ, "RAW_LOG_ONLY_EVENT_TYPES", frozenset())
+    return [
+        ("refusal", integ.DENIAL_EVENT_TYPES.__contains__),
+        ("pause", integ.PAUSE_EVENT_TYPES.__contains__),
+        ("maintenance bypass", integ.MAINTENANCE_BYPASS_EVENT_TYPES.__contains__),
+        ("voice-only", integ.is_voice_only_event),
+        ("channelled advisory", channelled.__contains__),
+        ("raw log only", raw_log_only.__contains__),
+    ]
+
+
+_CHANNEL_CALLS = frozenset({"advise", "advise_warn", "_say_once_to_claude"})
+_RECORD_CALLS = frozenset({"append_audit", "_say_once_to_claude"})
+
+#: A channelled advisory whose channel is not a call beside its record, with
+#: what the witness test reads for it instead.
+_NAMED_CHANNEL_WITNESSES = {
+    "stop_held_handoff": "a stop_gate function writes the hold file (_hold_write) beside the held record "
+                         "(_say_held), and task_router reads HANDOFF_GATE_HOLD to name it on every prompt",
+}
+
+#: Each raw-log-only type, with where its by-design stderr voice is declared.
+_RAW_LOG_ONLY_REASONS = {
+    "action_justification_missing": "docs/HOOKS.md, post_write_check: the action-justification nudge "
+                                    "stays on stderr, and /status --log does not count that type",
+}
+
+
+def _channel_beside_record(trees: dict[str, ast.Module]) -> set[str]:
+    """Each string literal whose innermost statement list both writes a record
+    (``append_audit``, ``_say_once_to_claude``) and calls a channel to Claude
+    or the operator (``advise``, ``advise_warn``, ``_say_once_to_claude``)."""
+    found: set[str] = set()
+    for name, tree in trees.items():
+        if name == "_integrity.py":
+            continue
+        parent = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        lists: dict[int, list] = {}
+        for node in ast.walk(tree):
+            for field in ("body", "orelse", "finalbody"):
+                stmts = getattr(node, field, None)
+                if isinstance(stmts, list):
+                    lists.update({id(s): stmts for s in stmts if isinstance(s, ast.stmt)})
+        speaks: dict[int, bool] = {}  # one walk a statement list, not one a literal
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            up = node
+            while up is not None and id(up) not in lists:
+                up = parent.get(id(up))
+            if up is None:
+                continue
+            stmts = lists[id(up)]
+            if id(stmts) not in speaks:
+                calls = {_call_name(c) for s in stmts for c in ast.walk(s) if isinstance(c, ast.Call)}
+                speaks[id(stmts)] = bool(calls & _RECORD_CALLS and calls & _CHANNEL_CALLS)
+            if speaks[id(stmts)]:
+                found.add(node.value)
+    return found
+
+
+def _family_offenders(written, integ) -> list[str]:
+    """Each written type that sits in no family, or in more than one."""
+    families = _audit_families(integ)
+    out = []
+    for event_type in sorted(written):
+        held = [label for label, admits in families if admits(event_type)]
+        if len(held) != 1:
+            out.append(f"{event_type}: {', '.join(held) or 'no family'}")
+    return out
+
+
+_CENSUS_READS = {
+    "_integrity.py": "def append_audit(root, event, *, quiet=False):\n    return True\n",
+    "_hook_utils.py": textwrap.dedent('''\
+        from _integrity import append_audit
+
+        def say_once(root, key, hook, event_type, message, **details):
+            append_audit(root, {"event_type": event_type, "details": details})
+    '''),
+    "hook_a.py": textwrap.dedent('''\
+        import _hook_utils
+        from _integrity import append_audit
+
+        KIND = "a_module_constant"
+
+        def _wrapper(root, event_type="a_default"):
+            _hook_utils.say_once(root, "k", "hook_a", event_type, "said")
+
+        def _composed(root, event):
+            append_audit(root, {"event_type": f"{event}_blocked_composed"})
+
+        def _closure(event):
+            def _inner(root):
+                append_audit(root, {"event_type": f"{event}_from_a_closure"})
+            return _inner
+
+        def _lowered(root, kind):
+            append_audit(root, {"event_type": kind.lower()})
+
+        def _rebound(root, kind):
+            kind = kind.lower()
+            append_audit(root, {"event_type": kind})
+
+        def _self_ref(root):
+            event = "a_seed"
+            event = f"{event}_read"
+            append_audit(root, {"event_type": event})
+
+        def main(root, flag):
+            _wrapper(root)
+            _wrapper(root, event_type="a_keyword")
+            _hook_utils.say_once(root, "k", "hook_a", event_type="a_say_once_keyword", message="said")
+            picked = "a_branch_one" if flag else "a_branch_two"
+            append_audit(root, {"event_type": picked})
+            append_audit(root, event={"event_type": KIND})
+            _composed(root, "pretooluse")
+            _closure("stop")(root)
+            _lowered(root, "A_LOWERED")
+            _rebound(root, "A_REBOUND")
+            _self_ref(root)
+    '''),
+    "hook_c.py": textwrap.dedent('''\
+        import functools
+        import _integrity
+
+        class _Refusal:
+            def __init__(self):
+                self._event = "c_class_default"
+                self._write = None
+
+            def record(self, *, event="c_record_default"):
+                self._event = event
+
+            def build(self, root):
+                self._write = functools.partial(_integrity.append_audit, root, quiet=True)
+                self._write({"event_type": self._event})
+
+        def run(refusal, flag):
+            if flag:
+                event, details = "c_unpacked", {}
+            else:
+                event = "c_plain"
+            refusal.record(event=event)
+            refusal.record()
+    '''),
+}
+
+_CENSUS_SAYS_UNREAD = {
+    "_integrity.py": _CENSUS_READS["_integrity.py"],
+    "_hook_utils.py": _CENSUS_READS["_hook_utils.py"],
+    "hook_b.py": textwrap.dedent('''\
+        import _hook_utils
+        from _integrity import append_audit
+
+        def _forward(root, **details):
+            _hook_utils.say_once(root, "k", "hook_b", message="said", **details)
+
+        def _never_called(root, event_type):
+            append_audit(root, {"event_type": event_type})
+
+        def main(root, suffix):
+            append_audit(root, {"event_type": "b_" + suffix})
+            record = {"event_type": "b_prebuilt"}
+            append_audit(root, record)
+    '''),
+    "hook_d.py": textwrap.dedent('''\
+        import functools
+        import _hook_utils
+        from _integrity import append_audit
+        from _hook_utils import say_once as _say
+
+        def main(root, items, extra):
+            _say(root, "k", "hook_d", "d_via_an_alias", "said")
+            later = functools.partial(_hook_utils.say_once, root)
+            later("k", "hook_d", "d_via_a_partial", "said")
+            for looped in items:
+                append_audit(root, {"event_type": looped})
+            grown = "d_one"
+            grown += "_more"
+            append_audit(root, {"event_type": grown})
+            append_audit(root, {"event_type": "d_spread", **extra})
+            writer = append_audit
+            writer(root, {"event_type": "d_aliased"})
+    '''),
+}
+
+
+class TestEveryAuditTypeHasAFamily:
+    """DEF-3093. The written set is derived from every ``append_audit`` call
+    by ``_AuditTypeCensus``, which is fed both what it must read and what it
+    must name as unread; every written type then sits in exactly one declared
+    family, and the two advisory sets name only types a hook writes."""
+
+    def test_the_census_reads_every_form_a_type_reaches_the_writer_by(self):
+        census = _AuditTypeCensus({n: ast.parse(src) for n, src in _CENSUS_READS.items()})
+        assert census.unread == []
+        assert set(census.written) == {
+            "a_default", "a_keyword", "a_say_once_keyword", "a_branch_one", "a_branch_two",
+            "a_module_constant", "pretooluse_blocked_composed", "stop_from_a_closure", "a_lowered",
+            # A name reads every value it is ever bound to, not their order: a
+            # superset, never a dropped type.
+            "A_REBOUND", "a_rebound", "a_seed", "a_seed_read",
+            # A partial of the writer, a self attribute set in the class and
+            # by a method's keyword, and a literal tuple unpacked.
+            "c_class_default", "c_record_default", "c_unpacked", "c_plain",
+        }
+        assert census.traced >= {"say_once", "_wrapper", "_composed", "_closure", "_lowered", "_rebound", "record"}
+
+    def test_the_census_names_each_site_it_cannot_read(self):
+        census = _AuditTypeCensus({n: ast.parse(src) for n, src in _CENSUS_SAYS_UNREAD.items()})
+        # What it can read beside a named gap stays read: said, never dropped.
+        assert set(census.written) == {"d_one", "d_spread"}
+        said = sorted(census.unread)
+        assert len(said) == 10, said
+        for phrase in ("say_once is imported as _say",
+                       "_hook_utils.say_once is passed on, not called",
+                       "say_once() may take event_type from **kwargs",
+                       "no call of _never_called() gives event_type a value",
+                       "'b_' + suffix",
+                       "the event is not a dict literal with an event_type key",
+                       "looped is bound by a form the census does not read",
+                       "grown is bound by a form the census does not read",
+                       "a ** spread after event_type may replace it",
+                       "append_audit is referenced, not called"):
+            assert sum(phrase in line for line in said) == 1, (phrase, said)
+
+    def test_the_census_reads_the_live_hooks_whole(self):
+        census = _live_audit_census()
+        assert census.unread == []
+        assert len(census.written) >= 95, f"discovery floor: found only {len(census.written)}"
+        # It sees at least what the older readers see, and traces through each
+        # writer the bare-emitter roster names.
+        assert sorted(_emitted_denial_event_types() - set(census.written)) == []
+        assert sorted(_emitted_bypass_event_types() - set(census.written)) == []
+        assert sorted(_AUDIT_WRITERS - {"append_audit"} - census.traced) == []
+
+    def test_every_written_type_sits_in_exactly_one_family(self):
+        integ = _load_hook_module("_integrity")
+        assert _family_offenders(_live_audit_census().written, integ) == []
+
+    def test_a_new_type_outside_every_family_is_named(self):
+        integ = _load_hook_module("_integrity")
+        hook = ast.parse(textwrap.dedent('''\
+            from _integrity import append_audit
+
+            def main(root):
+                append_audit(root, {"event_type": "postcompact_summary_unwritten"})
+        '''))
+        census = _live_audit_census(**{"zz_new_hook.py": hook})
+        assert _family_offenders(census.written, integ) == ["postcompact_summary_unwritten: no family"]
+
+    def test_the_two_advisory_sets_name_written_types_no_other_family_admits(self):
+        integ = _load_hook_module("_integrity")
+        written = set(_live_audit_census().written)
+        channelled = set(getattr(integ, "CHANNELLED_ADVISORY_EVENT_TYPES", ()))
+        raw_log_only = set(getattr(integ, "RAW_LOG_ONLY_EVENT_TYPES", ()))
+        assert channelled and raw_log_only
+        assert sorted((channelled | raw_log_only) - written) == [], "declared, but no hook writes it"
+        assert channelled & raw_log_only == set()
+        tiers = set(integ.BLOCKED_EVENT_TYPES) | set(integ.MAINTENANCE_BYPASS_EVENT_TYPES)
+        assert sorted((channelled | raw_log_only) & tiers) == []
+        assert [t for t in sorted(channelled | raw_log_only) if integ.is_voice_only_event(t)] == []
+
+    def test_every_channelled_advisory_has_a_witnessed_channel(self):
+        """The channelled set is no escape hatch: a type joins it only where a
+        channel call sits beside its record, or under a named witness read
+        here, so a type with no channel, or one whose channel is removed,
+        fails instead of passing as channelled."""
+        integ = _load_hook_module("_integrity")
+        channelled = set(getattr(integ, "CHANNELLED_ADVISORY_EVENT_TYPES", ()))
+        trees = dict(_live_hook_trees())
+        beside = _channel_beside_record(trees)
+        named = set(_NAMED_CHANNEL_WITNESSES)
+        assert sorted(channelled - beside - named) == [], "declared channelled, with no channel beside its record"
+        assert sorted(named - channelled) == []
+        assert sorted(named & beside) == [], "a named witness for a channel the census already sees"
+        held = [fn.name for fn in ast.walk(trees["stop_gate.py"]) if isinstance(fn, _DEFS)
+                and {"_say_held", "_hold_write"} <= {_call_name(c) for c in ast.walk(fn) if isinstance(c, ast.Call)}]
+        assert held, "no stop_gate function writes the hold file beside the held record"
+        assert any(isinstance(n, ast.Name) and n.id == "HANDOFF_GATE_HOLD" and isinstance(n.ctx, ast.Load)
+                   for fn in ast.walk(trees["task_router.py"]) if isinstance(fn, _DEFS) for n in ast.walk(fn))
+
+    def test_every_raw_log_only_type_names_its_reason(self):
+        integ = _load_hook_module("_integrity")
+        assert set(getattr(integ, "RAW_LOG_ONLY_EVENT_TYPES", ())) == set(_RAW_LOG_ONLY_REASONS)

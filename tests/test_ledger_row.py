@@ -19,6 +19,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -298,6 +299,128 @@ class TestADeferralIntoTheStruckRow:
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "| ~~`DEF-1`~~ | new::home | ✅ **CLOSED 2026-09-06" in text
         assert "| ~~`DEF-1`~~ | §C1 | new::home |" in text
+
+
+class TestFreeTextKeepsItsRowWhole:
+    """Every free text a verb writes into a ledger cell -- a strike's closing
+    text, a filing's body, an anchor -- has each bare pipe escaped as the
+    ledger escapes one (``\\|``), so a quoted pipeline never splits its row.
+    Until DEF-2098 the strike wrote its closing text raw: a closing that
+    quoted a pipeline left a five-cell row the strike accepted, and only the
+    landing gate's completeness test caught it, a CI round later. A code span
+    keeps its backticks, and a pipe already escaped by hand stays escaped
+    once."""
+
+    PIPELINE = "now reads `ls a | head` whole\nand `x \\| y` as typed"
+    ESCAPED = "now reads `ls a \\| head` whole and `x \\| y` as typed"
+
+    @staticmethod
+    def _member_cells(lr, text: str, rid: str) -> list[str]:
+        found = lr._member_line(rid, text, struck_ok=True)
+        assert found is not None, rid
+        try:
+            return lr._cells(found[1])
+        except lr.RowShape as exc:
+            # The defect itself, said as a failure: a bare pipe split the row.
+            pytest.fail(f"{rid}'s row split at a bare pipe: {exc}")
+
+    @staticmethod
+    def _index_cells(lr, text: str, rid: str) -> list[str]:
+        found = lr._index_line(rid, text)
+        assert found is not None, rid
+        return [c.strip() for c in re.split(r"(?<!\\)\|", found[1].strip()[1:-1])]
+
+    @staticmethod
+    def _converged(lr, tree, text: str) -> None:
+        gen = lr._load("generate_ledger_regions")
+        gen._PROBES = tree["probes"]
+        assert gen.find_drift(text) == []
+
+    def test_a_strike_closing_text_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        tree["closing"].write_text(self.PIPELINE, encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        cells = self._member_cells(lr, text, "DEF-1")
+        assert cells[2] == f"✅ **CLOSED 2026-09-06 — {self.ESCAPED}** PRIOR TEXT: what"
+        assert cells[3] == "major"
+        self._converged(lr, tree, text)
+
+    def test_a_strike_anchor_with_a_pipe_keeps_both_rows_whole(self, lr, tree):
+        assert lr.main(_args(tree, "strike", "DEF-1", "--anchor", "a.py::f | b.py::g",
+                             "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "a.py::f \\| b.py::g"
+        assert self._index_cells(lr, text, "DEF-1") == ["~~`DEF-1`~~", "§C1", "a.py::f \\| b.py::g"]
+        self._converged(lr, tree, text)
+
+    def test_a_filed_body_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        tree["body"].write_text("**A new defect.** `ls a | head` reads it.", encoding="utf-8")
+        assert TestFile()._file(lr, tree) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        member = "| `DEF-3` | new/site.py::fn | **A new defect.** `ls a \\| head` reads it. | minor |"
+        assert member in text
+        assert self._member_cells(lr, text, "DEF-3")[3] == "minor"
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        new = [p for p in data["probes"] if p["id"] == "DEF-3"][0]
+        assert new["row_sha"] == hashlib.sha256(member.encode("utf-8")).hexdigest()[:12]
+        self._converged(lr, tree, text)
+
+    def test_a_filed_anchor_and_index_anchor_with_a_pipe_keep_both_rows_whole(self, lr, tree):
+        assert TestFile()._file(lr, tree, "--index-anchor", "c.py | d.py") == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._index_cells(lr, text, "DEF-3") == ["`DEF-3`", "§C1", "c.py \\| d.py"]
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]),
+                             "file", "DEF-4", "--section", "C1", "--after", "DEF-3",
+                             "--anchor", "e.py | f.py", "--text-file", str(tree["body"]),
+                             "--severity", "nit", "--probe-cmd", "echo open=True",
+                             "--open-value", "open=True", "--subject", "body.md")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-4")[1] == "e.py \\| f.py"
+        assert self._index_cells(lr, text, "DEF-4") == ["`DEF-4`", "§C1", "e.py \\| f.py"]
+        self._converged(lr, tree, text)
+
+    def test_a_repin_anchor_with_a_pipe_keeps_both_rows_whole(self, lr, tree):
+        (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "repin", "DEF-1",
+                             "--reason", "moved", "--anchor", "g.py | h.py")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "g.py \\| h.py"
+        assert self._index_cells(lr, text, "DEF-1") == ["`DEF-1`", "§C1", "g.py \\| h.py"]
+        self._repinned(lr, tree, text, "DEF-1")
+
+    def test_a_repin_text_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject
+        tree["body"].write_text(self.PIPELINE, encoding="utf-8")
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "repin", "DEF-1",
+                             "--reason", "reworded", "--text-file", str(tree["body"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[2:] == [self.ESCAPED, "major"]
+        self._repinned(lr, tree, text, "DEF-1")
+
+    def _repinned(self, lr, tree, text: str, rid: str) -> None:
+        """The probe's pin is the sha the checker recomputes from the row as
+        written (escaped), and the regions converge."""
+        line = lr._member_line(rid, text, struck_ok=False)[1]
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        pin = [p for p in data["probes"] if p["id"] == rid][0]
+        assert pin["row_sha"] == lr._load("check_ledger_probes").row_sha(line)
+        self._converged(lr, tree, text)
+
+    def test_a_strike_with_no_anchor_keeps_a_hand_escaped_site_cell_as_it_was(self, lr, tree):
+        rows = ("| `DEF-1` | a.py \\| b.py | what | major |", "| `DEF-2` | site | what | minor |")
+        tree["ledger"].write_text(_ledger(c1_rows=rows), encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "a.py \\| b.py"
+
+    def test_a_class_effort_with_a_pipe_keeps_the_index_row_whole(self, lr, tree):
+        assert lr.main(_args(tree, "class", "C7", "--title", "New", "--population", "HYGIENE",
+                             "--audience", "MAINTAINER", "--effort", "S | M")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        row = next(ln for ln in text.split("\n") if ln.startswith("| [§C7]"))
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip()[1:-1])]
+        assert cells[1:] == ["New", "HYGIENE", "MAINTAINER", "S \\| M"]
+        self._converged(lr, tree, text)
 
 
 class TestABaselinedIdRefusesTheStrike:

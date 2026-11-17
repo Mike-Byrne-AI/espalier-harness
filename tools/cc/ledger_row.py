@@ -1824,6 +1824,17 @@ def _cell_text(text: str) -> str:
     return re.sub(r"(?<!\\)([|*~`])", r"\\\1", " ".join(text.split()))
 
 
+def _cell_line(text: str) -> str:
+    """Free ``text`` a verb writes into a ledger cell (a strike's closing
+    text, a row's body, an anchor) on one line, each unescaped pipe escaped
+    the way the ledger escapes one (``\\|``), so `_cells` reads the row whole
+    rather than as a split row. The pipe alone: a code span keeps its
+    backticks, and a pipe escaped by hand stays escaped once. `_cell_text`,
+    which escapes the bold and strike marks as well, is for the machine
+    detail the decline clauses quote."""
+    return re.sub(r"(?<!\\)\|", r"\\|", text.strip().replace("\n", " "))
+
+
 def _probes_changed_by_hand(ids: list[str], *, root: Path, probes: Path, data: dict,
                             base: str | None) -> list[str]:
     """The refusal sentences for each id of the row whose probe the base holds
@@ -2094,7 +2105,7 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     if declined is not None and (why := _decline_refusal(declined, guards=guards, base=base, no_base=no_base)):
         print(f"ledger_row: {why}. Nothing struck.", file=sys.stderr)
         return 2
-    closing = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
+    closing = _cell_line(text_file.read_text(encoding="utf-8"))
     if declined is None and _DECLINE_STAMP.match(closing):
         # Only --declined writes the stamp: one typed by hand would read as a
         # decline whose probe nothing drove (the failure-mode review).
@@ -2177,6 +2188,8 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     if declined is not None:
         closing = _decline_stamp(declined, readings, where, retired) + (f" {closing}" if closing else "")
     struck_cell = " ".join(f"~~`{i}`~~" for i in ids)
+    if anchor:
+        anchor = _cell_line(anchor)
     new_line = (f"| {struck_cell} | {anchor or cells[1]} | ✅ **CLOSED {day} — {closing}** "
                 f"PRIOR TEXT: {cells[2]} | " + " | ".join(cells[3:]) + " |")
     # A row that lives in its own file is struck there, member and index lines
@@ -2331,7 +2344,7 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     # does, the convergence below strips every stored total, this row's
     # neighbours' included.
     index_row = (f"| [{name}](#{_anchor_slug(heading)}) | {title} | {population} | "
-                 f"{audience} | {effort or _EM_DASH} |")
+                 f"{audience} | {_cell_line(effort or _EM_DASH)} |")
     if dry_run:
         print(index_row)
         print("\n".join(block))
@@ -2739,7 +2752,7 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
                   file=sys.stderr)
             return 2
         member_at = prev[0] + 1
-    body = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
+    body = _cell_line(text_file.read_text(encoding="utf-8"))
     # A class MIXED on either axis carries the row's own population and
     # audience cells (the generator reads the row's cell on a MIXED axis and
     # the class tag on a classed one, so the classed cell must repeat it);
@@ -2768,8 +2781,8 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
         print(f"ledger_row: {section} {why}", file=sys.stderr)
         return 2
     tags = f" {population} | {audience} |" if mixed else ""
-    new_line = f"| `{rid}` | {anchor} | {body} | {severity} |{tags}"
-    new_index = f"| `{rid}` | {section} | {index_anchor or anchor} |"
+    new_line = f"| `{rid}` | {_cell_line(anchor)} | {body} | {severity} |{tags}"
+    new_index = f"| `{rid}` | {section} | {_cell_line(index_anchor or anchor)} |"
     if finishing:
         # The index row this filing writes: in the ledger file, none where the
         # --after row has none (the insertion below skips it).
@@ -3039,8 +3052,9 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         print(f"ledger_row: note -- {rid}'s row no longer matches the row_sha its probe pinned (a re-pin cut off "
               "before its probe, or a hand edit); the stamp says it moved before this re-pin", file=sys.stderr)
     if text_file is not None:
-        cells[2] = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
+        cells[2] = _cell_line(text_file.read_text(encoding="utf-8"))
     if anchor:
+        anchor = _cell_line(anchor)
         cells[1] = anchor
     if population or audience:
         # Re-classification is a live operation (a class-index cell already

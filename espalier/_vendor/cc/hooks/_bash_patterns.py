@@ -145,19 +145,37 @@ _PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
     "_PS_GLUED_OPENING", default=False)
 
 
-def reading_cache(maxsize: int) -> Callable[[Any], Any]:
+def reading_cache(maxsize: int, *, keyed_by: "Callable[[], Any] | None" = None) -> Callable[[Any], Any]:
     """`functools.lru_cache` keyed by the reading too, so a text's answer
     under one reading is never read back under the other (air's verifier
     note 38d60b (c)). The cached function keeps ``cache_clear``,
     ``cache_info`` and ``__wrapped__``; it holds ``maxsize`` entries a
     reading, one cache for each (``cache_info`` reads the enclosing call's
-    reading's, ``cache_clear`` empties both)."""
-    def wrap(fn: Any) -> Any:
-        caches = {reading: functools.lru_cache(maxsize=maxsize)(fn) for reading in (False, True)}
+    reading's, ``cache_clear`` empties both).
 
-        @functools.wraps(fn)
-        def cached(*args: Any, **kwargs: Any) -> Any:
-            return caches[bool(_PS_GLUED_OPENING.get())](*args, **kwargs)
+    ``keyed_by``, where given, is called at every call and its answer joins
+    the key: the state beyond the arguments that the memo's reading reads
+    (DEF-2085), which the reading reads only by calling the same function.
+    `tests/test_write_guard.py`'s no-state pin holds that shape: the key is a
+    function, or a lambda calling one with no argument, the function takes
+    none, and the reading, walked with that function as a leaf, reads
+    nothing else."""
+    def wrap(fn: Any) -> Any:
+        if keyed_by is None:
+            caches = {reading: functools.lru_cache(maxsize=maxsize)(fn) for reading in (False, True)}
+
+            @functools.wraps(fn)
+            def cached(*args: Any, **kwargs: Any) -> Any:
+                return caches[bool(_PS_GLUED_OPENING.get())](*args, **kwargs)
+        else:
+            def under(_state: Any, *args: Any, **kwargs: Any) -> Any:
+                return fn(*args, **kwargs)
+
+            caches = {reading: functools.lru_cache(maxsize=maxsize)(under) for reading in (False, True)}
+
+            @functools.wraps(fn)
+            def cached(*args: Any, **kwargs: Any) -> Any:
+                return caches[bool(_PS_GLUED_OPENING.get())](keyed_by(), *args, **kwargs)
 
         def cache_clear() -> None:
             for cache in caches.values():
@@ -5886,7 +5904,13 @@ _PS_GLUED_HEAD_NUMBER_CAP = 64
 #: there it is per call; a test process keeps it, which only adds second
 #: readings. It is set by a walk, and a cached answer skips the walk: code
 #: that lowers it between calls in one process clears the reading caches
-#: too, or a cache hit leaves it lowered.
+#: too, or a cache hit leaves it lowered. Every memo whose reading walks
+#: (`_relief_applies`, `_removed_or_relocated_cached`, the speed bump's two
+#: scan memos) raises it and never reads it, and the hook tree only ever
+#: raises it, so a hit after the miss that filled it, in one process, finds
+#: it as that miss left it: constant there by construction, not a key the
+#: memos lack (DEF-2085; `tests/test_write_guard.py::TestAMemoServesWhatAFreshReadingWould::test_a_flag_a_reading_raises_is_never_lowered_in_the_hook_tree`
+#: holds every touch in the hook tree to a raise or a read).
 _PS_GLUED_OPENED = [False]
 
 
@@ -5903,7 +5927,8 @@ def glued_opener_opened() -> bool:
 #: that second judgment of the first leg cost a 32 KiB Bash call about 0.3 s
 #: of the hook's 0.7 (#620's three time-budget reds, 2026-11-13). Sticky like
 #: the record above, so an answer cached by a walk that asked still finds it
-#: raised.
+#: raised: the memos that walk raise it and never read it, and the hook tree
+#: only ever raises it (DEF-2085, pinned as the record above is).
 _PS_OPENER_ASKED = [False]
 
 
@@ -6378,7 +6403,14 @@ _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 #: handed again, which is that fold, so a second walk of it is a lookup. A
 #: fold of a fold is itself (pinned). Keyed by the reading too, since the
 #: fold runs the walk, which reads comment openers (the failure-mode review
-#: of DEF-2073's design A, WARN 2). Bounded: cleared past 64 entries.
+#: of DEF-2073's design A, WARN 2). Bounded: cleared past 64 entries. A
+#: memo whose reading folds reads this table only through
+#: `fold_powershell_quotes`, and an entry is the fold of its key, so it
+#: needs no key of the memo's (DEF-2085): except that the depth is not in
+#: the key, so a body met first inside a nest past `_PS_FOLD_DEPTH_CAP`
+#: levels keeps that nest's typed levels where it is met again shallower,
+#: and the reverse (declared, not keyed: no command the named user types
+#: holds a nest of 64 `$( )` levels).
 _PS_FOLDED: dict[tuple[bool, str], str] = {}
 
 #: Raised by every fold that moves a quote, a cached one included, so the
@@ -6386,7 +6418,13 @@ _PS_FOLDED: dict[tuple[bool, str], str] = {}
 #: PowerShell program reaches them by: the PowerShell tool's dispatch, a
 #: program the Bash tool launches, one `Start-Process` carries (DEF-2040; the
 #: code review drove the last two allowed with the bit kept per dispatch).
-#: `write_guard.py::_a_dispatch_resets_the_fold` lowers it for each call.
+#: `write_guard.py::_one_judgment` lowers it as each judgment starts and
+#: ends. The memos whose reading folds raise it and never read it, so a hit
+#: skips the raise its miss made: within one judgment it finds it raised,
+#: and a hook process makes one judgment, so there it is constant (DEF-2085).
+#: An in-process caller's second judgment can find it lowered by a hit; on
+#: the routes the DEF-2040 rows drive, a fold outside the memos raises it
+#: first, so no verdict moves there (driven in `tests/test_write_guard.py`).
 FOLD_MOVED_A_QUOTE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
     "FOLD_MOVED_A_QUOTE", default=False)
 
@@ -11536,7 +11574,16 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     return list(_removed_or_relocated_cached(command, _depth))
 
 
-@reading_cache(maxsize=8)
+#: Keyed by the temp reading too (DEF-2085): cmd's remove of a temp variable
+#: is read as the value this process inherits unless the judged text sets
+#: one itself (`_cmd_target`), so one text's operands differ by the
+#: environment, and by the hard tier's push, which the secret leg before it
+#: never makes: the two legs, called in `write_guard.py::_run_main`'s order
+#: in one process, served the hard tier's walk the secret leg's answer for a
+#: nested program (driven in `tests/test_write_guard.py`; not through a hook
+#: call). A lambda, because `_temp_reading` is defined below: a bare name
+#: fails at import.
+@reading_cache(maxsize=8, keyed_by=lambda: _temp_reading())
 def _removed_or_relocated_cached(command: str, _depth: int) -> tuple[tuple[str, str], ...]:
     return tuple(_iter_removed_or_relocated_operands(command, _depth))
 
@@ -14858,9 +14905,13 @@ def _vetted_scratch_values() -> list[str]:
     temp-root carve-out (`below_a_temp_root`) and the catastrophic reader's
     temp-root rule (`_target_is_catastrophic`). Remembered per environment
     and home (`_VETTED_MEMO`): the carve-out asks it several times a target,
-    and each answer resolves paths on disk."""
-    key = (*(os.environ.get(v, "") for v in ("TEMP", "TMP", "TMPDIR")),
-           os.path.expanduser("~"))
+    and each answer resolves paths on disk. The key holds the four values the
+    answer is read from; the judge it asks (`_target_is_catastrophic`) is
+    handed an absolute value, which the temp-variable reader never matches,
+    so the stack top it could read stays unread here, and the disk it
+    resolves on holds still within a hook call (a hand-rolled memo the
+    no-state pin does not walk; DEF-2085's review read it)."""
+    key = (*(os.environ.get(v, "") for v in _TEMP_VAR_NAMES), os.path.expanduser("~"))
     hit = _VETTED_MEMO.get(key)
     if hit is not None:
         return list(hit)
@@ -14873,7 +14924,7 @@ def _vetted_scratch_values() -> list[str]:
     out: list[str] = []
     _VETTING_SCRATCH[0] = True
     try:
-        for var in ("TEMP", "TMP", "TMPDIR"):
+        for var in _TEMP_VAR_NAMES:
             value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
             if not _SCRATCH_ROOT_VALUE_RE.match(value) or _target_is_catastrophic(value, None, by_drive=False):
                 continue
@@ -16613,7 +16664,7 @@ def _cmd_target(token: str) -> str:
     # case-sensitive); a path below it stays a variable, as on both tools
     temp = re.fullmatch(r"\$(TEMP|TMP|TMPDIR)/?", t, re.IGNORECASE)
     if temp is not None:
-        t = _temp_var_target("$" + temp.group(1).upper(), powershell=False) or t
+        t = _bash_temp_var_target("$" + temp.group(1).upper()) or t
     head = "//" if t.startswith("//") else ""
     return head + re.sub(r"/{2,}", "/", t[len(head):])
 
@@ -17683,6 +17734,26 @@ _BASH_TEMP_VAR_NAME_RE = _first_use(r"(?<![A-Za-z0-9_${%])(?:TEMP|TMP|TMPDIR)(?!
 #: unread: the value the command expands is not the one this process
 #: inherits (`export TMPDIR=$(mktemp -d)` then its cleanup).
 _TEMP_VARS_SET: list[bool] = [False]
+#: The temp variables whose inherited values `_temp_reading` and the
+#: scratch-root reader (`_vetted_scratch_values`) read, as bash spells them
+#: (DEF-2049; cmd's names, matched in any case, are read by these). The
+#: readers' patterns spell the same names again; a name a pattern takes and
+#: this tuple lacks reads as unset, so it stays unread, toward the wall.
+_TEMP_VAR_NAMES = ("TEMP", "TMP", "TMPDIR")
+
+
+def _temp_reading() -> tuple[bool, "str | None", "str | None", "str | None"]:
+    """All a Bash-spelled temp variable's reading reads beside its text:
+    whether the judged text sets one itself (the top of `_TEMP_VARS_SET`),
+    then the value this process inherits for each of `_TEMP_VAR_NAMES`. The
+    Bash reader (`_bash_temp_var_target`) reads them through this one call,
+    and a memo whose reading reaches it adds this to its key
+    (`reading_cache`'s ``keyed_by``, DEF-2085), so the key is what the
+    answer read. It takes no argument and calls nothing of this module's,
+    so every call of it reads the same state (the pin holds a key to that
+    shape)."""
+    temp, tmp, tmpdir = map(os.environ.get, _TEMP_VAR_NAMES)
+    return (_TEMP_VARS_SET[-1], temp, tmp, tmpdir)
 
 
 def _temp_var_target(part: str, *, powershell: bool) -> str | None:
@@ -17702,15 +17773,46 @@ def _temp_var_target(part: str, *, powershell: bool) -> str | None:
     expands its own value, so the two classifier entries leave it unread
     there (`_TEMP_VARS_SET`), and the one reader that lifts a wall by it
     (`powershell_removal_is_below_a_scratch_root`) asks
-    `_ps_command_sets_a_temp_var` first."""
-    m = (_TEMP_VAR_PS_RE if powershell else _TEMP_VAR_BASH_RE).match(part)
+    `_ps_command_sets_a_temp_var` first.
+
+    The Bash spelling is `_bash_temp_var_target`, which reads its state
+    through `_temp_reading` alone; every Bash-spelled caller calls it
+    directly. The PowerShell spelling keeps the typed case for its lookup (a
+    POSIX environment is case-sensitive), so it reads the environment
+    itself, here, and no decorated memo reaches it (DEF-2085, the no-state
+    pin in `tests/test_write_guard.py`)."""
+    if not powershell:
+        return _bash_temp_var_target(part)
+    m = _TEMP_VAR_PS_RE.match(part)
     if m is None or _TEMP_VARS_SET[-1]:
         return None
-    tail = part[m.end():]
-    if tail and not tail.startswith("/"):
+    found = m.groupdict()
+    return _temp_root(found, os.environ.get(found["b"] or found["n"]), part[m.end():])
+
+
+def _bash_temp_var_target(part: str) -> str | None:
+    """`_temp_var_target` on the Bash spelling, its state read through
+    `_temp_reading` alone, so a memo that adds that call to its key holds
+    all this read (DEF-2085). A name the pattern takes and
+    `_TEMP_VAR_NAMES` does not stays unread."""
+    m = _TEMP_VAR_BASH_RE.match(part)
+    if m is None:
+        return None
+    set_here, *inherited = _temp_reading()
+    if set_here:
         return None
     found = m.groupdict()
-    inherited = os.environ.get(found["b"] or found["n"])
+    return _temp_root(found, dict(zip(_TEMP_VAR_NAMES, inherited)).get(found["b"] or found["n"]),
+                      part[m.end():])
+
+
+def _temp_root(found: "dict[str, str | None]", inherited: str | None, tail: str) -> str | None:
+    """The directory a temp variable matched as ``found`` names, from the
+    value ``inherited`` for it and the ``tail`` that follows it in the
+    operand, or None (`_temp_var_target`'s rules). Reads its arguments
+    alone."""
+    if tail and not tail.startswith("/"):
+        return None
     op = found.get("op")
     if op and (inherited is None or (op.startswith(":") and not inherited)):
         # unset (or empty, with the colon): `?` stops the shell before the
@@ -17875,7 +17977,7 @@ def _target_is_catastrophic(
     # A temp variable is the directory it names (DEF-2049), as `$HOME` is:
     # the root spelled by it walls as the literal root does (rule a2 below).
     # Unset or relative, it stays a variable, the soft tier's.
-    temp = None if match else _temp_var_target(expanded, powershell=False)
+    temp = None if match else _bash_temp_var_target(expanded)
     if temp is not None:
         expanded = temp
     # `$PWD` is the directory the command runs in (DEF-843): until 2026-09-18
@@ -18120,7 +18222,7 @@ def _brace_prefix_completes_a_site(prefix: str, root: str | None, base: str | No
     if _PWD_PREFIX_RE.match(p):
         return True
     # a temp variable is read as `_target_is_catastrophic` reads it (DEF-2049)
-    p = (None if m else _temp_var_target(p, powershell=False)) or p
+    p = (None if m else _bash_temp_var_target(p)) or p
     if not (p.startswith("/") or _DRIVE_OR_UNC_ABSOLUTE_RE.match(p)):
         if base is None:
             return False
