@@ -192,10 +192,11 @@ _BUILD_THE_REFUSAL_AT_S = 2.0
 #: two processes on the hosts measured (Windows 3.10, 3.11 and 3.13, 20 spawns
 #: each, 2026-11-16); a reading outside the parent's own is not used.
 _BEGUN_MARK = b"write_guard: judging began at "
-#: What the judging child writes on stderr, after its begun mark, as a
-#: speed-bump checkpoint is about to spend its one-shot state (DEF-2097): the
-#: parent reads it at its deadline, since the identical re-issue would pass
-#: that nudge unseen, and takes it out of what it relays.
+#: What the judging child writes on stderr as a speed-bump checkpoint is about
+#: to spend its one-shot state, or as the pattern load finds a kept, older
+#: ``_speedbump`` it cannot watch, so before its begun mark or after it
+#: (DEF-2097): the parent reads it at its deadline, since the identical
+#: re-issue would pass that nudge unseen, and takes it out of what it relays.
 _SPENT_MARK = b"write_guard: a checkpoint spent its one-shot\n"
 #: The two bounds a refusal names (DEF-2091): the child's thread budget counts
 #: from the child's first line, the parent's deadline from the hook's.
@@ -271,13 +272,20 @@ def _spent(began: bool | None, start_up: float | None, judged: float | None) -> 
 
 
 #: The longest command a refusal past the begun mark may ask to re-issue
-#: (DEF-2097, air bd4b29): past it the command's length, not the first-use
-#: compiles every call pays, is what a split would shorten. Measured on the
-#: Windows box (3.11.9, 2026-11-17, 7 rounds of fresh interpreters, the
-#: judgment past the mark): the compiles are a fixed 73 to 76 ms, and the rest
-#: reaches them at about 1,550 characters for a delete list (``rm -f`` of N
-#: paths, about 1.1 ms a path) and about 6,200 for a ``git add`` of the same
-#: paths (about 0.33 ms a path); the gate sits under the lower of the two.
+#: (DEF-2097, air bd4b29 and G1b): under it no measured shape's length adds
+#: what a split would save, so the time went to what every call pays. Past it
+#: the refusal keeps the split, as before DEF-2097, whether or not a split
+#: would pay there. Measured on the Windows box (3.11.9, 2026-11-17, 7 rounds
+#: of fresh interpreters, the judgment past the mark). Bash: the first-use
+#: compiles are a fixed 73 to 76 ms, and the rest reaches them at about 1,550
+#: characters for a delete list (``rm -f`` of N paths, about 1.1 ms a path)
+#: and about 6,200 for a ``git add`` of the same paths (about 0.33 ms a path).
+#: PowerShell: the compiles are a fixed 30 ms and a ``Remove-Item`` list's
+#: rest is 19 ms at one path, so the rest reaches the compiles alone at about
+#: 360 characters quoted. A split repeats that per-command 19 ms as it repeats
+#: the compiles, so counting it as fixed the crossings are about 1,620
+#: characters (PowerShell, quoted), 2,620 (unquoted), 3,070 (``rm -f``) and
+#: 6,550 (``git add``). One gate for both tools sits under all four (air G1b).
 _RE_ISSUE_GATE_CHARS = 1500
 
 
@@ -292,12 +300,30 @@ def _short_enough(tool_input: object) -> bool:
 def _a_short_call(payload: bytes) -> bool | None:
     """At the parent's deadline: `_short_enough` of the payload it holds, read
     only there, so a call answered in time pays nothing for it (40ec7f);
-    ``None`` where the payload does not read as a call."""
+    ``None`` where the payload does not read as a call: a parse that raises
+    anything (a payload nested past the parser's depth raises RecursionError)
+    must not take the deadline's refusal with it. A byte-order mark is cut by
+    hand, as `read_stdin_safely` reads one: the ``utf-8-sig`` codec is an
+    import, which a loaded box makes slow past the deadline, where the
+    record's time is short (DEF-2092)."""
     try:
-        data = json.loads(payload.decode("utf-8", errors="replace"))
-    except ValueError:  # fail-open: ok deliberate -- an unread payload is no short call: the refusal asks for the split
+        data = json.loads(payload.removeprefix(b"\xef\xbb\xbf").decode("utf-8", errors="replace"))
+    # fail-open: ok deliberate -- an unread payload is no short call: the refusal asks for the split
+    except Exception:  # noqa: BLE001
         return None
     return _short_enough(data.get("tool_input")) if isinstance(data, dict) else None
+
+
+def _deadline_details(size: int, began: bool | None, spent: bool | None, short: bool | None,
+                      start_up: float | None, judged: float | None) -> dict[str, object]:
+    """The parent's deadline record (DEF-2091, DEF-2097): the payload's length
+    in place of the tool, which it never judged, then its three readings and,
+    where the child's clock was read, how the time split."""
+    details: dict[str, object] = {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child",
+                                  "bytes": size, "began": began, "spent": spent, "short": short}
+    if start_up is not None and judged is not None:
+        details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
+    return details
 
 
 def _start_up_spent_it(began: bool | None, spent: bool | None = None, start_up: float | None = None,
@@ -634,11 +660,8 @@ def _answer_from_a_judging_child() -> None:
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()
-    details: dict[str, object] = {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child",
-                                  "bytes": len(payload), "began": began, "spent": spent, "short": short}
-    if start_up is not None and judged is not None:
-        details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
-    refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S)
+    refusal.record(_deadline_details(len(payload), began, spent, short, start_up, judged),
+                   by=_HOOK_STARTED + EXIT_BY_S)
     os._exit(0)
 
 
@@ -724,16 +747,28 @@ def _close_the_spends() -> bool | None:
         return _ONE_SHOT_SPENT
 
 
-def _watch_the_one_shots() -> bool:
-    """The judging child, as the pattern path imports ``_speedbump``: have it
-    say when a checkpoint is about to spend its one-shot state (DEF-2097).
-    False where a kept, older ``_speedbump.py`` has no ``ON_SPEND``: the
-    spends are then unwatched, and `_load_the_pattern_path` says one was
-    spent, so both bounds keep the split as before DEF-2097."""
-    if not hasattr(_speedbump, "ON_SPEND"):
+def _watch_the_one_shots(speedbump: Any) -> bool:
+    """The judging child, as the pattern path imports ``_speedbump`` (handed
+    in by the loader, so this reads no name the path binds): have it say when
+    a checkpoint is about to spend its one-shot state (DEF-2097). False where
+    a kept, older ``_speedbump.py`` has no ``ON_SPEND``: the spends are then
+    unwatched, and the caller says one was spent, so both bounds keep the
+    split as before DEF-2097."""
+    if not hasattr(speedbump, "ON_SPEND"):
         return False
-    _speedbump.ON_SPEND = _say_one_shot_spent
+    speedbump.ON_SPEND = _say_one_shot_spent
     return True
+
+
+def _watch_a_path_loaded_early() -> None:
+    """The judging child, as its ``__main__`` block marks it: a pattern path
+    that loaded before the mark (none does today) went unwatched, since the
+    loader watches only a marked child; watch it now, or say it spent where
+    it cannot be watched, so a spend is never read as none (DEF-2097)."""
+    if not _pattern_path_loaded:
+        return
+    if not _watch_the_one_shots(_speedbump):
+        _say_one_shot_spent()
 
 
 #: The judging child's clock as it wrote its begun mark (`_say_judging_began`),
@@ -921,7 +956,7 @@ def _load_the_pattern_path() -> None:
                 sys.path.insert(0, here)
             import _bash_patterns
             import _speedbump
-            unwatched = _MARK_THE_JUDGING and not _watch_the_one_shots()
+            unwatched = _MARK_THE_JUDGING and not _watch_the_one_shots(_speedbump)
             for step in _PATTERN_STEPS:
                 step()
             _pattern_path_loaded = True
@@ -5482,6 +5517,9 @@ def _verdict_for(
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        # A payload never read has no length to read, as at the parent's
+        # deadline (`_a_short_call`): ``None``, never the short a bare {} reads as.
+        short = _short_enough(tool_input) if seen else None
         # The spends close before the mark is read: a mark and a spend that
         # land between the two readings would read as not begun and spent.
         spent = _close_the_spends() if _MARK_THE_JUDGING else None
@@ -5493,10 +5531,10 @@ def _verdict_for(
         rc = _audit_deny(
             _root_or_dot(), "pretooluse_blocked_time_budget",
             _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged, spent,
-                           _short_enough(tool_input)),
+                           short),
             hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
             budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, began=began,
-            spent=spent, short=_short_enough(tool_input), **split,
+            spent=spent, short=short, **split,
         )
         _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc
@@ -5950,6 +5988,7 @@ if __name__ == "__main__":
         # call loads it (`_begin_judging`); no checkpoint has spent yet.
         _MARK_THE_JUDGING = True
         _ONE_SHOT_SPENT = False
+        _watch_a_path_loaded_early()
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0

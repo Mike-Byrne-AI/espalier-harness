@@ -2282,9 +2282,12 @@ checkpoint had spent its one-shot, start-up took at least judging's share of
 the bound, and the call carries no command or one under 1,500 characters
 (`write_guard.py`'s `_RE_ISSUE_GATE_CHARS`): a shorter command would pay the
 same start-up, and the same first-use compiles of the patterns it reads, in
-its own process, while past the gate the command's length is what a split
-shortens (on the Windows box the compiles are a fixed 73 to 76 ms, which a
-delete list's judging passes at about 1,550 characters). Where a checkpoint
+its own process, and under the gate no measured command's length adds what a
+split would save. On the Windows box the gate sits under every crossing
+measured for a Bash delete list, a Bash `git add` and a PowerShell
+`Remove-Item` list, counting the compiles and the per-command cost that a
+split repeats. Past the gate the split stays, as before, whether or not it
+would pay there. Where a checkpoint
 had spent its one-shot, the command is long, or the spend, a share or the
 length is unread, it keeps the split, since that nudge is keyed on the
 command and the identical re-issue would pass it unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`

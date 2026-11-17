@@ -10,10 +10,12 @@
   for the re-issue where start-up took at least judging's share of the
   bound, no speed-bump checkpoint had spent its one-shot nudge, and the call
   carries no command or one under 1,500 characters, at both the child's
-  budget and the hook's deadline. A longer command keeps the split: past the
-  gate its length, not the compiles, is what a split shortens (on a Windows
-  box the compiles are a fixed 73 to 76 ms, which a delete list's judging
-  passes at about 1,550 characters). Where a checkpoint had spent its
+  budget and the hook's deadline. Under that gate no measured command's
+  length adds what a split would save: on a Windows box it sits under every
+  crossing measured for a Bash delete list, a Bash `git add` and a
+  PowerShell `Remove-Item` list, counting the compiles and the per-command
+  cost a split repeats. A longer command keeps the split, as before. Where a
+  checkpoint had spent its
   one-shot, the split stays too, since that nudge is keyed on the command
   and the identical re-issue would pass it unseen. The child says a spend on
   its error stream just before the spend, watching from the moment the

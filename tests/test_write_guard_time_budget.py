@@ -1355,6 +1355,8 @@ class TestTheRemedyReadsTheSpendAndTheShares:
         # whichever bound answered. Held at the parent's start, the child's own
         # budget falls past the parent's deadline.
         shares = re.search(r"(\d+\.\d) s went to start-up and (\d+\.\d) s to judging", reason)
+        assert shares or "had not begun judging" not in reason, (
+            f"a rig miss, not the rule: the deadline fell before the begun mark ({reason})")
         assert shares, reason
         assert float(shares[1]) > float(shares[2]), reason
         assert ("re-issue the same command once" in reason) is re_issue, reason
@@ -1408,6 +1410,49 @@ class TestEveryOneShotFollowsTheSpend:
                 late.append((bump.id, (fired and fired[0], said, sorted(after))))
         assert len(_speedbump.SPEEDBUMPS) >= 10, _speedbump.SPEEDBUMPS
         assert not late, late
+
+    def test_no_reinject_row_spends_a_once_flag_in_the_judgment(self):
+        """A tripwire (the delta's failure-mode review, NIT 5): the judgment
+        calls ``_reinject.check("PreToolUse", ...)``, whose once-flags and
+        session slot never say ``ON_SPEND``, and no reinject row is a
+        PreToolUse row today, so none spends there. A first one reds here:
+        have its spend said through ``_speedbump.ON_SPEND`` before it lands."""
+        import _reinject
+
+        source = Path(write_guard.__file__).read_text(encoding="utf-8")
+        assert '_reinject.check("PreToolUse"' in source
+        assert len(_reinject.REINJECTS) >= 10, _reinject.REINJECTS
+        assert [rule.id for rule in _reinject.REINJECTS if rule.event == "PreToolUse"] == []
+
+    def test_no_checkpoint_fires_inside_a_with_block(self):
+        """``ON_SPEND`` takes ``_SPEND_LOCK``, a plain lock: a ``check_fired``
+        called while a ``with`` holds it would wait on itself, and one under any
+        other ``with`` is a lock order no row reads (NIT 5)."""
+        tree = ast.parse(Path(write_guard.__file__).read_text(encoding="utf-8"))
+        fires = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == "check_fired"]
+        under = sorted({node.lineno for block in ast.walk(tree) if isinstance(block, (ast.With, ast.AsyncWith))
+                        for node in ast.walk(block) if any(node is fire for fire in fires)})
+        assert fires, "the walk found no check_fired call"
+        assert under == [], under
+
+    def test_a_path_loaded_before_the_mark_is_watched_or_said_spent(self, monkeypatch):
+        """The ``__main__`` block's watch (NIT 6): a path loaded before the
+        child is marked was never watched; it is watched as the mark is set,
+        or said spent where a kept, older ``_speedbump`` cannot be watched."""
+        said: list[bool] = []
+        monkeypatch.setattr(write_guard, "_say_one_shot_spent", lambda: said.append(True))
+        monkeypatch.setattr(write_guard, "_pattern_path_loaded", False)
+        write_guard._watch_a_path_loaded_early()
+        assert said == []
+        monkeypatch.setattr(write_guard, "_pattern_path_loaded", True)
+        monkeypatch.setattr(write_guard, "_speedbump", types.SimpleNamespace(), raising=False)
+        write_guard._watch_a_path_loaded_early()
+        assert said == [True]
+        watched = types.SimpleNamespace(ON_SPEND=None)
+        monkeypatch.setattr(write_guard, "_speedbump", watched, raising=False)
+        write_guard._watch_a_path_loaded_early()
+        assert said == [True] and watched.ON_SPEND is write_guard._say_one_shot_spent
 
     @pytest.mark.parametrize(("command", "checkpoint"), [
         ("git push --force origin main", "CP-FORCEPUSH"),
@@ -1707,9 +1752,60 @@ class TestTheRefusalReadsWhatSpentTheTime:
         (b"not json", None),
         (b"[1, 2]", None),
         (b"", None),
-    ], ids=["a short command", "no command", "a long command", "not json", "no call", "nothing"])
+        (b'{"tool_name": "mcp__x__y", "tool_input": {"a": ' + b"[" * 5000 + b"]" * 5000 + b"}}", None),
+        (b'\xef\xbb\xbf{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}', True),
+    ], ids=["a short command", "no command", "a long command", "not json", "no call", "nothing",
+            "nested past the parsers depth", "a byte-order mark"])
     def test_the_parent_reads_the_length_from_the_payload_it_holds(self, payload, short):
+        """A parse that raises anything, a payload nested past the parser's
+        depth (RecursionError) included, reads as unread: it never takes the
+        deadline's refusal with it, which would exit 1 with no deny (the delta's
+        reviews, WARN). A byte-order mark reads as `read_stdin_safely` reads it."""
         assert write_guard._a_short_call(payload) is short
+
+    @pytest.mark.parametrize(("began", "spent", "short", "start_up", "judged", "split"), [
+        (True, False, True, 2.614, 1.386, {"start_up_s": 2.61, "judged_s": 1.39}),
+        (True, True, False, None, None, {}),
+        (False, None, None, 4.0, 0.0, {"start_up_s": 4.0, "judged_s": 0.0}),
+        (None, None, None, None, None, {}),
+    ], ids=["begun, split read", "spent and long, split unread", "not begun", "nothing read"])
+    def test_the_parents_record_carries_its_three_readings(self, began, spent, short, start_up, judged, split):
+        """The parent's deadline record, in process (the delta's failure-mode
+        review, NIT 8): a spawned row sees it only where a loaded box leaves the
+        record its time to land."""
+        assert write_guard._deadline_details(321, began, spent, short, start_up, judged) == {
+            "hook": "write_guard", "budget_s": write_guard.HARD_DEADLINE_S, "bound": "child", "bytes": 321,
+            "began": began, "spent": spent, "short": short, **split}
+
+    def test_a_payload_never_read_records_no_length(self, monkeypatch, guard_root):
+        """The child's own budget refusal, for a payload it never read, records
+        ``short`` as unread (``None``), as the parent does, never the short a
+        bare ``{}`` reads as (the delta's failure-mode review, NIT 7)."""
+        release = threading.Event()
+
+        class _Blocking(io.RawIOBase):
+            def readable(self) -> bool:
+                return True
+
+            def readinto(self, buffer) -> int:
+                release.wait(_EVENT_CEILING_S)
+                return 0
+
+        streams = _Streams()
+        monkeypatch.setattr(write_guard, "JUDGMENT_BUDGET_S", _TINY_BUDGET_S)
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BufferedReader(_Blocking()), encoding="utf-8"))
+        monkeypatch.setattr(sys, "stdout", streams.out)
+        monkeypatch.setattr(sys, "stderr", streams.err)
+        try:
+            rc = int(write_guard.main())
+        finally:
+            release.set()
+            for t in _judgment_threads():
+                t.join(_EVENT_CEILING_S)
+        assert rc == 0
+        assert "could not finish judging" in _the_one_deny(streams)
+        records = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [d.get("short") for d in records] == [None], records
 
 
 class TestTheParentReadsItsRunnerAndItsFault:
