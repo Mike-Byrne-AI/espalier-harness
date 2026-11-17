@@ -36,10 +36,12 @@ Two rankers, both measured, because they answer different callers:
                                                winners, then the runners-up.
 
 Reporting both is the point. A defect measured on the control can be absent on
-the front door (DEF-679's query ranks the wanted principle 4th on the control
-and 2nd-of-4 on the front door, because pass 2 ranks it first -- it was 3rd-of-4
-until the passes were interleaved on 2026-09-04), and a fix judged on the
-control alone can buy nothing a reader ever sees.
+the front door (DEF-679's query ranked the wanted principle 4th on the control
+and 2nd-of-4 on the front door, because pass 2 ranked it first -- it was 3rd-of-4
+until the passes were interleaved on 2026-09-04; since the hooks guide joined
+this repository's corpus on 2026-11-16 it is 5th on the control and 4th-of-4 on
+the front door, where pass 2's winner is the guide's Configuration summary), and
+a fix judged on the control alone can buy nothing a reader ever sees.
 
 Per arm, per path:
 
@@ -163,7 +165,7 @@ MIN_QUERY_TOKENS = 3
 #: difference is the whole measurement: the heading floor is applied BEFORE the
 #: treatment (which documents have a usable title), so applying it again AFTER
 #: stripping is a post-treatment filter on the outcome -- it discards exactly
-#: the queries stripping hurt most. Measured 2026-11-17 at STRIP_FRACTION, paired
+#: the queries stripping hurt most. Measured 2026-11-16 at STRIP_FRACTION, paired
 #: on the same documents (`--sweep --min-kept N` reproduces each row as the
 #: 0.15 line of its sweep; tests/test_recall_eval.py reds when a row drifts):
 #:
@@ -175,10 +177,10 @@ MIN_QUERY_TOKENS = 3
 #: At 2 the arm reproduced the table in _recall.py (211 of 246 queries, 83.4%)
 #: to 0.1pp on accuracy and 1% on size ratio when first measured, 2026-09-03
 #: (251/289 = 0.869 vs 0.858); the size ratio has stayed within three points of
-#: the original's at every re-paste since (295/345 = 0.855 on 2026-11-17) -- two
+#: the original's at every re-paste since (295/345 = 0.855 on 2026-11-16) -- two
 #: points until the 2026-09-25 seed took four documents out of the heading count,
-#: 2.2 over since, 0.3 under once the hooks guide joined the corpus (2026-11-17) --
-#: with the accuracy about 3.1pp under it (80.3% on 2026-11-17),
+#: 2.2 over since, 0.3 under once the hooks guide joined the corpus (2026-11-16) --
+#: with the accuracy about 3.1pp under it (80.3% on 2026-11-16),
 #: so it is PLAUSIBLE
 #: -- fitted, not recovered -- that this was the original rule. The sub-second
 #: prose test in tests/test_recall_eval.py pins both parentheticals to the
@@ -190,7 +192,7 @@ MIN_STRIPPED_TOKENS = 2
 
 #: Document-frequency fraction above which a token is "ubiquitous" and stripped.
 #:
-#: Swept 2026-11-17 on the live 368-document corpus with MIN_STRIPPED_TOKENS=2
+#: Swept 2026-11-16 on the live 368-document corpus with MIN_STRIPPED_TOKENS=2
 #: (first swept 2026-09-12 at 308 documents -- 308 again by coincidence after
 #: the pull ranker stopped indexing two memory/ notes, not by standing still;
 #: `--sweep` reproduces it; every cell below is that output, not a memory):
@@ -233,7 +235,7 @@ NAMED_CASES: tuple[tuple[str, str], ...] = (
 )
 
 #: How many control hits a named case prints. Deep enough to show where a
-#: principle sits when it loses -- DEF-679's sat 4th.
+#: principle sits when it loses -- DEF-679's sat 4th, and 5th since 2026-11-16.
 NAMED_CASE_DEPTH = 8
 
 _PRINCIPLE_PREFIX = "docs/STANDING_PRINCIPLES.md :: "

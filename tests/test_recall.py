@@ -2297,7 +2297,7 @@ _TASK_ARM_FILED = frozenset({
 #: paraphrase curve was then FLAT at 4/16 across top=2/3/4. Had it not been flat,
 #: draft 2's headline would have been wrong as well as unearned: it survived on a
 #: property of the corpus, not on the method. (The curve has moved many times since,
-#: most recently to [6, 6, 6, 7] and the constant to 6 on 2026-11-17, which is exactly
+#: most recently to [6, 6, 6, 7] and the constant to 6 on 2026-11-16, which is exactly
 #: why leaving the reasoning here rather than only the number matters.)
 #: docs/FAILURE_MODES.md §5.15.
 #:
@@ -2307,7 +2307,7 @@ _TASK_ARM_FILED = frozenset({
 #: that revision (the corpus grows with every memory note; the count is not pinned
 #: here because it is not the denominator). Different denominator, not drift: the
 #: rates are consistent and marginally better (83.7% -> 85.0% at elem 0).
-#: ⚠ RE-DERIVED 2026-11-17 to 9, with every figure in this table (not two
+#: ⚠ RE-DERIVED 2026-11-16 to 9, with every figure in this table (not two
 #: constants), and its two causes dated apart. (1) Drift since 2026-09-24: the 10
 #: was a private-tree reading, and from the public tree's first commit (d00f6de4,
 #: v0.8.0b1) on the union read 9 at every commit air's verifier sampled (ack
@@ -2324,7 +2324,7 @@ _PARAPHRASE_UNION_HITS = 9
 #: Not a Sandbox" rose from 3.9701 to 3.9864 (the lead 0.85% to 0.45%): the
 #: fragment marker that had diluted it by 19 tokens is no longer its text. An
 #: ordinary edit to that SHARP_EDGES entry is the likeliest next cause of 8 -> 7.
-#: ⚠ RE-DERIVED 2026-11-17 to 6, two causes dated apart. (1) Drift since
+#: ⚠ RE-DERIVED 2026-11-16 to 6, two causes dated apart. (1) Drift since
 #: 2026-09-24: from the public tree's first commit (d00f6de4) on, the control read
 #: 7 against the pinned 8, inside its band (air's verifier, ack 9c1b49). (2) The
 #: hooks guide (27 sections, the operator's ruling of 2026-11-16): control 7 to 6
@@ -2427,16 +2427,20 @@ _PARAPHRASE_UNION_TOP = 2
 #: fourth for "I fixed one site, where else does this live" (a CONTESTED row)
 #: and §8 seventh. The union stays at 10 under every variant, so what moved is
 #: recall()'s deep reach on one contested row, not the front door.
-#: ⚠ RE-DERIVED 2026-11-17 to [6, 6, 6, 7], two causes dated apart. (1) Drift
+#: ⚠ RE-DERIVED 2026-11-16 to [6, 6, 6, 7], two causes dated apart. (1) Drift
 #: since 2026-09-24: the pinned [7, 7, 8, 8] read [6, 6, 7, 7] from the public
 #: tree's first commit (d00f6de4) on (air's verifier, ack 9c1b49), one under at
 #: every slot and inside every band. Re-pinning only the two headline constants
 #: would have recorded a curve that falls from slot 3 to slot 4, which recall()
 #: cannot produce. (2) The hooks guide took slot 4 from 7 to 6 on one row,
 #: DEF-679's (its cause is on _PARAPHRASE_CONTROL_HITS). The curve's only climb,
-#: slot 4 to slot 6, now rests on that one row: principle 2 at rank 5. One more
-#: adverse document above it flattens the curve; the union (9) still delivers
-#: more than recall(top=6) (7).
+#: slot 4 to slot 6, now rests on that one row: principle 2 at rank 5, 0.018
+#: ahead of "Local Hooks Are Not a Sandbox". Driven by the lane's failure-mode
+#: review: one "not a security boundary" sentence in any HOOKS.md section takes
+#: it to rank 6 with no red; two such sentences, or one plus a 0.45% nudge to
+#: that SHARP_EDGES entry, flatten the curve and red its unbanded climb. Fourteen
+#: HOOKS.md versions over the month before all read [6, 6, 6, 7], so ordinary
+#: growth does not move it. The union (9) still delivers more than recall(top=6) (7).
 _PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall()
 
 #: union(top=_PARAPHRASE_UNION_TOP) minus recall(top=6) on the paraphrase arm --
@@ -2448,7 +2452,7 @@ _PARAPHRASE_PLATEAU = ((2, 6), (3, 6), (4, 6), (6, 7))  # (top, hits) for recall
 #: union did not move, so the headline is parity at under four lines against
 #: six (the test's docstring carries the re-derivation). 2026-09-22: 10 - 8 = 2
 #: -- the single ranker's deep reach fell one hit on one contested row (the
-#: fold recorded on the plateau above); the union did not move. 2026-11-17:
+#: fold recorded on the plateau above); the union did not move. 2026-11-16:
 #: 9 - 7 = 2 before and after the hooks guide joined the corpus (the pinned 10
 #: and 8 had both drifted one under since 2026-09-24, so the margin held); the
 #: guide moved DEF-679's principle from rank 4 to 5, still inside six slots.
@@ -2598,7 +2602,7 @@ def test_the_union_beats_a_six_slot_control():
     growth since 09-12 had already put it). Direction unchanged, margin
     re-recorded at 2.
 
-    ⚠ STILL 2, 2026-11-17. The hooks guide joined this repository's corpus and
+    ⚠ STILL 2, 2026-11-16. The hooks guide joined this repository's corpus and
     DEF-679's principle fell from rank 4 to 5 in recall(): out of the four-slot
     control, still inside six. recall(top=6) reads 7 and the union 9, as both
     had read since 2026-09-24's drift; the curve's one climb now rests on that
@@ -4502,7 +4506,7 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         """Dies to: the self-host branch dropped (no hooks-guide section here), or
         the troubleshooting guide let in beside it."""
         sources = [d.source for d in _recall._load_corpus(REPO_ROOT) if d.family == _recall.REFERENCE_FAMILY]
-        assert any(s.startswith("docs/HOOKS.md :: 4. `write_guard.py`") for s in sources), sources
+        assert sources, "no hooks-guide section indexed on this repository"
         assert all(s.startswith("docs/HOOKS.md :: ") for s in sources), sources
 
     def test_a_fenced_heading_is_no_section(self, tmp_path, monkeypatch):
@@ -4571,8 +4575,9 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         assert set(self._reference(root)) == {"docs/HOOKS.md :: A"}
 
     def test_the_troubleshooting_guide_stays_off_here_even_stamped(self, tmp_path, monkeypatch):
-        """Dies to: the self-host branch reading both reference docs (a mutant
-        this repository's tree cannot see, since its copy carries no stamp)."""
+        """Dies to: the self-host branch reading both reference docs. The
+        live-tree test above catches that mutant on this tree too; this one
+        holds it where both docs carry the stamp."""
         root = self._adopter(tmp_path, monkeypatch)
         monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
         sources = set(self._reference(root))

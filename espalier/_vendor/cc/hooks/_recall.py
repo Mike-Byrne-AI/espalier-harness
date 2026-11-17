@@ -192,7 +192,7 @@ def _index_tokens(text: str) -> list[str]:
 #: more than three points from a fresh sweep. The first version of this
 #: table was typed from a one-off script on a 246-heading corpus and nothing
 #: regenerated it, so every number aged silently for forty documents (DEF-679's
-#: closure records the gap). Corpus 368 docs, 2026-11-17; heading arm 345
+#: closure records the gap). Corpus 368 docs, 2026-11-16; heading arm 345
 #: queries, stripped arm 295 (df > 0.15n removed, >= 2 tokens kept):
 #:
 #:     alpha  heading@1  stripped@1   heading@4  lost-to-a-BIGGER-doc
@@ -224,12 +224,12 @@ def _index_tokens(text: str) -> list[str]:
 #: tests/test_recall_eval.py's
 #: test_alpha_zero_shows_the_bias_the_exponent_corrects requires, against a
 #: fresh sweep, that the shipped alpha beats alpha 0 on stripped@1 and ties or
-#: wins on heading@1 (2026-11-17: +2.0pp and +0.3pp; earlier readings are in
+#: wins on heading@1 (2026-11-16: +2.0pp and +0.3pp; earlier readings are in
 #: this block's history, not repeated here). tests/test_recall_eval.py keeps
 #: the shipped regression reproducible by putting the old key back.
 #:
 #: Both label tiers peak at the same value. 0.05 over 0.15 is ~2pp on the
-#: heading arm and ~1pp on the stripped arm (2026-11-17) -- real but small;
+#: heading arm and ~1pp on the stripped arm (2026-11-16) -- real but small;
 #: the value is taken at the measured peak rather than nudged, because "pick
 #: by the measurement" is the whole point. The
 #: heading@4 column is NOT flat across the range any more (it was ~96.7% at
@@ -877,8 +877,8 @@ def corpus_summary(root: Path) -> dict:
 
 
 #: The seeded reference docs recall indexes on a tree that is not this
-#: repository: the two `init` deploys that answer "why did a hook deny or block
-#: me". The deny texts cite docs/HOOKS.md sections by heading. The rest of the
+#: repository (this one indexes SELF_HOST_REFERENCE_DOCS below): the two `init`
+#: deploys that answer "why did a hook deny or block me". The deny texts cite docs/HOOKS.md sections by heading. The rest of the
 #: deployed reference docs stay out: with all of them the deny answers measured
 #: no better, and this repository's corpus moved 14 pins (2026-10-18).
 REFERENCE_DOCS = ("docs/HOOKS.md", "docs/TROUBLESHOOTING.md")
@@ -1080,13 +1080,18 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
     # section by heading. On this repository the hooks guide alone indexes
     # (SELF_HOST_REFERENCE_DOCS), read without the stamp its source never
     # carries: the operator's ruling of 2026-11-16, so hook detail moved out of
-    # the root CLAUDE.md hook table stays recallable. Measured that day: its 27
-    # sections took one hit from the paraphrase arm's recall(top=4) (DEF-679's
-    # query lost its principle to the audit-log section) while the front door
-    # kept all nine. The troubleshooting guide stays off here, since every seeded
-    # reference doc together moved 14 recall pins, four of them headline claims
-    # (2026-10-18); the two docs on an adopter tree add 39 sections and move
-    # nothing here. The cost on an adopter tree, stated:
+    # the root CLAUDE.md hook table stays recallable. Measured that day, its 27
+    # sections cost: one hit from the paraphrase arm's recall(top=4) (DEF-679's
+    # query: principle 2 from rank 4 to 5, behind the audit-log section); on the
+    # front door, which kept all nine paraphrase hits, that principle from 2nd
+    # of 4 to 4th, behind the guide's Configuration summary (pass 2's winner)
+    # and its audit-log section; "hook exit codes channel xor" losing its
+    # docs/sharp-edges/ note (its SHARP_EDGES twin still leads); the stripped
+    # "maintenance launch" losing first place to the guide's Friction bypass;
+    # and 4 of the guide's own 19 heading queries missing their section. The
+    # troubleshooting guide stays off here, since every seeded reference doc
+    # together moved 14 recall pins, four of them headline claims (2026-10-18).
+    # The two docs on an adopter tree add 40 sections. The cost there, stated:
     # the four-document corpus already answered 26 of the suppression arm's 29
     # off-topic English queries with a wrong neighbour, and answers 28 now; what
     # changes is WHICH neighbour, and on a Node tree the word "hook" reaches the
