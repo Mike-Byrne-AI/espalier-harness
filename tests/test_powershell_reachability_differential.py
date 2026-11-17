@@ -169,6 +169,16 @@ class TestRefusesToExecuteAnythingUnconfined:
             prd.assert_safe_to_execute(
                 "Remove-Item -Recurse -Force /somewhere/else", victim, tmp_path)
 
+    def test_the_victims_name_inside_another_word_is_no_declared_operand(self, prd, tmp_path):
+        """A declared spelling must open a word: `victim` inside
+        `./not-the-victim` is prose to this check, never the sandbox's
+        operand, or any row that mentions the name would pass condition (2)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="declared sandbox operand"):
+            prd.assert_safe_to_execute(
+                "Remove-Item -Recurse -Force ./not-the-victim", victim, tmp_path)
+
     @pytest.mark.parametrize(
         "trailing",
         ["/", "~", "C:" + chr(92), ",/", ",~"],
@@ -180,7 +190,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         """⚠ REGRESSION PIN. Found by this wrapper on the day it was written, and
         confirmed on BOTH legs before it was fixed.
 
-        Every one of conditions 2-5 anchors on the delete verb plus its FIRST
+        Every whole-string condition anchors on the delete verb plus its FIRST
         operand, so a second operand riding behind a declared one was invisible to
         all of them: `Remove-Item -Recurse -Force ./victim /` was ACCEPTED, and the
         Bash sibling accepted a home-directory delete. PowerShell's positional
@@ -302,6 +312,277 @@ class TestRefusesToExecuteAnythingUnconfined:
         with pytest.raises(prd.UnsafeToExecute, match="cannot lex"):
             prd.assert_safe_to_execute(
                 "Remove-Item -Recurse -Force ./victim 'unclosed", victim, tmp_path)
+
+    def test_refuses_a_victim_outside_the_sandbox(self, prd, tmp_path):
+        """Condition (3) on this leg: a victim built outside the throwaway
+        directory is refused whatever the command says."""
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir()
+        outside = tmp_path / "victim"
+        outside.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="outside sandbox"):
+            prd.assert_safe_to_execute("Remove-Item -Recurse -Force ./victim", outside, sandbox)
+
+    @pytest.mark.parametrize(("operand", "says"), [
+        ("*", "catastrophic operand"),
+        ("../outside", "escapes the sandbox"),
+        (chr(92), "catastrophic operand"),
+        (chr(92) + "Windows", "escapes the sandbox"),
+    ], ids=["bare-glob", "parent-walk", "drive-root", "drive-root-child"])
+    def test_refuses_a_delete_inside_a_quoted_subexpression(self, prd, tmp_path, operand, says):
+        """PowerShell runs a `$(...)` inside a double-quoted string, and the
+        operand reader lexes that string as ONE word, so it reads no operand
+        there: the whole-string scans are what see this delete. Each spelling
+        is refused by one of them alone (a glob is no escaping form, a parent
+        walk no catastrophic one), so each scan has a red of its own."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=says):
+            prd.assert_safe_to_execute(
+                f'Write-Output "$(Remove-Item -Recurse -Force {operand} )" ./victim', victim, tmp_path)
+
+    @pytest.mark.parametrize(("trailing", "says"), [
+        ("*", "catastrophic delete operand"),
+        ("{absolute}", "escaping delete operand"),
+    ], ids=["bare-glob", "absolute-inside-the-sandbox"])
+    def test_each_lone_operand_scan_refuses_what_the_other_does_not(
+            self, prd, tmp_path, trailing, says):
+        """The re-ask of each operand alone, one red per scan: a bare glob
+        behind the declared operand is catastrophic and not escaping; an
+        absolute spelling is escaping and not catastrophic, and is refused even
+        where it lands inside the sandbox, since the rows are relative by
+        design and an absolute operand is none the population declared."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        # quoted: a spaced basetemp (the perturbed CI leg) would split it in two
+        trailing = trailing.format(absolute=f"'{victim.as_posix()}'")
+        with pytest.raises(prd.UnsafeToExecute, match=says):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing}", victim, tmp_path)
+
+    @pytest.mark.parametrize("trailing", ["$HOME", "$env:USERPROFILE", "${env:USERPROFILE}"],
+                             ids=["home", "env-drive", "braced-env-drive"])
+    def test_refuses_a_variable_behind_the_declared_operand(self, prd, tmp_path, trailing):
+        """The Bash leg's binding condition, this leg's too since the two
+        share one condition set (DEF-5085). The interpreter fills a variable
+        in after this assertion has read the text, and nothing binds one for
+        a PowerShell row, so every name but `$null` is refused. Before the
+        merge this leg ACCEPTED all three -- neither pattern scan reads a
+        `$` -- and `$HOME` is the home directory: the 2026-09-17 incident's
+        shape on the other shell."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="unbound parameter expansion"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing}", victim, tmp_path)
+
+    def test_refuses_a_parent_walk_that_starts_inside_the_sandbox(self, prd, tmp_path):
+        """The Bash leg's resolution condition, this leg's too (DEF-5085):
+        the escaping scan reads a LEADING `../` only, so a walk out that
+        starts with the victim's own name was ACCEPTED; resolving each
+        operand against the sandbox reads where it lands."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="resolves outside sandbox"):
+            prd.assert_safe_to_execute(
+                "Remove-Item -Recurse -Force ./victim victim/../../outside", victim, tmp_path)
+
+    @pytest.mark.parametrize("trailing", ["$(Resolve-Path ~)", '"$(Get-Location)/.."'],
+                             ids=["subexpression", "quoted-subexpression"])
+    def test_refuses_a_subexpression_behind_the_declared_operand(self, prd, tmp_path, trailing):
+        """Condition (9) on this leg (DEF-5085): a `$(...)` operand is a value
+        the interpreter computes after this assertion reads the text, so the
+        row is classifier-only. Both spellings were ACCEPTED before (9): the
+        operand reader stops at the `(` and keeps the bare `$`, or keeps the
+        quoted span as one relative word, and neither pattern scan reads a
+        `$`."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="a substitution"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing}", victim, tmp_path)
+
+    @pytest.mark.parametrize("trailing", ["..{bs}outside", "victim{bs}..{bs}..{bs}outside",
+                                          "{bs}Windows"],
+                             ids=["parent-walk", "inner-walk", "drive-root-child"])
+    def test_refuses_a_backslash_walk_behind_the_declared_operand(self, prd, tmp_path, trailing):
+        """DEF-2100: the reader lexed with the POSIX escape, the backslash, and
+        dropped it, so each of these was the name of a file inside the
+        sandbox (`..outside`) and was ACCEPTED. PowerShell's escape is the
+        backtick and its provider reads a backslash as a separator on every
+        host (driven on PowerShell 5.1: the first resolved to the working
+        directory's sibling, the second to its parent)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="resolves outside sandbox"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing.format(bs=chr(92))}",
+                victim, tmp_path)
+
+    def test_the_set_reads_a_profiles_separators_before_it_resolves(self, prd, tmp_path):
+        """The mechanism under the walk test above, on any host: a Windows
+        host's path reads a backslash as a separator whatever the profile
+        says, so that test reds only on the POSIX legs if the set stops
+        reading `separators`. A separator no host reads (`%`) reds here."""
+        import dataclasses
+
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        shell = dataclasses.replace(prd.POWERSHELL, separators="/%")
+        with pytest.raises(prd.UnsafeToExecute, match="resolves outside sandbox"):
+            prd._confinement.assert_confined(
+                "Remove-Item -Recurse -Force ./victim ..%outside", victim, tmp_path, shell)
+
+    def test_the_profile_declares_the_backslash_a_separator(self, prd):
+        """PowerShell's provider reads `..\\outside` as a parent walk on every
+        host (driven on PowerShell 5.1: it resolved to the working
+        directory's sibling). Only the POSIX legs could red on the behavior,
+        so the declaration is pinned where every host reads it."""
+        assert chr(92) in prd.POWERSHELL.separators
+
+    @pytest.mark.parametrize("trailing", [
+        "(Resolve-Path ~)", "((Get-Location))", "@('/')", "@p", "{ $_.FullName + '/..' }",
+    ], ids=["argument-expression", "nested-argument-expression", "array-subexpression",
+            "splat", "delay-bind-scriptblock"])
+    def test_refuses_an_argument_the_interpreter_computes(self, prd, tmp_path, trailing):
+        """DEF-2100: the operand list ended at a `(` or `{`, so the argument
+        behind it was never read and the row was ACCEPTED, and a splat or an
+        array (`@`) was a harmless name. Each is a value PowerShell computes
+        after this assertion reads the text (driven on PowerShell 5.1: the
+        home directory, or the working directory's parent), so the reader
+        hands the opener over and condition (9) refuses it."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="a substitution"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing}", victim, tmp_path)
+
+    @pytest.mark.parametrize("trailing", [
+        "HKCU:{bs}Software{bs}x", "Env:{bs}X", "Temp:/x", "FileSystem::/",
+    ], ids=["registry-drive", "environment-drive", "temp-drive", "provider-qualified"])
+    def test_refuses_a_drive_the_provider_maps(self, prd, tmp_path, trailing):
+        """DEF-2100: a drive name longer than one letter, or a provider-
+        qualified path, lands wherever the interpreter's drive table maps it
+        (`HKCU:` is the registry), which no path this assertion resolves can
+        say; each read as a relative name inside the sandbox and was
+        ACCEPTED."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="an expansion \\(mapped-drive"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing.format(bs=chr(92))}",
+                victim, tmp_path)
+
+    @pytest.mark.parametrize(("command", "says"), [
+        ("Remove-Item -Recurse -Force ./victim HK`CU:{bs}x", "mapped-drive"),
+        ('Remove-Item -Recurse -Force ./victim "`/"', "a substitution"),
+        ('Remove-Item -Recurse -Force ./victim "`~"', "a substitution"),
+        ('Remove-Item -Recurse -Force ./victim "`.`.{bs}outside"', "a substitution"),
+        ("Remove-Item`\n-Recurse -Force ./victim /", "resolves outside sandbox"),
+        ("Remove-Item -Recurse -Force ./victim `\nHKCU:{bs}Software{bs}x", "mapped-drive"),
+    ], ids=["escaped-drive-name", "quoted-escaped-root", "quoted-escaped-home",
+            "quoted-escaped-walk", "continued-verb", "continued-operand"])
+    def test_reads_the_backtick_as_powershell_does(self, prd, tmp_path, command, says):
+        """DEF-2100's review: the backtick is PowerShell's escape. Outside
+        quotes the lexer consumes it (`HK`CU:` is `HKCU:`); inside a double-
+        quoted span one is left in the word, and PowerShell yields the
+        character after it (`"`/"` is the root); before a line break it is a
+        line continuation, which the lexer would glue into the word. Each was
+        ACCEPTED as a name inside the sandbox."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=says):
+            prd.assert_safe_to_execute(command.format(bs=chr(92)), victim, tmp_path)
+
+    def test_finds_quoted_placeholder_is_no_scriptblock(self, prd, tmp_path):
+        """The calibration twin of the `{` mark: the sweep rows hand find
+        `'{}'`, which the lexer strips to `{}`; that whole word, or an empty
+        scriptblock, binds no path, so the row is accepted (both reviews: the
+        mark refused eight POSIX rows per nested head before this)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        prd.assert_safe_to_execute("find ./victim -exec rm -rf '{}' +", victim, tmp_path)
+
+    def test_a_backslash_that_stays_inside_the_sandbox_is_still_accepted(self, prd, tmp_path):
+        """The calibration twin: the declared `.\\victim` spelling and a
+        backslash path under the victim resolve inside the sandbox once the
+        backslash is read as a separator."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        bs = chr(92)
+        prd.assert_safe_to_execute(f"Remove-Item -Recurse -Force .{bs}victim", victim, tmp_path)
+        prd.assert_safe_to_execute(
+            f"Remove-Item -Recurse -Force ./victim victim{bs}x", victim, tmp_path)
+
+    def test_the_interpreters_own_null_is_no_unbound_variable(self, prd, tmp_path):
+        """The calibration twin of the binding condition: the operand reader
+        over-collects, so the or-chained rows' `2>$null` hands it the
+        redirect's target as an operand. `$null` binds no path, so the row is
+        accepted (three execution rows read that way)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        prd.assert_safe_to_execute(
+            "Get-Item ./nonexistent-xyz 2>$null || Remove-Item -Recurse -Force ./victim",
+            victim, tmp_path)
+
+    @pytest.mark.parametrize("trailing", ["$null/..", "$null/Windows", "${null}/Windows"],
+                             ids=["parent-walk", "root-child", "braced-root-child"])
+    def test_the_interpreters_null_is_exempt_only_as_the_whole_operand(self, prd, tmp_path, trailing):
+        """`$null/Windows` expands to `/Windows`: the exemption is for the
+        redirect target the reader over-collects, the whole operand `$null`,
+        never a name the rest of the operand builds a path on (code review,
+        driven: all three were accepted when the exemption read the name)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="unbound parameter expansion"):
+            prd.assert_safe_to_execute(
+                f"Remove-Item -Recurse -Force ./victim {trailing}", victim, tmp_path)
+
+    def test_both_legs_raise_one_class_from_one_condition_set(self, prd):
+        """The Bash leg loads the set by path and this leg imports it by its
+        bare name; both must hold the same module, or a caller catching one
+        leg's refusal would miss the other's."""
+        spec = importlib.util.spec_from_file_location(
+            "_rd_for_the_ps_tests", REPO_ROOT / "bench" / "reachability_differential.py")
+        rd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rd)
+        assert rd._confinement is prd._confinement
+        assert rd.UnsafeToExecute is prd.UnsafeToExecute
+
+    def test_a_refused_row_is_no_verdict_never_a_fail_open(self, prd, monkeypatch, capsys):
+        """A row the set refuses stops the run before an interpreter sees it:
+        exit 3, the instrument's code, never FAIL-OPEN's 1 (failure-mode
+        review: the refusal escaped `main` and read as a fail-open)."""
+        monkeypatch.setattr(prd, "find_powershell", lambda: ("pwsh", "pwsh"))
+        monkeypatch.setattr(prd, "assert_instrument_is_live", lambda pwsh: None)
+
+        def refused(pwsh, quick=False):
+            raise prd.UnsafeToExecute("driven: a refused row")
+
+        monkeypatch.setattr(prd, "run", refused)
+        assert prd.main([]) == 3
+        assert "a row the confinement set refuses" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("platform", ["nt", "posix"])
+    @pytest.mark.parametrize("nested", ["pwsh", "powershell"])
+    def test_every_row_of_the_population_passes_the_condition_set(
+            self, prd, tmp_path, nested, platform, monkeypatch):
+        """The census as a pin: every row `run` hands an interpreter, rendered
+        as `_run_pwsh` renders it, passes the assertion in memory. A condition
+        that would refuse a calibrated row reds here, on any host, before a
+        run with an interpreter finds it as a crash. The sweep rows differ by
+        platform, so each platform's population is built on every host (both
+        DEF-2100 reviews: find's `'{}'` rows exist on POSIX alone, and a Windows
+        run of this pin never built them)."""
+        monkeypatch.setattr(prd, "_PLATFORM", platform)
+        victim = tmp_path / "victim"
+        rows = (prd.inert_rows() + prd.opener_context_rows() + prd.reparsed_inert_rows()
+                + prd.call_operator_inert_rows() + prd.execution_rows(nested=nested)
+                + prd.call_operator_rows() + prd.sweep_rows(nested=nested))
+        assert rows
+        for row in rows:
+            prd.assert_safe_to_execute(
+                row["template"].replace(prd._TARGET, "./victim"), victim, tmp_path)
 
 
 class TestThePopulationIsDerived:
