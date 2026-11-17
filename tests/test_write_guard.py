@@ -2332,9 +2332,9 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
     # (tests/_hook_spawn.py), so this is the backstop for a result read here
     # from any other spawn. Both refusals: the child's template, and the
     # parent's plain-words fallback at its deadline, which never holds the
-    # template's phrase (DEF-2058).
+    # template's phrase (DEF-2058). A crash judged nothing either (DEF-2096).
     if holds_a_budget_refusal(out):
-        pytest.fail(f"write_guard ran out of its time budget, so no tier judged this row: {out[:200]}")
+        pytest.fail(f"write_guard ran out of its time budget or crashed, so no tier judged this row: {out[:200]}")
     if result.returncode == 2 or '"permissionDecision": "deny"' in out:
         return "wall"     # either shell's hard tier, each with its own reason text
     assert result.returncode == 0 and not out.strip(), (

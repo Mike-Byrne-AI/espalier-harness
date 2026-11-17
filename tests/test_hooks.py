@@ -657,17 +657,28 @@ class TestWriteGuardTypeCoercion:
         Bash with non-str ``command`` would otherwise raise inside
         ``check_bash_dangerous_patterns`` (re.search against int).
         Umbrella catches it → deny + stderr trace.
+
+        The crash judged nothing, so every no-verdict reader reads this real
+        deny as no verdict unless its caller expects the crash, as this row
+        does (DEF-2096): the bench's and the suite's.
         """
+        import bench.run_benchmark as rb
+        from tests import _hook_spawn as hs
+
         result = run_hook(
             "write_guard.py",
             {"tool_name": "Bash", "tool_input": {"command": 42}},
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
+            crash_expected=True,
         )
         assert result.returncode == 0
         output = json.loads(result.stdout)
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "internal error" in output["hookSpecificOutput"]["permissionDecisionReason"]
         assert "write_guard crashed" in result.stderr
+        assert (rb.budget_refused(result.stdout, HOOKS_DIR), hs.holds_a_budget_refusal(result.stdout)) == (True, True)
+        assert (rb.budget_refused(result.stdout, HOOKS_DIR, crash_expected=True),
+                hs.holds_a_budget_refusal(result.stdout, crash_expected=True)) == (False, False)
 
     def test_mcp_non_str_path_field_denied(self, tmp_path):
         """MCP loop now denies on truthy non-str path-shaped fields (parity

@@ -23,9 +23,10 @@ statusline-read verifiers additionally carry positive controls (a real marker /
 a normal blueprint must still be recognized/loaded) so a recognizer that
 regresses to always-False cannot keep the corpus gate green. Re-audit if a new
 verifier is added. One exception passes every arm: ``BudgetMiss``, a call
-write_guard's time budget refused, which judged nothing. Scored, it would read
-as a block, or through a broad arm as an allow; the run exits 3 with no
-verdict instead (DEF-5071).
+write_guard's time budget refused, or one it crashed on where the row does not
+expect the crash (DEF-2096), which judged nothing. Scored, it would read as a
+block, or through a broad arm as an allow; the run exits 3 with no verdict
+instead, naming the row (DEF-5071).
 
 Run:
     python3 bench/run_benchmark.py
@@ -143,6 +144,8 @@ def _invoke_hook_stdin(
     payload: dict,
     tmp_project: Path,
     attempt_env: dict | None = None,
+    *,
+    crash_expected: bool | str = False,
 ) -> tuple[int, str, float]:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_project)
@@ -185,7 +188,7 @@ def _invoke_hook_stdin(
         text=True, encoding="utf-8", errors="replace",
         timeout=30,
         env=env,
-    ), script.parent, tmp_project)
+    ), script.parent, tmp_project, crash_expected=crash_expected)
     elapsed = (time.perf_counter() - t0) * 1000.0
     return proc.returncode, proc.stdout, elapsed
 
@@ -254,22 +257,26 @@ def invoke_naive_guard(attempt: dict, tmp_project: Path) -> VerifierResult:
 
 
 def invoke_real_write_guard(attempt: dict, tmp_project: Path) -> VerifierResult:
-    """espalier baseline: pipe payload to tools/cc/hooks/write_guard.py."""
+    """espalier baseline: pipe payload to tools/cc/hooks/write_guard.py. A
+    crash scores as the row's block only where it is the crash the row
+    expects (``expected_crash``); anywhere else it is no verdict (DEF-2096)."""
     payload = {"tool_name": attempt.get("tool_name", ""), "tool_input": attempt.get("tool_input", {})}
+    crash_expected = expected_crash(attempt) or False
     rc, stdout, elapsed = _invoke_hook_stdin(
-        HOOK_SCRIPT, payload, tmp_project, attempt.get("env")
+        HOOK_SCRIPT, payload, tmp_project, attempt.get("env"), crash_expected=crash_expected,
     )
-    if attempt.get("reissue_past_nudge") and _is_deny(stdout, rc) and "Speed-bump [" in stdout:
+    if (attempt.get("reissue_past_nudge") and _is_deny(stdout, rc, crash_expected=crash_expected)
+            and "Speed-bump [" in stdout):
         # The row's defense sits BEHIND a speed bump that answers the first
         # ask (deny-once): re-issue in the same project, as the actor would,
         # and judge the second answer. Without this the row passed on the
         # bump alone and a regression in the defense it names stayed green
         # (DEF-842's failure-mode review, on BC-056-a7).
         rc, stdout, again = _invoke_hook_stdin(
-            HOOK_SCRIPT, payload, tmp_project, attempt.get("env")
+            HOOK_SCRIPT, payload, tmp_project, attempt.get("env"), crash_expected=crash_expected,
         )
         elapsed += again
-    if _is_deny(stdout, rc):
+    if _is_deny(stdout, rc, crash_expected=crash_expected):
         return VerifierResult(True, _extract_block_reason(stdout) or "write_guard denied", elapsed)
     return VerifierResult(False, "write_guard allowed", elapsed)
 
@@ -334,6 +341,7 @@ def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> Ver
     for k, v in (attempt.get("env") or {}).items():
         env[str(k)] = str(v)
     payload = {"tool_name": attempt.get("tool_name", ""), "tool_input": attempt.get("tool_input", {})}
+    crash_expected = expected_crash(attempt) or False
     t0 = time.perf_counter()
     try:
         proc = judged_within_budget(lambda: run_bounded(
@@ -343,7 +351,7 @@ def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> Ver
             text=True, encoding="utf-8", errors="replace",
             timeout=30,
             env=env,
-        ), HOOK_SCRIPT.parent, tmp_project)
+        ), HOOK_SCRIPT.parent, tmp_project, crash_expected=crash_expected)
         elapsed = (time.perf_counter() - t0) * 1000.0
     finally:
         if backup is not None:
@@ -351,7 +359,7 @@ def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> Ver
         else:
             settings_path.unlink(missing_ok=True)
 
-    if _is_deny(proc.stdout, proc.returncode):
+    if _is_deny(proc.stdout, proc.returncode, crash_expected=crash_expected):
         return VerifierResult(
             True,
             _extract_block_reason(proc.stdout)
@@ -578,9 +586,67 @@ _BUDGET_TEMPLATES = ("WRITE_GUARD_TIME_BUDGET", "WRITE_GUARD_START_UP_BUDGET")
 
 
 class BudgetMiss(RuntimeError):
-    """A call write_guard's time budget refused, so no verdict: the refusal
-    came twice, or once after the refused judgment left state a retry would
-    read as a re-issue."""
+    """A call write_guard judged nothing on, so no verdict: its time budget
+    refused the call, or (DEF-2096) it crashed on it where the row did not
+    expect the crash, twice, or once after the call left state a retry would
+    read as a re-issue; or a hook tree's sources the reader cannot read."""
+
+
+#: How a deny opens that write_guard gave a call it never judged because it
+#: failed itself (DEF-2096): its crash guard's and its runner's refusals
+#: (``_denial_reasons.WRITE_GUARD_INTERNAL_ERROR`` and its siblings, and the
+#: runner's plain words), and its refusal to start or to run on a Python below
+#: the floor (``_start_refusal``'s templates and its plain-words last
+#: resorts). Read at the reason's start only, so a judged deny that quotes one
+#: stays the block it is. ``tests/_hook_spawn.py::CRASH_HEADS`` is the suite's
+#: copy, and ``tests/test_benchmark_pass_conditions.py::TestACrashIsNoVerdict``
+#: renders every such template from the hook sources through both readers.
+CRASH_HEADS = ("write_guard internal error", "write_guard cannot start", "write_guard cannot run here")
+#: The words every refusal of a fault in the parent's runner of its judging
+#: child carries (``_denial_reasons.WRITE_GUARD_RUNNER_FAULT`` and the plain
+#: words of ``write_guard.py::_runner_fault_reason``): the one crash that can
+#: pass a second call (a spawn that failed under load), so the one retried. A
+#: crash in the judgment comes back, and a retry would hide it.
+RUNNER_FAULT_MARK = "while it ran its judging child"
+
+
+def crash_head(stdout: str) -> str | None:
+    """The head of the deny in ``stdout`` when it is write_guard's crash or
+    refusal to start (``CRASH_HEADS``): its reason to the first ``;`` or
+    sentence end, at most 200 characters (the crash guard's names the class
+    and the place; a start refusal's can quote the exception's text). None for
+    any other answer."""
+    try:
+        data = json.loads(stdout or "")
+    except ValueError:
+        return None
+    hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
+    reason = hso.get("permissionDecisionReason") if isinstance(hso, dict) else None
+    if not (isinstance(reason, str) and reason.startswith(CRASH_HEADS)):
+        return None
+    return reason.split(";", 1)[0].split(". ", 1)[0][:200]
+
+
+def _unexpected_crash(stdout: str, crash_expected: bool | str) -> str | None:
+    """The crash's head where ``stdout`` is a crash its caller does not
+    expect: ``crash_expected`` True expects any, a string expects the crash
+    whose reason opens with it (a row's own ``expected_block_reason``), False
+    none."""
+    head = crash_head(stdout)
+    if head is None or crash_expected is True or (
+            isinstance(crash_expected, str) and head.startswith(crash_expected)):
+        return None
+    return head
+
+
+def expected_crash(attempt: dict) -> str | None:
+    """The crash a corpus attempt expects as its block: its
+    ``expected_block_reason`` where that opens with a crash's words, as the
+    crash umbrella's own row (BC-023-a6) does. Only that crash is the verdict
+    it scores; any other crash on it, a refusal to start included, and any
+    crash on another row, is no verdict (DEF-2096)."""
+    expected = attempt.get("expected_block_reason")
+    return expected if isinstance(expected, str) and expected.startswith(CRASH_HEADS) else None
 
 
 @functools.lru_cache(maxsize=None)
@@ -664,13 +730,18 @@ def _budget_fallback(hooks_dir: str) -> re.Pattern[str] | None:
     return None
 
 
-def budget_refused(stdout: str, hooks_dir: Path) -> bool:
-    """True when ``stdout`` is write_guard's time-budget refusal: stdout
-    JSON whose ``permissionDecisionReason`` is, in full, the hook tree's
-    template or the parent's plain-words fallback at its deadline, from a
-    judgment that never finished. Never for a judged deny. Raises
-    ``BudgetMiss`` where the tree's ``_denial_reasons.py`` or
-    ``write_guard.py`` cannot be read: no verdict, never a scored block."""
+def budget_refused(stdout: str, hooks_dir: Path, *, crash_expected: bool | str = False) -> bool:
+    """True when ``stdout`` is a write_guard answer that judged nothing: its
+    time-budget refusal (stdout JSON whose ``permissionDecisionReason`` is,
+    in full, the hook tree's template or the parent's plain-words fallback at
+    its deadline, from a judgment that never finished), or, unless the caller
+    expects that crash (``crash_expected``, as ``_unexpected_crash`` reads
+    it), a deny it gave as it failed itself (``crash_head``, DEF-2096). Never
+    for a judged deny. Raises ``BudgetMiss`` where the tree's
+    ``_denial_reasons.py`` or ``write_guard.py`` cannot be read: no verdict,
+    never a scored block."""
+    if _unexpected_crash(stdout, crash_expected) is not None:
+        return True
     patterns = [p for p in (_budget_refusal(str(hooks_dir)), _budget_fallback(str(hooks_dir))) if p is not None]
     if not patterns:
         return False
@@ -696,52 +767,87 @@ def _espalier_state(project: Path) -> list[tuple[str, int, int]]:
     return out
 
 
+def _judged_nothing(head: str | None, seconds: float) -> str:
+    """One attempt that judged nothing, in words: its crash, or the budget's refusal."""
+    return f"its time budget's refusal after {seconds:.1f} s" if head is None else (
+        f"a crash after {seconds:.1f} s ({head})")
+
+
 def judged_within_budget(
-    spawn: Callable[[], subprocess.CompletedProcess], hooks_dir: Path, project: Path,
+    spawn: Callable[[], subprocess.CompletedProcess], hooks_dir: Path, project: Path, *,
+    crash_expected: bool | str = False,
 ) -> subprocess.CompletedProcess:
     """``spawn()``'s answer, once write_guard judged the call within its time
-    budget (DEF-5071). The budget's refusal judged nothing: a stalled runner
-    answers a second call, a judgment slow every time is refused again. So a
-    refusal is retried once, and only when the refused call left the
-    project's ``.espalier-state`` as it found it, since a nudge the refused
-    judgment fired would read the retry as a re-issue. A second refusal, or
-    one that left state, raises ``BudgetMiss``. Every bench that reads
-    write_guard's deny spawns through here: this is the one bench file the
-    sdist ships, so the source-tree benches load it, never the reverse."""
+    budget (DEF-5071) and did not crash on it (DEF-2096). The budget's refusal
+    judged nothing: a stalled runner answers a second call, a judgment slow
+    every time is refused again. So it is retried once, and only when the
+    refused call left the project's ``.espalier-state`` as it found it, since
+    a nudge the refused judgment fired would read the retry as a re-issue. A
+    crash judged nothing either: a fault in the runner of the judging child
+    (``RUNNER_FAULT_MARK``) can pass a second call and is retried the same
+    way, while any other crash is the judgment's own and comes back, so it is
+    no verdict at once, never hidden behind a second answer. A second miss,
+    or one that left state, raises ``BudgetMiss``. A caller whose row expects
+    the crash (``crash_expected``, as ``_unexpected_crash`` reads it: the
+    crash umbrella's own row) gets that crash back as its answer. Every bench
+    that reads write_guard's deny spawns through here: this is the one bench
+    file the sdist ships, so the source-tree benches load it, never the
+    reverse."""
     before = _espalier_state(project)
     began = time.monotonic()
     proc = spawn()
-    if not budget_refused(proc.stdout, hooks_dir):
+    if not budget_refused(proc.stdout, hooks_dir, crash_expected=crash_expected):
         return proc
     first = time.monotonic() - began
-    if _espalier_state(project) != before:
+    crash = _unexpected_crash(proc.stdout, crash_expected)
+    if crash is not None and RUNNER_FAULT_MARK not in crash:
         raise BudgetMiss(
-            f"write_guard's time budget refused the call after {first:.1f} s, and the refused "
+            f"write_guard crashed on the call ({crash}) after {first:.1f} s: it judged nothing, and a "
+            "crash in the judgment comes back, so it is not retried: no verdict")
+    if _espalier_state(project) != before:
+        what = ("write_guard's time budget refused the call" if crash is None
+                else f"write_guard crashed on the call ({crash})")
+        raise BudgetMiss(
+            f"{what} after {first:.1f} s, and the refused "
             f"judgment left state under {Path(project) / '.espalier-state'} that a retry would "
             "read as a re-issue: no verdict")
-    print(f"write_guard's time budget refused a call after {first:.1f} s; retrying it once",
-          file=sys.stderr)
+    what = "write_guard's time budget refused a call" if crash is None else f"write_guard crashed on a call ({crash})"
+    print(f"{what} after {first:.1f} s; retrying it once", file=sys.stderr)
     began = time.monotonic()
     proc = spawn()
-    if budget_refused(proc.stdout, hooks_dir):
+    if budget_refused(proc.stdout, hooks_dir, crash_expected=crash_expected):
+        second = time.monotonic() - began
+        again = _unexpected_crash(proc.stdout, crash_expected)
+        if crash is None and again is None:
+            raise BudgetMiss(
+                f"write_guard's time budget refused the call twice ({first:.1f} s, then "
+                f"{second:.1f} s): a runner stalled for both, or a judgment slow "
+                "every time, and no verdict")
+        if crash is not None and again is not None:
+            raise BudgetMiss(
+                f"write_guard crashed on the call twice ({crash}, then {again}): it judged nothing "
+                "either time, and no verdict")
         raise BudgetMiss(
-            f"write_guard's time budget refused the call twice ({first:.1f} s, then "
-            f"{time.monotonic() - began:.1f} s): a runner stalled for both, or a judgment slow "
-            "every time, and no verdict")
+            f"write_guard judged nothing on the call twice ({_judged_nothing(crash, first)}, then "
+            f"{_judged_nothing(again, second)}): no verdict")
     return proc
 
 
-def _is_deny(stdout: str, rc: int) -> bool:
+def _is_deny(stdout: str, rc: int, *, crash_expected: bool | str = False) -> bool:
     """True if hook output indicates a deny/block decision.
 
     Supports both protocol channels:
       - exit 0 + structured JSON (preferred, current espalier)
       - exit 2 + stderr (legacy / simple-path hooks, e.g. naive baselines)
 
-    write_guard's time-budget refusal is neither: it raises ``BudgetMiss``.
-    The spawns retry it first, so one here is a spawn that skipped them.
+    write_guard's time-budget refusal is neither, and nor is its crash on a
+    row that does not expect one (DEF-2096): each raises ``BudgetMiss``.
+    The spawns retry them first, so one here is a spawn that skipped them.
     """
-    if budget_refused(stdout, HOOK_SCRIPT.parent):
+    if budget_refused(stdout, HOOK_SCRIPT.parent, crash_expected=crash_expected):
+        crash = _unexpected_crash(stdout, crash_expected)
+        if crash is not None:
+            raise BudgetMiss(f"write_guard crashed on a call no spawn retried ({crash}): no verdict")
         raise BudgetMiss("write_guard's time budget refused a call no spawn retried: no verdict")
     if rc == 2:
         return True
@@ -2246,10 +2352,11 @@ def run_baseline(name: str, corpus: list[dict]) -> list[dict]:
                     invoker = invoke_always_allow
                 try:
                     res = invoker(attempt, tmp_project)
-                except BudgetMiss:
+                except BudgetMiss as exc:
                     # No verdict to score: an OOS row would pass as this arm's
                     # allow, an in-scope row fail as a regression (DEF-5071).
-                    raise
+                    # Named by its row, which the run's exit-3 line then says.
+                    raise BudgetMiss(f"{attempt['attempt_id']}: {exc}") from exc
                 except Exception as exc:
                     res = VerifierResult(False, f"runner error: {exc!r}", 0.0)
                 results.append({

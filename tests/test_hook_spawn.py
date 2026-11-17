@@ -102,6 +102,16 @@ if miss and mode.endswith("fallback"):
 if miss and mode.endswith("budget"):
     print('{"reason": "Command blocked: write_guard could not finish judging this command"}')
     sys.exit(0)
+if miss and mode.endswith("runnerfault"):
+    print('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", '
+          '"permissionDecisionReason": "write_guard internal error (OSError at tools/cc/hooks/write_guard.py:1) '
+          'while it ran its judging child; failing closed. Re-issue once."}}')
+    sys.exit(0)
+if miss and mode.endswith("crash"):
+    print('{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", '
+          '"permissionDecisionReason": "write_guard internal error (TypeError at tools/cc/hooks/x.py:1); '
+          'failing closed. Re-issue once."}}')
+    sys.exit(0)
 if mode == "deny":
     print('{"permissionDecision": "deny"}')
     sys.exit(2)
@@ -208,6 +218,56 @@ class TestOneRetryOnAMiss:
         argv, runs = child
         result = hs.run_hook_through(argv("deny"), env=None, input="{}")
         assert (result.returncode, runs()) == (2, 1)
+
+
+class TestACrashIsAMissUnlessTheRowExpectsIt:
+    """DEF-2096: write_guard's deny of a call it never judged because it
+    failed itself (its crash guard, its runner, its refusal to start) read as
+    the must-deny row's verdict. It is a miss unless the row passes
+    ``crash_expected`` (a row that drives the crash guard or a wedged guard):
+    a runner fault is retried once as the budget's refusal is, and a crash in
+    the judgment fails the row at once, since a retry would hide one that
+    comes back on some calls behind the second answer."""
+
+    def test_a_runner_fault_then_an_answer_returns_the_answer_and_warns(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried, match="a write_guard crash"):
+            result = hs.run_hook_through(argv("first-runnerfault"), env=None, input="{}")
+        assert (result.stdout.strip(), runs()) == ("answered", 2)
+
+    def test_a_crash_in_the_judgment_fails_the_row_at_once(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception, match="it is not retried") as failed:
+            hs.run_hook_through(argv("first-crash"), env=None, input="{}")
+        assert "_CRASH_EXPECTED_SITES" in str(failed.value) and runs() == 1
+        hs._RETRIED.clear()
+        with pytest.raises(pytest.fail.Exception, match="it is not retried"):
+            hs.retry_a_budget_miss(_spawn(argv("first-crash", "long.txt")), env=None)
+        assert runs("long.txt") == 1
+
+    def test_two_runner_faults_fail_the_row_naming_both(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.run_hook_through(argv("always-runnerfault"), env=None, input="{}")
+        text = str(failed.value)
+        assert (text.count("a write_guard crash after"), text.count("(OSError at tools/cc/hooks/write_guard.py:1)")) == (
+            2, 2), text
+        assert "the guard's to fix" in text and runs() == 2
+
+    def test_a_row_that_expects_the_crash_reads_it_at_once(self, child):
+        argv, runs = child
+        result = hs.run_hook_through(argv("always-crash"), env=None, input="{}", crash_expected=True)
+        assert "write_guard internal error" in result.stdout and runs() == 1
+        hs._RETRIED.clear()
+        long = hs.retry_a_budget_miss(_spawn(argv("always-crash", "long.txt")), env=None, crash_expected=True)
+        assert "write_guard internal error" in long.stdout and runs("long.txt") == 1
+
+    def test_the_long_bound_reads_a_crash_apart(self, child):
+        argv, _runs = child
+        crashed = _spawn(argv("always-crash"))()
+        with pytest.raises(pytest.fail.Exception, match="a write_guard crash"):
+            hs.not_a_budget_miss(crashed)
+        assert hs.not_a_budget_miss(crashed, crash_expected=True) is crashed
 
 
 class TestTheRetrysLimits:

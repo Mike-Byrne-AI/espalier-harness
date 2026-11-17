@@ -509,6 +509,280 @@ class TestEveryBenchReaderTellsTheBudgetFromAVerdict:
         assert type(caught.value).__name__ == "BudgetMiss"
 
 
+def _decision(reason: str) -> str:
+    """A deny on the decision channel, as a PreToolUse hook prints it."""
+    import json
+
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": reason}}) + "\n"
+
+
+def _crash_reasons(monkeypatch) -> dict[str, str]:
+    """Every deny write_guard gives a call it never judged because it failed
+    itself (DEF-2096), rendered from the hook sources, each field filled:
+    every ``_denial_reasons`` template that says write_guard's internal error
+    and each one its crash guard (``_judge``'s handlers) and its runner's
+    refusal (``_runner_fault_reason``) read, that refusal's two plain-words
+    forms, write_guard's own last resort where ``_start_refusal`` cannot
+    import, every ``_start_refusal`` template but the two named as no deny,
+    and the plain-words last resorts it composes where a template could not
+    be (the start refusal's and the floor's). Derived by name and by words,
+    not by the readers' heads, so a new template in these places joins
+    without an edit here; a crash text written anywhere else does not."""
+    import ast
+    import collections
+    import types
+
+    monkeypatch.syspath_prepend(str(HOOKS))
+    import _denial_reasons
+    import _start_refusal
+    import write_guard
+
+    fields = collections.defaultdict(lambda: "x", hook="write_guard", error="TypeError",
+                                     file="tools/cc/hooks/_bash_patterns.py", line="4560")
+    # Every reasons template that says write_guard's internal error, by its
+    # words, wherever write_guard reads it, beside those its two refusers read.
+    reasons: dict[str, str] = {
+        name: value.format_map(fields) for name, value in vars(_denial_reasons).items()
+        if isinstance(value, str) and "write_guard internal error" in value}
+    tree = ast.parse((HOOKS / "write_guard.py").read_text(encoding="utf-8"))
+    # Its own last resort where _start_refusal cannot import, composed in
+    # plain words at module level.
+    last = [n.value for t in tree.body if isinstance(t, ast.Try) for h in t.handlers for n in ast.walk(h)
+            if isinstance(n, ast.Assign) and isinstance(n.value, ast.BinOp) and any(
+                isinstance(x, ast.Subscript) and isinstance(x.slice, ast.Constant)
+                and x.slice.value == "permissionDecisionReason" for x in n.targets)]
+    assert len(last) == 1, [ast.unparse(n) for n in last]
+    reasons["write_guard-last-resort"] = eval(compile(ast.Expression(last[0]), "write_guard.py", "eval"), {
+        "_cause": "tools/cc/hooks/_start_refusal.py raised ImportError", "_LAST_RESTORE": "git restore x"})
+    owners = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)
+              and n.name in ("_judge", "_runner_fault_reason")}
+    assert set(owners) == {"_judge", "_runner_fault_reason"}, sorted(owners)
+    scopes = [h for t in ast.walk(owners["_judge"]) if isinstance(t, ast.Try) for h in t.handlers]
+    scopes.append(owners["_runner_fault_reason"])
+    for scope in scopes:
+        for node in ast.walk(scope):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.value.id == "_denial_reasons"
+                    and isinstance(getattr(_denial_reasons, node.attr, None), str)):
+                reasons[node.attr] = getattr(_denial_reasons, node.attr).format_map(fields)
+    monkeypatch.setattr(write_guard, "_HOOK_STARTED", -1e12)  # past the deadline: the plain words
+    named = ({"error": "OSError", "file": "tools/cc/hooks/write_guard.py", "line": 1,
+              "restore": "git restore tools/cc/hooks/write_guard.py"}, {})
+    for label, fault in (("runner-unplaced", None), ("runner-placed", named)):
+        reasons[label] = write_guard._runner_fault_reason(types.SimpleNamespace(reasons=None), fault)
+    # Every start-refusal template but the two that are no deny, left out by
+    # name: a new refusal joins whatever its words, and reds a reader that
+    # does not know them.
+    not_a_deny = {"WEDGE_RESTORE_CONTEXT": "the context of the one restore a wedged hook lets through",
+                  "BELOW_FLOOR_BANNER": "the SessionStart banner's line"}
+    assert set(not_a_deny) <= set(_start_refusal._OPERATOR_FACING_TEMPLATES), not_a_deny
+    for name in _start_refusal._OPERATOR_FACING_TEMPLATES:
+        if name not in not_a_deny:
+            reasons[name] = getattr(_start_refusal, name).format_map(fields)
+    source = ast.parse(Path(_start_refusal.__file__).read_text(encoding="utf-8"))
+    composed = [n.value for t in ast.walk(source) if isinstance(t, ast.Try) for h in t.handlers
+                for s in h.body for n in ast.walk(s) if isinstance(n, ast.Assign) and isinstance(n.value, ast.BinOp)
+                and any(isinstance(x, ast.Name) and x.id == "reason" for x in n.targets)]
+    # The start refusal's and the floor's last resorts, each composed in plain
+    # words where its template could not be.
+    assert len(composed) >= 2, [ast.unparse(c) for c in composed]
+    for node in composed:
+        for body in (False, True):
+            reasons[f"composed-line-{node.lineno}-body={body}"] = eval(
+                compile(ast.Expression(node), "_start_refusal.py", "eval"),
+                {"hook": "write_guard", "body": body, "exc": TypeError("x"), "_FLOOR": _start_refusal._FLOOR})
+    # The derivation never shrinks under the members it was written against.
+    assert {"WRITE_GUARD_INTERNAL_ERROR", "WRITE_GUARD_CRASHED_AT", "WRITE_GUARD_CRASHED_ON_A_KEPT_FILE",
+            "WRITE_GUARD_RUNNER_FAULT", "HELPER_SKEW", "SIBLING_RAISED", "SIBLING_RAISED_UNPLACED",
+            "BODY_RAISED", "BODY_RAISED_UNPLACED", "BELOW_FLOOR", "write_guard-last-resort"} <= set(reasons), (
+        sorted(reasons))
+    return reasons
+
+
+def _census_module():
+    spec = importlib.util.spec_from_file_location("_crash_reader_guard_cost_census",
+                                                  REPO_ROOT / "scripts" / "guard_cost_census.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+#: A crash as write_guard's crash guard words it (``WRITE_GUARD_CRASHED_AT``).
+_A_CRASH = ("write_guard internal error (TypeError at tools/cc/hooks/_bash_patterns.py:4560); failing closed."
+            " Re-issue once.")
+#: A fault in the parent's runner of its judging child (``WRITE_GUARD_RUNNER_FAULT``).
+_A_RUNNER_FAULT = ("write_guard internal error (OSError at tools/cc/hooks/write_guard.py:500) while it ran its"
+                   " judging child; failing closed. Re-issue once.")
+#: A refusal to start (``_start_refusal.SIBLING_RAISED``).
+_A_START_REFUSAL = ("write_guard cannot start: tools/cc/hooks/_integrity.py raised ImportError at line 3 while"
+                    " the hook imported its siblings.")
+
+
+class TestACrashIsNoVerdict:
+    """DEF-2096: a deny write_guard gives a call it never judged because it
+    failed itself -- its crash guard's, its runner's, or its refusal to start
+    -- read as a judged block in every reader that knew the budget's refusal
+    alone, so a guard that crashed on a bypass row passed it, and the release
+    gate was green on a guard that judged nothing. Each reader now reads it as
+    no verdict, as it reads the budget's refusal, unless its caller expects
+    the crash: the one corpus row whose expected outcome it is (BC-023-a6)
+    and the suite's rows that drive a wedged guard."""
+
+    def test_every_reader_reads_every_crash_as_no_verdict(self, monkeypatch):
+        import bench.run_benchmark as rb
+        from tests import _hook_spawn as hs
+
+        from espalier import selfcheck
+
+        census = _census_module()
+        for name, reason in _crash_reasons(monkeypatch).items():
+            out = _decision(reason)
+            assert (rb.budget_refused(out, HOOKS), hs.holds_a_budget_refusal(out),
+                    census.decision("bash", 0, out), selfcheck._crash_head(out) is not None) == (
+                True, True, "deny (crash)", True), (name, reason)
+
+    def test_a_caller_that_expects_the_crash_reads_it_as_its_verdict(self, monkeypatch):
+        import bench.run_benchmark as rb
+        from tests import _hook_spawn as hs
+
+        for name, reason in _crash_reasons(monkeypatch).items():
+            out = _decision(reason)
+            assert (rb.budget_refused(out, HOOKS, crash_expected=True),
+                    hs.holds_a_budget_refusal(out, crash_expected=True)) == (False, False), name
+            # A row's own expected crash is that crash alone (the code review):
+            # the umbrella's words expect its internal error, never a refusal
+            # to start, which judged nothing of the row either.
+            umbrella = rb.budget_refused(out, HOOKS, crash_expected="write_guard internal error")
+            assert umbrella is (not reason.startswith("write_guard internal error")), name
+        # The budget's refusal is no verdict to it still.
+        refusal = _refusal(monkeypatch)
+        assert rb.budget_refused(refusal, HOOKS, crash_expected=True) is True
+        assert hs.holds_a_budget_refusal(refusal, crash_expected=True) is True
+
+    @pytest.mark.parametrize("reason", [
+        f"Dangerous command blocked, quoting: {_A_CRASH}",
+        "Command blocked: a protected zone (the hook said: write_guard cannot start: x).",
+        "Command blocked: a protected zone.",
+    ], ids=["quotes-the-crash", "quotes-the-start-refusal", "plain"])
+    def test_a_judged_deny_stays_a_verdict(self, reason):
+        """The crash's words read at the reason's start only, so a judged deny
+        that quotes them is the block it is."""
+        import bench.run_benchmark as rb
+        from tests import _hook_spawn as hs
+
+        out = _decision(reason)
+        assert (rb.budget_refused(out, HOOKS), hs.holds_a_budget_refusal(out),
+                _census_module().decision("bash", 0, out)) == (False, False, "deny")
+
+    def test_a_runner_fault_then_an_answer_reads_as_the_answer(self, tmp_path, capsys):
+        """A fault in the runner of the judging child can pass a second call,
+        so it is retried as the budget's refusal is."""
+        import bench.run_benchmark as rb
+
+        answers = _Answers(_decision(_A_RUNNER_FAULT), "")
+        proc = rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path)
+        assert (proc.stdout, answers.calls) == ("", 2)
+        assert "crashed" in capsys.readouterr().err
+
+    def test_two_runner_faults_are_no_verdict(self, tmp_path):
+        import bench.run_benchmark as rb
+
+        fault = _decision(_A_RUNNER_FAULT)
+        answers = _Answers(fault, fault)
+        with pytest.raises(rb.BudgetMiss, match="crashed on the call twice"):
+            rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path)
+        assert answers.calls == 2
+
+    @pytest.mark.parametrize("crash", [_A_CRASH, _A_START_REFUSAL], ids=["crash-guard", "start-refusal"])
+    def test_a_crash_in_the_judgment_is_no_verdict_at_once(self, tmp_path, crash):
+        """Any other crash comes back: a retry would hide one that fires on
+        some calls behind the second answer (the failure-mode review)."""
+        import bench.run_benchmark as rb
+
+        answers = _Answers(_decision(crash), "")
+        with pytest.raises(rb.BudgetMiss, match="it is not retried"):
+            rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path)
+        assert answers.calls == 1
+
+    def test_an_expected_crash_is_the_answer_at_once(self, tmp_path):
+        import bench.run_benchmark as rb
+
+        answers = _Answers(_decision(_A_CRASH))
+        proc = rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path, crash_expected=True)
+        assert (proc.stdout, answers.calls) == (_decision(_A_CRASH), 1)
+
+    @pytest.mark.parametrize(("name", "read", "allowed"), _READERS)
+    def test_a_crash_is_no_verdict_to_every_bench_reader(
+            self, load_bench, monkeypatch, tmp_path, name, read, allowed):
+        module = load_bench(name)
+        crash = _decision(_A_CRASH)
+        monkeypatch.setattr(module, "run_bounded", _Answers(crash, crash))
+        with pytest.raises(RuntimeError, match="crashed on the call") as caught:
+            read(module, tmp_path)
+        assert type(caught.value).__name__ == "BudgetMiss"
+        assert "TypeError at tools/cc/hooks/_bash_patterns.py:4560" in str(caught.value)
+
+    def test_a_spawn_that_skipped_the_reader_never_scores_a_crash(self):
+        import bench.run_benchmark as rb
+
+        with pytest.raises(rb.BudgetMiss, match="crashed"):
+            rb._is_deny(_decision(_A_CRASH), 0)
+        assert rb._is_deny(_decision(_A_CRASH), 0, crash_expected=True) is True
+
+    def test_the_one_corpus_row_that_expects_the_crash_is_bc_023_a6(self):
+        """Its expected block is the crash guard's own (the umbrella's
+        class); a crash on any other row is no verdict."""
+        import bench.run_benchmark as rb
+
+        expecting = {a["attempt_id"]: rb.expected_crash(a) for entry in rb.load_corpus()
+                     for a in entry["canonical_attempts"] if rb.expected_crash(a)}
+        assert expecting == {"BC-023-a6": "write_guard internal error"}
+
+    def test_the_release_bench_scores_the_expected_crash_and_no_other(self, monkeypatch, tmp_path):
+        import bench.run_benchmark as rb
+
+        rows = {a["attempt_id"]: a for entry in rb.load_corpus() for a in entry["canonical_attempts"]}
+        crash = _decision(_A_CRASH)
+        monkeypatch.setattr(rb, "run_bounded", _Answers(crash))
+        scored = rb.invoke_real_write_guard(rows["BC-023-a6"], tmp_path)
+        assert (scored.blocked, scored.reason) == (True, _A_CRASH)
+        monkeypatch.setattr(rb, "run_bounded", _Answers(crash))
+        with pytest.raises(rb.BudgetMiss, match="crashed on the call"):
+            rb.invoke_real_write_guard(rows["BC-023-a1"], tmp_path)
+        # The umbrella's row expects its internal error: a guard that cannot
+        # start never judged it either (the code review).
+        monkeypatch.setattr(rb, "run_bounded", _Answers(_decision(_A_START_REFUSAL)))
+        with pytest.raises(rb.BudgetMiss, match="cannot start"):
+            rb.invoke_real_write_guard(rows["BC-023-a6"], tmp_path)
+
+    def test_the_kill_switch_invoker_reads_a_crash_as_no_verdict(self, monkeypatch, tmp_path):
+        """Its own spawn passes the row's expectation as the plain one does
+        (the code review: no row drove it)."""
+        import bench.run_benchmark as rb
+
+        attempt = next(a for entry in rb.load_corpus() for a in entry["canonical_attempts"]
+                       if a["verifier"] == "killswitch_under_maintenance")
+        monkeypatch.setattr(rb, "run_bounded", _Answers(_decision(_A_CRASH)))
+        with pytest.raises(rb.BudgetMiss, match="crashed on the call"):
+            rb.invoke_killswitch_under_maintenance(attempt, tmp_path)
+        assert not (tmp_path / ".claude" / "settings.json").exists()
+
+    def test_the_attempt_loop_names_the_row_it_has_no_verdict_for(self, monkeypatch):
+        import bench.run_benchmark as rb
+
+        def crashed(attempt, project):
+            raise rb.BudgetMiss("write_guard crashed on the call twice")
+
+        monkeypatch.setattr(rb, "setup_baseline", lambda name, project: None)
+        monkeypatch.setitem(rb.BASELINE_INVOKERS, "espalier", {"crashed": crashed})
+        corpus = [{"id": "BC-T", "in_scope": True, "canonical_attempts": [
+            {"attempt_id": "BC-T-a1", "verifier": "crashed", "expected_outcome": "blocked"}]}]
+        with pytest.raises(rb.BudgetMiss, match=r"^BC-T-a1: write_guard crashed"):
+            rb.run_baseline("espalier", corpus)
+
+
 def _raising(exc: BaseException):
     def raise_it(*args, **kwargs):
         raise exc

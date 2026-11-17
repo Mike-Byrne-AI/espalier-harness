@@ -410,11 +410,13 @@ def _run_hook(root: Path, hook: str, event: str, timeout: int = 45,
     payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root), **_NOOP_INPUT.get(event, {})}
     env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
            "ESPALIER_STOP_GATE": "light"}
+    # Every row here reads the crash or the refusal to start as its answer,
+    # and an intact cell's row asserts there is none (DEF-2096).
     return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)], input=json.dumps(payload),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
         env=env,
-    ), env=env, cwd=str(root), allowance=allowance)
+    ), env=env, cwd=str(root), allowance=allowance, crash_expected=True)
 
 
 def _skew(root: Path, *names: str) -> None:
@@ -923,14 +925,18 @@ def _plant(root: Path, plant: str) -> None:
 
 
 def _run_payload(root: Path, hook: str, payload: dict, audit: Path,
-                 allowance: RetryAllowance | None = None) -> subprocess.CompletedProcess:
+                 allowance: RetryAllowance | None = None, *, crash: bool = False) -> subprocess.CompletedProcess:
+    """``crash``: the row reads the wedged guard's crash or refusal to start
+    as its answer. A row that asserts a judged deny or an allow leaves it
+    off, so a crash there is a miss, never its verdict (DEF-2096's code
+    review: the relay row read one deny document, which a crash also is)."""
     env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)}
     return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)],
         input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "wedged", "cwd": str(root), **payload}),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
         env=env,
-    ), env=env, cwd=str(root), allowance=allowance)
+    ), env=env, cwd=str(root), allowance=allowance, crash_expected=crash)
 
 
 def _taker(run: subprocess.CompletedProcess) -> str:
@@ -965,9 +971,9 @@ def restores(tmp_path_factory) -> list[Restore]:
             payload = {**payload, "cwd": str(root / payload["cwd"])}
         if "{taker}" in payload["tool_input"].get("command", ""):
             taker = _taker(_run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], root / "taker",
-                                        allowance))
+                                        allowance, crash=True))
             payload = _bash(payload["tool_input"]["command"].replace("{taker}", taker))
-        run = _run_payload(root, "write_guard.py", payload, audit, allowance)
+        run = _run_payload(root, "write_guard.py", payload, audit, allowance, crash=True)
         result = Restore(plant, payload, passes, run.returncode, run.stdout, run.stderr,
                          _wedge_copies(root), _audit_text(audit))
         shutil.rmtree(root, ignore_errors=True)
@@ -995,7 +1001,7 @@ class TestAWedgedGuardNamesWhatRaised:
         _copy_cc(root)
         _append(root, "tools/cc/hooks/_bash_patterns.py", "\ndel has_catastrophic_recursive_rm\n")
         audit = root / "audit"
-        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), audit)
+        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), audit, crash=True)
         out = json.loads(refused.stdout)["hookSpecificOutput"]
         reason = out["permissionDecisionReason"]
         assert refused.returncode == 0 and out["permissionDecision"] == "deny", (refused.stdout, refused.stderr[-300:])
@@ -1018,7 +1024,7 @@ class TestAWedgedGuardNamesWhatRaised:
         _copy_cc(root)
         _append(root, "tools/cc/hooks/_bash_patterns.py", "\ndel has_catastrophic_recursive_rm\n")
         _append(root, "tools/cc/hooks/_denial_reasons.py", "\ndel WRITE_GUARD_CRASHED_ON_A_KEPT_FILE\n")
-        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), root / "audit")
+        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), root / "audit", crash=True)
         reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
         assert reason.startswith("write_guard internal error (AttributeError at tools/cc/hooks/write_guard.py:"), reason
         assert "`git restore --source=HEAD -- tools/cc/hooks/write_guard.py`" in reason, reason
@@ -1101,7 +1107,7 @@ class TestAFaultInTheJudgingChildsRunner:
         _copy_cc(root)
         _append(root, _JSON_SAFE, _RAISING_RUNNER)
         audit = root / "audit"
-        refused = _run_payload(root, "write_guard.py", _bash("git status"), audit)
+        refused = _run_payload(root, "write_guard.py", _bash("git status"), audit, crash=True)
         reasons = _denies(refused)
         assert refused.returncode == 0 and len(reasons) == 1, (refused.stdout, refused.stderr[-300:])
         assert reasons[0].startswith(f"write_guard internal error (KeyError at {_JSON_SAFE}:"), reasons
@@ -1117,7 +1123,7 @@ class TestAFaultInTheJudgingChildsRunner:
         text = _audit_text(audit)
         assert '"pretooluse_blocked_internal_error"' in text, text[-600:]
         assert '"pretooluse_failed_open_wedge_restore"' in text and '"where": "parent"' in text, text[-600:]
-        other = _run_payload(root, "write_guard.py", _bash(f"git restore {_UNRELATED}"), audit)
+        other = _run_payload(root, "write_guard.py", _bash(f"git restore {_UNRELATED}"), audit, crash=True)
         assert len(_denies(other)) == 1, other.stdout
 
     def test_a_kept_runner_that_predates_the_deadline_readings_keeps_the_hard_bound(self, tmp_path):
@@ -1537,7 +1543,7 @@ class TestTheNamedRestoreRepairsTheGuard:
         audit = root / "audit"
         on_the_path = scenario in self._ON_THE_PATTERN_PATH
         payload = self._MUTATION if on_the_path else _NOOP_INPUT["PreToolUse"]
-        refused = _run_payload(root, "write_guard.py", payload, audit)
+        refused = _run_payload(root, "write_guard.py", payload, audit, crash=True)
         reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
         assert ("internal error" if on_the_path else "cannot start") in reason and edited in reason, reason
         if on_the_path:
@@ -1563,7 +1569,7 @@ class TestTheNamedRestoreRepairsTheGuard:
         _committed_copy(root)
         _append(root, f"tools/cc/hooks/{REFUSAL}.py", _RAISE)
         audit = root / "audit"
-        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit, crash=True)
         reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
         command = reason.split("Restore it to HEAD: `", 1)[1].split("`", 1)[0]
         assert command == f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py", reason

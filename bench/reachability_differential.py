@@ -1105,7 +1105,9 @@ def guard_denies(cmd: str, hooks_dir: Path, project_dir: str) -> bool:
     reports every deny as an allow -- the first probe written during the incident
     that motivated this file did exactly that and called 12 correct denials wrong.
     The time budget's refusal is a deny on the same channel that judged
-    nothing: it is retried once, or raises (DEF-5071).
+    nothing: it is retried once, or raises (DEF-5071). So is a deny the guard
+    gave as it crashed: a runner fault is retried once, any other crash raises
+    at once (DEF-2096).
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
