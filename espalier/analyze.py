@@ -1013,14 +1013,17 @@ def detect_head_sha(repo_root: Path) -> str:
     first commit, or where git cannot be run."""
     import subprocess
 
-    from espalier._spawn import run_no_stdin
+    from espalier._spawn import SpawnFailure, say_unstarted, spawn_checked
     try:
-        head = run_no_stdin(
+        head = spawn_checked(
             ["git", "rev-parse", "--verify", "-q", "HEAD"],
             cwd=repo_root, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=5,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except subprocess.TimeoutExpired:
+        return ""
+    if isinstance(head, SpawnFailure):
+        say_unstarted(head, "the fingerprint records no head commit")
         return ""
     sha = head.stdout.strip()
     return sha if head.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else ""
@@ -1030,11 +1033,11 @@ def detect_git_conventions(repo_root: Path) -> dict[str, Any]:
     """Analyze git log to detect commit message patterns."""
     import subprocess
 
-    from espalier._spawn import run_no_stdin
+    from espalier._spawn import SpawnFailure, say_unstarted, spawn_checked
     result: dict[str, Any] = {"format": "freeform", "evidence": [], "confidence": 0.0}
 
     try:
-        log = run_no_stdin(
+        log = spawn_checked(
             ["git", "log", "--oneline", "-30", "--format=%s"],
             cwd=repo_root,
             capture_output=True,
@@ -1049,9 +1052,12 @@ def detect_git_conventions(repo_root: Path) -> dict[str, Any]:
             errors="replace",
             timeout=5,
         )
-        if log.returncode != 0 or not log.stdout.strip():
-            return result
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except subprocess.TimeoutExpired:
+        return result
+    if isinstance(log, SpawnFailure):
+        say_unstarted(log, "the commit-message convention reads as freeform")
+        return result
+    if log.returncode != 0 or not log.stdout.strip():
         return result
 
     messages = [m.strip() for m in log.stdout.strip().splitlines() if m.strip()]

@@ -2206,7 +2206,8 @@ class TestABannerThatNeverAnswers:
                 targets = ([node.target] if isinstance(node, ast.AnnAssign)
                            else node.targets if isinstance(node, ast.Assign) else [])
                 for t in targets:
-                    if isinstance(t, ast.Name) and re.fullmatch(r"_[A-Z_]*_VERDICTS", t.id):
+                    # The verdict memos, and the said-once memos (DEF-985).
+                    if isinstance(t, ast.Name) and re.fullmatch(r"_[A-Z_]*_VERDICTS|_SAID_[A-Z_]+", t.id):
                         found.add((f"espalier.{path.stem}", t.id))
         assert found, "the census found no memo, so it reads nothing"
         assert found <= set(conftest._ENGINE_INTERPRETER_MEMOS), (

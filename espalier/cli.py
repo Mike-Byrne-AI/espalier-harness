@@ -48,7 +48,7 @@ from espalier._python_floor import (
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._rmtree import remove_file
-from espalier._spawn import run_no_stdin
+from espalier._spawn import SpawnFailure, run_no_stdin, say_unstarted, spawn_checked
 from espalier._text import (
     forward_if_drive_rooted, is_drive_rooted, os_error_text, pin_utf8_streams, plural, program_word,
     quoted_if_spaced, windows_short_path,
@@ -805,7 +805,7 @@ def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> "tuple[b
             return False, None
         cand_prefix = Path(payload[0]).resolve()
         cand_base = Path(payload[1]).resolve()
-    except (subprocess.SubprocessError, OSError, ValueError):
+    except (subprocess.SubprocessError, OSError, ValueError):  # fail-open: ok deliberate -- the candidate started moments ago (interpreter_start_failure and its banner answered first), and an unread probe reads permissive by design (the docstring above)
         # ValueError covers json.JSONDecodeError (a subclass).
         return False, None
     if cand_prefix == cand_base:
@@ -5999,18 +5999,21 @@ def _git_covered_entries(
             prefix="espalier-check-ignore-", ignore_cleanup_errors=True,
         ) as scratch:
             scratch_root = Path(scratch)
-            init = run_no_stdin(
+            init = spawn_checked(
                 ["git", "init", "-q", "--template=", str(scratch_root)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=30, env=env,
             )
+            if isinstance(init, SpawnFailure):
+                say_unstarted(init, "which harness .gitignore entries your rules already cover is not asked of git")
+                return None
             if init.returncode != 0:
                 return None
             (scratch_root / ".gitignore").write_bytes(gi_bytes)
             stdin = "".join(
                 path + "\0" for paths in probes.values() for path in paths
             ) + _GITIGNORE_CONTROL_PROBE + "\0"
-            proc = run_no_stdin(
+            proc = spawn_checked(
                 ["git", "-C", str(scratch_root),
                  "-c", f"core.excludesFile={scratch_root / 'no-global-excludes'}",
                  "-c", f"core.ignorecase={'true' if fold else 'false'}",
@@ -6023,6 +6026,9 @@ def _git_covered_entries(
                 errors="replace", check=False, timeout=30, env=env,
             )
     except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "which harness .gitignore entries your rules already cover is not asked of git")
         return None
     # 0: at least one path is excluded; 1: none is; anything else is an error.
     if proc.returncode not in (0, 1):
@@ -6115,13 +6121,16 @@ def _git_ignorecase(repo_root: Path) -> bool:
     direction for a diagnostic that must never abort a completed deploy.
     """
     try:
-        proc = run_no_stdin(
+        proc = spawn_checked(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=30,
         )
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (ValueError, subprocess.SubprocessError):
+        return False
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "git's case folding reads as off")
         return False
     return proc.stdout.strip() == "true"
 
@@ -6204,7 +6213,7 @@ def _untracked_conflicts(
     # platform most operators are sitting on.
     fold = _git_ignorecase(repo_root)
     try:
-        result = run_no_stdin(
+        result = spawn_checked(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             cwd=repo_root, capture_output=True, text=True,
             # errors= AND ValueError, together: a filename that is not valid
@@ -6218,7 +6227,10 @@ def _untracked_conflicts(
             # immediate sibling `_tracked_conflicts` carries both defenses.
             encoding="utf-8", errors="replace", timeout=10,
         )
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (ValueError, subprocess.SubprocessError):
+        return {}
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "no uncommitted file a new .gitignore entry would hide is named")
         return {}
     if result.returncode != 0:
         return {}
@@ -6305,7 +6317,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
     (``cleanup._retire_gitignore_block``): an ignore rule guards no tracked
     file, so a tracked one is never the reason to keep it."""
     try:
-        proc = run_no_stdin(
+        proc = spawn_checked(
             ["git", "-C", str(repo_root), "ls-files", "-z"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=120,
@@ -6313,13 +6325,19 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
         # git itself is case-insensitive on macOS/Windows checkouts; match it,
         # or the check misses `Reports/q4.md` against `/reports/` and silently
         # creates the state it exists to prevent.
-        case_proc = run_no_stdin(
+        case_proc = spawn_checked(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=30,
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (ValueError, subprocess.TimeoutExpired):
+        return None
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "no tracked file is checked against the harness's .gitignore entries")
+        return None
+    if isinstance(case_proc, SpawnFailure):
+        say_unstarted(case_proc, "no tracked file is checked against the harness's .gitignore entries")
         return None
     if proc.returncode != 0:
         return None
@@ -6748,13 +6766,16 @@ def _ignored_files_under(repo_root: Path, folder: str) -> list[str] | None:
     cannot answer. Nothing is fed to the child, so its stdin is closed (the
     DEF-928 shape)."""
     try:
-        proc = run_no_stdin(
+        proc = spawn_checked(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--others", "--ignored",
              "--exclude-standard", "--", f"{folder}/"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             check=False, timeout=60, stdin=subprocess.DEVNULL,
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (ValueError, subprocess.TimeoutExpired):
+        return None
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, f"what retiring the {folder}/ rule would put back in git status is not named")
         return None
     if proc.returncode != 0:
         return None
@@ -7021,11 +7042,14 @@ def _git_hides(repo_root: Path, rel: str) -> bool:
     catch-all such as ``.*`` would hide the include from every commit);
     False when it does not, or when git cannot be asked."""
     try:
-        done = run_no_stdin(
+        done = spawn_checked(
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
             capture_output=True, timeout=10, check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.SubprocessError:
+        return False
+    if isinstance(done, SpawnFailure):
+        say_unstarted(done, f"{rel} reads as not ignored by your rules")
         return False
     return done.returncode == 0
 
@@ -7042,12 +7066,15 @@ def _git_ignored(repo_root: Path, rels: Sequence[str]) -> set[str] | None:
         return set()
     try:
         # NUL-separated both ways (-z needs --stdin), so no path is quoted.
-        done = run_no_stdin(
+        done = spawn_checked(
             ["git", "-C", str(repo_root), "check-ignore", "--stdin", "-z"],
             input=b"\0".join(rel.encode("utf-8") for rel in rels) + b"\0",
             capture_output=True, timeout=10, check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.SubprocessError:
+        return None
+    if isinstance(done, SpawnFailure):
+        say_unstarted(done, "which harness paths your rules ignore is not read")
         return None
     if done.returncode not in (0, 1):  # 1: none ignored; 128: git could not answer
         return None

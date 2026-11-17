@@ -3,14 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from espalier._spawn import run_no_stdin
+from espalier._spawn import SpawnFailure, say_unstarted, spawn_checked
 from espalier._text import quoted_if_spaced
 
 
 def _git_branch(repo_root: Path) -> str:
     try:
-        proc = run_no_stdin(["git", "-C", str(repo_root), "branch", "--show-current"], capture_output=True, text=True, encoding="utf-8", check=False)
-    except (OSError, ValueError):  # strict decode: a structured answer (DEF-821)
+        proc = spawn_checked(["git", "-C", str(repo_root), "branch", "--show-current"], capture_output=True, text=True, encoding="utf-8", check=False)
+    except ValueError:  # strict decode: a structured answer (DEF-821)
+        return "main"
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "the lane plan's base branch reads as main")
         return "main"
     branch = proc.stdout.strip()
     return branch or "main"

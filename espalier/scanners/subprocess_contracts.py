@@ -168,7 +168,11 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # call carries the same pragma as spawn_checked's, for the same reason (the argv
 # is the caller's, argv[0] resolved first); tests/test_stop_gate.py drives both
 # of its callers end to end.
-MAX_PRAGMA_COUNT: int = 16
+# Raised 16 -> 17 (2026-11-17) for espalier/_spawn.py::spawn_checked, the
+# engine's copy of that chokepoint (DEF-985): its one call into run_no_stdin
+# carries the same pragma, for the same reason; tests/test_bounded_spawn.py
+# drives each of its 24 callers.
+MAX_PRAGMA_COUNT: int = 17
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

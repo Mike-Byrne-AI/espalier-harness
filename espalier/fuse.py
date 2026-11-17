@@ -26,7 +26,7 @@ from pathlib import Path
 from espalier import fusion_manifest, surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._rmtree import remove_file, remove_tree
-from espalier._spawn import run_no_stdin
+from espalier._spawn import SpawnFailure, run_no_stdin, say_unstarted, spawn_checked
 from espalier._text import os_error_text, plural
 
 # Noise never copied even from a non-git host (mirrors the gitignored set).
@@ -141,15 +141,18 @@ def _overlay_categories(rels) -> list[str]:
 def _tracked_files(repo: Path) -> list[str] | None:
     """git-tracked repo-relative paths, or None if ``repo`` is not a git repo."""
     try:
-        r = run_no_stdin(
+        r = spawn_checked(
             ["git", "ls-files", "-z"],
             cwd=str(repo), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=120, check=False,
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (ValueError, subprocess.TimeoutExpired):
         # errors= AND ValueError together, the way cli.py's git captures are
         # written: a host filename that is not valid UTF-8 would otherwise
         # raise UnicodeDecodeError (a ValueError) past the tuple.
+        return None
+    if isinstance(r, SpawnFailure):
+        say_unstarted(r, "the fusion reads the tree as no git repository")
         return None
     if r.returncode != 0:
         return None
@@ -471,12 +474,15 @@ def _workflow_tracked(out: Path) -> bool | None:
     try:
         if not (out / _WORKFLOW_REL).is_file():
             return None
-        r = run_no_stdin(
+        r = spawn_checked(
             ["git", "-C", str(out), "ls-files", "--error-unmatch", "--", _WORKFLOW_REL],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30, check=False,
         )
     except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if isinstance(r, SpawnFailure):
+        say_unstarted(r, "whether git tracks the fused CI workflow is left unsaid")
         return None
     if r.returncode == 0:
         return True
@@ -858,10 +864,13 @@ def _run_in_fusion(out: Path, argv: list[str], *, timeout: int = 180) -> int | N
     env = {**os.environ, "PYTHONPATH": str(out)}
     try:
         # subprocess-contract: ok dynamic-argv-runner; the only caller passes espalier's own in-tree `-m espalier fingerprint <out>` CLI, pinned end-to-end by tests/test_fuse.py::TestFuseEndToEnd::test_analyze_fingerprint_refreshed_post_overlay
-        r = run_no_stdin(argv, cwd=str(out), env=env, capture_output=True,
-                         text=True, encoding="utf-8", errors="replace",
-                         timeout=timeout, check=False)
-    except (OSError, ValueError, subprocess.SubprocessError):
+        r = spawn_checked(argv, cwd=str(out), env=env, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, check=False)
+    except (ValueError, subprocess.SubprocessError):
+        return None
+    if isinstance(r, SpawnFailure):
+        say_unstarted(r, "the fused engine's own run reports no exit code")
         return None
     return r.returncode
 

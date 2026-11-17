@@ -237,15 +237,18 @@ def _tracked_root_markdown(repo_root: Path) -> list[str]:
     ``_tracked_root_markdown`` (tools/cc/reflect_protocol.py)."""
     import subprocess
 
-    from espalier._spawn import run_no_stdin
+    from espalier._spawn import SpawnFailure, say_unstarted, spawn_checked
 
     try:
-        r = run_no_stdin(
+        r = spawn_checked(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--", ":(glob)*.md"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=20, check=False,
         )
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (ValueError, subprocess.TimeoutExpired):
+        r = None
+    if isinstance(r, SpawnFailure):
+        say_unstarted(r, "the reflect pass reads every root markdown file on disk, tracked or not")
         r = None
     if r is not None and r.returncode == 0:
         return sorted(n for n in r.stdout.split("\0") if n and "/" not in n)
