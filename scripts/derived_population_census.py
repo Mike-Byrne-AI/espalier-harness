@@ -1510,8 +1510,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        11, "8ca76a87fe387df12b7c8021b84fb5b9401a8f5ff54dc7b74fcf87d33fc15243",
+        12, "2ef7c273aae38651490b5733c47694b32854305b1d539a1e06c822e4e8088a8a",
         "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-11-17 (+1, DEF-2065's lane): one comprehension over "
+        "mod._hook_utils.take_advisories() in "
+        "TestTheGovernanceWiringLine._void_reading -- a filter of the advisories the "
+        "hook under test just wrote, keeping the void-reading lines; the population "
+        "is the run's own output, not a roster, and each test that reads it asserts "
+        "the count (`len(lines) == 1`) and the wording by hand, so a line the hook "
+        "stops writing reds there: CORRECT. "
         "NEW 2026-10-26 (+2, the threshold-handoff lane): an all-any over "
         "hu.SESSION_SIDE_SUFFIXES (no suffix ends in `.json`, else the marker readers' "
         "glob names a session's own side file as a live sibling) and a comprehension "
