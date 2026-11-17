@@ -608,9 +608,13 @@ class TestR4TheBashParserIsTheOracle:
 
     def test_a_twin_that_parses_otherwise_is_refused(self, gm, monkeypatch):
         """A twin is the spelling's proof only while the two parse alike: one
-        bash prints otherwise (the file spelling for the merge) is refused."""
-        monkeypatch.setattr(gm, "R4_BASH_TWINS", {"2>&1": "2>/dev/null"})
-        with pytest.raises(gm.InstrumentBroken):
+        whose printed difference holds the merge but which parses to more (a
+        second merge beside it) passes every check before the last and is
+        refused there (the code review's NIT 1: a file-spelling twin was
+        refused earlier, for not being the redirect, and left this one
+        unpinned)."""
+        monkeypatch.setattr(gm, "R4_BASH_TWINS", {"2>&1": "2>&1 2>& 1"})
+        with pytest.raises(gm.InstrumentBroken, match="otherwise than its twin"):
             gm.assert_parsers_are_live(shutil.which("bash"), None)
 
     def test_a_quoted_merge_among_the_candidates_is_no_null_place(self, gm, monkeypatch):
@@ -647,6 +651,16 @@ class TestR4TheBashParserIsTheOracle:
         alone = [gm.bash_parsed_forms([text], bash)[0] for text in texts]
         assert alone[0] is not None and alone[1] is None and alone[2] is not None, alone
         assert gm.bash_parsed_forms(texts, bash) == alone
+
+    def test_a_batch_past_the_argument_limit_still_prints(self, gm):
+        """The batch's script reaches bash on its standard input, never as one
+        argument: R4's full population, with the merge spelling and its twins,
+        passed the platform's argument limit and the full run stopped on a
+        traceback (DEF-5122's first full run). Twelve texts of 100 KB each fit
+        one argument apiece on Linux and pass macOS's 1 MB limit together."""
+        texts = [f"printf %s {chr(97 + i) * 100_000}" for i in range(12)]
+        forms = gm.bash_parsed_forms(texts, shutil.which("bash"))
+        assert all(forms), [i for i, f in enumerate(forms) if not f]
 
     def test_no_text_is_run(self, gm, tmp_path):
         marker = tmp_path / "ran"
@@ -711,6 +725,30 @@ class TestR4ADeadOracleOrJudgeGates:
         monkeypatch.setattr(gm, "_token_blanks", lambda _command, _tool: [])
         report = gm.check_r4(rows=self._rows(gm))
         assert any("Bash" in d and "null" in d for d in report["dead_separators"]), report
+
+    def test_a_spelling_proved_null_nowhere_reads_dead_beside_a_live_one(self, gm, monkeypatch):
+        """A spelling, or a table, whose places the parser never proves null
+        reds even while another keeps its tool's total live (the failure-mode
+        review's gap 3: the merge went unwritten behind the file spelling's
+        count before DEF-5122)."""
+        real = gm.bash_insertion_is_null
+        monkeypatch.setattr(gm, "assert_parsers_are_live", lambda *_a: None)
+        monkeypatch.setattr(gm, "bash_insertion_is_null", lambda o, i, f: "&" not in f and real(o, i, f))
+        report = gm.check_r4(rows=self._rows(gm))
+        assert report["null_by_part"]["Bash spelling 2>&1"] == 0 < report["null_by_part"]["Bash spelling 2>/dev/null"]
+        assert any("spelling 2>&1" in d for d in report["dead_separators"]), report["dead_separators"]
+        assert not any("spelling 2>/dev/null" in d or "table" in d for d in report["dead_separators"])
+
+    def test_each_spelling_is_one_the_guard_blanks(self, gm):
+        """R4 writes only spellings the guard's second reading blanks, so a
+        red on a spelling never points at a helper that leaves it by design
+        (the failure-mode review's NIT 4: `&>` and `*>` take the success
+        stream, and the reading keeps them)."""
+        for tool, spellings in gm.R4_REDIRECTS.items():
+            for spelling in spellings:
+                command = f"rm {spelling} x"
+                free = gm._bash_patterns.stderr_redirect_free_command(command, powershell=tool == "PowerShell")
+                assert free.split() == ["rm", "x"], (tool, spelling, free)
 
     def test_a_judge_that_denies_no_original_reads_dead(self, gm, monkeypatch):
         cls = gm._operand_class()

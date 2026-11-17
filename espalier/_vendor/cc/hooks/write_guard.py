@@ -1406,24 +1406,36 @@ def _also_stderr_redirect_free(tool: "str | None", at: int) -> "Callable[[Callab
     command, a string or a tool input carrying one. Bash and PowerShell
     alone: no other tool's input holds a command."""
     def wrap(fn: "Callable[..., int]") -> "Callable[..., int]":
+        # the argument's name as well as its place, so a caller passing it by
+        # keyword keeps the second reading (the code review's NIT 2)
+        names = fn.__code__.co_varnames[:fn.__code__.co_argcount]
+
+        def given(args: tuple, kwargs: dict, index: int) -> Any:
+            if len(args) > index:
+                return args[index]
+            return kwargs.get(names[index]) if index < len(names) else None
+
         @functools.wraps(fn)
         def both(*args: Any, **kwargs: Any) -> int:
             rc = fn(*args, **kwargs)
-            if rc or len(args) <= at:
+            if rc:
                 return rc
-            name = tool if tool is not None else args[0]
+            name = tool if tool is not None else given(args, kwargs, 0)
             if name not in ("Bash", "PowerShell"):
                 return rc
-            held = args[at]
+            held = given(args, kwargs, at)
             command = held.get("command") if isinstance(held, dict) else held
             if not isinstance(command, str) or ">" not in command:
                 return rc
             free = _stderr_redirect_free(command, name == "PowerShell")
             if free is command:
                 return rc
-            again = list(args)
-            again[at] = {**held, "command": free} if isinstance(held, dict) else free
-            return fn(*again, **kwargs)
+            swapped = {**held, "command": free} if isinstance(held, dict) else free
+            if len(args) > at:
+                return fn(*args[:at], swapped, *args[at + 1:], **kwargs)
+            return fn(*args, **{**kwargs, names[at]: swapped})
+        # what the leg test reads back: the tool and the command's place
+        both._stderr_free_reading = (tool, at)  # type: ignore[attr-defined]
         return both
     return wrap
 

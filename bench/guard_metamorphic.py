@@ -1095,7 +1095,9 @@ def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = Non
                 return
             script = "".join(f"__r4_{idx}() {{\n{texts[idx]}\n}}\n" for idx in batch)
             script += "".join(f"declare -f __r4_{idx}\nprintf '%s\\n' {sep}\n" for idx in batch)
-            proc = run_bounded([bash, "-r", "-c", script], capture_output=True, text=True,
+            # on standard input, never one argument: R4's full population
+            # passed the platform's argument limit (DEF-5122's first full run)
+            proc = run_bounded([bash, "-r"], input=script, capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=60, cwd=scratch, env=env)
             forms = proc.stdout.split(sep + "\n") if proc.returncode == 0 else []
             if len(forms) == len(batch) + 1:
@@ -1316,6 +1318,10 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
 
     census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
     null_by_kind: dict[str, int] = {}
+    # per (tool, spelling) and (tool, table) over the denied rows' places: a
+    # spelling or a table proved null nowhere beside a live one reds, never
+    # hides in its tool's total (the failure-mode review's gap 3)
+    null_by_part: dict[tuple[str, str], int] = {}
     violations, undenied = [], []
     saved = os.environ.pop("ESPALIER_MAINTENANCE_MODE", None)
     try:
@@ -1343,9 +1349,14 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                     undenied.append(f"{row['key']} on {row['kind']}")
                     continue
                 stats["originals_denied"] += 1
-                for _row, _at, text, _redirect in mine:
+                for _row, _at, text, redirect in mine:
+                    parts = ((row["tool"], f"spelling {redirect}"), (row["tool"], f"table {row['table']}"))
+                    for part in parts:
+                        null_by_part.setdefault(part, 0)
                     if not null_by_text[text]:
                         continue
+                    for part in parts:
+                        null_by_part[part] += 1
                     stats["null"] += 1
                     null_by_kind[row["kind"]] = null_by_kind.get(row["kind"], 0) + 1
                     if not denied(row, text):
@@ -1366,6 +1377,10 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
             for tool, stats in census.items() if tools_run[tool] and stats["null"] == 0]
     dead += [f"{tool}: no original row is denied on the class's own projects -- the judge is dead"
              for tool, stats in census.items() if tools_run[tool] and stats["originals_denied"] == 0]
+    dead += [f"{tool}: the {part} has places on denied rows and the parser proves none null -- "
+             "R4 vouches for nothing there"
+             for (tool, part), count in sorted(null_by_part.items())
+             if count == 0 and census[tool]["null"] > 0]
     if drops:
         dead.append(f"Bash: {len(drops)} parsed form(s) dropped as empty or foreign -- a batch went "
                     "wrong past bash's notice, and those places were never judged")
@@ -1396,6 +1411,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
         "undenied_originals": undenied,
         "null_by_kind": null_by_kind,
+        "null_by_part": {f"{tool} {part}": count for (tool, part), count in sorted(null_by_part.items())},
         "rejudged_kinds": rejudged,
         "remedy": R4_REMEDY,
     }

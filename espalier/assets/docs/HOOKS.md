@@ -2503,6 +2503,22 @@ spellings of them are work:
   reader unless a real session records the slip (the last bullet's rule). One
   level of a program handed to a shell as a quoted string (`bash -c '...'`,
   `pwsh -Command "..."`) is not this shape; it stays in the contract above.
+- **An error-stream redirect among a command's words.** Each hard check (the
+  zone checks, the secret-path check, and the Bash and PowerShell hard
+  tiers) is judged a second time, where its first reading allowed, on the
+  command with each error-stream redirect blanked (Bash's `2>`; PowerShell's
+  `2>` to `6>`; a merge or a close glued on), and the call is refused where
+  either reading refuses, so a reader that takes an operand by its place
+  keeps its verdict with such a redirect among the operands. A redirect of
+  any other stream stays in both readings, since it changes what a shell
+  runs or what a pipe carries, and so does an error-stream redirect whose
+  target holds a quote, a backtick or a substitution. The second reading is
+  of the command as written, at its top level, and the hard checks' alone,
+  unlike the glued reading below: the speed bump is not judged on it, and a
+  program handed to a shell as a quoted string (`bash -c '...'`) is read as
+  the first reading reads it, so an error-stream redirect inside that string
+  is not blanked. One level of such a string is in the contract above, so a
+  verdict lowered there is a defect, tracked for its own fix.
 - **The PowerShell comment reader, by ruling (2026-11-12).** A `<#` block
   comment is read where PowerShell opens one, a `<#` glued to the token
   before it included where that token lets PowerShell open it (a variable in

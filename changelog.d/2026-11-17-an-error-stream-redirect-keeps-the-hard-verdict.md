@@ -13,7 +13,11 @@
   error-stream redirect blanked (Bash's `2>`; PowerShell's `2>` to `6>`), and
   a refusal on either reading is the check's. A redirect of any other stream
   stays in both readings, since it changes what a shell runs or what a pipe
-  carries. The guard's metamorphic bench now writes the merge spelling beside
-  the file spelling, judges the find classifier's wall rows and the five
-  shapes, and proves the merge's place null on a twin bash prints otherwise,
-  since bash prints `2>&1` as written.
+  carries, and so does one whose target holds a quote or a substitution. The
+  second reading is of the command's top level: an error-stream redirect
+  inside a program handed to a shell as a quoted string (`bash -c '...'`) is
+  not blanked yet. The guard's metamorphic bench now writes the merge
+  spelling beside the file spelling, judges the find classifier's wall rows
+  (at the change's base, 63 of them lost the wall with a redirect among the
+  operands) and the five shapes, and proves the merge's place null on a twin
+  bash prints otherwise, since bash prints `2>&1` as written.

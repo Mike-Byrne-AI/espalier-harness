@@ -3062,6 +3062,14 @@ class TestCatastrophicFindDelete:
         rows = self._root_rows()
         assert len(rows) >= 40, f"the matrix's root rows collapsed: {len(rows)}"
         assert "find / -exec rm -rf {} +" in rows
+        # the walls `_root_rows` leaves out (a cwd or a placeholder R4 cannot
+        # spell), counted, so a wall row added in one of those shapes is seen
+        # leaving R4 (the failure-mode review's rough edge 5)
+        walls = [(cmd, cwd) for cmd, cwd, expect in self._MATRIX if expect is True]
+        left_out = [w for w in walls if w[1] is not None or w[0] not in rows]
+        assert len(walls) - len(rows) == len(left_out) == 3, (
+            "a wall row joined or left the shapes `_root_rows` filters out (a cwd, `{name}`, `{tmp}`): "
+            f"R4 does not judge {left_out}; spell it without them, or count it here")
         missed = [cmd for cmd in rows if not self._wall_denied("Bash", cmd, tmp_path)]
         assert missed == [], missed
 
@@ -22748,6 +22756,26 @@ def _reading_row(cmd: str) -> list:
 _MAIN_READING_DIGEST = "6990cc6b12f5f49abe8a907d66c7705ad0717a664440ac8d568739a0651bcb7e"
 
 
+def _hard_legs(source: str) -> set:
+    """The hard legs `_run_main` judges on both glued readings: each
+    `check_*` called inside a lambda handed to `_either_glued_reading`, read
+    by the AST, so a call written across lines is found (the failure-mode
+    review's gap 2: a regex over the source missed one)."""
+    import ast
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+    legs = set()
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "_either_glued_reading"):
+            for arg in node.args:
+                for inner in ast.walk(arg):
+                    if (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)
+                            and inner.func.id.startswith("check_")):
+                        legs.add(inner.func.id)
+    return legs
+
+
 def _unwrapped_legs(source: str) -> list:
     """The calls in `_run_main` that read the command and are not judged on
     both readings: a hard leg (`check_*`) outside a lambda handed to
@@ -27223,6 +27251,23 @@ class TestARedirectAmongTheOperandsKeepsTheHardVerdict:
         assert self._decision(tool, control, tmp_path) == "deny", f"{key}: the control itself"
         assert self._decision(tool, spelling, tmp_path) == "deny", f"{key}: {spelling!r}"
 
+    #: key -> (tool, spelling, its redirect-free control): calls the guard
+    #: allows whose error-stream target is a quoted word, so a part blank
+    #: would move the quote's pair (the code review's SHOULD-FIX 1)
+    _QUOTED_TARGET_ROWS = {
+        "secret-mention-after-a-quoted-target": (
+            "Bash", "echo x 2>\"a b\" '; cat .env'", "echo x '; cat .env'"),
+        "zone-mention-after-a-quoted-target": (
+            "Bash", "echo x 2>\"a b\" '> tools/cc/y'", "echo x '> tools/cc/y'"),
+    }
+
+    @pytest.mark.parametrize("key", list(_QUOTED_TARGET_ROWS))
+    def test_a_quoted_target_keeps_its_controls_allow(self, key, tmp_path, monkeypatch):
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        tool, spelling, control = self._QUOTED_TARGET_ROWS[key]
+        assert self._decision(tool, control, tmp_path) == "allow", f"{key}: the control itself"
+        assert self._decision(tool, spelling, tmp_path) == "allow", f"{key}: a false deny"
+
     @pytest.mark.parametrize("command, powershell", [
         ("ls -la", False), ("git status", False), ("Get-ChildItem notes", True),
         ("ls > out.txt", False), ("Get-ChildItem > out.txt", True)])
@@ -27264,6 +27309,15 @@ class TestARedirectAmongTheOperandsKeepsTheHardVerdict:
         ("rm 12>x cc", False),
         ("rm 2<x cc", False),
         ("rm 2>x>y cc", False),
+        # a target holding a quote, a backtick or a substitution, or one that
+        # runs on past the run: blanked in part, it left a quote or a paren
+        # unpaired (the code review's SHOULD-FIX 1)
+        ('echo x 2>"a b" c', False),
+        ("echo x 2>'a b' c", False),
+        ("echo x 2>$(echo f) c", False),
+        ("echo x 2>`echo f` c", False),
+        ('Write-Output x 2>"a b" c', True),
+        ("Write-Output x 2>$(Get-Date) c", True),
     ])
     def test_what_is_not_an_error_stream_redirect_is_left_whole(self, command, powershell):
         assert _bash_patterns_module().stderr_redirect_free_command(command, powershell=powershell) == command
@@ -27306,21 +27360,44 @@ class TestARedirectAmongTheOperandsKeepsTheHardVerdict:
         on_input = wg._also_stderr_redirect_free(None, 1)(lambda tool, ti: seen.append(ti["command"]) or 0)
         on_input("Read", {"command": "a 2> b"})
         assert seen == ["a 2> b"], "no other tool's input holds a command"
+        seen.clear()
+        # by keyword, the argument keeps its second reading (the code review's NIT 2)
+        assert both(command="rm 2>/dev/null x", verdict=0) == 0
+        assert seen == ["rm 2>/dev/null x", "rm             x"]
+        seen.clear()
+        on_input("Bash", ti={"command": "rm 2>/dev/null x"})
+        assert seen == ["rm 2>/dev/null x", "rm             x"]
 
     def test_every_hard_leg_the_dispatch_runs_reads_the_stderr_free_command(self):
-        """Derived from `_run_main`, never listed (STANDING_PRINCIPLES §14): a
-        hard leg added there without the reading reds here. The three entries
-        an in-process caller calls straight keep `_one_judgment` outermost,
-        so both readings are one judgment and the fold's raise holds across
-        them."""
+        """Derived from `_run_main` by its AST, never listed (STANDING_PRINCIPLES
+        §14): a hard leg added there without the reading, or whose command
+        argument moved from the place the reading reads, reds here and names
+        the fix (the failure-mode review's gap 2). The three entries an
+        in-process caller calls straight keep `_one_judgment` outermost, so
+        both readings are one judgment and the fold's raise holds across them."""
         import ast
-        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
-        defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-        src = ast.get_source_segment((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"), defs["_run_main"])
-        legs = set(re.findall(r"_either_glued_reading\(lambda: (check_\w+)\(", src))
+        import inspect
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        defs = {n.name: n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+        legs = _hard_legs(source)
         assert len(legs) == 8, sorted(legs)
+        fix = "decorate it with `_also_stderr_redirect_free(<tool or None>, <the command argument's place>)`"
         for name in sorted(legs):
             names = [d.func.id if isinstance(d, ast.Call) else d.id for d in defs[name].decorator_list]
-            assert "_also_stderr_redirect_free" in names, name
+            assert "_also_stderr_redirect_free" in names, f"{name}: {fix}"
             if "_one_judgment" in names:
                 assert names.index("_one_judgment") < names.index("_also_stderr_redirect_free"), name
+            fn, reading = getattr(wg, name), None
+            while reading is None and fn is not None:
+                reading = getattr(fn, "_stderr_free_reading", None)
+                fn = getattr(fn, "__wrapped__", None) if reading is None else fn
+            assert reading is not None, f"{name}: {fix}"
+            tool, at = reading
+            params = list(inspect.signature(inspect.unwrap(getattr(wg, name))).parameters)
+            assert params[at] in ("command", "tool_input"), (
+                f"{name}: the reading reads argument {at} ({params[at]}), not the command: {fix}")
+            expected = None if params[0] == "tool_name" else "PowerShell" if "powershell" in name else "Bash"
+            assert tool == expected, f"{name}: the reading names {tool!r} where the leg is {expected!r}: {fix}"

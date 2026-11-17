@@ -7797,7 +7797,8 @@ def stderr_redirect_free_command(command: str, *, powershell: bool) -> str:
     to ``6>`` on PowerShell, a merge's ``&1`` or a close's ``&-`` glued on),
     with a bare operator's target blanked with it. A redirect this cannot
     read as one error stream's (a second angle in its target, a target
-    beyond a masked gap) is left whole: the second reading is skipped and
+    beyond a masked gap, one holding a quote, a backtick or a substitution)
+    is left whole: the second reading is skipped and
     the first stands, so a skip never lowers a verdict. A call with no
     error-stream opener pays one membership test per stream digit."""
     streams = _STDERR_STREAMS[powershell]
@@ -7856,6 +7857,14 @@ def _stderr_redirect_free_built(command: str, powershell: bool) -> str:
             continue          # an input or a read-write redirect (`2<x`, `2<>x`)
         if words != 2 and any(c in "<>" for c in scan[at:span[1]]):
             continue          # a second redirect glued to the target (`2>x>y`)
+        # A target that holds a quote, a backtick or a substitution, or runs on
+        # past the run (a quoted word's blank is a masked gap), is left whole:
+        # blanked in part, it would leave a quote or a paren unpaired and the
+        # rest of the command read otherwise (the code review's SHOULD-FIX 1)
+        if ((span[1] < n and command[span[1]] not in " \t\n;&|)")
+                or any(c in "'\"`" for c in command[span[0]:span[1]])
+                or "$(" in command[span[0]:span[1]]):
+            continue
         if out is None:
             out = list(command)
         for p in range(span[0], span[1]):
