@@ -308,6 +308,7 @@ class TestTheBudgetsRefusalIsNoVerdict:
         live deadline, and tied to the phrase the test-side readers know it
         by (``tests/_hook_spawn.py::BUDGET_FALLBACK``)."""
         import ast
+        import builtins
         import json
 
         import bench.run_benchmark as rb
@@ -323,9 +324,15 @@ class TestTheBudgetsRefusalIsNoVerdict:
                  and any(isinstance(x, ast.Name) and x.id == "reason" for x in n.targets)]
         assert len(bound) == 1, bound
         # The binding reads what spent the time (DEF-2091): rendered here for a
-        # child still starting up, the shape a loaded box gave.
+        # child still starting up, the shape a loaded box gave. Every other
+        # local it reads (the spend and the length, DEF-2097) is bound unread,
+        # from the expression's own names, so a new reading never reds this
+        # as a NameError in place of the fallback's text.
+        free = {n.id for n in ast.walk(bound[0]) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        unread = dict.fromkeys(free - set(vars(write_guard)) - set(dir(builtins)))
         reason = eval(compile(ast.Expression(bound[0]), "write_guard.py", "eval"),
-                      {**vars(write_guard), "began": False, "start_up": write_guard.HARD_DEADLINE_S, "judged": 0.0})
+                      {**vars(write_guard), **unread, "began": False, "start_up": write_guard.HARD_DEADLINE_S,
+                       "judged": 0.0})
         assert hs.BUDGET_FALLBACK in reason and hs.BUDGET_REFUSAL not in reason, reason
 
         def decision(text: str) -> str:
