@@ -7769,6 +7769,100 @@ def _scan_and_view_matches(rx: "re.Pattern[str]", scan: str, view: str) -> list[
     return sorted(found + extra, key=lambda m: m.start())
 
 
+#: The streams whose redirect `stderr_redirect_free_command` blanks: Bash's
+#: standard error, and PowerShell's streams other than success (error,
+#: warning, verbose, debug, information; `_redirect_words`' 1 to 6 less the
+#: success stream's 1).
+_STDERR_STREAMS = {False: "2", True: "23456"}
+
+
+def stderr_redirect_free_command(command: str, *, powershell: bool) -> str:
+    """``command`` with each redirect of an error stream blanked, the same
+    length, for write_guard's second reading of a hard check
+    (`write_guard._also_stderr_redirect_free`), or the command itself where
+    it holds none. An error stream's redirect changes where diagnostics go
+    and nothing else: the program, its operands, its standard input and
+    what its standard output hands a pipe are the same without it. A
+    redirect of any other stream is left in place, since it changes what a
+    reader reads: a stdin redirect is what a shell runs (`bash < f`), a
+    success-stream redirect empties a pipe (`ls > f | xargs rm`), and either
+    one, blanked, would refuse a call the guard allows (DEF-5122's first
+    build blanked every redirect and redded 34 tests, the PowerShell block
+    comment's `<#` and `#>` among them).
+
+    The blanks are placed by the redirect view of the command's scan
+    (`_redirects_blanked`, built on the scan, so a quoted or commented `>`
+    stays data: air's note f19d8d (c)), and a run the view blanked is kept
+    blanked only where it opens on an error stream (``2>`` on Bash, ``2>``
+    to ``6>`` on PowerShell, a merge's ``&1`` or a close's ``&-`` glued on),
+    with a bare operator's target blanked with it. A redirect this cannot
+    read as one error stream's (a second angle in its target, a target
+    beyond a masked gap) is left whole: the second reading is skipped and
+    the first stands, so a skip never lowers a verdict. A call with no
+    error-stream opener pays one membership test per stream digit."""
+    streams = _STDERR_STREAMS[powershell]
+    if not any(d + ">" in command for d in streams):
+        return command
+    return _stderr_redirect_free_built(command, powershell)
+
+
+def _stderr_redirect_free_built(command: str, powershell: bool) -> str:
+    """`stderr_redirect_free_command` for a command holding an error
+    stream's opener. Not remembered: its scan and view are (Bash's), and a
+    memo above `_redirects_blanked` would serve a blinded view's caller the
+    unblinded answer (`tests/test_guard_metamorphic.py`'s R4 blinds it)."""
+    scan = mask_powershell_inert_syntax(command) if powershell else mask_inert_syntax(command)
+    if len(scan) != len(command):
+        return command
+    view = _redirects_blanked(scan, powershell=powershell)
+    if view is scan or view == scan:
+        return command
+    runs: list[tuple[int, int]] = []
+    i, n = 0, len(scan)
+    while i < n:
+        if view[i] == " " and scan[i] != " ":
+            j = i + 1
+            while j < n and view[j] == " " and scan[j] != " ":
+                j += 1
+            runs.append((i, j))
+            i = j
+        else:
+            i += 1
+    streams = _STDERR_STREAMS[powershell]
+    out: list[str] | None = None
+    k = 0
+    while k < len(runs):
+        start, end = runs[k]
+        words = _redirect_words(scan[start:end], powershell=powershell)
+        span: tuple[int, int] | None = None
+        if words == 2:
+            # a bare operator: its target is the next run, past blanks alone
+            if k + 1 < len(runs):
+                target = runs[k + 1]
+                if (command[end:target[0]].strip(" \t") == ""
+                        and not any(c in "<>" for c in scan[target[0]:target[1]])):
+                    span = (start, target[1])
+            k += 2
+        else:
+            span = (start, end)
+            k += 1
+        if span is None or scan[span[0]] not in streams:
+            continue
+        # the operator: the stream digit, one `>` or two, a glued `&` or `|`
+        at = span[0] + 1
+        while at < span[1] and scan[at] == ">":
+            at += 1
+        if at == span[0] + 1 or at - span[0] > 3:
+            continue          # an input or a read-write redirect (`2<x`, `2<>x`)
+        if words != 2 and any(c in "<>" for c in scan[at:span[1]]):
+            continue          # a second redirect glued to the target (`2>x>y`)
+        if out is None:
+            out = list(command)
+        for p in range(span[0], span[1]):
+            out[p] = " "      # a quoted target's newline is the target's, no boundary
+    return command if out is None else "".join(out)
+
+
 def _ps_success_stream_to_file(tok: str) -> bool:
     """True when ``tok`` opens a redirect that sends PowerShell's success
     stream to a file (`>`, `>>`, `1>`, `*>`, `*>>`, glued or bare), never

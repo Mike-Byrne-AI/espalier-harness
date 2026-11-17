@@ -1375,6 +1375,59 @@ def _lower_the_fold() -> None:
         raised.set(False)
 
 
+def _stderr_redirect_free(command: str, powershell: bool) -> str:
+    """`_bash_patterns.stderr_redirect_free_command`, the pattern path
+    loaded first (a read-only call never loads it)."""
+    _load_the_pattern_path()
+    return _bash_patterns.stderr_redirect_free_command(command, powershell=powershell)
+
+
+def _also_stderr_redirect_free(tool: "str | None", at: int) -> "Callable[[Callable[..., int]], Callable[..., int]]":
+    """A hard check judged on the command and, where it allowed, on the
+    command with each error stream's redirect blanked
+    (`_bash_patterns.stderr_redirect_free_command`): a refusal on either is
+    the check's (DEF-5122). A redirect of an error stream changes where
+    diagnostics go and nothing a reader reads, so the guard holds for the
+    command the verdict it gives the same command without it (air's rulings
+    5c1e1c and 0b2f62; R4's relation in `bench/guard_metamorphic.py`). One
+    reading at each hard check's entry, so a reader that takes an operand by
+    its place keeps its verdict with no view of its own (the chain DEF-5107,
+    5108, 2087 and 5120 enrolled readers one set at a time). A redirect of
+    any other stream stays in both readings: it changes what a shell runs or
+    what a pipe carries. The first reading keeps every refusal it made: the
+    redirect target's write leg reads the redirects themselves. The second
+    runs only where the first allowed and a redirect was blanked, so a call
+    holding no ``>`` pays one membership test. A reading that allows prints
+    nothing, so a deny prints once, its text the refusing reading's, and
+    both run inside the one judgment (`_one_judgment` sits outside this) and
+    the call's one time budget (8aa088's rule, as `_either_glued_reading`
+    keeps it for the glued reading). ``tool`` names the tool, or None where
+    the check's first argument does; ``at`` is the argument holding the
+    command, a string or a tool input carrying one. Bash and PowerShell
+    alone: no other tool's input holds a command."""
+    def wrap(fn: "Callable[..., int]") -> "Callable[..., int]":
+        @functools.wraps(fn)
+        def both(*args: Any, **kwargs: Any) -> int:
+            rc = fn(*args, **kwargs)
+            if rc or len(args) <= at:
+                return rc
+            name = tool if tool is not None else args[0]
+            if name not in ("Bash", "PowerShell"):
+                return rc
+            held = args[at]
+            command = held.get("command") if isinstance(held, dict) else held
+            if not isinstance(command, str) or ">" not in command:
+                return rc
+            free = _stderr_redirect_free(command, name == "PowerShell")
+            if free is command:
+                return rc
+            again = list(args)
+            again[at] = {**held, "command": free} if isinstance(held, dict) else free
+            return fn(*again, **kwargs)
+        return both
+    return wrap
+
+
 def _ps_blank_quoted_spans(text: str) -> "str | None":
     """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
     PowerShell can end a string somewhere the Bash grammar the blanking
@@ -3384,6 +3437,7 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
 
 
 @_one_judgment
+@_also_stderr_redirect_free(None, 1)
 def check_secret_path_access(tool_name: str, tool_input: dict, root: Path) -> int:
     """Deny reads/writes of secret-bearing paths, for READ-ONLY tools too.
 
@@ -3941,6 +3995,7 @@ def _bind_the_bases() -> None:
     _powershell_bases = _bash_patterns.powershell_bases
 
 
+@_also_stderr_redirect_free("Bash", 0)
 def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | None = None) -> int:
     """Deny Bash commands that MUTATE a protected path: a write into it by
     the common patterns, and (§C52) a delete of it or a move of it out of
@@ -4185,6 +4240,7 @@ def _glob_note(rel: str, root: Path, base: Path | None, *, files_only: bool = Fa
     return f" (a wildcard that reaches `{entry}`)" if entry else ""
 
 
+@_also_stderr_redirect_free("Bash", 0)
 def check_bash_for_protected_hardlinks(command: str, root: Path, cwd: Path | None = None) -> int:
     """Deny ``ln``/``cp -l`` whose SOURCE (or any positional) is a protected-not-
     allowed file -- a hardlink aliases its bytes under a second name, so a later
@@ -4220,6 +4276,7 @@ def check_bash_for_protected_hardlinks(command: str, root: Path, cwd: Path | Non
     return 0
 
 
+@_also_stderr_redirect_free("Bash", 0)
 def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None = None) -> int:
     """Deny ``ln -s <target> <linkname>`` where ``linkname`` lands in a
     governed zone -- protected OR allowed-in-protected.
@@ -4286,6 +4343,7 @@ def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None
 
 
 @_one_judgment
+@_also_stderr_redirect_free("Bash", 0)
 def check_bash_dangerous_patterns(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -4552,6 +4610,7 @@ def _derive_the_carve_out_pids() -> None:
 
 
 @_one_judgment
+@_also_stderr_redirect_free("PowerShell", 0)
 def check_powershell(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -4727,6 +4786,7 @@ def _ps_dangerous_reason_here(
     return None
 
 
+@_also_stderr_redirect_free("PowerShell", 0)
 def check_powershell_for_protected_mutations(
     command: str, root: Path, cwd: Path | None = None,
 ) -> int:
@@ -4792,6 +4852,7 @@ def check_powershell_for_protected_mutations(
     return 0
 
 
+@_also_stderr_redirect_free("PowerShell", 0)
 def check_powershell_for_protected_symlinks(
     command: str, root: Path, cwd: Path | None = None,
 ) -> int:

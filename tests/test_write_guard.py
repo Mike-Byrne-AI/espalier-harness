@@ -2910,6 +2910,7 @@ class TestCatastrophicFindDelete:
         ('find "." -delete', None, True),
         ("find ./ -delete", None, True),
         ("find . -exec rm -rf {} +", None, True),
+        ("find / -exec rm -rf {} +", None, True),            # DEF-5122's control, judged by R4
         ("find . -exec rm {} \\;", None, True),
         ("find . -execdir rm -r {} +", None, True),
         ("find . -type f -delete", None, True),              # -type is not narrowing
@@ -3029,6 +3030,40 @@ class TestCatastrophicFindDelete:
         sys.path.insert(0, str(HOOKS_DIR))
         import _bash_patterns as bp
         return bp
+
+    @classmethod
+    def _root_rows(cls) -> list[str]:
+        """The matrix's walls from the checkout itself: a catastrophic row with
+        no cwd and no placeholder. `bench/guard_metamorphic.py`'s R4 judges
+        each with a stderr redirect at every null place (DEF-5122: `find /
+        -exec 2>/dev/null rm -rf {} +` met the nudge where its control met
+        this wall)."""
+        return [cmd for cmd, cwd, expect in cls._MATRIX
+                if cwd is None and expect is True and "{name}" not in cmd and "{tmp}" not in cmd]
+
+    @staticmethod
+    def _wall_denied(tool: str, command: str, project: Path) -> bool:
+        """The Bash hard tier, in-process, with the checkout ``project`` as its
+        root: any refusal is the wall (this class's own judge, as R4 reads it)."""
+        import contextlib
+        import io
+
+        _bash_patterns_module()
+        import write_guard as wg
+
+        assert tool == "Bash", tool
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bool(wg.check_bash_dangerous_patterns({"command": command}, project))
+
+    def test_every_root_row_meets_the_wall_judge(self, tmp_path, monkeypatch):
+        """R4's wall judge refuses every row it is handed, so a row it lets
+        through reads as the class's pin, never as R4's red."""
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        rows = self._root_rows()
+        assert len(rows) >= 40, f"the matrix's root rows collapsed: {len(rows)}"
+        assert "find / -exec rm -rf {} +" in rows
+        missed = [cmd for cmd in rows if not self._wall_denied("Bash", cmd, tmp_path)]
+        assert missed == [], missed
 
     @pytest.mark.parametrize("cmd, cwd, expect", _MATRIX)
     def test_classifier_matrix(self, tmp_path, cmd, cwd, expect):
@@ -24808,6 +24843,13 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         "bash-move-perl-rename": (
             "Bash", "deny", "_PERL_MUTATE_RE", "perl -e \"rename '{P}', '/tmp/x'\""),
         "bash-move-nested-sh": ("Bash", "deny", "nested-program", "sh -c 'mv \"{P}\" /tmp/x'"),
+        # ── DEF-5122: readers R4 never judged until these rows -- the symlink
+        # zone check (a link written into a zone) and the directory chain (a
+        # delete resolved under a `cd`, which lost its anchor to `2>&1`'s `&`
+        # alone: R4 writes that spelling too)
+        "bash-symlink-into-zone": ("Bash", "deny", "_LN_S_RE", 'ln -s x "{P}"'),
+        "bash-symlink-cp-into-zone": ("Bash", "deny", "existing-write-arm", 'cp -s x "{P}"'),
+        "bash-delete-after-a-cd": ("Bash", "deny", "_DESTROY_RE", "cd {D} && rm x.py"),
         # ── Bash: an enclosing directory ──
         "bash-ancestor-recursive-force": ("Bash", "deny", "_DESTROY_RE", 'rm -rf "{A}"'),
         "bash-ancestor-recursive": ("Bash", "deny", "_DESTROY_RE", 'rm -r "{A}"'),
@@ -25107,6 +25149,14 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             "PowerShell", "deny", "_PS_REMOVE_ITEM_RE", "Set-Location tools/cc; Remove-Item hooks/x.py"),
         "ps-clear-content-is-a-write": (
             "PowerShell", "deny", "existing-write-arm", 'Clear-Content "{P}"'),
+        # DEF-5122: the programs a launcher carries -- Start-Process's own
+        # walk, and the exec-quote position `iex` and `pwsh -Command` read
+        # through -- which R4 never judged until these rows
+        "ps-start-process-carried": (
+            "PowerShell", "deny", "nested-program", "Start-Process bash -ArgumentList '-c','rm -rf {D}'"),
+        "ps-iex-carried": ("PowerShell", "deny", "nested-program", 'iex "Remove-Item {P} -Recurse -Force"'),
+        "ps-pwsh-command-carried": (
+            "PowerShell", "deny", "nested-program", 'pwsh -Command "Remove-Item {P} -Recurse -Force"'),
         # ── PowerShell: move ──
         "ps-move-positional": ("PowerShell", "deny", "_PS_COPY_MOVE_POSITIONAL_RE", 'Move-Item "{P}" x'),
         "ps-move-path-and-destination-flags": (
@@ -27121,3 +27171,156 @@ class TestTheHardTierReadsWhatALauncherRuns:
     def test_each_launcher_reader_returns_the_program_it_runs(self, key, words, programs):
         bp = _bash_patterns_module()
         assert bp._LAUNCHER_READERS[key](words, False) == programs
+
+
+class TestARedirectAmongTheOperandsKeepsTheHardVerdict:
+    """DEF-5122: five readers outside R4's population lost their anchor to a
+    redirect among the operands -- the directory chain (a merge's `&` read as
+    a background `&`), the Bash symlink zone check, Start-Process's carried
+    program, PowerShell's exec-quote position, and find's catastrophic tail
+    -- each allowed, or nudged, where the same command with no redirect is
+    refused. The fix is one reading at each hard check's entry
+    (`write_guard._also_stderr_redirect_free`): the check is judged again on
+    the command with each error stream's redirect blanked
+    (`_bash_patterns.stderr_redirect_free_command`) wherever the first
+    reading allowed, so no reader needs a view of its own. An error stream's
+    redirect changes nothing a reader reads, so each spelling holds its
+    control's verdict (air's 5c1e1c, 0b2f62; R4's relation). The first build
+    blanked every redirect and redded 34 tests elsewhere in this file: a
+    stdin redirect is what a shell runs, a success-stream redirect empties a
+    pipe, and PowerShell's block comment opens on `<#`; those tests are the
+    narrowed reading's allow population, and the left-whole rows below are
+    their shapes at the transform."""
+
+    #: key -> (tool, spelling, its redirect-free control)
+    _ROWS = {
+        "directory-chain-merge": ("Bash", "cd cc 2>&1 && rm notes.md", "cd cc && rm notes.md"),
+        "bash-symlink-ln": ("Bash", "ln 2>/dev/null -s x cc/z.json", "ln -s x cc/z.json"),
+        "bash-symlink-cp": ("Bash", "cp 2>/dev/null -s x cc/z.json", "cp -s x cc/z.json"),
+        "ps-start-process-program": (
+            "PowerShell", "Start-Process 2>$null bash -ArgumentList '-c','rm -rf cc'",
+            "Start-Process bash -ArgumentList '-c','rm -rf cc'"),
+        "ps-iex-exec-quote": (
+            "PowerShell", 'iex 2>$null "Remove-Item cc -Recurse -Force"', 'iex "Remove-Item cc -Recurse -Force"'),
+        "ps-pwsh-command-exec-quote": (
+            "PowerShell", 'pwsh 2>$null -Command "Remove-Item cc -Recurse -Force"',
+            'pwsh -Command "Remove-Item cc -Recurse -Force"'),
+        "find-root-catastrophic-tail": (
+            "Bash", "find / -exec 2>/dev/null rm -rf {} +", "find / -exec rm -rf {} +"),
+    }
+
+    @staticmethod
+    def _decision(tool: str, command: str, tmp_path: Path) -> str:
+        out = run_guard_tool(tool, {"command": command}, tmp_path).stdout or ""
+        if not out.strip():
+            return "allow"
+        return json.loads(out).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+    @pytest.mark.parametrize("key", list(_ROWS))
+    def test_each_spelling_meets_its_controls_deny(self, key, tmp_path, monkeypatch):
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        tool, spelling, control = self._ROWS[key]
+        assert self._decision(tool, control, tmp_path) == "deny", f"{key}: the control itself"
+        assert self._decision(tool, spelling, tmp_path) == "deny", f"{key}: {spelling!r}"
+
+    @pytest.mark.parametrize("command, powershell", [
+        ("ls -la", False), ("git status", False), ("Get-ChildItem notes", True),
+        ("ls > out.txt", False), ("Get-ChildItem > out.txt", True)])
+    def test_a_call_holding_no_error_stream_opener_gets_itself_back(self, command, powershell):
+        free = _bash_patterns_module().stderr_redirect_free_command(command, powershell=powershell)
+        assert free is command
+
+    @pytest.mark.parametrize("command, powershell, expected", [
+        ("ln 2>/dev/null -s x cc/z.json", False, "ln             -s x cc/z.json"),
+        ("cd cc 2>&1 && rm notes.md", False, "cd cc      && rm notes.md"),
+        ("cat notes.txt 2> .env.err", False, "cat notes.txt            "),
+        # a success-stream redirect beside it stays: only the error stream's goes
+        ("ls build > /tmp/x.txt 2>&1", False, "ls build > /tmp/x.txt     "),
+        ("Remove-Item 2>$null cc", True, "Remove-Item" + " " * 9 + "cc"),
+        ("Remove-Item 3>$null cc", True, "Remove-Item" + " " * 9 + "cc"),
+        ("Remove-Item 2>&1 cc", True, "Remove-Item" + " " * 6 + "cc"),
+    ])
+    def test_an_error_stream_redirect_is_blanked_in_place(self, command, powershell, expected):
+        free = _bash_patterns_module().stderr_redirect_free_command(command, powershell=powershell)
+        assert free == expected and len(free) == len(command)
+
+    @pytest.mark.parametrize("command, powershell", [
+        # a quoted `>` is data: the scan masks it (air's note f19d8d (c))
+        ("echo 'a 2> b' notes.md", False),
+        ("Set-Content 'a 2> b' notes.md", True),
+        # a process substitution is a command, never a redirect (f19d8d (a))
+        ("cat 2> >(git ls-files | xargs rm -f) x", False),
+        # PowerShell's streams are 1 to 6 and `*`: `7>x` is a word
+        ("Remove-Item 7>x,cc/x.json", True),
+        # what the first build blanked and redded: a success-stream redirect
+        # beside a substitution, `*>` (it takes the success stream too), and
+        # a comment's `<#` and `#>`, which are no redirects
+        ("cat <(echo x) > out.txt .env", False),
+        ("cat notes.txt > $(echo .env.out)", False),
+        ("Remove-Item *>$null cc", True),
+        ("Get-ChildItem src | <# 2>x | Remove-Item C:\\ -Recurse -Force #> Select-Object Name", True),
+        # spellings read as no single error stream's redirect: another fd,
+        # an input on fd 2, a second redirect glued to the target
+        ("rm 12>x cc", False),
+        ("rm 2<x cc", False),
+        ("rm 2>x>y cc", False),
+    ])
+    def test_what_is_not_an_error_stream_redirect_is_left_whole(self, command, powershell):
+        assert _bash_patterns_module().stderr_redirect_free_command(command, powershell=powershell) == command
+
+    @pytest.mark.parametrize("command, expected", [
+        # a stdin redirect is what a shell runs, so it stays
+        ("bash < script.sh 2>x", "bash < script.sh    "),
+        # a success-stream redirect empties the pipe, so it stays
+        ("git ls-files > list.txt 2>/dev/null | xargs rm", "git ls-files > list.txt             | xargs rm"),
+    ])
+    def test_another_streams_redirect_stays_beside_a_blanked_one(self, command, expected):
+        assert _bash_patterns_module().stderr_redirect_free_command(command, powershell=False) == expected
+
+    def test_a_heredoc_keeps_its_operator_and_its_body(self):
+        """A heredoc's body is data unless its program is read: its operator
+        is no error stream's redirect, so it stays, and the body with it."""
+        command = "cat <<EOF 2>/dev/null\nrm -rf cc\nEOF"
+        free = _bash_patterns_module().stderr_redirect_free_command(command, powershell=False)
+        assert free == "cat <<EOF            \nrm -rf cc\nEOF"
+
+    def test_the_second_reading_runs_only_after_an_allow_and_a_blank(self):
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        seen: list[str] = []
+
+        def check(command: str, verdict: int) -> int:
+            seen.append(command)
+            return verdict
+
+        both = wg._also_stderr_redirect_free("Bash", 0)(check)
+        assert both("rm 2>/dev/null x", 1) == 1 and seen == ["rm 2>/dev/null x"]
+        seen.clear()
+        assert both("rm x", 0) == 0 and seen == ["rm x"]
+        seen.clear()
+        assert both("ls > out.txt", 0) == 0 and seen == ["ls > out.txt"], "no error stream: one reading"
+        seen.clear()
+        assert both("rm 2>/dev/null x", 0) == 0 and seen == ["rm 2>/dev/null x", "rm             x"]
+        seen.clear()
+        on_input = wg._also_stderr_redirect_free(None, 1)(lambda tool, ti: seen.append(ti["command"]) or 0)
+        on_input("Read", {"command": "a 2> b"})
+        assert seen == ["a 2> b"], "no other tool's input holds a command"
+
+    def test_every_hard_leg_the_dispatch_runs_reads_the_stderr_free_command(self):
+        """Derived from `_run_main`, never listed (STANDING_PRINCIPLES §14): a
+        hard leg added there without the reading reds here. The three entries
+        an in-process caller calls straight keep `_one_judgment` outermost,
+        so both readings are one judgment and the fold's raise holds across
+        them."""
+        import ast
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        src = ast.get_source_segment((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"), defs["_run_main"])
+        legs = set(re.findall(r"_either_glued_reading\(lambda: (check_\w+)\(", src))
+        assert len(legs) == 8, sorted(legs)
+        for name in sorted(legs):
+            names = [d.func.id if isinstance(d, ast.Call) else d.id for d in defs[name].decorator_list]
+            assert "_also_stderr_redirect_free" in names, name
+            if "_one_judgment" in names:
+                assert names.index("_one_judgment") < names.index("_also_stderr_redirect_free"), name

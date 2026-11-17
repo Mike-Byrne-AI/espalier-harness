@@ -439,14 +439,21 @@ class TestR4ThePopulationIsTheClasssDeniedRows:
         cls = gm._operand_class()
         return cls, {name: getattr(cls, name) for name in ("_ZONE_ROWS", "_SECRET_ROWS")}
 
-    def test_every_denied_form_of_both_tables_is_a_row(self, gm):
+    def test_every_denied_form_and_every_wall_row_is_a_row(self, gm):
+        """Each denied form of the operand class's two tables, and each wall
+        row of the find class's matrix (DEF-5122), read from the class."""
         cls, tables = self._tables(gm)
+        walls = gm._wall_class()._root_rows()
         expected = sum(len(cls._plain_forms(command)) for table in tables.values()
                        for _tool, expect, _arm, command in table.values() if expect == "deny")
         rows = gm.operand_rows()
-        assert len(rows) == expected
-        assert {r["table"] for r in rows} == set(tables)
+        assert len(rows) == expected + len(walls)
+        assert {r["table"] for r in rows} == set(tables) | {"_MATRIX"}
         assert {r["tool"] for r in rows} == {"Bash", "PowerShell"}
+        matrix = [r for r in rows if r["table"] == "_MATRIX"]
+        assert [r["command"] for r in matrix] == walls
+        assert {(r["tool"], r["arm"], r["kind"]) for r in matrix} == {("Bash", gm.R4_WALL_ARM, "-")}
+        assert "find / -exec rm -rf {} +" in walls, "DEF-5122's wall row left the matrix"
 
     def test_no_allowed_row_joins(self, gm):
         _cls, tables = self._tables(gm)
@@ -454,10 +461,10 @@ class TestR4ThePopulationIsTheClasssDeniedRows:
         assert allowed, "the class holds no allowed row: the filter below would test nothing"
         assert not allowed & {r["key"] for r in gm.operand_rows()}
 
-    def test_the_quick_sample_keeps_both_tools_and_both_tables(self, gm):
+    def test_the_quick_sample_keeps_both_tools_and_every_table(self, gm):
         rows = gm.operand_rows(quick=True)
         assert {r["tool"] for r in rows} == {"Bash", "PowerShell"}
-        assert {r["table"] for r in rows} == {"_ZONE_ROWS", "_SECRET_ROWS"}
+        assert {r["table"] for r in rows} == {"_ZONE_ROWS", "_SECRET_ROWS", "_MATRIX"}
 
     def test_the_quick_sample_judges_every_row_once(self, gm):
         """One form per row, every row: CI judges each denied row, and a row
@@ -533,6 +540,16 @@ class TestR4OffersEachBlankAfterTheCommandWord:
         assert gm.insert_redirect("rm x", "PowerShell", 4) == "rm x 2>$null"
         assert gm.insert_redirect("rm -f x", "Bash", 0) == "2>/dev/null rm -f x"
 
+    def test_each_spelling_is_written_at_the_place(self, gm):
+        """The merge is written as each tool spells it, and every spelling a
+        tool holds is written where its first one is (DEF-5122: the directory
+        chain lost its anchor to `2>&1` alone)."""
+        assert gm.R4_REDIRECTS["Bash"][0] == gm.R4_REDIRECT["Bash"]
+        assert "2>&1" in gm.R4_REDIRECTS["Bash"] and "2>&1" in gm.R4_REDIRECTS["PowerShell"]
+        assert gm.insert_redirect("cd cc && rm x", "Bash", 5, "2>&1") == "cd cc 2>&1 && rm x"
+        assert gm.insert_redirect("rm -f x", "Bash", 0, "2>&1") == "2>&1 rm -f x"
+        assert gm.insert_redirect("rm x", "PowerShell", 2, "2>&1") == "rm 2>&1 x"
+
 
 @_needs_bash
 class TestR4TheBashParserIsTheOracle:
@@ -548,6 +565,56 @@ class TestR4TheBashParserIsTheOracle:
         assert gm.bash_insertion_is_null(plain, moved, form)
         assert not gm.bash_insertion_is_null(quoted, quoted_moved, form)
         assert not gm.bash_insertion_is_null(body, body_moved, form), "a heredoc body is data, not a place"
+
+    def test_the_merge_is_proved_on_its_twin_and_parses_as_it(self, gm):
+        """bash prints `2>&1` as written, so its own text read back from a
+        quoted word reads as a parse: the place is proved on the twin `2>& 1`,
+        which bash prints as `2>&1`, and the spelling's own form must equal
+        the twin's (DEF-5122's first run: the calibration caught the quoted
+        merge read as a redirect)."""
+        bash = shutil.which("bash")
+        gm.assert_parsers_are_live(bash, None)
+        form = gm._bash_redirect_form(bash, "2>&1")
+        assert gm._bash_proof("2>&1") == "2>& 1" and gm._bash_proof("2>/dev/null") == "2>/dev/null"
+        plain, twin, own, quoted, quoted_twin, quoted_own, body, body_twin = gm.bash_parsed_forms(
+            ["cd cc && rm x", "cd cc 2>& 1 && rm x", "cd cc 2>&1 && rm x",
+             "printf %s 'a b'", "printf %s 'a 2>& 1 b'", "printf %s 'a 2>&1 b'",
+             "cat <<'EOF'\na b\nEOF", "cat <<'EOF'\na 2>& 1 b\nEOF"], bash)
+        assert gm.bash_insertion_is_null(plain, twin, form) and own == twin
+        assert not gm.bash_insertion_is_null(quoted, quoted_twin, form)
+        assert quoted_own != quoted_twin, "a quoted merge is the word's text, not the twin's parse"
+        assert gm.bash_insertion_is_null(quoted, quoted_own, form), (
+            "the read-back the twin exists for: the merge's own quoted text passes the text test")
+        assert not gm.bash_insertion_is_null(body, body_twin, form), "a heredoc body is data, not a place"
+
+    def test_a_spelling_printed_as_written_with_no_twin_is_refused(self, gm, monkeypatch):
+        monkeypatch.setattr(gm, "R4_BASH_TWINS", {})
+        with pytest.raises(gm.InstrumentBroken, match="as written"):
+            gm.assert_parsers_are_live(shutil.which("bash"), None)
+
+    def test_a_twin_that_parses_otherwise_is_refused(self, gm, monkeypatch):
+        """A twin is the spelling's proof only while the two parse alike: one
+        bash prints otherwise (the file spelling for the merge) is refused."""
+        monkeypatch.setattr(gm, "R4_BASH_TWINS", {"2>&1": "2>/dev/null"})
+        with pytest.raises(gm.InstrumentBroken):
+            gm.assert_parsers_are_live(shutil.which("bash"), None)
+
+    def test_a_quoted_merge_among_the_candidates_is_no_null_place(self, gm, monkeypatch):
+        """In `check_r4`, a merge offered inside a quoted word (a scan that
+        offered one) reads as no null place, since its own form differs from
+        its twin's: the read-back never reaches a judge."""
+        rows = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"] == "bash-delete-plain"][:1]
+        assert rows, "the class's plain Bash delete row is gone: pick another anchor"
+        row = dict(rows[0], command="printf %s 'a b'", key="quoted-probe")
+        # every original is denied, so each null place is counted and none reds
+        monkeypatch.setattr(gm._operand_class(), "_zone_denied", staticmethod(lambda *_a: True))
+        monkeypatch.setattr(gm, "R4_REDIRECTS", {"Bash": ("2>&1",), "PowerShell": ("2>&1",)})
+        census = {}
+        for name, place in (("quoted", " b'"), ("control", " 'a")):
+            monkeypatch.setattr(gm, "_token_blanks", lambda command, _tool, p=place: [command.index(p)])
+            census[name] = gm.check_r4(rows=[row])["null_census"]["Bash"]
+        assert census["quoted"].startswith("0/1 places null over 1 "), census
+        assert census["control"].startswith("1/1 places null over 1 "), census
 
     def test_a_rejected_text_gets_no_form_and_its_neighbours_keep_theirs(self, gm):
         forms = gm.bash_parsed_forms(["printf %s a", "printf %s (", "cat <<EOF\nno end", "printf %s b"],
@@ -590,6 +657,18 @@ class TestR4ThePowerShellParserIsTheOracle:
         assert not gm.powershell_insertion_is_null(quoted, quoted_moved)
         assert broken is None
         assert new_item is not None and not marker.exists()
+
+    def test_the_merge_reads_null_among_the_words_and_not_inside_a_quote(self, gm):
+        """PowerShell's parse names the redirection by its extent, so the merge
+        needs no twin there: among the words it is the one redirection more,
+        inside a quote it is no redirection (DEF-5122)."""
+        pwsh = _pwsh_or_skip()
+        plain, moved, quoted, quoted_moved, file_spelling = gm.powershell_parsed_forms(
+            ["Remove-Item a b", "Remove-Item a 2>&1 b", "Remove-Item 'a b'", "Remove-Item 'a 2>&1 b'",
+             "Remove-Item a 2>$null b"], pwsh)
+        assert gm.powershell_insertion_is_null(plain, moved, "2>&1")
+        assert not gm.powershell_insertion_is_null(quoted, quoted_moved, "2>&1")
+        assert not gm.powershell_insertion_is_null(plain, file_spelling, "2>&1"), "the extent is the spelling's own"
 
 
 @_needs_bash
@@ -696,6 +775,53 @@ class TestR4RedsAReaderOffTheView:
         assert {v["tool"] for v in report["violations"]} == {"Bash"}, report["violations"]
         assert report["rejudged_kinds"], report
         assert not report["dead_separators"], report["dead_separators"]
+
+
+@_needs_bash
+class TestR4RedsAHardCheckOffTheStderrFreeReading:
+    """DEF-5122's purpose: the readers outside R4's first population held
+    their verdict with a redirect among the operands once each hard check was
+    judged again on the command with its error-stream redirects blanked
+    (`write_guard._also_stderr_redirect_free`). With that reading blinded,
+    R4 names their rows, and the directory chain reds on the merge alone, the
+    spelling R4 did not write before this lane; on the tree as it is, they
+    are clean."""
+
+    _BASH = ("bash-symlink-into-zone", "bash-delete-after-a-cd", "find / -exec rm -rf {} +")
+    _POWERSHELL = ("ps-start-process-carried", "ps-iex-carried", "ps-pwsh-command-carried")
+
+    @staticmethod
+    def _rows(gm, keys):
+        rows = [r for r in gm.operand_rows(quick=True) if r["key"] in keys]
+        assert {r["key"] for r in rows} == set(keys), "an anchor row is gone: re-read which rows DEF-5122 enrolled"
+        return rows
+
+    @staticmethod
+    def _blind(gm, monkeypatch):
+        """The judges' own write_guard (each imports it by name from the hooks
+        folder the bench puts on the path), its second reading made the first."""
+        assert gm._bash_patterns.__name__ == "_bash_patterns"
+        import write_guard as wg
+        assert callable(getattr(wg, "_also_stderr_redirect_free", None)), "R4_REMEDY names a helper that is gone"
+        monkeypatch.setattr(wg, "_stderr_redirect_free", lambda command, powershell: command)
+
+    def test_a_blinded_reading_reds_the_bash_rows_it_held(self, gm, monkeypatch):
+        rows = self._rows(gm, self._BASH)
+        assert not gm.check_r4(rows=rows)["violations"]
+        self._blind(gm, monkeypatch)
+        blinded = gm.check_r4(rows=rows)
+        assert {v["key"] for v in blinded["violations"]} == set(self._BASH), blinded["violations"]
+        chain = [v["detail"] for v in blinded["violations"] if v["key"] == "bash-delete-after-a-cd"]
+        assert chain and all("2>&1" in d for d in chain), chain
+        assert "_also_stderr_redirect_free" in blinded["remedy"]
+
+    def test_a_blinded_reading_reds_the_powershell_rows_it_held(self, gm, monkeypatch):
+        pwsh = _pwsh_or_skip()
+        rows = self._rows(gm, self._POWERSHELL)
+        assert not gm.check_r4(rows=rows, pwsh=pwsh)["violations"]
+        self._blind(gm, monkeypatch)
+        blinded = gm.check_r4(rows=rows, pwsh=pwsh)
+        assert {v["key"] for v in blinded["violations"]} == set(self._POWERSHELL), blinded["violations"]
 
 
 @_needs_bash
