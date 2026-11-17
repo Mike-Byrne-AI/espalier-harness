@@ -286,6 +286,19 @@ class TestCpDiscardReadsTheStatementDirectory:
         assert not _speedbump._pred_discard(
             "Bash", {"command": "cd sub && ls file.txt; cd ..; git checkout file.txt"}, repo)
 
+    def test_a_cd_behind_a_redirect_still_moves_the_probe(self, tmp_path: Path):
+        """DEF-2087's code review: the scan reads `cd 2>/dev/null sub` as a cd
+        to the redirect, its redirect view as a cd to `sub`. Both readings
+        find the pathspec at one place, and the probe was asked once, for
+        the scan's directory, so the dirty `sub/file.txt` drew no nudge where
+        `cd sub && git checkout file.txt` draws it."""
+        repo = tmp_path / "repo"
+        self._repo_with_dirty(repo, "sub/file.txt")
+        assert _speedbump._pred_discard(
+            "Bash", {"command": "cd 2>/dev/null sub && git checkout file.txt"}, repo)
+        assert _speedbump._pred_discard(
+            "Bash", {"command": "cd sub 2>/dev/null && git checkout file.txt"}, repo)
+
     def test_another_checkouts_dirty_file_draws_no_nudge_here(self, tmp_path: Path):
         repo = tmp_path / "repo"
         repo.mkdir()

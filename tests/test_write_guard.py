@@ -24,6 +24,7 @@ from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
 from tests._pwsh_cache import private_cache_env
+from tests._regex_search_sites import regex_search, regex_searches, search_sites
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
 from tests._wait_budget import scaled
@@ -4437,9 +4438,9 @@ class TestCatastrophicLoopCarrier:
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
         fn = next(n for n in ast.walk(tree)
                   if isinstance(n, ast.FunctionDef) and n.name == "_iter_removed_or_relocated_operands")
-        spelled = {n.func.value.id for n in ast.walk(fn)
-                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                   and n.func.attr == "finditer" and isinstance(n.func.value, ast.Name)}
+        # either call shape: the opener searched itself, or through the
+        # scan-and-view helper (DEF-2087's sibling put the four on the view)
+        spelled = {s.regex for s in regex_searches(fn) if s.shape in ("finditer", "_scan_and_view_matches")}
         assert derived <= spelled, sorted(derived - spelled)
 
     def test_the_word_list_roots_are_its_words_loop(self):
@@ -4631,20 +4632,13 @@ class TestCatastrophicLoopCarrier:
         would read the block's brace as a narrowing filter again, and the
         failure-mode review found that reverting two of the three verdict
         readers moved no row. `_ps_piped_remove_matches` is the one site
-        that searches the regex and the one caller of `_ps_header_feed`.
-        Grows deliberately."""
+        that searches the regex (in either call shape: the pattern's own
+        method, or the scan-and-view helper, `tests/_regex_search_sites.py`)
+        and the one caller of `_ps_header_feed`. Grows deliberately."""
         import ast
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
-        sites: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                for sub in ast.walk(node):
-                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                            and sub.func.attr in ("finditer", "search", "match", "fullmatch")
-                            and isinstance(sub.func.value, ast.Name)
-                            and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
-                        sites.add(node.name)
+        sites = search_sites(tree, "_PS_PIPED_REMOVE_RE")
         assert sites == {"_ps_piped_remove_matches"}, sites
 
         def callers(name: str) -> set[str]:
@@ -4658,6 +4652,26 @@ class TestCatastrophicLoopCarrier:
         assert callers("_ps_header_feed") == {"_ps_piped_remove_matches"}
         assert callers("_ps_piped_remove_matches") == {"_ps_fed_removes"}
         assert "iter_ps_removed_or_relocated_operands" in callers("_ps_fed_removes")
+
+    @pytest.mark.parametrize("planted", [
+        pytest.param("def _a_new_reader(scan, view):\n"
+                     "    return _scan_and_view_matches(_PS_PIPED_REMOVE_RE, scan, view)\n",
+                     id="through-the-helper"),
+        pytest.param("def _a_new_reader(scan):\n"
+                     "    return _PS_PIPED_REMOVE_RE.search(scan)\n",
+                     id="the-patterns-own-method"),
+    ])
+    def test_a_second_search_site_of_the_piped_remove_regex_reds_the_site_pin_loop(self, planted):
+        """The site pin's must-red twin: a second search of the regex planted
+        beside the module's own source (in memory, never on disk), in either
+        call shape, is seen as a site. The pin knew only the method call
+        until DEF-2087's failure-mode review planted one through the
+        scan-and-view helper and the pin stayed green."""
+        import ast
+
+        src = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
+        sites = search_sites(ast.parse(src + "\n\n" + planted), "_PS_PIPED_REMOVE_RE")
+        assert sites == {"_ps_piped_remove_matches", "_a_new_reader"}, sites
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -14703,9 +14717,12 @@ class TestARedirectWrittenFirstHidesNoOperand:
     closes are the after-check's under the coverage contract (docs/HOOKS.md)
     and are taken because the one view closes them. The speed bump's git
     checkpoints read the same view (`tests/test_speedbump_irreversible.py::
-    TestARedirectInGitsOptionSlotDrawsTheCheckpoint`). Left as it was: a
-    redirect before the command word (the anchor family's ruled limits).
-    The oracle rows run each shape under the shell that runs it (pwsh 7.6.5
+    TestARedirectInGitsOptionSlotDrawsTheCheckpoint`). A redirect before the
+    command word needed nothing here: the readers already read past it
+    (`2>/dev/null git rm <zone>` and `2>$null Set-Content <hook>` were
+    refused at main). The loop forms of the tracked tree's wipe and tar's
+    extraction directory read the same view (the failure-mode review's
+    sibling sites). The oracle rows run each shape under the shell that runs it (pwsh 7.6.5
     on the lane's box; Windows PowerShell 5.1 was not driven)."""
 
     @pytest.mark.parametrize("cmd", [
@@ -14784,6 +14801,17 @@ class TestARedirectWrittenFirstHidesNoOperand:
     def test_what_main_refused_beside_a_redirect_stays_refused(self, cmd, reason, tmp_path):
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason=reason)
 
+    # controls, each refused at main: a redirect before the command word,
+    # which the readers read past already (the class docstring's claim)
+    @pytest.mark.parametrize("tool, cmd", [
+        pytest.param("PowerShell", f"2>$null Set-Content {_HOOK} x", id="powershell-write"),
+        pytest.param("PowerShell", "2>$null git rm cc/x.json", id="powershell-git-rm"),
+        pytest.param("Bash", "2>/dev/null git rm cc/x.json", id="bash-git-rm"),
+    ])
+    def test_a_redirect_before_the_command_word_was_read_past_already(self, tool, cmd, tmp_path):
+        run = run_bash_guard if tool == "Bash" else _run_ps_guard
+        assert_hook_denied(run(cmd, tmp_path), contains_reason="zone blocked")
+
     @pytest.mark.parametrize("cmd", [
         pytest.param("Set-Content 2>$null notes.txt x", id="set-content"),
         pytest.param("Copy-Item 2>$null a.py b.py", id="copy"),
@@ -14818,6 +14846,57 @@ class TestARedirectWrittenFirstHidesNoOperand:
         run = run_bash_guard if tool == "Bash" else _run_ps_guard
         assert _delete_verdict(run(cmd, tmp_path)) == expect
 
+    # One feed binds a remove (`_ps_fed_removes`), and a feed can lower its
+    # verdict, so the view adds a match only for a remove the text neither
+    # matched nor fed: a remove the text and the view both find is ONE pair.
+    @pytest.mark.parametrize("cmd, removes", [
+        pytest.param("git ls-files 2>$null | Remove-Item -Force", 1, id="redirect-after-the-listing"),
+        pytest.param("Get-ChildItem . -Recurse 2>$null | Remove-Item -Recurse -Force", 1, id="listing-redirect"),
+        pytest.param("git 2>$null ls-files | Remove-Item -Force", 1, id="redirect-in-the-slot"),
+        pytest.param("gci a 2>$null | ri -fo; gci b 2>$null | ri -fo", 2, id="two-pipelines"),
+    ])
+    def test_the_piped_remove_reader_gives_one_pair_per_remove(self, cmd, removes):
+        bp = _bash_patterns_module()
+        pairs = list(bp._ps_piped_remove_matches(bp.powershell_scan_text(cmd)))
+        assert len(pairs) == len({m.start("rmargs") for m, _fed in pairs}) == removes, pairs
+
+    # The loop forms of the same wipe (the piped carrier's twin readers): the
+    # listing bound to a loop variable and removed in the body, its head
+    # behind a redirect in git's option slot. Each was allowed with the
+    # redirect there and walled with it last; the wall's reader, the zone
+    # reader and the discard snapshot's placement each read the tracked tree.
+    _LOOP_WIPES = [
+        pytest.param('git 2>/dev/null ls-files | while read f; do rm -f "$f"; done', id="while-read"),
+        pytest.param('for f in $(git 2>/dev/null ls-files); do rm -f "$f"; done', id="for-subst"),
+        pytest.param('while read f; do rm -f "$f"; done < <(git 2>/dev/null ls-files)', id="tail-fed"),
+        pytest.param('git 2>&1 ls-files | while read f; do rm -f "$f"; done', id="while-read-merge"),
+    ]
+
+    @pytest.mark.parametrize("cmd", _LOOP_WIPES)
+    def test_the_loop_readers_read_the_tracked_listing_past_the_redirect(self, cmd, tmp_path):
+        bp = _bash_patterns_module()
+        assert list(bp.iter_unnarrowed_loop_remove_roots(cmd, wipes_only=True)) == [["."]]
+        assert ("delete", ".") in bp.iter_removed_or_relocated_operands(cmd)
+        assert [path for path, _dirs in bp.iter_placed_loop_removals(cmd, tmp_path)] == ["."]
+
+    @pytest.mark.parametrize("cmd", [
+        *_LOOP_WIPES,
+        pytest.param('git ls-files 2>/dev/null | while read f; do rm -f "$f"; done', id="control-redirect-last"),
+        pytest.param('while read f; do rm -f "$f"; done < <(git ls-files)', id="control-tail-fed"),
+    ])
+    def test_the_loop_forms_of_the_tracked_wipe_meet_the_wall(self, cmd, tmp_path):
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    def test_the_loop_form_handed_to_bash_from_powershell_meets_the_wall(self, tmp_path):
+        cmd = "bash -c 'git 2>/dev/null ls-files | while read f; do rm -f \"$f\"; done'"
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == "wall"
+
+    def test_tars_extraction_directory_is_read_past_a_redirect(self, tmp_path):
+        assert "cc/blueprints" in _bash_patterns_module()._candidate_paths_from_bash(
+            "tar -xf a.tar -C 2>/dev/null cc/blueprints")
+        assert_hook_denied(run_bash_guard("tar -xf a.tar -C 2>/dev/null cc/blueprints", tmp_path),
+                           contains_reason="zone blocked")
+
     # The view itself: each redirect and a bare operator's target blank, the
     # same length, and nothing else moved -- a statement after the redirect,
     # a group's brace, a quoted name the scan already masked, a digit no
@@ -14847,6 +14926,12 @@ class TestARedirectWrittenFirstHidesNoOperand:
         pytest.param("git rm x 2> 'e f'", False, "git rm x         ", id="bash-quoted-target"),
         pytest.param("echo x <(ls)", False, "echo x <(ls)", id="bash-process-substitution"),
         pytest.param("diff >(git rm a) b 2>x", False, "diff >(git rm a) b    ", id="bash-process-substitution-out"),
+        # a process substitution that is a bare operator's target keeps its
+        # operator: the tail-fed loop's feed reads on the view as on the scan
+        pytest.param("done < <(git 2>x ls-files)", False, "done < <(git     ls-files)",
+                     id="bash-process-substitution-as-input-target"),
+        pytest.param("cat a > >(tee b) 2>x", False, "cat a > >(tee b)    ",
+                     id="bash-process-substitution-as-output-target"),
         pytest.param("Move-Item 2> 'e r.txt' .env b.txt", True, "Move-Item              .env b.txt",
                      id="quoted-target-with-a-blank"),
         pytest.param("*>x", False, "*>x", id="bash-glob-then-redirect"),
@@ -14888,7 +14973,7 @@ class TestARedirectWrittenFirstHidesNoOperand:
     def test_every_scan_match_is_kept_beside_the_views(self):
         bp = _bash_patterns_module()
         scan = "git rm a.txt 2>/dev/null; git 2>/dev/null rm b.txt"
-        got = bp._scan_and_view_matches(bp._GIT_RM_MV_RE, scan, bp._redirects_blanked(scan))
+        got = bp._scan_and_view_matches(bp._GIT_RM_MV_RE, scan, bp._redirects_blanked(scan, powershell=False))
         on_scan = list(bp._GIT_RM_MV_RE.finditer(scan))
         assert [m.regs for m in got if m.string is scan] == [m.regs for m in on_scan] != []
         assert scan.index("rm b.txt") in {m.start(1) for m in got if m.string is not scan}
@@ -18677,22 +18762,17 @@ class TestQuotedTargetSurvivesTheRoot:
                 continue
             scans = self._SCAN_READERS[fn.name]
             for loop in ast.walk(fn):
-                if not isinstance(loop, ast.For) or not isinstance(loop.iter, ast.Call):
+                if not isinstance(loop, ast.For) or not isinstance(loop.target, ast.Name):
                     continue
-                call = loop.iter
-                if (isinstance(call.func, ast.Attribute) and call.func.attr == "finditer"
-                        and call.args and isinstance(call.args[0], ast.Name)
-                        and call.args[0].id in scans and isinstance(loop.target, ast.Name)):
-                    regex = call.func.value.id if isinstance(call.func.value, ast.Name) else "?"
-                elif (isinstance(call.func, ast.Name) and call.func.id == "_scan_and_view_matches"
-                        and len(call.args) == 3 and isinstance(call.args[0], ast.Name)
-                        and isinstance(call.args[1], ast.Name) and call.args[1].id in scans
-                        and isinstance(loop.target, ast.Name)):
-                    # the scan and its redirect view in one loop (DEF-2087):
-                    # a match of either is read the same way
-                    regex = call.args[0].id
-                else:
+                # either call shape (`tests/_regex_search_sites.py`): the
+                # pattern's `finditer`, or the scan and its redirect view in
+                # one loop (DEF-2087), a match of either read the same way
+                search = regex_search(loop.iter)
+                if (search is None or search.shape not in ("finditer", "_scan_and_view_matches")
+                        or not search.texts or not isinstance(search.texts[0], ast.Name)
+                        or search.texts[0].id not in scans):
                     continue
+                regex = search.regex
                 # a regex held in a loop variable (`for rx in (A, B): for m in
                 # rx.finditer(scan)`) resolves to every name THAT loop iterates
                 regexes = _held_regexes(fn, loop, regex)
@@ -25352,17 +25432,12 @@ class TestRemovedOrRelocatedOperandIsAMutation:
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
                             and sub.func.id in helpers):
                         searched.add(helpers[sub.func.id])
-                    # an arm matched on the scan and its redirect view
-                    # (DEF-2087) is searched with the regex it is handed
-                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
-                            and sub.func.id == "_scan_and_view_matches" and sub.args
-                            and isinstance(sub.args[0], ast.Name) and sub.args[0].id.endswith("_RE")):
-                        searched.add(sub.args[0].id)
-                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                            and sub.func.attr in ("finditer", "search", "match")
-                            and isinstance(sub.func.value, ast.Name)
-                            and sub.func.value.id.endswith("_RE")):
-                        searched.add(sub.func.value.id)
+                    # either call shape: the pattern's own method, or the
+                    # scan-and-view helper (DEF-2087), which searches the
+                    # pattern it is handed (`tests/_regex_search_sites.py`)
+                    found = regex_search(sub)
+                    if found is not None and found.regex.endswith("_RE"):
+                        searched.add(found.regex)
         assert seen == readers, f"reader bodies not found: {readers - seen}"
         bp = _bash_patterns_module()
         declared = set(bp._MUTATION_ARMS) | set(bp._SECRET_EFFECT_ARMS)

@@ -506,9 +506,13 @@ def _with_redirect_views(readings: list[Any]) -> list[Any]:
     (DEF-2087, air's ruling f03cb7): `git 2>/dev/null push --force origin
     main`, `git 2>/dev/null reset --hard` and `git 2>/dev/null clean -fd`
     drew no checkpoint, the redirect read as a global option the head does
-    not know. The view supplements the text and never replaces it (air's
-    note f19d8d (a)), and keeps its length, so a raw twin still indexes it.
-    A kept, older pattern module without the view reads the texts alone."""
+    not know. Its two callers reach every checkpoint that reads them: the
+    discard readings (`_discard_readings`), and the readings of the force
+    push, the release (a version tag's push), the clean and the kill
+    (`_git_checkpoint_readings`), the kill's pid read past a redirect too.
+    The view supplements the text and never replaces it (air's note f19d8d
+    (a)), and keeps its length, so a raw twin still indexes it. A kept,
+    older pattern module without the view reads the texts alone."""
     blank = getattr(_bash_patterns, "_redirects_blanked", None)
     if blank is None:
         return readings
@@ -543,8 +547,9 @@ def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str |
 
 
 def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str, bool]]:
-    """``(text, is_bash_text)`` for the release, force-push and clean
-    checkpoints, by tool (DEF-1038): on the Bash tool the masked command and
+    """``(text, is_bash_text)`` for the force-push, release (a version tag's
+    push), clean and kill checkpoints, by tool (DEF-1038; the kill's pid
+    reader, `_named_kill_targets`, reads the same texts): on the Bash tool the masked command and
     every program it hands to a shell (`_scan_texts`), read by the Bash arms;
     on the PowerShell tool its own scan text, read by the PowerShell twins so a
     literal stays data. A program the PowerShell tool hands to `bash -c` is
@@ -819,8 +824,12 @@ def _pred_discard(tool_name: str, tool_input: dict, root: Path, cwd: Path | None
     # it hands to `bash -c`: the one checkpoint whose deny is a recovery
     # artifact rather than ceremony, so it is not tool-keyed like the others.
     # a reading and its redirect view can find one pathspec at one place:
-    # git is asked about it once (DEF-2087's view doubles the readings)
-    probed: set[tuple[str | None, tuple[int, int]]] = set()
+    # git is asked about it once for each set of directories the statement
+    # runs in (DEF-2087's view doubles the readings; the view can read a cd
+    # the scan cannot -- `cd 2>/dev/null sub && git checkout f` runs in
+    # `sub`, which the scan read as the redirect, so a key without the
+    # directories skipped the one probe that asked about `sub/f`)
+    probed: set[tuple[str | None, tuple[int, int], tuple[Path, ...]]] = set()
     for scan, raw, is_bash in _discard_readings(tool_name, tool_input):
         if (_DISCARD_RE if is_bash else _PS_DISCARD_RE).search(scan):
             return True
@@ -833,14 +842,14 @@ def _pred_discard(tool_name: str, tool_input: dict, root: Path, cwd: Path | None
         # most-typed destructive form uncovered -- cost a real, unrecoverable
         # loss of uncommitted work.
         m = _bash_patterns._GIT_CHECKOUT_BARE_RE.search(scan)
-        if m and (raw, m.span(1)) in probed:
+        if not m:
             continue
-        if m:
-            probed.add((raw, m.span(1)))
-        if m and _destroys_uncommitted_work(
-            root, _checkout_operand(scan, raw, m),
-            _statement_directories(scan, m.start(1), root, cwd),
-        ):
+        dirs = _statement_directories(scan, m.start(1), root, cwd)
+        key = (raw, m.span(1), tuple(dirs))
+        if key in probed:
+            continue
+        probed.add(key)
+        if _destroys_uncommitted_work(root, _checkout_operand(scan, raw, m), dirs):
             return True
     return False
 
@@ -2365,10 +2374,13 @@ def _kill_targets(verb: str, words: list[str | None], *, bash: bool) -> list[tup
 
 def _named_kill_targets(tool_name: str, tool_input: dict) -> list[tuple[int, bool]]:
     """Every ``(pid, named as a parent)`` a kill in the command names, first
-    `_KILL_PID_CAP`, read from the texts the git checkpoints read
-    (`_git_checkpoint_readings`: the masked Bash command and the programs it
-    hands to a shell, or the PowerShell scan text), so a quoted or commented
-    MENTION is data."""
+    `_KILL_PID_CAP`, read from the texts the force-push, release and clean
+    checkpoints read (`_git_checkpoint_readings`: the masked Bash command and
+    the programs it hands to a shell, or the PowerShell scan text), so a
+    quoted or commented MENTION is data -- and each text again with its
+    redirects blanked (`_with_redirect_views`, DEF-2087), so a pid after a
+    redirect is named (`Stop-Process 2>$null -Id <pid>` named only the
+    stream's digit before the view)."""
     found: list[tuple[int, bool]] = []
     for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
         head = _KILL_HEAD_RE if is_bash else _PS_KILL_HEAD_RE

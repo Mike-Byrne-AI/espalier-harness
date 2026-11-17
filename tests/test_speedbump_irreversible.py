@@ -5051,6 +5051,28 @@ class TestARedirectInGitsOptionSlotDrawsTheCheckpoint:
         assert not _speedbump._pred_discard("Bash", {"command": "git checkout src/x.py 2>/dev/null"}, tmp_path)
         assert asked == ["src/x.py"]
 
+    def test_git_is_asked_again_where_the_view_reads_another_directory(self, tmp_path, monkeypatch):
+        """Once per pathspec AND set of statement directories: the scan reads
+        `cd 2>/dev/null sub` as a cd to the redirect, the view as a cd to
+        `sub`, and the probe the key skipped was the one asked about `sub`
+        (DEF-2087's code review)."""
+        (tmp_path / "sub").mkdir()
+        asked: list[list[str]] = []
+        monkeypatch.setattr(_speedbump, "_destroys_uncommitted_work",
+                            lambda root, operand, dirs: asked.append([d.name for d in dirs]) or False)
+        _speedbump._pred_discard("Bash", {"command": "cd 2>/dev/null sub && git checkout f"}, tmp_path, tmp_path)
+        assert ["sub"] in asked and len(asked) == 2, asked
+
+    def test_a_powershell_stop_behind_a_redirect_names_its_pid(self):
+        """The kill checkpoint reads the texts the force-push, release and
+        clean checkpoints read (`_git_checkpoint_readings`), so it reads the
+        redirect view too: a redirect between the stop and its pid named only
+        the stream's digit until the view, and names the pid beside it now
+        (the digit itself is a ledger row of its own, the kill reader's)."""
+        for command in ("Stop-Process -Id 2>$null 4242", "Stop-Process 2>$null 4242", "kill 2>$null 4242"):
+            pids = _speedbump._named_kill_pids("PowerShell", {"command": command})
+            assert 4242 in pids, (command, pids)
+
     def test_a_kept_pattern_module_without_the_view_reads_the_text_alone(self, tmp_path, monkeypatch):
         """An upgrade that kept an older `_bash_patterns` without the view
         leaves every checkpoint reading the text as before."""

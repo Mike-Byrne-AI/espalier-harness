@@ -55,6 +55,8 @@ from pathlib import Path
 import pytest
 
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
+from tests._regex_search_sites import regex_searches, text_names
+from tests._source_segment import segment, source_lines
 from tests._wait_budget import scaled
 from tests.test_write_guard import _delete_verdict, run_bash_guard, run_guard_from
 
@@ -839,22 +841,26 @@ class TestMaskControlsAndFailClosed:
         """
         import re
 
+        import ast
+
         src = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
-        start = src.index("def _candidate_paths_from_bash")
-        # ⚠ END AT THE NEXT TOP-LEVEL `def`, NOT AT A NAMED SIBLING. This slice
-        # used to run to `def _candidate_paths_from_powershell`, which is not the
-        # end of this function -- it is merely the next one someone happened to
-        # name. On 2026-08-26 the PowerShell symlink chain was relocated between
-        # the two (it had to move below `_PS_CMD_POS` to be anchored), and
-        # `powershell_symlink_linknames`'s own raw `.finditer(command)` silently
-        # joined this population. The failure was loud in that direction, but the
-        # same slice fails SILENTLY in the other: move `_candidate_paths_from_
-        # powershell` above this function and the population becomes empty, and
-        # an empty population satisfies nothing while looking like a pass. A
-        # boundary defined by a NEIGHBOUR's name is not a boundary.
-        end = src.index("\ndef ", start + 1)
-        body = src[start:end]
-        raw = sorted(set(re.findall(r"(\w+)\.finditer\(command\)", body)))
+        # The function is read PARSED, never as a text slice: a slice ran to
+        # the next `def` someone named (on 2026-08-26 the PowerShell symlink
+        # chain moved between the two and its raw `.finditer(command)` joined
+        # this population; moved the other way, the population would have
+        # been empty and passed), and a text regex for `.finditer(command)`
+        # could not see the scan-and-view helper's call shape (DEF-2087's
+        # failure-mode review). Every search in either shape is read by
+        # `tests/_regex_search_sites.py`, so an opener over the raw `command`
+        # names itself here however it is written.
+        fn = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "_candidate_paths_from_bash")
+        body = segment(source_lines(src), fn) or ""
+        searches = list(regex_searches(fn))
+        # the floor is the count the walk reads (14 at DEF-2087's lane): a
+        # walk that stops seeing a call shape reds here, not by passing empty
+        assert len(searches) >= 14, f"the walk saw only {len(searches)} searches in the extractor"
+        raw = sorted({s.regex for s in searches if "command" in text_names(s)})
         assert raw == [], (
             "DEF-704 moved the last raw call sites into `_inline_program_bodies`; "
             f"a new extractor is reading the raw command directly: {raw}"
