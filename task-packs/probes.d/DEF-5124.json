@@ -1,0 +1,16 @@
+{
+ "id": "DEF-5124",
+ "subject": "bench/guard_metamorphic.py",
+ "cmd": "python3 -c \"import ast, os, sys, importlib.util\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nsrc = open('tools/cc/hooks/_bash_patterns.py', encoding='utf-8').read()\nsites = []\nfor fn in ast.walk(ast.parse(src)):\n    if isinstance(fn, ast.FunctionDef) and fn.name != '_scan_and_view_matches':\n        for c in ast.walk(fn):\n            if isinstance(c, ast.Call) and getattr(c.func, 'id', None) == '_scan_and_view_matches':\n                sites.append((fn.name, c.lineno, c.end_lineno, fn.name + ':' + ast.unparse(c.args[0])))\nfrom bench.powershell_reachability_differential import find_powershell\npw = find_powershell()\nif not pw:\n    sys.exit('no PowerShell: the population is not whole here')\nspec = importlib.util.spec_from_file_location('gm_probe', 'bench/guard_metamorphic.py')\ngm = importlib.util.module_from_spec(spec); sys.modules['gm_probe'] = gm; spec.loader.exec_module(gm)\nbp = gm._bash_patterns\norig = bp._scan_and_view_matches\nseen = set()\ndef wrapped(rx, scan, view):\n    out = orig(rx, scan, view)\n    if view != scan and len(out) > sum(1 for _ in rx.finditer(scan)):\n        f = sys._getframe(1)\n        seen.update(k for n, a, b, k in sites if n == f.f_code.co_name and a <= f.f_lineno <= b)\n    return out\nbp._scan_and_view_matches = wrapped\nrep = gm.check_r4(True, pw[0])\nprint('sites', len(sites), 'witnessed', len(seen), 'violations', len(rep['violations']), file=sys.stderr)\nprint(sorted({k for *_, k in sites} - seen))\"",
+ "open_value": "['_candidate_paths_from_bash:_TAR_C_RE', '_candidate_paths_from_bash:rx', '_candidate_paths_from_powershell:rx', '_iter_loop_sweeps:rx', '_iter_piped_sweeps:_PIPED_REMOVE_RE', 'iter_placed_loop_removals:rx']",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py",
+  "tests/test_write_guard.py",
+  "bench/powershell_reachability_differential.py",
+  "bench/powershell_guard_rehearsal.py"
+ ],
+ "row_sha": "46a9c4fc6c5c",
+ "text_sha": "509442814e78",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD c764cb26e381)"
+}
