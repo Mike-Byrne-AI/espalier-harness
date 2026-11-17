@@ -550,3 +550,97 @@ class TestRelaunchLinesArePortable:
             "relaunch instruction that never mentions --continue "
             "(following it loses the session):\n  " + "\n  ".join(offenders)
         )
+
+
+# DEF-994: a Windows venv keeps its scripts in ``Scripts/`` and has no ``bin/``,
+# so a setup block whose only bash activate line names ``bin/`` fails in Git
+# Bash (Claude Code's Bash tool on Windows): the shell prints one error, carries
+# on, and the next ``pip install`` lands in whatever ``python`` is first on PATH.
+# The four blocks that make a venv in a source checkout, named, so a block
+# reworded away from the line, or a predicate that stops matching it, reds here.
+_VENV_SETUP_SITES = (
+    "docs/QUICKSTART.md",
+    "CONTRIBUTING.md",
+    "docs/DEMO.md",
+    "examples/README.md",
+)
+
+# A venv's ``bin/activate`` handed to the ``.`` or ``source`` builtin; prose that
+# names the file without sourcing it is not a line anyone pastes. ``activate``
+# alone: ``activate.fish`` and ``activate.csh`` are other shells' scripts.
+_SOURCED_BIN_ACTIVATE_RE = re.compile(
+    r"(?:^|[\s;&|(`])(?:\.|source)\s+[\"']?(?P<dir>[\w./-]*?)bin/activate(?![\w.])"
+)
+
+
+def _posix_only_activate(line: str) -> bool:
+    """True when ``line`` sources a venv's ``bin/activate`` and never names the
+    same venv's ``Scripts/activate``: the line a Windows Git Bash paste fails on.
+    A PowerShell ``Activate.ps1`` beside it does not count; Git Bash runs the
+    bash script."""
+    m = _SOURCED_BIN_ACTIVATE_RE.search(line)
+    if m is None:
+        return False
+    scripts = r"(?<![\w./-])" + re.escape(m["dir"]) + r"Scripts/activate(?![\w.])"
+    return re.search(scripts, line) is None
+
+
+class TestVenvActivateLinesReachGitBash:
+    """DEF-994: every bash activate line an adopter pastes also reaches the
+    ``Scripts/activate`` a Windows venv holds."""
+
+    @pytest.mark.contract
+    def test_the_gate_engages(self) -> None:
+        missing = [
+            rel for rel in _VENV_SETUP_SITES
+            if not any(
+                _SOURCED_BIN_ACTIVATE_RE.search(ln)
+                for ln in (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
+            )
+        ]
+        assert not missing, (
+            "named venv setup block(s) no longer source a bin/activate line: "
+            f"{missing}"
+        )
+
+    @pytest.mark.contract
+    def test_every_bin_activate_line_also_reaches_scripts(self) -> None:
+        texts = dict(_existing_docs())
+        for rel in _VENV_SETUP_SITES:
+            texts.setdefault(rel, (REPO_ROOT / rel).read_text(encoding="utf-8"))
+        offenders = [
+            f"{rel}:{lineno}: {line.strip()}"
+            for rel, text in texts.items()
+            for lineno, line in enumerate(text.splitlines(), 1)
+            if _posix_only_activate(line)
+        ]
+        assert not offenders, (
+            "activate line with no .venv/Scripts/activate (a Windows Git Bash "
+            "paste fails, and pip then installs outside the venv):\n  "
+            + "\n  ".join(offenders)
+        )
+
+    @pytest.mark.parametrize("line", [
+        ". .venv/bin/activate",
+        "source .venv/bin/activate",
+        "  . venv/bin/activate",
+        "cd repo && . .venv/bin/activate",
+        "then run `. .venv/bin/activate` before installing",
+        # the PowerShell comment the four sites carried is not a Git Bash form
+        r". .venv/bin/activate          # PowerShell: .\.venv\Scripts\Activate.ps1",
+        # another venv's Scripts/ does not answer this one
+        ". venv/bin/activate  # or . .venv/Scripts/activate",
+    ])
+    def test_a_line_sourcing_bin_alone_is_held(self, line: str) -> None:
+        assert _posix_only_activate(line)
+
+    @pytest.mark.parametrize("line", [
+        "if [ -f .venv/Scripts/activate ]; then . .venv/Scripts/activate; "
+        "else . .venv/bin/activate; fi",
+        ". .venv/Scripts/activate",
+        "source .venv/bin/activate.fish",
+        "the venv's .venv/bin/activate script sets VIRTUAL_ENV",
+        "python -m venv .venv",
+    ])
+    def test_a_line_that_reaches_scripts_or_sources_no_bin_passes(self, line: str) -> None:
+        assert not _posix_only_activate(line)
