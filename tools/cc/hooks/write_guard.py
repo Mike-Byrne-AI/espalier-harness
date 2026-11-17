@@ -5549,7 +5549,7 @@ def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     that moved a quote takes the two relief gates' relief away
     (`_bash_patterns.FOLD_MOVED_A_QUOTE`, raised by any fold that moved a
     quote and read in `_ps_blank_quoted_spans`), the assign's edge, until
-    the dispatch ends (`_a_dispatch_resets_the_fold`)."""
+    the judgment ends (`_one_judgment` lowers it as each starts and ends)."""
     if tool_name != "PowerShell" or not isinstance(tool_input.get("command"), str):
         return tool_input
     _load_the_pattern_path()
