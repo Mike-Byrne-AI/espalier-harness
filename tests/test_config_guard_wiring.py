@@ -368,6 +368,248 @@ class TestTheChangeIsJudgedNotTheState:
         assert not tree.joinpath(*ig.UNWIRED_PENDING).exists()
 
 
+#: An entry Claude Code ignores where it sits: driven on Claude Code 2.1.321
+#: (DEF-2065, `claude -p`, marker hooks, one run an arm), an unknown type, a
+#: missing `url` or a missing `type` under PostToolUse, and an unknown type
+#: under ConfigChange or Stop, is logged "entry ignored" and the rest of the
+#: file loads, the gates included; under PreToolUse or PermissionRequest
+#: nothing in the file is applied. A group whose matcher is not a string is
+#: dropped whole ("matcher ignored"; its hook never ran, under Stop and under
+#: PostToolUse).
+_IGNORED_ENTRY = {"type": "websocket", "url": "ws://127.0.0.1:9/h"}
+
+
+def _beside_the_gates(event: str = "PostToolUse", entry: dict = _IGNORED_ENTRY) -> dict:
+    data = _settings()
+    data["hooks"].setdefault(event, []).append({"hooks": [dict(entry)]})
+    return data
+
+
+class TestAStartFromAVoidReadingFileKeepsTheGatesArmed:
+    """DEF-2065: the voiding rule reads a file holding an entry Claude Code
+    ignores (or a type newer than espalier's table) as void, so SessionStart
+    recorded no gate as live; config_guard then had nothing to lose and let any
+    unwire through, a removed ``hooks`` key included. A SessionStart that ran
+    from the file proves Claude Code applied it, so the start records the gates
+    the file wires with those entries set aside, and the shapes it tolerated,
+    which config_guard reads the changed file under."""
+
+    def test_the_start_records_the_gates_the_file_wires(self, tree):
+        """Earn-the-red 1. Mutation: record ``live_governance_gates(data, root)``
+        with no tolerated set (the code before DEF-2065)."""
+        _write(tree, _beside_the_gates())
+        _started(tree)
+        assert sorted(_integrity().read_wired_gates(tree)) == sorted(GATES)
+
+    def test_removing_the_hooks_key_after_such_a_start_is_refused(self, tree):
+        """Earn-the-red 2: the row's harm, the unwire let through."""
+        _write(tree, _beside_the_gates())
+        _started(tree)
+        _write(tree, {"permissions": {}})
+        _denied_naming(_change(tree), GATES)
+
+    def test_an_edit_that_keeps_the_tolerated_entry_passes(self, tree):
+        """Earn-the-red 3. Mutation: record the gates as live but no tolerated
+        set (the row's fix shape as filed): every later edit then reads as
+        losing every gate, and is refused."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        data["permissions"]["allow"] = ["Bash(ls)"]
+        _write(tree, data)
+        assert _change(tree) is None
+        assert sorted(ig.read_wired_gates(tree)) == sorted(GATES)
+        assert ig.read_wired_tolerated(tree), "the tolerated shapes outlive a let-through"
+
+    def test_a_shape_the_start_did_not_tolerate_is_still_refused(self, tree):
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        data["hooks"]["PreToolUse"][0]["hooks"].append({"type": "http"})
+        _write(tree, data)
+        _denied_naming(_change(tree), GATES)
+
+    def test_the_tolerated_entry_moved_under_pretooluse_is_refused(self, tree):
+        """Claude Code applies nothing from a file holding such an entry under
+        PreToolUse (driven on 2.1.321), so a tolerated shape is keyed with its
+        event."""
+        _write(tree, _beside_the_gates())
+        _started(tree)
+        _write(tree, _beside_the_gates(event="PreToolUse"))
+        _denied_naming(_change(tree), GATES)
+
+    def test_a_dropped_gate_beside_the_tolerated_entry_is_refused(self, tree):
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        del data["hooks"]["Stop"]
+        _write(tree, data)
+        decision = _change(tree)
+        _denied_naming(decision, ("stop_gate.py",))
+        assert "write_guard.py" not in decision["reason"], decision["reason"]
+        assert "loads NO hooks" not in decision["reason"], "the findings are read with the entry set aside"
+
+    def test_the_refusal_note_names_the_repairs_order(self, tree):
+        """The second code review, driven: the note told Claude to run
+        `--repair`, which refuses the file as void while the entry stands."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        del data["hooks"]["Stop"]
+        _write(tree, data)
+        _denied_naming(_change(tree), ("stop_gate.py",))
+        notice = ig.take_unwired_notice(tree)
+        assert notice and "remove the malformed hook entry" in notice, notice
+        assert notice.index("remove the malformed") < notice.index("run the repair"), notice
+        assert notice.isascii()
+
+    def test_a_refusal_with_no_malformed_entry_keeps_the_plain_repair(self, tree):
+        ig = _integrity()
+        data = _settings()
+        _started(tree)
+        del data["hooks"]["Stop"]
+        _write(tree, data)
+        _denied_naming(_change(tree), ("stop_gate.py",))
+        notice = ig.take_unwired_notice(tree)
+        assert notice and "run `espalier merge-settings --repair`" in notice and "malformed" not in notice, notice
+
+    def test_an_entry_nested_past_the_encoder_still_has_a_key(self):
+        """The second code review: the encoder raises on a value the loader
+        still reads (about 100,000 levels on 3.14); the key falls back to the
+        value's type rather than raising out of every reader."""
+        ig = _integrity()
+        deep: list = []
+        for _ in range(200_000):
+            deep = [deep]
+        key = ig._problem_key("PostToolUse", deep)
+        assert key.startswith("PostToolUse:") and ig.problem_event(key) == "PostToolUse"
+
+    def test_a_torn_tolerated_record_reads_the_file_strictly(self, tree):
+        """Fail-closed: a record whose tolerated set cannot be read judges the
+        file as the voiding rule reads it."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        _write(tree, data)
+        _started(tree)
+        snap = tree.joinpath(*ig.WIRED_GATES_SNAPSHOT)
+        record = json.loads(snap.read_text(encoding="utf-8"))
+        record["tolerated"] = "not a list"
+        snap.write_text(json.dumps(record), encoding="utf-8")
+        assert ig.read_wired_tolerated(tree) == ()
+        data["permissions"]["allow"] = ["Bash(ls)"]
+        _write(tree, data)
+        _denied_naming(_change(tree), GATES)
+
+    def test_a_file_that_reads_wired_records_no_tolerated_shape(self, tree):
+        """The common start writes the record it always wrote."""
+        ig = _integrity()
+        _started(tree)
+        record = json.loads(tree.joinpath(*ig.WIRED_GATES_SNAPSHOT).read_text(encoding="utf-8"))
+        assert record == {"gates": sorted(GATES)}
+
+    def test_every_entry_the_start_held_is_tolerated(self, tree):
+        """The failure-mode review's mutation: keep only the first problem, and
+        a file with two ignored entries records no gate again."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        data["hooks"]["Stop"].append({"hooks": [{"type": "http"}]})
+        _write(tree, data)
+        _started(tree)
+        assert sorted(ig.read_wired_gates(tree)) == sorted(GATES)
+        assert len(ig.read_wired_tolerated(tree)) == 2
+        _write(tree, {"permissions": {}})
+        _denied_naming(_change(tree), GATES)
+
+    @pytest.mark.parametrize("added", [_IGNORED_ENTRY, {"type": "websocket"}], ids=["same", "malformed"])
+    def test_a_second_entry_beside_a_tolerated_one_is_refused(self, tree, added):
+        """A Claude Code that knows a type newer than espalier's table loads a
+        well-formed entry of it under PreToolUse. A second one missing a field
+        is not covered by the first: a PreToolUse entry Claude Code cannot load
+        applies nothing from the file (driven). An exact copy is refused too,
+        conservatively: the start proved each entry it held once, and Claude
+        Code may well load the copy."""
+        data = _beside_the_gates(event="PreToolUse")
+        _write(tree, data)
+        _started(tree)
+        data["hooks"]["PreToolUse"].append({"hooks": [dict(added)]})
+        _write(tree, data)
+        _denied_naming(_change(tree), GATES)
+
+    def test_the_tolerance_does_not_read_the_problem_wording(self, tree, monkeypatch):
+        """An upgrade mid-session that rewords the rule (a type added to the
+        table rewrites every unknown-type sentence) still tolerates the entry
+        the session started with."""
+        ig = _integrity()
+        _write(tree, _beside_the_gates())
+        _started(tree)
+        tolerated = ig.read_wired_tolerated(tree)
+        assert tolerated and not any("websocket" in key for key in tolerated), tolerated
+        monkeypatch.setitem(ig._HOOK_TYPE_REQUIRED_STRINGS, "sixth", ("x",))
+        state, data = ig.read_project_settings(tree)
+        assert sorted(ig.live_governance_gates(data, tree, tolerated=tolerated)) == sorted(GATES)
+
+    def test_a_group_whose_matcher_is_not_a_string_wires_nothing(self, tree):
+        """Claude Code drops such a group whole (driven on 2.1.321), so the
+        gate inside it is not counted as running, the matcher set aside or not."""
+        ig = _integrity()
+        data = _beside_the_gates()
+        data["hooks"]["ConfigChange"][0]["matcher"] = ["project_settings"]
+        _write(tree, data)
+        _started(tree)
+        assert "config_guard.py" not in ig.read_wired_gates(tree)
+        assert sorted(ig.read_wired_gates(tree)) == sorted(set(GATES) - {"config_guard.py"})
+
+
+class TestTheHookIsNamedByItsPathTail:
+    """The second code review: the reader that decides which settings file
+    names the SessionStart hook had three fixes no test pinned -- the path
+    tail's boundaries, and the project file counting only a loadable entry."""
+
+    HOOK = "tools/cc/hooks/session_start.py"
+
+    @staticmethod
+    def _file(hook: dict, matcher: object = None) -> dict:
+        group: dict = {"hooks": [hook]}
+        if matcher is not None:
+            group["matcher"] = matcher
+        return {"hooks": {"SessionStart": [group]}}
+
+    @pytest.mark.parametrize("arg, named", [
+        ("${CLAUDE_PROJECT_DIR}/tools/cc/hooks/session_start.py", True),
+        ("C:\\repo\\tools\\cc\\hooks\\session_start.py", True),
+        ("tools/cc/hooks/session_start.py", True),
+        ("/home/u/.claude/hooks/session_start.py", False),
+        ("/srv/my_tools/cc/hooks/session_start.py", False),
+        ("/srv/repo/tools/cc/hooks/session_start.pyc", False),
+    ], ids=["project-dir", "windows", "bare", "another-hook", "longer-dir", "longer-name"])
+    def test_an_args_path_names_the_hook_by_its_whole_tail(self, arg, named):
+        hook = {"type": "command", "command": "python3", "args": [arg]}
+        assert _integrity().settings_name_hook(self._file(hook), "SessionStart", self.HOOK,
+                                               loadable_only=True) is named
+
+    @pytest.mark.parametrize("command", [
+        "python3 tools/cc/hooks/session_start.py>log",
+        "python3 tools/cc/hooks/session_start.py\t2>err",
+        "cd x && python3 tools/cc/hooks/session_start.py\n",
+    ], ids=["redirect", "tab", "newline"])
+    def test_a_shell_command_names_it_before_an_operator_or_whitespace(self, command):
+        hook = {"type": "command", "command": command}
+        assert _integrity().settings_name_hook(self._file(hook), "SessionStart", self.HOOK, loadable_only=True)
+
+    def test_an_entry_claude_code_cannot_load_names_it_only_for_another_source(self):
+        """An untyped entry, or a group whose matcher is not a string, never
+        ran this hook, so it proves nothing of the project file; in another
+        file it may still be what a source ran, so it counts there."""
+        ig = _integrity()
+        untyped = self._file({"command": "python3", "args": [self.HOOK]})
+        badly_matched = self._file({"type": "command", "command": "python3", "args": [self.HOOK]}, matcher=["x"])
+        for data in (untyped, badly_matched):
+            assert not ig.settings_name_hook(data, "SessionStart", self.HOOK, loadable_only=True), data
+            assert ig.settings_name_hook(data, "SessionStart", self.HOOK, loadable_only=False), data
+
+
 
 class TestTheRefusalIsTold:
     """The ConfigChange refusal reaches no one (the protocol pin), so the note
