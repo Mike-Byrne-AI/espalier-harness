@@ -614,8 +614,17 @@ WRITE_GUARD_TIME_BUDGET = (
 
 #: write_guard's time budget, where start-up spent the time: the judging
 #: child had not begun judging, so no judgment ran and the re-issue passes no
-#: nudge unseen. A loaded box's start-up refused 10 ordinary calls in a week on
-#: the Windows seat, each told to split a command that was not long (DEF-2091).
+#: nudge unseen; or it had, no checkpoint spent its one-shot, start-up took at
+#: least judging's share, and the call has no command or a short one, whose
+#: judging past the mark is mostly the first-use compiles every call pays
+#: (DEF-2097; ``{spent}`` then shows the split, and "not to this command"
+#: means its length). On the Windows seat a loaded box's start-up refused 5
+#: real calls in 30 minutes on 2026-11-16, before the begun mark reached main
+#: (4 Bash commands of 101 to 147 characters and an Edit), each told to split;
+#: DEF-2091's census of 10 in a week matched the refusal's words anywhere in a
+#: tool result, and none of its 10 was a refusal (DEF-2097's recount: is_error
+#: and the refusal opening the result, bare or after Claude Code's hook-error
+#: head).
 WRITE_GUARD_START_UP_BUDGET = (
     "Command blocked: write_guard could not finish judging this command within"
     " its {budget} s time budget ({bound}; {spent}): the time went to starting"
