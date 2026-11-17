@@ -165,7 +165,7 @@ Paths these touch, for the scope walk:
   express a behaviour; these stay rows.
 - **First-run rows that are not audience-shaped:** `DEF-993` (help wraps at hyphens),
   `DEF-912` (bare repo path in remedies), `DEF-994` (a venv line in source-checkout docs `init`
-  never deploys), `DEF-996` (a `.bak` promise true on no tree: stale, not mis-addressed),
+  never deploys; struck 2026-11-17, the four blocks reach a Windows venv's `Scripts/`), `DEF-996` (a `.bak` promise true on no tree: stale, not mis-addressed),
   `DEF-903` (sdist membership), `DEF-889` (an unindexed public doc; gate
   `tests/test_operator_docs.py::TestDocIndexCompleteness`).
 - **The six-phrase and TP/BC denylists** stay as they are; the maintainer twice declined to
