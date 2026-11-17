@@ -352,7 +352,7 @@ class TestASeatNameTwoCheckoutsAnswer:
             seat.resolve(clone, "box-x")
         said = str(caught.value)
         assert "answered by 2 checkouts" in said and "one mail ref" in said, said
-        assert f"the only session is in {a.as_posix()}; if that is the seat" in said, said
+        assert f"only {a.as_posix()} holds a session; if it is the seat" in said, said
         assert self._rename(b) in said and f'git -C "{a.as_posix()}"' not in said and "&&" not in said, said
         assert f"{a.as_posix()} on lane/a at" in said and f"{b.as_posix()} on lane/b at" in said, said
         assert str(a) == a.as_posix() or str(a) not in said, said
@@ -377,32 +377,69 @@ class TestASeatNameTwoCheckoutsAnswer:
         assert self._static(said, clone).isascii(), said
 
     @pytest.mark.parametrize("case, why", [
-        ("marker", "only a session marker names it"),
-        ("background", "it is a background session Claude Code's daemon resumed"),
-        ("caller", "it is the session asking"),
-    ], ids=["marker", "background", "caller"])
+        ("marker", "a session there is named only by a session marker"),
+        ("mixed", "a session there is named only by a session marker"),
+        ("background", "a session there is a background one Claude Code's daemon resumed"),
+        ("headless", "a session there is no window ('sdk-cli', where a window is cli or claude-vscode)"),
+        ("caller", "a session there is the one asking"),
+    ], ids=["marker", "mixed", "background", "headless", "caller"])
     def test_a_lone_session_that_is_weak_evidence_gets_no_rename(self, seat, clone, registry, monkeypatch,
                                                                 case, why):
-        """One checkout alone holds a session, but that session does not say
-        it is the seat: a marker outlives its window, the daemon resumes an
-        old session wherever it was, and the asker is wherever it asked from.
-        Dies to: the rename given for the other checkout on any lone session,
-        which renames the live seat out from under its window."""
+        """One checkout alone holds sessions, but they do not say it is the
+        seat: a marker outlives its window (``mixed``: one beside a window the
+        registry lists, a session that window is not), the daemon resumes an
+        old session wherever it was, a headless run registers as kind
+        interactive and can be started from any checkout, and the asker is
+        wherever it asked from. Dies to: the rename given for the other
+        checkout on any lone session, which renames the live seat out from
+        under its window."""
         a, b = self._twins(clone)
-        if case == "marker":
-            marker = {"session_id": "m1", "pid": os.getpid(), "cwd": str(a)}
+        if case in ("marker", "mixed"):
+            marker = {"session_id": "m1", "pid": 999_999_999 if case == "mixed" else os.getpid(), "cwd": str(a)}
             monkeypatch.setattr(seat.sync, "_default_marker_reader", lambda: (
                 lambda tree: [marker] if seat.sync._norm(tree) == seat.sync._norm(a) else []))
+        if case == "mixed":
+            registry(a)
         elif case == "background":
             registry(a, kind="background")
-        else:
+        elif case == "headless":
+            registry(a, entrypoint="sdk-cli")
+        elif case == "caller":
             monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", f"s{registry(a)}")
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box-x")
         said = str(caught.value)
-        assert f"the operator's call (the only session is in {a.as_posix()}, and {why})" in said, said
+        assert f"the operator's call (only {a.as_posix()} holds a session, and {why})" in said, said
         assert self._rename(b) not in said and said.count("git -C") == 1, said
-        assert f"{a.as_posix()} on lane/a at" in said and "1 live session(s): pid" in said, said
+        assert f"{a.as_posix()} on lane/a at" in said and " live session(s): pid" in said, said
+
+    def test_a_caller_in_another_checkout_does_not_hold_the_rename_back(self, seat, clone, registry, monkeypatch):
+        """Run inside a session, as `retire` and `launch --print` are: the
+        asker's own window is in the clone, which answers another name, and
+        the seat's window is in one twin. Dies to: any known caller read as
+        weak evidence, wherever it is."""
+        a, b = self._twins(clone)
+        registry(a)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", f"s{registry(clone, pid=os.getppid())}")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        said = str(caught.value)
+        assert f"only {a.as_posix()} holds a session; if it is the seat" in said and self._rename(b) in said, said
+
+    def test_the_askers_own_clone_is_given_no_shape_beside_a_worktree_named_back(self, seat, clone, registry,
+                                                                                monkeypatch):
+        """The asker's window in the clone, a worktree named back to the
+        clone's name: weak evidence, and the clone answers, so not even the
+        shape is given (the operator could run it on the clone). Dies to: the
+        shape gated on the clone being among the ones to rename, which it is
+        not when it is the lone checkout."""
+        a = _worktree(clone, "a", name="box")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", f"s{registry(clone)}")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert f"only {clone.as_posix()} holds a session, and a session there is the one asking" in said, said
+        assert "git -C" not in said and "so no command is given" in said and a.as_posix() in said, said
 
     def test_a_worktree_named_back_to_the_clones_name_is_refused(self, seat, clone, registry, monkeypatch,
                                                                  capsys):
@@ -414,7 +451,7 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert "answered by 2 checkouts" in said and f"the only session is in {clone.as_posix()}" in said, said
+        assert "answered by 2 checkouts" in said and f"only {clone.as_posix()} holds a session" in said, said
         assert self._rename(a) in said, said
         monkeypatch.chdir(a)
         assert seat.main(["launch", "box", "--print"]) == 1
@@ -471,7 +508,8 @@ class TestASeatNameTwoCheckoutsAnswer:
         that read is failed). The live rows are the registry's, so only the
         case's own fact keeps the rename back."""
         a, b = self._twins(clone)
-        live = seat.sync.Occupancy([{"pid": 1, "source": "registry", "kind": "interactive"}], "registry")
+        live = seat.sync.Occupancy([{"pid": 1, "source": "registry", "kind": "interactive", "entrypoint": "cli"}],
+                                   "registry")
         states = {"untold": (live, seat.sync.Occupancy(None, "", "cannot tell")), "two-live": (live, live)}
         first, second = states.get(case, (live, seat.sync.Occupancy([], "registry")))
         monkeypatch.setattr(seat.sync, "occupancy", lambda path, **kw: first if path == a else second)
@@ -486,18 +524,23 @@ class TestASeatNameTwoCheckoutsAnswer:
         assert self._rename(a) not in said and self._rename(b) not in said, said
         assert said.count("git -C") == (0 if case == "ext-unread" else 1), said
 
-    def test_two_folders_one_derived_name_with_per_worktree_config_off(self, seat, clone, registry):
+    @pytest.mark.parametrize("live", [True, False], ids=["one-live", "none-live"])
+    def test_two_folders_one_derived_name_with_per_worktree_config_off(self, seat, clone, registry, live):
         """With per-worktree config off no worktree holds a name of its own,
         so the one twin left is two folders that derive one name; a
-        ``--worktree`` set fails there. Dies to: the rename printed with the
-        config off."""
+        ``--worktree`` set fails there, and that is said beside any other
+        reason, so a set written by hand is not taken for the fix. Dies to:
+        the rename printed with the config off (``one-live``), and the config
+        said only where no other reason holds (``none-live``)."""
         _git(clone, "config", "extensions.worktreeConfig", "false")
         dotted, dashed = _worktree(clone, "x.y"), _worktree(clone, "x-y")
-        registry(dotted)
+        if live:
+            registry(dotted)
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box-x-y")
         said = str(caught.value)
-        assert "the operator's call (per-worktree config is off in this clone" in said, said
+        first = "" if live else "none of them holds a session; "
+        assert f"the operator's call ({first}per-worktree config is off in this clone" in said, said
         assert "git -C" not in said and dashed.as_posix() in said, said
 
     def test_a_derived_name_and_an_own_name_that_meet_are_refused(self, seat, clone):
