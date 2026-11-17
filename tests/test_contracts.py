@@ -2249,6 +2249,18 @@ _ORIGIN_PROBE = (
 #: The engine bodies that are the spawn itself, whose own calls hand on what
 #: they were given: the bounded spawn's (both engine homes) and the wrapper's.
 _ENGINE_SPAWN_OWN = _BOUNDED_SPAWN_OWN | {("espalier/_spawn.py", "run_no_stdin")}
+#: The engine's checked spawn (DEF-985): ``run_no_stdin`` behind argv[0]'s
+#: resolution, so a call of it closes the child's stdin as a call of the
+#: wrapper does. ``espalier/`` imports nothing from ``tools/cc/``, so every
+#: ``spawn_checked`` in an engine file is this one, never the hooks'.
+_ENGINE_CHECKED_SPAWN = "spawn_checked"
+
+
+def _closes_stdin_by_wrapper(site: dict) -> bool:
+    """An engine spawn site that hands its child the wrapper's closed stdin:
+    a ``run_no_stdin`` call, or the checked spawn that calls it."""
+    return site["no_stdin"] or site["callee"] == _ENGINE_CHECKED_SPAWN
+
 #: The one engine file whose spawns may call the bounded spawn directly: the
 #: stdlib-only scanner, which cannot import the wrapper and keeps its own copy.
 _ENGINE_STDLIB_SPAWNER = "espalier/scanners/freshness.py"
@@ -2261,22 +2273,26 @@ _CLOSED_STDIN = frozenset({"subprocess.DEVNULL", "subprocess.PIPE", "DEVNULL", "
 _ENGINE_TREE_RUNS = frozenset({"run_tree_bounded"})
 #: ``run_no_stdin`` calls at the reroute (DEF-928, 2026-10-18): the 35 engine
 #: calls that went through ``run_bounded`` and the 13 raw sites. A walk that
-#: finds fewer broke, or sites went around the wrapper.
+#: finds fewer broke, or sites went around the wrapper. Since DEF-985 the
+#: count is of ``run_no_stdin`` and ``spawn_checked`` calls together: a site
+#: that answers for a program that never started moved from the one to the
+#: other, and both close the child's stdin.
 _ENGINE_NO_STDIN_FLOOR = 48
 
 
 def _engine_spawns_that_inherit_stdin(root: Path, rels: list[str]) -> list[str]:
     """Each engine spawn in ``rels`` that may hand its child the parent's
-    standard input, with why. An engine spawn calls ``run_no_stdin``; else it
-    hands its child a closed stdin itself (``stdin=`` one of ``_CLOSED_STDIN``,
-    or an ``input=`` that is not ``None``) and is the engine's tree run
+    standard input, with why. An engine spawn calls ``run_no_stdin`` or the
+    checked spawn in front of it (``spawn_checked``, DEF-985); else it hands its
+    child a closed stdin itself (``stdin=`` one of ``_CLOSED_STDIN``, or an
+    ``input=`` that is not ``None``) and is the engine's tree run
     (``_ENGINE_TREE_RUNS``), the freshness scanner's own ``run_bounded`` or a
     raw call marked ``# spawn: ok``. A ``stdin=None`` is the parent's stdin, as
     the wrapper reads it. The spawn's own bodies (``_ENGINE_SPAWN_OWN``) are the
     mechanism and are not read."""
     out = []
     for site in _spawn_sites_in(root, rels):
-        if site["no_stdin"] or (site["path"], site["function"]) in _ENGINE_SPAWN_OWN:
+        if _closes_stdin_by_wrapper(site) or (site["path"], site["function"]) in _ENGINE_SPAWN_OWN:
             continue
         where = f"{site['path']}:{site['lineno']} in {site['function']}"
         values = site["values"]
@@ -2311,8 +2327,9 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
     ``init`` died at its first ``git`` read with ``[WinError 6] The handle is
     invalid`` after writing its seed docs (DEF-928). ``espalier/_spawn.py::
     run_no_stdin`` closes the child's stdin unless the caller feeds it, and it
-    is the engine's one spawn chokepoint (DEF-985): every engine spawn calls it,
-    or feeds its child and is one of the three shapes it does not cover (the
+    is the engine's one spawn chokepoint (DEF-985): every engine spawn calls it
+    (or ``spawn_checked``, which resolves argv[0] and then calls it), or feeds
+    its child and is one of the three shapes it does not cover (the
     engine's tree run for a child that is itself a tree, DEF-5090; the
     stdlib-only scanner's own copy; a raw call marked ``# spawn: ok``). The
     ``tools/cc`` copy's callers, the hooks among them, keep inheriting stdin;
@@ -2332,9 +2349,9 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
         )
 
     def test_the_wrapper_population_holds_its_floor(self):
-        routed = [s for s in _spawn_sites_in(REPO_ROOT, self._engine_files()) if s["no_stdin"]]
+        routed = [s for s in _spawn_sites_in(REPO_ROOT, self._engine_files()) if _closes_stdin_by_wrapper(s)]
         assert len(routed) >= _ENGINE_NO_STDIN_FLOOR, (
-            f"{len(routed)} run_no_stdin calls in the engine, below the floor {_ENGINE_NO_STDIN_FLOOR} "
+            f"{len(routed)} run_no_stdin and spawn_checked calls in the engine, below the floor {_ENGINE_NO_STDIN_FLOOR} "
             "recorded at the reroute: the walk broke, or spawns went around the wrapper -- lower the "
             "floor on purpose, naming it"
         )
@@ -2353,7 +2370,8 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
             "def marked_fed_none():\n    subprocess.run(['git', 'log'], input=None)  # spawn: ok holds no pipe at all\n"
             "def tree_fed():\n    run_tree_bounded(['pytest'], stdin=subprocess.DEVNULL, timeout=5)\n"
             "def tree_unfed():\n    run_tree_bounded(['pytest'], timeout=5)\n"
-            "def tree_none():\n    _spawn.run_tree_bounded(['pytest'], stdin=None, timeout=5)\n",
+            "def tree_none():\n    _spawn.run_tree_bounded(['pytest'], stdin=None, timeout=5)\n"
+            "def checked():\n    spawn_checked(['git', 'log'], timeout=5)\n",
             encoding="utf-8")
         (tmp_path / "espalier" / "scanners").mkdir()
         (tmp_path / "espalier" / "scanners" / "freshness.py").write_text(
@@ -2376,6 +2394,456 @@ class TestEveryEngineSpawnClosesItsChildsStdin:
             "espalier/scanners/freshness.py:3 in unfed: the stdlib-only scanner's own spawn hands on the "
             "parent's stdin: pass stdin=subprocess.DEVNULL (it cannot import run_no_stdin)",
         ], stray
+
+
+#: The spawns that raise when their program does not start: the wrapper, the
+#: bounded spawn and its tree run, by name, and a raw ``subprocess`` call.
+#: ``spawn_checked`` hands that failure back instead, and is read by its branch.
+_RAISING_ENGINE_SPAWNS = frozenset({"run_no_stdin", "run_bounded", "run_tree_bounded"})
+_RAW_SUBPROCESS_SPAWNS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
+#: The names an ``except`` clause catches a start that failed by: ``Popen``'s
+#: ``OSError`` family, an argument it refuses (``ValueError``), and the arms
+#: that catch everything. An arm naming only ``TimeoutExpired``,
+#: ``CalledProcessError`` or ``SubprocessError`` catches a child that ran,
+#: which answers for itself (a non-git tree's ``git`` exits 128).
+_START_FAILURES = frozenset(
+    name for name, value in vars(__import__("builtins")).items()
+    if isinstance(value, type) and issubclass(value, OSError)
+) | {"ValueError", "Exception", "BaseException"}
+#: The calls the census reads as saying something. The coverage boundary: a
+#: speaker by any other name reads as silence and is refused (the strict side:
+#: add the name here), while a call named here that reaches no reader -- a
+#: file's ``write`` -- reads as speech (the blind side). So does an arm that
+#: reads the exception: it hands it on, into its answer or a message.
+_START_FAILURE_SPEAKERS = frozenset({"print", "warn", "warning", "error", "exception", "critical", "info",
+                                     "debug", "write", "say_unstarted"})
+#: An arm whose silence is the right answer (an optional program whose fallback
+#: answers the same) says why on its ``except`` line, in the vocabulary of
+#: ``tests/test_failopen_voice.py``: a kind, then a reason; the kind alone is
+#: refused, since ``deliberate`` fits every arm.
+_DECLARED_SILENCE = re.compile(r"# fail-open: ok (?:telemetry|cleanup|text-fallback|deliberate)\b\W*\w")
+#: The spawn's own bodies, whose arms are the mechanism: the bounded spawn's,
+#: the wrapper's and the checked spawn's.
+_START_FAILURE_OWN = _ENGINE_SPAWN_OWN | {("espalier/_spawn.py", _ENGINE_CHECKED_SPAWN)}
+#: ``spawn_checked`` calls in the engine at the contract's landing (DEF-985,
+#: 2026-11-17): the 24 git and interpreter reads that answer in a program's
+#: place. A walk that finds fewer broke, or sites went back to raising spawns.
+_ENGINE_CHECKED_SPAWN_FLOOR = 24
+#: The engine's arms around a raising spawn whose silence is right, each with
+#: its reason on its ``except`` line: ripgrep is optional (both of
+#: scope_walker's arms), the doctor's start probe answers "unspawnable" into
+#: its own warning, and the virtualenv probe runs only on a candidate that
+#: started moments before. A new one is added here on purpose.
+_DECLARED_SILENT_ARMS = (
+    "espalier/cli.py::_ask_resolves_only_inside_a_virtualenv",
+    "espalier/doctor.py::_run_start_probe",
+    "espalier/scope_walker.py::_walk_with_ripgrep",
+    "espalier/scope_walker.py::_rg_multi",
+)
+
+
+def _called_name(node: ast.AST) -> str:
+    return node.attr if isinstance(node, ast.Attribute) else node.id if isinstance(node, ast.Name) else ""
+
+
+class _SpawnNames:
+    """What one module calls the spawns by: the engine's names and any ``as``
+    alias of them from ``espalier._spawn``, the bare names a ``from subprocess
+    import`` binds, the module names ``subprocess`` goes by, and the
+    module-level tuples of exception names an ``except`` may name."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.raising = set(_RAISING_ENGINE_SPAWNS)
+        self.checked = {_ENGINE_CHECKED_SPAWN}
+        self.bare: set[str] = set()  # `from subprocess import run`: read as a bare call only
+        self.modules = {"subprocess"}
+        self.tuples: dict[str, set[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in ("espalier._spawn", "_spawn"):
+                for alias in node.names:
+                    if alias.name in _RAISING_ENGINE_SPAWNS:
+                        self.raising.add(alias.asname or alias.name)
+                    elif alias.name == _ENGINE_CHECKED_SPAWN:
+                        self.checked.add(alias.asname or alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+                self.bare.update(alias.asname or alias.name for alias in node.names
+                                 if alias.name in _RAW_SUBPROCESS_SPAWNS)
+            elif isinstance(node, ast.Import):
+                self.modules.update(alias.asname for alias in node.names
+                                    if alias.name == "subprocess" and alias.asname)
+        for node in tree.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Tuple)):
+                self.tuples[node.targets[0].id] = {_called_name(e) for e in node.value.elts}
+
+    def raises_on_a_failed_start(self, call: ast.Call) -> bool:
+        fn = call.func
+        return _called_name(fn) in self.raising or (isinstance(fn, ast.Name) and fn.id in self.bare) or (
+            isinstance(fn, ast.Attribute) and fn.attr in _RAW_SUBPROCESS_SPAWNS
+            and isinstance(fn.value, ast.Name) and fn.value.id in self.modules)
+
+    def catches_a_failed_start(self, caught: "ast.expr | None") -> bool:
+        if caught is None:
+            return True
+        names = {_called_name(n) for n in ast.walk(caught)}
+        for name in list(names):
+            names |= self.tuples.get(name, set())
+        return bool(names & _START_FAILURES)
+
+
+def _says_or_hands_on(body: list[ast.stmt], name: "str | None") -> bool:
+    """A raise, a call of a speaker, or a read (a load, never a store) of
+    ``name`` (the exception, or the failure) anywhere in ``body``."""
+    return any(
+        isinstance(n, ast.Raise)
+        or (isinstance(n, ast.Call) and _called_name(n.func) in _START_FAILURE_SPEAKERS)
+        or (name is not None and isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load))
+        for stmt in body for n in ast.walk(stmt))
+
+
+def _spawn_failure_tested(test: ast.expr) -> "str | None":
+    """The name ``if isinstance(<name>, SpawnFailure):`` tests (a walrus's
+    target included), or None."""
+    if (isinstance(test, ast.Call) and _called_name(test.func) == "isinstance" and len(test.args) == 2
+            and _called_name(test.args[1]) == "SpawnFailure"):
+        subject = test.args[0]
+        if isinstance(subject, ast.NamedExpr):
+            subject = subject.target
+        if isinstance(subject, ast.Name):
+            return subject.id
+    return None
+
+
+def _spawns_failing_to_start_in_silence(root: Path, rels: list[str],
+                                        declared: "list[str] | None" = None) -> list[str]:
+    """Each place in ``rels`` where a program that never started is answered
+    in silence (DEF-985), with why: an ``except`` arm around a raising spawn
+    that catches a start that failed and neither raises, says anything, reads
+    the exception nor declares its silence on its line; an
+    ``if isinstance(<name>, SpawnFailure):`` branch that neither raises, says
+    nor reads the failure; and a ``spawn_checked`` answer bound to a name no
+    such branch in its function tests. The spawn's own bodies
+    (``_START_FAILURE_OWN``) are the mechanism and are not read."""
+    found: list[tuple[str, int, str]] = []
+    for rel in rels:
+        text = (root / rel).read_text(encoding="utf-8")
+        lines = text.splitlines()
+        tree = ast.parse(text)
+        names = _SpawnNames(tree)
+        owner: dict[int, ast.AST] = {}
+        parent: dict[int, ast.AST] = {}
+
+        def visit(node: ast.AST, fn: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                inner = child if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+                owner[id(child)] = inner
+                parent[id(child)] = node
+                visit(child, inner)
+
+        visit(tree, tree)
+
+        def where(node: ast.AST, lineno: int) -> str:
+            fn = owner.get(id(node), tree)
+            return f"{rel}:{lineno} in {getattr(fn, 'name', '<module>')}"
+
+        def own(node: ast.AST) -> bool:
+            return (rel, getattr(owner.get(id(node), tree), "name", "<module>")) in _START_FAILURE_OWN
+
+        def spawns_in(body: list[ast.stmt]) -> bool:
+            return any(isinstance(c, ast.Call) and names.raises_on_a_failed_start(c)
+                       for stmt in body for c in ast.walk(stmt))
+
+        def binding(call: ast.Call) -> "str | None":
+            up = parent.get(id(call))
+            if (isinstance(up, ast.Assign) and up.value is call and len(up.targets) == 1
+                    and isinstance(up.targets[0], ast.Name)):
+                return up.targets[0].id
+            if isinstance(up, ast.AnnAssign) and up.value is call and isinstance(up.target, ast.Name):
+                return up.target.id
+            if isinstance(up, ast.NamedExpr) and up.value is call:
+                return up.target.id
+            return None
+
+        def read_before_rebound(scope: ast.AST, bound: str, call: ast.Call) -> bool:
+            """An ``isinstance(<bound>, SpawnFailure)`` branch at or after the
+            call's line and before the name is bound again. A store in a
+            handler of a ``try`` whose body holds the call is no rebind: the
+            handler runs when the call raised, so the failure was never bound."""
+            line = call.lineno
+            handled: set[int] = set()
+            up = parent.get(id(call))
+            while up is not None and up is not scope:
+                above = parent.get(id(up))
+                if isinstance(above, ast.Try) and up in above.body:
+                    handled |= {id(n) for h in above.handlers for n in ast.walk(h)}
+                up = above
+            rebinds = [n.lineno for n in ast.walk(scope) if isinstance(n, ast.Name) and n.id == bound
+                       and isinstance(n.ctx, ast.Store) and n.lineno > line and id(n) not in handled]
+            until = min(rebinds, default=float("inf"))
+            return any(isinstance(n, ast.If) and _spawn_failure_tested(n.test) == bound
+                       and line <= n.lineno < until for n in ast.walk(scope))
+
+        for node in ast.walk(tree):
+            if own(node):
+                continue
+            if isinstance(node, ast.Try) and spawns_in(node.body):
+                for handler in node.handlers:
+                    if not names.catches_a_failed_start(handler.type) or _says_or_hands_on(
+                            handler.body, handler.name):
+                        continue
+                    if _DECLARED_SILENCE.search(lines[handler.lineno - 1]):
+                        if declared is not None:
+                            declared.append(where(handler, handler.lineno).split(":", 1)[0] + "::"
+                                            + getattr(owner.get(id(handler), tree), "name", "<module>"))
+                    else:
+                        caught = ast.unparse(handler.type) if handler.type is not None else "bare"
+                        found.append((rel, handler.lineno,
+                                      f"{where(handler, handler.lineno)}: an except arm catches a start that "
+                                      f"failed ({caught}) and says nothing: route the spawn through "
+                                      "spawn_checked and say_unstarted, or give the arm "
+                                      "`# fail-open: ok <kind> <reason>`"))
+            elif isinstance(node, ast.With) and spawns_in(node.body):
+                for item in node.items:
+                    ctx = item.context_expr
+                    if (isinstance(ctx, ast.Call) and _called_name(ctx.func) == "suppress"
+                            and any(names.catches_a_failed_start(arg) for arg in ctx.args)
+                            and not _DECLARED_SILENCE.search(lines[node.lineno - 1])):
+                        found.append((rel, node.lineno,
+                                      f"{where(node, node.lineno)}: a suppress() swallows a start that failed "
+                                      f"({', '.join(ast.unparse(a) for a in ctx.args)}): route the spawn "
+                                      "through spawn_checked and say_unstarted"))
+            elif isinstance(node, ast.If):
+                tested = _spawn_failure_tested(node.test)
+                if tested is not None and not _says_or_hands_on(node.body, tested):
+                    found.append((rel, node.lineno,
+                                  f"{where(node, node.lineno)}: a SpawnFailure branch on {tested} says nothing: "
+                                  "call say_unstarted, or hand the failure on"))
+            elif isinstance(node, ast.Call) and _called_name(node.func) in names.checked:
+                bound = binding(node)
+                if bound is None:
+                    found.append((rel, node.lineno,
+                                  f"{where(node, node.lineno)}: a spawn_checked answer bound to no name, so no "
+                                  "SpawnFailure branch reads it: bind it, then "
+                                  "`if isinstance(<name>, SpawnFailure):`"))
+                elif not read_before_rebound(owner.get(id(node), tree), bound, node):
+                    found.append((rel, node.lineno,
+                                  f"{where(node, node.lineno)}: a spawn_checked answer, {bound}, that no "
+                                  f"`if isinstance({bound}, SpawnFailure):` branch reads before it is bound "
+                                  "again"))
+    return [message for _rel, _line, message in sorted(found)]
+
+
+class TestNoEngineSpawnFailsToStartInSilence:
+    """DEF-985's user: an adopter whose ``git`` (or ``npm``, or the floor
+    interpreter) is missing or shimmed reads an empty, all-clear answer from
+    ``init``, ``doctor``, ``analyze`` or ``freshness``, because a spawn that
+    never started fell into a handler that said nothing. An engine site that
+    answers in a program's place goes through ``espalier/_spawn.py::
+    spawn_checked`` and says the failure with ``say_unstarted`` (the stdlib-only
+    freshness scanner, which cannot import it, through its own
+    ``_say_unstarted``, reading the exception); an arm whose silence is right
+    says why. ``tests/test_bounded_spawn.py::
+    TestEveryEngineSiteSaysAProgramThatNeverStarted`` drives each member.
+    What the census cannot see: a raising spawn behind a helper of another
+    name (``def _git(...): return run_no_stdin(...)``, its caller's arm
+    quiet), since it reads callee names; a named call that reaches no reader,
+    and an arm that reads the exception and drops it (both read as speech). A
+    speaker by another name is refused (the strict side). It reads ``as``
+    aliases from ``espalier._spawn``, a ``from subprocess import``, a
+    module-level tuple named in an ``except``, ``contextlib.suppress``, a store
+    of the failure's name (not a read), and a ``spawn_checked`` answer that is
+    unbound or bound again before its branch, each as the reviews of
+    2026-11-17 drove them."""
+
+    def test_no_engine_spawn_that_never_started_is_answered_in_silence(self):
+        quiet = _spawns_failing_to_start_in_silence(REPO_ROOT, TestEveryEngineSpawnClosesItsChildsStdin._engine_files())
+        assert not quiet, (
+            "a program that never started is answered in silence here, so its caller's empty or "
+            "all-clear answer reads as true (DEF-985):\n  " + "\n  ".join(quiet)
+        )
+
+    def test_the_checked_spawn_population_holds_its_floor(self):
+        checked = [s for s in _spawn_sites_in(REPO_ROOT, TestEveryEngineSpawnClosesItsChildsStdin._engine_files())
+                   if s["callee"] == _ENGINE_CHECKED_SPAWN
+                   and (s["path"], s["function"]) not in _START_FAILURE_OWN]
+        assert len(checked) >= _ENGINE_CHECKED_SPAWN_FLOOR, (
+            f"{len(checked)} spawn_checked calls in the engine, below the floor {_ENGINE_CHECKED_SPAWN_FLOOR} "
+            "recorded at the contract's landing: the walk broke, or sites went back to a raising spawn -- "
+            "lower the floor on purpose, naming it"
+        )
+
+    def test_the_census_names_each_shape_it_refuses_and_passes_the_rest(self, tmp_path):
+        (tmp_path / "espalier").mkdir()
+        (tmp_path / "espalier" / "m.py").write_text("\n".join([
+            "import subprocess",
+            "from espalier._spawn import SpawnFailure, run_bounded, run_no_stdin, say_unstarted, spawn_checked",
+            "def quiet():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'])",
+            "    except OSError:",
+            "        return None",
+            "def timeout_only():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'], timeout=5)",
+            "    except subprocess.TimeoutExpired:",
+            "        return None",
+            "def child_ran():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'], check=True)",
+            "    except subprocess.SubprocessError:",
+            "        return None",
+            "def speaks():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'])",
+            "    except OSError:",
+            "        print('git did not start')",
+            "def reads():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'])",
+            "    except (OSError, ValueError) as exc:",
+            "        return None, str(exc)",
+            "def declared():",
+            "    try:",
+            "        run_no_stdin(['rg', 'x'])",
+            "    except FileNotFoundError:  # fail-open: ok deliberate -- rg is optional, the walk answers the same",
+            "        return None",
+            "def declared_kind_alone():",
+            "    try:",
+            "        run_no_stdin(['rg', 'x'])",
+            "    except FileNotFoundError:  # fail-open: ok deliberate",
+            "        return None",
+            "def bare_raw():",
+            "    try:",
+            "        subprocess.run(['git', 'log'], stdin=subprocess.DEVNULL)  # spawn: ok holds no pipe at all",
+            "    except:",
+            "        return None",
+            "def bounded_everything():",
+            "    try:",
+            "        run_bounded(['git', 'log'], timeout=5)",
+            "    except Exception:",
+            "        return None",
+            "def checked_says():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        say_unstarted(r, 'the log reads empty')",
+            "        return None",
+            "    return r.stdout",
+            "def checked_silent():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        return None",
+            "    return r.stdout",
+            "def checked_unread():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    return r.stdout",
+            "def checked_handed_on():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        return None, r.resolution",
+            "    return r.stdout, ''",
+            "def checked_under_an_arm_for_its_child():",
+            "    try:",
+            "        r = spawn_checked(['git', 'log'], timeout=5)",
+            "    except OSError:",
+            "        return None",
+            "    if isinstance(r, SpawnFailure):",
+            "        say_unstarted(r, 'the log reads empty')",
+            "        return None",
+            "    return r.stdout",
+            # The shapes the reviews of 2026-11-17 drove past the first cut.
+            "from espalier._spawn import run_no_stdin as _run",
+            "from subprocess import run, DEVNULL",
+            "import contextlib",
+            "_GIT_ERRORS = (OSError, subprocess.TimeoutExpired)",
+            "def store_is_no_read():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        r = None",
+            "    return r",
+            "def walrus_silent():",
+            "    if isinstance(r := spawn_checked(['git', 'log']), SpawnFailure):",
+            "        return None",
+            "    return r.stdout",
+            "def annotated_says():",
+            "    r: object = spawn_checked(['git', 'log'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        say_unstarted(r, 'the log reads empty')",
+            "    return r",
+            "def inline_answer():",
+            "    return spawn_checked(['git', 'log']).stdout",
+            "def rebound_before_read():",
+            "    r = spawn_checked(['git', 'log'])",
+            "    r = spawn_checked(['git', 'status'])",
+            "    if isinstance(r, SpawnFailure):",
+            "        say_unstarted(r, 'the status reads empty')",
+            "    return r",
+            "def aliased():",
+            "    try:",
+            "        _run(['git', 'log'])",
+            "    except NotADirectoryError:",
+            "        return None",
+            "def suppressed():",
+            "    with contextlib.suppress(OSError):",
+            "        run_no_stdin(['git', 'log'])",
+            "def tupled():",
+            "    try:",
+            "        run_no_stdin(['git', 'log'])",
+            "    except _GIT_ERRORS:",
+            "        return None",
+            "def bare_imported():",
+            "    try:",
+            "        run(['git', 'log'], stdin=DEVNULL)",
+            "    except OSError:",
+            "        return None",
+            "def another_run_is_no_spawn(job):",
+            "    try:",
+            "        job.run()",
+            "    except OSError:",
+            "        return None",
+        ]) + "\n", encoding="utf-8")
+        (tmp_path / "espalier" / "_spawn.py").write_text("\n".join([
+            "def run_no_stdin(args):",
+            "    try:",
+            "        return run_bounded(args)",
+            "    except OSError:",
+            "        return None",
+        ]) + "\n", encoding="utf-8")
+        quiet = _spawns_failing_to_start_in_silence(tmp_path, ["espalier/m.py", "espalier/_spawn.py"])
+        route = ("and says nothing: route the spawn through spawn_checked and say_unstarted, or give the arm "
+                 "`# fail-open: ok <kind> <reason>`")
+        assert quiet == [
+            f"espalier/m.py:6 in quiet: an except arm catches a start that failed (OSError) {route}",
+            f"espalier/m.py:36 in declared_kind_alone: an except arm catches a start that failed "
+            f"(FileNotFoundError) {route}",
+            f"espalier/m.py:41 in bare_raw: an except arm catches a start that failed (bare) {route}",
+            f"espalier/m.py:46 in bounded_everything: an except arm catches a start that failed (Exception) {route}",
+            "espalier/m.py:56 in checked_silent: a SpawnFailure branch on r says nothing: call say_unstarted, "
+            "or hand the failure on",
+            "espalier/m.py:60 in checked_unread: a spawn_checked answer, r, that no "
+            "`if isinstance(r, SpawnFailure):` branch reads before it is bound again",
+            "espalier/m.py:82 in store_is_no_read: a SpawnFailure branch on r says nothing: call say_unstarted, "
+            "or hand the failure on",
+            "espalier/m.py:86 in walrus_silent: a SpawnFailure branch on r says nothing: call say_unstarted, "
+            "or hand the failure on",
+            "espalier/m.py:95 in inline_answer: a spawn_checked answer bound to no name, so no SpawnFailure "
+            "branch reads it: bind it, then `if isinstance(<name>, SpawnFailure):`",
+            "espalier/m.py:97 in rebound_before_read: a spawn_checked answer, r, that no "
+            "`if isinstance(r, SpawnFailure):` branch reads before it is bound again",
+            f"espalier/m.py:105 in aliased: an except arm catches a start that failed (NotADirectoryError) {route}",
+            "espalier/m.py:108 in suppressed: a suppress() swallows a start that failed (OSError): route the "
+            "spawn through spawn_checked and say_unstarted",
+            f"espalier/m.py:113 in tupled: an except arm catches a start that failed (_GIT_ERRORS) {route}",
+            f"espalier/m.py:118 in bare_imported: an except arm catches a start that failed (OSError) {route}",
+        ], quiet
+
+    def test_the_arms_that_declare_their_silence_are_the_roster(self):
+        """Each arm whose silence passes only by its ``# fail-open: ok``
+        line, held to a roster, so a new one is a reviewed diff here and never
+        a quiet way past the census (the failure-mode review of 2026-11-17)."""
+        declared: list[str] = []
+        _spawns_failing_to_start_in_silence(
+            REPO_ROOT, TestEveryEngineSpawnClosesItsChildsStdin._engine_files(), declared)
+        assert sorted(declared) == sorted(_DECLARED_SILENT_ARMS), sorted(declared)
 
 
 class TestEveryTimedSpawnOutsideToolsCcIsBounded:
@@ -2409,7 +2877,11 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
         )
 
     def test_the_routed_population_holds_its_floor(self):
-        routed = [s for s in _spawn_sites_in(REPO_ROOT, _census_files()) if s["bounded"] and s["timed"]]
+        # The engine's spawn_checked is the bounded spawn behind argv[0]'s
+        # resolution (DEF-985): a timed call of it is a timed bounded call.
+        routed = [s for s in _spawn_sites_in(REPO_ROOT, _census_files())
+                  if s["timed"] and (s["bounded"] or (s["path"].startswith("espalier/")
+                                                      and s["callee"] == _ENGINE_CHECKED_SPAWN))]
         assert len(routed) >= _ROUTED_TIMED_FLOOR, (
             f"{len(routed)} timed run_bounded calls outside tools/cc, below the floor "
             f"{_ROUTED_TIMED_FLOOR} recorded at the reroute: the walk broke, or sites went "

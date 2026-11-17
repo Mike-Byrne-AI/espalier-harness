@@ -6580,7 +6580,9 @@ launcher holds, and is the deterministic drive.
 passes `stdin=subprocess.DEVNULL` unless the caller feeds the child; a child that is itself a
 tree (a pytest) goes through `espalier/_spawn.py::run_tree_bounded` instead, with
 `stdin=subprocess.DEVNULL` given at the call, since that twin of the `tools/cc` copy closes
-none; the stdlib-only freshness scanner passes it on each of its own calls.
+none; the stdlib-only freshness scanner passes it on each of its own calls. A site that
+answers in place of a program that never started goes through `espalier/_spawn.py::spawn_checked`,
+which calls the same wrapper, and says the failure with `say_unstarted` (DEF-985).
 `tests/test_contracts.py::TestEveryEngineSpawnClosesItsChildsStdin` refuses an engine spawn
 that goes around it. It costs one thing: a child handed any one handle has the other two
 duplicated from the parent (with all three left alone `Popen` duplicates none), so a child

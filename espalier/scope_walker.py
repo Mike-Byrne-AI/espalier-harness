@@ -196,7 +196,7 @@ def _walk_with_ripgrep(
             check=False,
             timeout=30,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # fail-open: ok deliberate -- ripgrep is optional: on None the caller's Python walk answers the same references, so a missing rg changes nothing the user reads
         return None
     if proc.returncode not in (0, 1):
         return None
@@ -320,7 +320,7 @@ def _rg_multi(
             check=False,
             timeout=30,
         )
-    except (FileNotFoundError, subprocess.SubprocessError):
+    except (FileNotFoundError, subprocess.SubprocessError):  # fail-open: ok deliberate -- ripgrep is optional: on None _walk_multi_with_ripgrep hands over to the Python walk, which answers the same references
         return None
     if proc.returncode not in (0, 1):
         return None

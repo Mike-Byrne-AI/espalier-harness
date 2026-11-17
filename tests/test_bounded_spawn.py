@@ -1309,3 +1309,451 @@ class TestTheWrappersHandleTradeOnWindows:
         subprocess.run([sys.executable, "-c", driver, str(out)], check=True, stdin=subprocess.DEVNULL,
                        capture_output=True, timeout=30)  # two bare starts, about 1 s; under the 60 s ceiling
         assert json.loads(out.read_text(encoding="utf-8")) == {"bare": 0, "wrapper": 6}
+
+
+#: A Windows script shim's body: echo one word, CRLF-ended as cmd.exe writes it.
+_SHIM_BODY = b"@echo shimmed" + bytes([13, 10])
+
+
+class TestTheEngineSpawnHandsBackAStartThatFailed:
+    """``espalier/_spawn.py::spawn_checked`` (DEF-985): the hooks' contract for
+    the engine. argv[0] is resolved first, a program that does not start comes
+    back as a ``SpawnFailure``, and what a child that started does still raises
+    as it did, so a caller speaks on a start that failed and on nothing else."""
+
+    def test_a_program_on_no_path_comes_back_unresolved(self):
+        from espalier._spawn import SpawnFailure, spawn_checked
+        got = spawn_checked(["espalier-no-such-program-985"], capture_output=True, timeout=30)
+        assert got == SpawnFailure(("espalier-no-such-program-985",), "Unresolved", None)
+        assert got.resolution == "`espalier-no-such-program-985` did not resolve to a program"
+
+    def test_an_empty_command_comes_back_empty(self):
+        from espalier._spawn import SpawnFailure, spawn_checked
+        assert spawn_checked([]) == SpawnFailure((), "EmptyCommand", None)
+
+    def test_a_file_that_is_no_program_resolves_and_still_cannot_start(self, tmp_path):
+        """POSIX: not executable, so ``exec`` refuses; Windows: not a program
+        ``CreateProcess`` runs. Either way the token resolved, and the failure
+        says to what."""
+        from espalier._spawn import SpawnFailure, spawn_checked
+        notes = tmp_path / "notes.txt"
+        notes.write_bytes(b"not a program")
+        got = spawn_checked([str(notes)], capture_output=True, timeout=30)
+        assert isinstance(got, SpawnFailure) and got.resolved == str(notes), got
+        assert got.error not in ("Unresolved", "EmptyCommand") and got.detail, got
+        assert got.resolution.endswith("and still could not start"), got.resolution
+
+    def test_an_argument_popen_refuses_comes_back_as_a_start_that_failed(self):
+        from espalier._spawn import SpawnFailure, spawn_checked
+        got = spawn_checked([sys.executable, "-c", "pass", "a" + chr(0) + "b"], capture_output=True, timeout=scaled(30))
+        assert isinstance(got, SpawnFailure) and got.error == "ValueError", got
+
+    def test_a_child_that_ran_and_answered_no_is_the_callers_answer(self):
+        """A non-git tree's ``git`` exits 128: it started, so no failure."""
+        from espalier._spawn import spawn_checked
+        got = spawn_checked([sys.executable, "-c", "raise SystemExit(3)"], capture_output=True, timeout=scaled(30))
+        assert isinstance(got, subprocess.CompletedProcess) and got.returncode == 3, got
+
+    def test_a_check_exit_still_raises(self):
+        from espalier._spawn import spawn_checked
+        with pytest.raises(subprocess.CalledProcessError):
+            spawn_checked([sys.executable, "-c", "raise SystemExit(3)"], capture_output=True, check=True,
+                          timeout=scaled(30))
+
+    def test_output_that_does_not_decode_still_raises(self, monkeypatch):
+        """A ``UnicodeDecodeError`` is a ``ValueError``, and the child that
+        printed it ran: it propagates, never a start that failed. Faked at the
+        bounded spawn, because on Windows with a timeout CPython decodes in
+        ``communicate``'s reader thread and the error never reaches the caller
+        at all."""
+        from espalier import _spawn
+
+        def undecodable(args, **kw):
+            raise UnicodeDecodeError("utf-8", bytes([255]), 0, 1, "invalid start byte")
+
+        monkeypatch.setattr(_spawn, "run_bounded", undecodable)
+        with pytest.raises(UnicodeDecodeError):
+            _spawn.spawn_checked([sys.executable, "-c", "pass"], capture_output=True, text=True, encoding="utf-8",
+                                 timeout=scaled(30))
+
+    def test_a_timeout_still_raises(self):
+        from espalier._spawn import spawn_checked
+        with pytest.raises(subprocess.TimeoutExpired):
+            spawn_checked([sys.executable, "-c", "import time; time.sleep(60)"], capture_output=True, timeout=scaled(1))
+
+    def test_the_child_gets_a_closed_stdin_and_the_resolved_program(self, monkeypatch):
+        from espalier import _spawn
+        calls = []
+        monkeypatch.setattr(_spawn, "run_bounded", lambda args, **kw: calls.append((args, kw)) or "ran")
+        assert _spawn.spawn_checked(["git", "log"], timeout=5) == "ran"
+        assert calls == [([_spawn.resolve_program("git"), "log"],
+                          {"input": None, "stdin": subprocess.DEVNULL, "timeout": 5})]
+        assert os.path.isabs(calls[0][0][0]), calls
+
+    def test_a_program_in_the_current_directory_is_not_resolved(self, tmp_path, monkeypatch):
+        """``shutil.which`` searches the current directory first on Windows, so
+        a ``git.cmd`` a cloned tree carries would run where ``CreateProcess``
+        never looked (the code review of 2026-11-17): the engine looks on PATH
+        alone, and a relative PATH entry is skipped as the same place."""
+        from espalier import _spawn
+        from tests._stubs import write_stub
+        name = "planted985"
+        write_stub(tmp_path / (name + ".cmd" if os.name == "nt" else name),
+                   "@echo planted" if os.name == "nt" else "#!/bin/sh\necho planted", crlf=os.name == "nt")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PATH", os.pathsep.join([".", "", os.environ.get("PATH", "")]))
+        assert _spawn.resolve_program(name) is None
+        got = _spawn.spawn_checked([name], capture_output=True, timeout=scaled(30))
+        assert isinstance(got, _spawn.SpawnFailure) and got.error == "Unresolved", got
+
+    @pytest.mark.parametrize("clash", [
+        {"input": "x", "stdin": subprocess.DEVNULL},
+        {"capture_output": True, "stdout": subprocess.DEVNULL},
+    ], ids=["input-with-stdin", "capture-with-stdout"])
+    def test_a_callers_keyword_clash_raises_and_is_no_start_that_failed(self, clash):
+        from espalier._spawn import spawn_checked
+        with pytest.raises(ValueError):
+            spawn_checked(["git", "log"], **clash)
+
+    def test_the_contract_reads_as_the_hooks_copy_does(self):
+        """The engine's copy and ``tools/cc/hooks/_hook_utils.py``'s are held
+        to the same shim refusal and the same sentences, so a fix to one
+        reaches the other. Where they part, on purpose: the engine never
+        resolves a bare name in the current directory, and reads a decode
+        error as a child that ran."""
+        from espalier import _spawn
+        hooks = _load_hook_utils()
+        assert _spawn._CMD_SHIM_METACHARS == hooks._CMD_SHIM_METACHARS
+        for args in [((), "EmptyCommand", None), (("git",), "Unresolved", None),
+                     (("npm", "a&b"), "CmdShimMetachar", "C:/x/npm.cmd"),
+                     (("git",), "FileNotFoundError", "/usr/bin/git", "[Errno 2] gone")]:
+            assert _spawn.SpawnFailure(*args).resolution == hooks.SpawnFailure(*args).resolution, args
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="PATHEXT and the .cmd shim are Windows's")
+    def test_a_cmd_shim_starts_where_a_bare_spawn_cannot_find_it(self, tmp_path, monkeypatch):
+        """``npm`` is ``npm.cmd``: ``subprocess`` alone looks for an .exe and
+        raises, ``shutil.which`` honours PATHEXT and finds the shim."""
+        from espalier._spawn import spawn_checked
+        (tmp_path / "shim985.cmd").write_bytes(_SHIM_BODY)
+        monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+        with pytest.raises(FileNotFoundError):
+            subprocess.run(["shim985"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+        got = spawn_checked(["shim985"], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert isinstance(got, subprocess.CompletedProcess) and got.stdout.strip() == "shimmed", got
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="PATHEXT and the .cmd shim are Windows's")
+    def test_a_cmd_shim_with_a_metacharacter_argument_is_refused(self, tmp_path, monkeypatch):
+        from espalier._spawn import spawn_checked
+        (tmp_path / "shim985.cmd").write_bytes(_SHIM_BODY)
+        monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+        got = spawn_checked(["shim985", "a&b"], capture_output=True, timeout=30)
+        assert got.error == "CmdShimMetachar" and got.resolved.lower().endswith("shim985.cmd"), got
+
+
+class TestTheEngineSaysOnceThatAProgramNeverStarted:
+    """``espalier/_spawn.py::say_unstarted`` (DEF-985): one line on stderr per
+    program per process, naming the program, how it failed and what the caller
+    answers in its place; a stream that cannot take it costs the caller nothing."""
+
+    @pytest.fixture(autouse=True)
+    def fresh(self, monkeypatch):
+        from espalier import _spawn
+        monkeypatch.setattr(_spawn, "_SAID_UNSTARTED", set())
+
+    def test_the_line_names_the_program_and_what_answers_in_its_place(self, capsys):
+        from espalier._spawn import SpawnFailure, say_unstarted
+        say_unstarted(SpawnFailure(("git", "ls-files"), "Unresolved", None), "the tracked set reads empty")
+        err = capsys.readouterr().err
+        assert err == "espalier: `git` did not resolve to a program, so the tracked set reads empty\n", err
+
+    def test_a_second_failure_of_the_same_program_says_nothing_and_another_program_does(self, capsys):
+        from espalier._spawn import SpawnFailure, say_unstarted
+        say_unstarted(SpawnFailure(("git", "a"), "Unresolved", None), "one")
+        say_unstarted(SpawnFailure(("git", "b"), "FileNotFoundError", "/x/git", "[Errno 2] gone"), "two")
+        say_unstarted(SpawnFailure(("rg",), "Unresolved", None), "three")
+        lines = capsys.readouterr().err.splitlines()
+        assert [ln.split(",", 1)[0] for ln in lines] == [
+            "espalier: `git` did not resolve to a program", "espalier: `rg` did not resolve to a program"], lines
+
+    def test_a_failure_that_raised_carries_its_detail(self, capsys):
+        from espalier._spawn import SpawnFailure, say_unstarted
+        say_unstarted(SpawnFailure(("git",), "PermissionError", "/opt/git", "[Errno 13] Permission denied: /opt/git"),
+                      "the branch reads main")
+        assert capsys.readouterr().err.startswith(
+            "espalier: `git` resolved to `/opt/git` and still could not start "
+            "([Errno 13] Permission denied: /opt/git), so the branch reads main\n")
+
+    def test_a_path_the_stream_cannot_encode_is_escaped_not_raised(self, monkeypatch):
+        from espalier import _spawn
+
+        class _Cp1252Console:
+            """A stock Windows console's stream: it encodes strictly, so a
+            character outside its code page raises at the write."""
+            encoding = "cp1252"
+
+            def __init__(self):
+                self.raw = bytearray()
+
+            def write(self, text):
+                self.raw += text.encode(self.encoding)
+
+            def flush(self):
+                pass
+
+        stream = _Cp1252Console()
+        monkeypatch.setattr(_spawn.sys, "stderr", stream)
+        word = chr(0x436)  # outside cp1252
+        _spawn.say_unstarted(_spawn.SpawnFailure(("git",), "Unresolved", None), word + " reads empty")
+        escaped = word.encode("cp1252", "backslashreplace").decode("cp1252")
+        assert escaped[0] == chr(92) and escaped != word
+        assert bytes(stream.raw).decode("cp1252").startswith(
+            "espalier: `git` did not resolve to a program, so " + escaped + " reads empty")
+
+    @pytest.mark.parametrize("closed", [True, False], ids=["no-stderr", "stderr-raises"])
+    def test_a_stream_that_cannot_take_the_line_costs_the_caller_nothing(self, monkeypatch, closed):
+        from espalier import _spawn
+
+        class _Closed:
+            encoding = "utf-8"
+
+            def write(self, text):
+                raise ValueError("I/O operation on closed file.")
+
+        monkeypatch.setattr(_spawn.sys, "stderr", None if closed else _Closed())
+        _spawn.say_unstarted(_spawn.SpawnFailure(("git",), "Unresolved", None), "the tracked set reads empty")
+
+
+def _git_dir(root: Path) -> Path:
+    (root / ".git").mkdir(exist_ok=True)
+    return root
+
+
+def _deployed_hook(root: Path, name: str) -> Path:
+    hook = root / "tools" / "cc" / "hooks" / name
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_bytes(b"")
+    return root
+
+
+def _frontmatter_at_risk(root: Path, monkeypatch) -> Path:
+    from espalier import render_surface
+    monkeypatch.setattr(render_surface, "frontmatter_body_paths", lambda repo: [".claude/agents/a.md"])
+    monkeypatch.setattr(render_surface, "_read_body_bytes", lambda path: "")
+    monkeypatch.setattr(render_surface, "frontmatter_has_crlf", lambda text: False)
+    monkeypatch.setattr(render_surface, "frontmatter_hazards",
+                        lambda text: [("description", render_surface.FRONTMATTER_FRAGILE, "", "")])
+    return root
+
+
+def _bound_paths(monkeypatch) -> None:
+    from espalier import freshness
+    monkeypatch.setattr(freshness, "_pinned_bound_paths", lambda repo: ["x.py"])
+    monkeypatch.setattr(freshness, "_pinned_marker_paths", lambda repo: [])
+
+
+def _workflow_on_disk(root: Path) -> Path:
+    from espalier import fuse
+    workflow = root / fuse._WORKFLOW_REL
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_bytes(b"name: x")
+    return root
+
+
+def _root_markdown(root: Path) -> Path:
+    (root / "a.md").write_bytes(b"# a")
+    return root
+
+
+def _site(name: str):
+    import importlib
+    module, _, attr = name.rpartition(".")
+    return getattr(importlib.import_module("espalier." + module), attr)
+
+
+#: Each engine site that answers in place of a program that never started
+#: (DEF-985): its name under ``espalier.``, the call (tmp_path, monkeypatch),
+#: the answer it gives in the program's place, and words of what it says. The
+#: answer is the one each site gave before the contract on a missing program:
+#: the contract adds the line. Three sites answer where they used to raise (a
+#: PermissionError at ``detect_git_conventions``, a ValueError at
+#: ``_pinned_bound_changed_since`` and ``_tracked_dirs``): the permissive side.
+_ENGINE_SITES = [
+    ("analyze.detect_head_sha", lambda t, m: _site("analyze.detect_head_sha")(t), "", "records no head commit"),
+    ("analyze.detect_git_conventions",
+     lambda t, m: _site("analyze.detect_git_conventions")(t)["format"], "freeform", "reads as freeform"),
+    ("cli._git_covered_entries",
+     lambda t, m: _site("cli._git_covered_entries")(t / ".gitignore", ("reports/",), fold=False), None,
+     "already cover is not asked of git"),
+    ("cli._git_ignorecase", lambda t, m: _site("cli._git_ignorecase")(t), False, "case folding reads as off"),
+    ("cli._untracked_conflicts",
+     lambda t, m: (m.setattr(__import__("espalier.cli").cli, "_git_ignorecase", lambda repo: False),
+                   _site("cli._untracked_conflicts")(t, ["task-packs/"]))[1], {}, "no uncommitted file"),
+    ("cli._git_tracked", lambda t, m: _site("cli._git_tracked")(t), None, "no tracked file is checked"),
+    ("cli._ignored_files_under", lambda t, m: _site("cli._ignored_files_under")(t, "task-packs"), None,
+     "retiring the task-packs/ rule"),
+    ("cli._git_hides", lambda t, m: _site("cli._git_hides")(t, ".worktreeinclude"), False,
+     ".worktreeinclude reads as not ignored"),
+    ("cli._git_ignored", lambda t, m: _site("cli._git_ignored")(_git_dir(t), ["a"]), None, "harness paths"),
+    ("doctor._probe_deployed_stop_gate",
+     lambda t, m: _site("doctor._probe_deployed_stop_gate")(_deployed_hook(t, "stop_gate.py")), None,
+     "deployed stop gate"),
+    ("doctor._probe_recall_corpus",
+     lambda t, m: _site("doctor._probe_recall_corpus")(_deployed_hook(t, "_recall.py")), {"error": "no_answer"},
+     "recall corpus as not readable"),
+    ("doctor._check_frontmatter_line_endings",
+     lambda t, m: _site("doctor._check_frontmatter_line_endings")(_frontmatter_at_risk(t, m)), [],
+     "LF line endings"),
+    ("freshness._git_head_sha_quiet", lambda t, m: _site("freshness._git_head_sha_quiet")(t), None,
+     "cache reads as stale"),
+    ("freshness._git_is_ancestor_within_n",
+     lambda t, m: _site("freshness._git_is_ancestor_within_n")("a" * 40, "HEAD", n=5, cwd=t), False,
+     "off this branch"),
+    ("freshness._pinned_bound_changed_since",
+     lambda t, m: (_bound_paths(m), _site("freshness._pinned_bound_changed_since")(t, "a" * 40))[1], True,
+     "cache reads as stale"),
+    ("fuse._tracked_files", lambda t, m: _site("fuse._tracked_files")(t), None, "no git repository"),
+    ("fuse._workflow_tracked", lambda t, m: _site("fuse._workflow_tracked")(_workflow_on_disk(t)), None,
+     "fused CI workflow"),
+    ("fuse._run_in_fusion", lambda t, m: _site("fuse._run_in_fusion")(t, [sys.executable, "-c", "pass"]), None,
+     "reports no exit code"),
+    ("pre_release._parity_runnable", lambda t, m: _site("pre_release._parity_runnable")(), False,
+     "not runnable here"),
+    ("reflect_protocol._tracked_root_markdown",
+     lambda t, m: _site("reflect_protocol._tracked_root_markdown")(_root_markdown(t)), ["a.md"], "on disk"),
+    ("worktree._git_branch", lambda t, m: _site("worktree._git_branch")(t), "main", "base branch reads as main"),
+    ("zone_writes._tracked_dirs", lambda t, m: _site("zone_writes._tracked_dirs")(_git_dir(t), ["tools/cc/"]),
+     frozenset(), "without git's tracked set"),
+]
+
+#: The stdlib-only freshness scanner's git reads, through its own copy of the
+#: bounded spawn and its own form of the line.
+_SCANNER_SITES = [
+    ("_git_log_name_only", lambda sf, t: sf._git_log_name_only(t, "a" * 40, ["x.py"]), {},
+     "touching its bound files"),
+    ("_place_symbol", lambda sf, t: sf._place_symbol(t, "x.py", "f"), (None, "git did not answer"), "not placed"),
+    ("_git_log_symbol_commits", lambda sf, t: sf._git_log_symbol_commits(t, "a" * 40, "x.py", (1, 2)), None,
+     "commits since its pin"),
+    ("_git_status_dirty", lambda sf, t: sf._git_status_dirty(t, ["x.py"]), {}, "uncommitted change"),
+    ("_git_diff_old_ranges", lambda sf, t: sf._git_diff_old_ranges(t, "x.py"), None, "working-tree change"),
+    ("_manifest_fragments_at_head", lambda sf, t: sf._manifest_fragments_at_head(t), None, "not at HEAD"),
+    ("_head_sha", lambda sf, t: sf._head_sha(t), "", "records no head commit"),
+]
+
+
+def _never_starts(args, **kwargs):
+    raise FileNotFoundError(2, "No such file or directory")
+
+
+def _said(err: str) -> list[str]:
+    return [line for line in err.splitlines() if line.startswith("espalier: ")]
+
+
+class TestEveryEngineSiteSaysAProgramThatNeverStarted:
+    """DEF-985's user: an adopter whose ``git`` is missing or shimmed reads an
+    empty, all-clear answer from ``init``, ``doctor``, ``analyze`` or
+    ``freshness``, because a spawn that never started fell into a handler that
+    said nothing. Each site now says it, once, on stderr, and gives the answer
+    it gave before. A child that ran and answered no (a non-git tree's ``git``
+    exits 128) says nothing. The census in ``tests/test_contracts.py``
+    (``TestNoEngineSpawnFailsToStartInSilence``) holds the population; this
+    drives each member. The memo is reset with ``raising=False`` so this file
+    laid over the tree before the contract reds on the missing line, not on a
+    missing name."""
+
+    @pytest.fixture(autouse=True)
+    def fresh(self, monkeypatch):
+        from espalier import _spawn
+        from espalier.scanners import freshness as scanner
+        monkeypatch.setattr(_spawn, "_SAID_UNSTARTED", set(), raising=False)
+        monkeypatch.setattr(scanner, "_SAID_UNSTARTED", set(), raising=False)
+
+    @pytest.mark.parametrize("name,call,answer,words", _ENGINE_SITES, ids=[row[0] for row in _ENGINE_SITES])
+    def test_an_engine_site_says_once_and_its_answer_stands(self, tmp_path, monkeypatch, capsys,
+                                                            name, call, answer, words):
+        from espalier import _spawn
+        monkeypatch.setattr(_spawn, "run_bounded", _never_starts)
+        assert call(tmp_path, monkeypatch) == answer
+        said = _said(capsys.readouterr().err)
+        assert len(said) == 1 and words in said[0] and "could not start" in said[0], said
+
+    @pytest.mark.parametrize("name,call,answer,words", _SCANNER_SITES, ids=[row[0] for row in _SCANNER_SITES])
+    def test_a_scanner_site_says_once_and_its_answer_stands(self, tmp_path, monkeypatch, capsys,
+                                                            name, call, answer, words):
+        from espalier.scanners import freshness as scanner
+        monkeypatch.setattr(scanner, "run_bounded", _never_starts)
+        assert call(scanner, tmp_path) == answer
+        said = _said(capsys.readouterr().err)
+        assert len(said) == 1 and words in said[0] and "`git` could not start" in said[0], said
+
+    @pytest.mark.parametrize("name,call,answer,words", _ENGINE_SITES, ids=[row[0] for row in _ENGINE_SITES])
+    def test_an_engine_site_whose_program_ran_says_nothing(self, tmp_path, monkeypatch, capsys,
+                                                           name, call, answer, words):
+        """The real program, in a tree that is no repository: git starts and
+        answers no, the interpreter starts; none of it is a start that failed."""
+        call(tmp_path, monkeypatch)
+        assert _said(capsys.readouterr().err) == []
+
+    @pytest.mark.parametrize("name,call,answer,words", _SCANNER_SITES, ids=[row[0] for row in _SCANNER_SITES])
+    def test_a_scanner_site_whose_git_ran_says_nothing(self, tmp_path, capsys, name, call, answer, words):
+        from espalier.scanners import freshness as scanner
+        call(scanner, tmp_path)
+        assert _said(capsys.readouterr().err) == []
+
+    @pytest.mark.parametrize("raised", [
+        subprocess.TimeoutExpired(["git"], 30),
+        UnicodeDecodeError("utf-8", bytes([255]), 0, 1, "invalid start byte"),
+    ], ids=["timeout", "undecodable"])
+    def test_a_scanner_git_that_started_and_then_failed_says_nothing(self, tmp_path, monkeypatch, capsys, raised):
+        """The scanner reads the exception, so its own type check is the line
+        between a start that failed and a child that ran: a timeout and output
+        that did not decode are the second, and keep the scan's old answer."""
+        from espalier.scanners import freshness as scanner
+
+        def started_then_failed(args, **kwargs):
+            raise raised
+
+        monkeypatch.setattr(scanner, "run_bounded", started_then_failed)
+        assert scanner._head_sha(tmp_path) == ""
+        assert _said(capsys.readouterr().err) == []
+
+    def test_a_git_on_no_path_is_named_as_unresolved(self, tmp_path, monkeypatch, capsys):
+        """The anchor, with nothing faked: PATH holds no git, so the lane
+        plan's branch read never starts, and the line says why."""
+        from espalier.worktree import _git_branch
+        empty = tmp_path / "empty-path"
+        empty.mkdir()
+        monkeypatch.setenv("PATH", str(empty))
+        assert _git_branch(tmp_path) == "main"
+        assert _said(capsys.readouterr().err) == [
+            "espalier: `git` did not resolve to a program, so the lane plan's base branch reads as main"]
+
+    def test_a_fresh_process_says_it_with_the_memo_as_shipped(self, tmp_path):
+        """Nothing faked and nothing reset: a new interpreter with no git on
+        PATH, so a memo that ships holding a program (a debug edit that
+        "quiets the noise") reds here, where every in-process test resets it
+        first (the failure-mode review of 2026-11-17)."""
+        empty = tmp_path / "empty-path"
+        empty.mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "PATH"}
+        env["PATH"] = str(empty)
+        done = subprocess.run(
+            [sys.executable, "-c", "from espalier.worktree import _git_branch; print(_git_branch('.'))"],
+            cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=scaled(30))  # one import and one spawn, about a second
+        assert done.stdout.strip() == "main", done.stdout + done.stderr
+        assert _said(done.stderr) == [
+            "espalier: `git` did not resolve to a program, so the lane plan's base branch reads as main"], done.stderr
+
+    def test_the_driven_sites_are_every_checked_spawn(self):
+        """The table above is kept by hand; it is held to the engine's own
+        ``spawn_checked`` callers, so a new one is driven too (the
+        failure-mode review of 2026-11-17)."""
+        from tests.test_spawn_chokepoint import spawn_sites
+        engine = Path(__file__).resolve().parents[1] / "espalier"
+        callers = {
+            f"{site['file'][:-3].replace('/', '.')}.{site['function']}"
+            for site in spawn_sites(engine, "**/*.py")
+            if site["callee"] == "spawn_checked" and site["file"] != "_spawn.py"
+            and not site["file"].startswith("_vendor/")
+        }
+        assert callers == {row[0] for row in _ENGINE_SITES}, sorted(callers ^ {row[0] for row in _ENGINE_SITES})
