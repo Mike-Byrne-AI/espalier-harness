@@ -62,15 +62,19 @@ everything around it.
 
 ``R4`` — **a stderr redirect among the operands (must-deny).** Each denied row of
 ``tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`` stays
-denied with a stderr redirect written at any blank between its tokens after the
-command word, or on Bash before it. Each tool's own parser is the oracle that a place is null for what
-the verb is handed (no row is executed), and the class's own judges give the
-verdict, so a reader that takes an operand by its place and misses the redirect
-view reds here without anyone naming it (DEF-5120; the job DEF-5107, DEF-5108,
+denied, and each wall row of ``TestCatastrophicFindDelete`` stays walled, with
+a stderr redirect (the file spelling and the merge, ``2>&1``) written at any
+blank between its tokens after the command word, or on Bash before it. Each
+tool's own parser is the oracle that a place is null for what the verb is
+handed (no row is executed), and the classes' own judges give the verdict, so
+a reader that takes an operand by its place and loses it to the redirect reds
+here without anyone naming it (DEF-5120, DEF-5122; the job DEF-5107, DEF-5108,
 DEF-2088 and DEF-2087 fixed one reader set at a time). A red names its next
-step (``R4_REMEDY``): put the reader that takes the operand by its place on
-the redirect view, or, where the coverage contract gives the row's job to
-the after-check, take it to the dispatcher for the sort.
+step (``R4_REMEDY``): see that the hard check the row reaches reads the
+command with its error-stream redirects blanked, then put the reader that
+takes the operand by its place on the redirect view, or, where the coverage
+contract gives the row's job to the after-check, take it to the dispatcher
+for the sort.
 
 RUNNING IT
 ----------
@@ -824,15 +828,19 @@ def check_r3(quick: bool = False) -> dict:
 # denied rows of `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`
 # (`_ZONE_ROWS`, `_SECRET_ROWS`), read from the class, never copied, each
 # spelled under the plain root for every protected kind the class spells it
-# for. Its transformation is a stderr redirect written at each blank between
-# tokens after the command word, at the end, and on Bash before the command
-# word. Its relation: a denied row stays denied.
+# for, and the wall rows of `TestCatastrophicFindDelete` (`_root_rows`: its
+# matrix's catastrophic rows from the checkout itself, DEF-5122). Its
+# transformation is a stderr redirect, each of the tool's spellings, written
+# at each blank between tokens after the command word, at the end, and on
+# Bash before the command word. Its relation: a denied row stays denied.
 #
 # The transformation is proved null per row and per place by the tool's own
 # parser, never assumed: bash parses both spellings syntax-only (`bash -n`)
 # and prints each parsed form (`declare -f` of a function holding it; the
 # function is defined and printed, never called), and the spelling is null
-# where the two printed forms differ by the redirect alone; PowerShell's
+# where the two printed forms differ by the redirect alone (a spelling bash
+# prints as written, `2>&1`, is proved on a twin it prints otherwise and must
+# parse to the twin's form: `R4_BASH_TWINS`); PowerShell's
 # `Parser::ParseInput` gives each command's elements, and the spelling is null
 # where they are equal and the one redirection more is the one written. No
 # row is executed: a parser decides what a verb is handed, and a redirect is
@@ -840,29 +848,52 @@ def check_r3(quick: bool = False) -> dict:
 # blank inside a heredoc body, a comment), is out of the relation's domain and
 # counted apart, never judged.
 #
-# The judges are the class's own (`_zone_denied`, `_secret_denied`): the zone
-# checks and the secret check in-process on the class's own projects
-# (`built_projects`), with the speed bump and the maintenance gate out of the
-# loop, as the class pins them. In-process also lets a suite test blind the
-# redirect view and watch this relation go red.
+# The judges are the classes' own (`_zone_denied`, `_secret_denied`,
+# `_wall_denied`): the zone checks, the secret check and the Bash hard tier
+# in-process on the operand class's own projects (`built_projects`), with the
+# speed bump and the maintenance gate out of the loop, as the classes pin
+# them. In-process also lets a suite test blind the redirect view, or the
+# hard checks' redirect-free reading, and watch this relation go red.
 
-#: The stderr redirect written into each place, per tool. stderr is never
-#: where a verb reads its operands from, so the redirect is null for what the
-#: verb is handed wherever the parser accepts it.
-R4_REDIRECT: dict[str, str] = {"Bash": "2>/dev/null", "PowerShell": "2>$null"}
+#: The stderr redirects written into each place, per tool: the file spelling,
+#: and the merge, whose `&` a reader can take for a background `&` (DEF-5122:
+#: the directory chain lost its anchor to `2>&1` alone, which R4 never wrote).
+#: An error stream is never where a verb reads its operands from, so each is
+#: null for what the verb is handed wherever the parser accepts it.
+R4_REDIRECTS: dict[str, tuple[str, ...]] = {
+    "Bash": ("2>/dev/null", "2>&1"), "PowerShell": ("2>$null", "2>&1")}
+#: Each tool's first spelling, the default where a caller names none.
+R4_REDIRECT: dict[str, str] = {tool: spellings[0] for tool, spellings in R4_REDIRECTS.items()}
+
+#: The Bash spellings whose null proof is read from a twin. bash's printed
+#: form proves a parse only where it differs from the written text
+#: (`2>/dev/null` prints as `2> /dev/null`); `2>&1` prints as written, so its
+#: text read back from a quoted word would pass for a parse. The twin `2>& 1`
+#: is the same operator and word and prints as `2>&1`: its place is proved null
+#: as any spelling's is, and the spelling's own form must then equal the
+#: twin's, so both are one parse (`_bash_proof`, `check_r4`).
+R4_BASH_TWINS: dict[str, str] = {"2>&1": "2>& 1"}
+
+
+def _bash_proof(redirect: str) -> str:
+    """The text whose parse proves ``redirect``'s place null: its twin, or
+    the spelling itself."""
+    return R4_BASH_TWINS.get(redirect, redirect)
 
 #: What a red asks next, printed under R4's violations (DEF-5120). R4 holds no
 #: exclusion: a row held out by name hid the kinds no after-check watches
 #: (both reviews), and a red quick run lists every kind of its red rows
 #: (`check_r4`), so a red that shows only a watched zone is never read as the
 #: after-check's job. The helper names are pinned to the hooks module.
-R4_REMEDY_HELPERS = ("_redirects_blanked", "_scan_and_view_matches")
+R4_REMEDY_HELPERS = ("_redirects_blanked", "_scan_and_view_matches", "stderr_redirect_free_command")
 R4_REMEDY = (
-    "next: match the reader that takes this operand by its place on the redirect view as well "
-    f"(`{R4_REMEDY_HELPERS[0]}`, `{R4_REMEDY_HELPERS[1]}` in tools/cc/hooks/_bash_patterns.py; "
-    "the row's arm names the class's reader); R4 holds no exclusion, so a red no reader fix "
-    "meets goes to the dispatcher as a ledger row and the run stays red: never a skip by key "
-    "written into R4"
+    "next: see that the hard check the row reaches is judged on the command with its error-stream "
+    f"redirects blanked as well (`_also_stderr_redirect_free` in tools/cc/hooks/write_guard.py, "
+    f"over `{R4_REMEDY_HELPERS[2]}`); where it is, match the reader that takes this operand by its "
+    f"place on the redirect view as well (`{R4_REMEDY_HELPERS[0]}`, `{R4_REMEDY_HELPERS[1]}` in "
+    "tools/cc/hooks/_bash_patterns.py; the row's arm names the class's reader); R4 holds no "
+    "exclusion, so a red no reader fix meets goes to the dispatcher as a ledger row and the run "
+    "stays red: never a skip by key written into R4"
 )
 
 
@@ -880,10 +911,26 @@ def _operand_class():
     return TestRemovedOrRelocatedOperandIsAMutation
 
 
+def _wall_class():
+    """`TestCatastrophicFindDelete`, imported from the suite as the operand
+    class is: its matrix's root rows are R4's wall rows (DEF-5122), and its
+    `_wall_denied` their judge."""
+    try:
+        from tests.test_write_guard import TestCatastrophicFindDelete
+    except ImportError as exc:
+        raise InstrumentBroken(f"R4 reads its wall rows from tests/test_write_guard.py, absent here: {exc}") from exc
+    return TestCatastrophicFindDelete
+
+
+#: The arm a wall row names: the classifier the Bash hard tier asks.
+R4_WALL_ARM = "has_catastrophic_find_delete"
+
+
 def operand_rows(quick: bool = False) -> list[dict]:
     """Every denied row of the two tables, spelled under the plain root, one
-    entry per (row, kind): ``table``, ``key``, ``tool``, ``arm``, ``kind``,
-    ``command``. ``quick`` (the suite's only path) keeps each row's first
+    entry per (row, kind), and every wall row of the find class's matrix
+    (table ``_MATRIX``, kind ``-``, keyed by its text): ``table``, ``key``,
+    ``tool``, ``arm``, ``kind``, ``command``. ``quick`` (the suite's only path) keeps each row's first
     kind, so every row is judged in CI and a row added moves no other row's
     sample: a stride over the forms left 72 of 252 rows unjudged there, two
     of the lane's readers could leave the view with the suite green, and a
@@ -904,6 +951,9 @@ def operand_rows(quick: bool = False) -> list[dict]:
             for kind, spelled in forms[:1] if quick else forms:
                 rows.append({"table": table, "key": key, "tool": tool, "arm": arm,
                              "kind": kind, "command": spelled})
+    for command in _wall_class()._root_rows():
+        rows.append({"table": "_MATRIX", "key": command, "tool": "Bash", "arm": R4_WALL_ARM,
+                     "kind": "-", "command": command})
     return rows
 
 
@@ -987,13 +1037,15 @@ def _token_blanks(command: str, tool: str) -> list[int]:
     return sorted(set(points))
 
 
-def insert_redirect(command: str, tool: str, at: int) -> str:
-    """``command`` with the tool's stderr redirect written at offset ``at``:
-    after a blank before a blank or the end, and before a blank at a word's
-    start (the place before the command word), so it never glues to a word."""
+def insert_redirect(command: str, tool: str, at: int, redirect: str | None = None) -> str:
+    """``command`` with a stderr redirect (``redirect``, else the tool's first
+    spelling) written at offset ``at``: after a blank before a blank or the
+    end, and before a blank at a word's start (the place before the command
+    word), so it never glues to a word."""
+    redirect = redirect or R4_REDIRECT[tool]
     if at < len(command) and command[at] not in " \t\n":
-        return command[:at] + R4_REDIRECT[tool] + " " + command[at:]
-    return command[:at] + " " + R4_REDIRECT[tool] + command[at:]
+        return command[:at] + redirect + " " + command[at:]
+    return command[:at] + " " + redirect + command[at:]
 
 
 def _scratch_env(scratch: Path) -> dict[str, str]:
@@ -1043,7 +1095,9 @@ def bash_parsed_forms(texts: list[str], bash: str, drops: list[int] | None = Non
                 return
             script = "".join(f"__r4_{idx}() {{\n{texts[idx]}\n}}\n" for idx in batch)
             script += "".join(f"declare -f __r4_{idx}\nprintf '%s\\n' {sep}\n" for idx in batch)
-            proc = run_bounded([bash, "-r", "-c", script], capture_output=True, text=True,
+            # on standard input, never one argument: R4's full population
+            # passed the platform's argument limit (DEF-5122's first full run)
+            proc = run_bounded([bash, "-r"], input=script, capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=60, cwd=scratch, env=env)
             forms = proc.stdout.split(sep + "\n") if proc.returncode == 0 else []
             if len(forms) == len(batch) + 1:
@@ -1121,13 +1175,18 @@ def powershell_parsed_forms(texts: list[str], pwsh: str) -> list[dict | None]:
             for p in parsed]
 
 
-def _bash_redirect_form(bash: str) -> str:
-    """The redirect as bash prints it in a parsed form, read from bash: the
-    one difference between a calibration command and the same with the
-    redirect written among its words."""
-    plain, moved = bash_parsed_forms(["printf %s a b", f"printf %s a {R4_REDIRECT['Bash']} b"], bash)
+def _bash_redirect_form(bash: str, redirect: str | None = None) -> str:
+    """The redirect (``redirect``, else Bash's first spelling) as bash prints
+    it in a parsed form, read from bash: the one difference between a
+    calibration command and the same with the redirect's proof text
+    (`_bash_proof`) written among its words. A form the proof text holds as
+    written is refused: removing it from a quoted word's text would read as
+    a parse."""
+    redirect = redirect or R4_REDIRECT["Bash"]
+    proof = _bash_proof(redirect)
+    plain, moved = bash_parsed_forms(["printf %s a b", f"printf %s a {proof} b"], bash)
     if plain is None or moved is None or moved == plain:
-        raise InstrumentBroken("bash printed no redirect for the calibration command")
+        raise InstrumentBroken(f"bash printed no redirect for the calibration command ({redirect})")
     head = 0
     while head < len(plain) and plain[head] == moved[head]:
         head += 1
@@ -1135,8 +1194,12 @@ def _bash_redirect_form(bash: str) -> str:
     while tail < len(plain) - head and plain[-1 - tail] == moved[-1 - tail]:
         tail += 1
     form = moved[head:len(moved) - tail]
-    if R4_REDIRECT["Bash"].replace(" ", "") not in form.replace(" ", ""):
+    if redirect.replace(" ", "") not in form.replace(" ", ""):
         raise InstrumentBroken(f"bash's printed difference is not the redirect: {form!r}")
+    if form.strip() in proof:
+        raise InstrumentBroken(
+            f"bash prints {proof!r} as written ({form.strip()!r}), so its parse cannot be told from its "
+            "text in a quoted word: give the spelling a twin bash prints otherwise (R4_BASH_TWINS)")
     return form
 
 
@@ -1153,9 +1216,10 @@ def bash_insertion_is_null(original: str | None, inserted: str | None, form: str
     return False
 
 
-def powershell_insertion_is_null(original: dict | None, inserted: dict | None) -> bool:
+def powershell_insertion_is_null(original: dict | None, inserted: dict | None,
+                                 redirect: str | None = None) -> bool:
     """The commands' elements are unchanged and the one redirection more is
-    the one written."""
+    the one written (``redirect``, else PowerShell's first spelling)."""
     if original is None or inserted is None or original["shape"] != inserted["shape"]:
         return False
     extra = list(inserted["redirections"])
@@ -1163,32 +1227,39 @@ def powershell_insertion_is_null(original: dict | None, inserted: dict | None) -
         if r not in extra:
             return False
         extra.remove(r)
-    return extra == [R4_REDIRECT["PowerShell"]]
+    return extra == [redirect or R4_REDIRECT["PowerShell"]]
 
 
 def assert_parsers_are_live(bash: str | None, pwsh: str | None) -> str | None:
-    """The calibration pair per parser, so a parser that reads every place as
-    null (or none) cannot vouch: a redirect among the words is null, and the
-    same characters inside a quoted word are not. Returns bash's printed
-    redirect form (None without bash)."""
+    """The calibration pair per parser and per spelling, so a parser that
+    reads every place as null (or none) cannot vouch for any spelling R4
+    writes: a redirect among the words is null, and the same characters
+    inside a quoted word are not. Returns bash's printed form of its first
+    spelling (None without bash)."""
     form = None
     if bash:
-        form = _bash_redirect_form(bash)
-        plain, moved, quoted, quoted_moved = bash_parsed_forms(
-            ["printf %s a b", "printf %s 2>/dev/null a b",
-             "printf %s 'a b'", "printf %s 'a 2>/dev/null b'"], bash)
-        if not bash_insertion_is_null(plain, moved, form):
-            raise InstrumentBroken("bash's parse does not read a redirect among the words as null")
-        if bash_insertion_is_null(quoted, quoted_moved, form):
-            raise InstrumentBroken("bash's parse reads a quoted redirect as a redirect")
+        for redirect in R4_REDIRECTS["Bash"]:
+            printed = _bash_redirect_form(bash, redirect)
+            form = form or printed
+            proof = _bash_proof(redirect)
+            plain, moved, quoted, quoted_moved, own = bash_parsed_forms(
+                ["printf %s a b", f"printf %s {proof} a b",
+                 "printf %s 'a b'", f"printf %s 'a {proof} b'", f"printf %s {redirect} a b"], bash)
+            if not bash_insertion_is_null(plain, moved, printed):
+                raise InstrumentBroken(f"bash's parse does not read {proof} among the words as null")
+            if bash_insertion_is_null(quoted, quoted_moved, printed):
+                raise InstrumentBroken(f"bash's parse reads a quoted {proof} as a redirect")
+            if own is None or own != moved:
+                raise InstrumentBroken(f"bash parses {redirect} otherwise than its twin {proof}")
     if pwsh:
-        plain, moved, quoted, quoted_moved = powershell_parsed_forms(
-            ["Write-Output a b", "Write-Output a 2>$null b",
-             "Write-Output 'a b'", "Write-Output 'a 2>$null b'"], pwsh)
-        if not powershell_insertion_is_null(plain, moved):
-            raise InstrumentBroken("PowerShell's parse does not read a redirect among the words as null")
-        if powershell_insertion_is_null(quoted, quoted_moved):
-            raise InstrumentBroken("PowerShell's parse reads a quoted redirect as a redirect")
+        for redirect in R4_REDIRECTS["PowerShell"]:
+            plain, moved, quoted, quoted_moved = powershell_parsed_forms(
+                ["Write-Output a b", f"Write-Output a {redirect} b",
+                 "Write-Output 'a b'", f"Write-Output 'a {redirect} b'"], pwsh)
+            if not powershell_insertion_is_null(plain, moved, redirect):
+                raise InstrumentBroken(f"PowerShell's parse does not read {redirect} among the words as null")
+            if powershell_insertion_is_null(quoted, quoted_moved, redirect):
+                raise InstrumentBroken(f"PowerShell's parse reads a quoted {redirect} as a redirect")
     return form
 
 
@@ -1203,17 +1274,21 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
     holds (the second failure-mode review's SF-1: 94 such places on the
     guard before DEF-5120 showed in the full run alone)."""
     bash = shutil.which("bash")
-    form = assert_parsers_are_live(bash, pwsh)
+    assert_parsers_are_live(bash, pwsh)
+    printed = {r: _bash_redirect_form(bash, r) for r in R4_REDIRECTS["Bash"]} if bash else {}
     cls = _operand_class()
+    wall = _wall_class()
     derived = rows is None
     rows = operand_rows(quick) if rows is None else rows
     drops: list[int] = []
     tools_run = {"Bash": bash is not None, "PowerShell": pwsh is not None}
-    candidates = []        # (row, at, text)
+    candidates = []        # (row, at, text, redirect)
     for row in rows:
         if tools_run[row["tool"]]:
             for at in _token_blanks(row["command"], row["tool"]):
-                candidates.append((row, at, insert_redirect(row["command"], row["tool"], at)))
+                for redirect in R4_REDIRECTS[row["tool"]]:
+                    candidates.append((row, at, insert_redirect(row["command"], row["tool"], at, redirect),
+                                       redirect))
 
     null_by_text: dict[str, bool] = {}
     for tool in ("Bash", "PowerShell"):
@@ -1223,18 +1298,30 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         originals = sorted({c[0]["command"] for c in mine})
         texts = originals + [c[2] for c in mine]
         if tool == "Bash":
+            # a twinned spelling's place is proved on its twin's text, and its
+            # own text must parse to the twin's form (R4_BASH_TWINS)
+            proofs = {c[2]: insert_redirect(c[0]["command"], tool, c[1], _bash_proof(c[3]))
+                      for c in mine if c[3] in R4_BASH_TWINS}
+            texts += sorted(set(proofs.values()) - set(texts))
             forms = bash_parsed_forms(texts, bash, drops)
             parsed = dict(zip(texts, forms))
-            for row, _at, text in mine:
-                null_by_text[text] = bash_insertion_is_null(parsed[row["command"]], parsed[text], form)
+            for row, _at, text, redirect in mine:
+                proof = proofs.get(text, text)
+                null_by_text[text] = (
+                    bash_insertion_is_null(parsed[row["command"]], parsed[proof], printed[redirect])
+                    and parsed[text] is not None and parsed[text] == parsed[proof])
         else:
             forms = powershell_parsed_forms(texts, pwsh)
             parsed = dict(zip(texts, forms))
-            for row, _at, text in mine:
-                null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text])
+            for row, _at, text, redirect in mine:
+                null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text], redirect)
 
     census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
     null_by_kind: dict[str, int] = {}
+    # per (tool, spelling) and (tool, table) over the denied rows' places: a
+    # spelling or a table proved null nowhere beside a live one reds, never
+    # hides in its tool's total (the failure-mode review's gap 3)
+    null_by_part: dict[tuple[str, str], int] = {}
     violations, undenied = [], []
     saved = os.environ.pop("ESPALIER_MAINTENANCE_MODE", None)
     try:
@@ -1242,9 +1329,11 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         with cls.built_projects(rehearsal) as projects:
             project = projects["plain"]
 
+            judges = {"_ZONE_ROWS": cls._zone_denied, "_SECRET_ROWS": cls._secret_denied,
+                      "_MATRIX": wall._wall_denied}
+
             def denied(row: dict, text: str) -> bool:
-                judge = cls._zone_denied if row["table"] == "_ZONE_ROWS" else cls._secret_denied
-                return judge(row["tool"], text, project)
+                return judges[row["table"]](row["tool"], text, project)
 
             by_row: dict[int, list] = {}
             for cand in candidates:
@@ -1260,9 +1349,14 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
                     undenied.append(f"{row['key']} on {row['kind']}")
                     continue
                 stats["originals_denied"] += 1
-                for _row, _at, text in mine:
+                for _row, _at, text, redirect in mine:
+                    parts = ((row["tool"], f"spelling {redirect}"), (row["tool"], f"table {row['table']}"))
+                    for part in parts:
+                        null_by_part.setdefault(part, 0)
                     if not null_by_text[text]:
                         continue
+                    for part in parts:
+                        null_by_part[part] += 1
                     stats["null"] += 1
                     null_by_kind[row["kind"]] = null_by_kind.get(row["kind"], 0) + 1
                     if not denied(row, text):
@@ -1283,6 +1377,10 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
             for tool, stats in census.items() if tools_run[tool] and stats["null"] == 0]
     dead += [f"{tool}: no original row is denied on the class's own projects -- the judge is dead"
              for tool, stats in census.items() if tools_run[tool] and stats["originals_denied"] == 0]
+    dead += [f"{tool}: the {part} has places on denied rows and the parser proves none null -- "
+             "R4 vouches for nothing there"
+             for (tool, part), count in sorted(null_by_part.items())
+             if count == 0 and census[tool]["null"] > 0]
     if drops:
         dead.append(f"Bash: {len(drops)} parsed form(s) dropped as empty or foreign -- a batch went "
                     "wrong past bash's notice, and those places were never judged")
@@ -1313,6 +1411,7 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
         "undenied_originals": undenied,
         "null_by_kind": null_by_kind,
+        "null_by_part": {f"{tool} {part}": count for (tool, part), count in sorted(null_by_part.items())},
         "rejudged_kinds": rejudged,
         "remedy": R4_REMEDY,
     }
@@ -1333,6 +1432,10 @@ def main(argv: list[str] | None = None) -> int:
     # guard_tier (a test) gets plain again.
     global ROOT_SHAPE
     ROOT_SHAPE = args.root_shape
+    # R1's real-shell oracle (`bash_reaches`) refuses a row its confinement set
+    # cannot prove confined, before bash sees it: the class it raises, read from
+    # the module that raises it (the sibling differential's DEF-5085 rule).
+    from bench.reachability_differential import UnsafeToExecute
     try:
         assert_instrument_is_live()
 
@@ -1361,6 +1464,11 @@ def main(argv: list[str] | None = None) -> int:
     except BudgetMiss as exc:
         # A judgment that never finished: exit 3, never the violations' 1.
         print(f"NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+    except UnsafeToExecute as exc:
+        # A row never run is no verdict either: a traceback's exit 1 reads as
+        # violations (air's be8e74 (3)).
+        print(f"NO VERDICT -- a row the confinement set refuses: {exc}", file=sys.stderr)
         return 3
     finally:
         ROOT_SHAPE = "plain"
