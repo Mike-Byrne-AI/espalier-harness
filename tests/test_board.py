@@ -2405,6 +2405,44 @@ class TestSeats:
         assert "air-x: no mail; 1 live session in .claude/worktrees/work" in text, text
         assert "work2" not in text, "a second holder of a name gets a row only while it holds a session"
 
+    def test_a_live_checkout_takes_the_bare_row_in_either_list_order(self, board, tmp_path):
+        """A checkout holding a session takes its name's bare row over one
+        holding none, whatever order `git worktree list` gives: a clean, locked
+        subagent worktree answered air-work and was listed first, so the board
+        read the live seat as dark and named its live checkout to rename
+        (DEF-4125, 2026-11-16 and 17). Two checkouts that both hold a session
+        are a real collision, and the second keeps the held row and its remedy.
+        Dies to: the listing's order deciding which checkout a name's row
+        reads, or a live checkout that always takes the bare row."""
+        main = tmp_path / "repo"
+        stale, live = main / ".claude" / "worktrees" / "stale", main / ".claude" / "worktrees" / "live"
+        stale.mkdir(parents=True)
+        live.mkdir()
+        note = board.mail.new_message("air-x", "note", "x", now=_T0)
+        names = {str(main): "air", str(stale): "air-x", str(live): "air-x"}
+        for i, order in enumerate(((stale, live), (live, stale))):
+            local = board.read_sessions(main, run_=_git_for(main, *order, names=names),
+                                        config_dir=_registry(tmp_path / f"order{i}", live), inside_session=False)
+            rows = board.seat_rows({"air-x": [note]}, local, _NOW)
+            seated = [(r["seat"], r["path"], len(r["sessions"] or [])) for r in rows if r["name"] == "air-x"]
+            assert seated == [("air-x", str(live), 1)], (order, seated)
+            text = self._text(board, rows)
+            assert "air-x: last mail 6 h 25 min ago (note); 1 live session in .claude/worktrees/live" in text, text
+            assert "stale" not in text and "name it:" not in text, text
+        # The collision: both live. The one listed first keeps the bare row, and
+        # it is listed against path order and holds fewer sessions, so neither a
+        # path sort nor a most-sessions-first sort can pass for the listing's order.
+        one, two = main / ".claude" / "worktrees" / "b-one", main / ".claude" / "worktrees" / "a-two"
+        one.mkdir()
+        two.mkdir()
+        names.update({str(one): "air-y", str(two): "air-y"})
+        local = board.read_sessions(main, run_=_git_for(main, one, two, names=names),
+                                    config_dir=_registry(tmp_path / "both", one, two, two), inside_session=False)
+        rows = board.seat_rows({"air-y": [note]}, local, _NOW)
+        assert [(r["seat"], r["path"], r.get("name_shared_with")) for r in rows if r["name"] == "air-y"] == [
+            ("air-y", str(one), None), ("air-y [.claude/worktrees/a-two]", str(two), ".claude/worktrees/b-one")], rows
+        assert "name it:" in self._text(board, rows)
+
     def test_a_worktree_answering_the_clones_name_is_flagged_with_its_remedy(self, board, tmp_path):
         """The inherited-name state (docs/SHARP_EDGES.md, "The worktrees of one
         clone share its machine name") is flagged even when the main checkout
