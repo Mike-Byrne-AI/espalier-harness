@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-from tests._first_use_patterns import first_use_patterns
+from tests._first_use_patterns import compiled, first_use_patterns
 from tests._live_tree import checkout_glob
 from tests._platform_standin import without_the_alarm
 from tests._pytest_ini import declared_pytest_timeout
@@ -80,6 +80,11 @@ from write_guard import (  # noqa: E402
 import _bash_patterns  # noqa: E402
 import _speedbump  # noqa: E402
 import write_guard  # noqa: E402
+
+# `_bash_patterns`' module-level patterns compile on their first use (DEF-2084),
+# so each one's first timed search below would time its compile as well: each
+# is compiled here, once, and every timed region reads the match alone.
+_FORCED_FLAGS = [p.flags for p in vars(_bash_patterns).values() if type(p) is _bash_patterns._FirstUse]
 
 # This module arms SIGALRM itself (a `setitimer` budget around each timed
 # search), so pytest-timeout's per-test ceiling runs on its thread here: under
@@ -3342,7 +3347,7 @@ def _patterns_composing(fragment: str) -> set[str]:
     import _speedbump  # noqa: E402
 
     found = {name for mod in (_bash_patterns, _speedbump) for name, value in vars(mod).items()
-             if isinstance(value, re.Pattern) and fragment in value.pattern}
+             if compiled(mod, value) is not None and fragment in value.pattern}
     for mod in (_bash_patterns, _speedbump):
         found |= {name for name, value in first_use_patterns(mod).items() if fragment in value.pattern}
     return found
@@ -4262,6 +4267,12 @@ _DYNAMIC_COMPILE_ALLOWLIST: dict[tuple[str, str], str] = {
         "bounded to a few thousand steps. Twin of ci_guard._ci_matcher_covers_mutations, "
         "pinned equal by tests/test_ci_guard.py::TestHookSideWiringTwin."
     ),
+    ("_bash_patterns.py", "__getattr__:self.pattern"): (
+        "DEF-2084: _FirstUse compiles, on its first use, the source a module-level "
+        "_first_use( call gave it; this gate reads that literal at the call "
+        "(_iter_hook_compiled_patterns counts _first_use( as a compile), so each "
+        "pattern is vetted where it is written and this compile adds none."
+    ),
 }
 
 
@@ -4289,7 +4300,10 @@ def _iter_hook_compiled_patterns(path: Path, *, with_arg: bool = False):
             and func.attr == "compile"
             and isinstance(func.value, ast.Name)
             and func.value.id in re_module_names
-        ) or (isinstance(func, ast.Name) and func.id in compile_call_names)
+        ) or (isinstance(func, ast.Name) and func.id in compile_call_names) or (
+            # DEF-2084: `_bash_patterns`' module-level patterns compile on first
+            # use through `_first_use(source, flags)`, re.compile's arguments
+            isinstance(func, ast.Name) and func.id == "_first_use")
         if not is_compile:
             continue
         try:
@@ -4796,8 +4810,9 @@ def _derived_extraction_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
     found: dict[str, "re.Pattern[str]"] = {}
     for module in (_bash_patterns, _wg):
         for attr, value in vars(module).items():
-            if isinstance(value, re.Pattern) and attr.endswith("_RE"):
-                found.setdefault(attr, value)
+            pattern = compiled(module, value)
+            if pattern is not None and attr.endswith("_RE"):
+                found.setdefault(attr, pattern)
     # Also harvest patterns held INSIDE the dangerous-pattern registries. Those
     # records may inline `re.compile(...)` rather than referencing a
     # module-level name, and an inlined pattern is invisible to the scan above
@@ -4845,9 +4860,12 @@ def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
     each through its accessor, by `tests/_first_use_patterns.py`'s rule over
     the three pattern modules, read by both budget arms below beside the
     derived population (DEF-3063; it walked `_bash_patterns` alone, by hand,
-    until DEF-4122). The check below compares it with the source."""
+    until DEF-4122). The check below compares it with the source. The
+    helper's first-use objects (DEF-2084) are module-level names, which the
+    derivation reads through `compiled`, so only the accessors' calls are
+    taken here: each pattern is budgeted once."""
     return sorted((f"{module.__name__}.{name}", pattern) for module in _pattern_modules()
-                  for name, pattern in first_use_patterns(module).items())
+                  for name, pattern in first_use_patterns(module).items() if name.endswith("()"))
 
 
 _FIRST_USE_REGEXES = _first_use_regexes()
@@ -4860,10 +4878,19 @@ def _compiling_functions(sources: dict[str, str]) -> set[str]:
     and binds its pattern to a module-level name the derivation reads."""
     compiling: set[str] = set()
     for module, text in sources.items():
-        for node in ast.walk(ast.parse(text)):
+        tree = ast.parse(text)
+        # `_bash_patterns._FirstUse` compiles each module-level pattern on its
+        # first use (DEF-2084); each is a module-level name the derivation reads
+        # (pinned in the test below), so its methods are no accessor to enrol.
+        first_use_methods = {id(fn) for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
+                             and cls.name == "_FirstUse" for fn in cls.body
+                             if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if any(ast.unparse(d) == "_on_the_pattern_path" for d in node.decorator_list):
+                continue
+            if id(node) in first_use_methods:
                 continue
             for call in ast.walk(node):
                 if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
@@ -4895,6 +4922,12 @@ def test_every_first_use_compile_is_enrolled():
     derived = {name for name, _ in _DERIVED_REGEXES}
     unread = sorted(_step_bound_compiles(sources.get("write_guard", "")) - derived)
     assert not unread, f"pattern-path steps bind compiles the derivation cannot read: {unread}"
+    # and the first-use carve-out's (DEF-2084): every first-use pattern under a
+    # name the derivation reads (an `_RE` name) is in it, so none escapes
+    first_use = {name for name, value in vars(_bash_patterns).items()
+                 if type(value) is _bash_patterns._FirstUse and name.endswith("_RE")}
+    assert first_use and not first_use - derived, (
+        f"first-use patterns the derivation cannot read: {sorted(first_use - derived)}")
 
 
 def _step_bound_compiles(text: str) -> set[str]:

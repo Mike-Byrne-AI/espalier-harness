@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2095",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import pathlib,sys;sys.path.insert(0,'.');from espalier.cli import _sibling_takes;_,k=_sibling_takes(pathlib.Path('tools/cc'));print('default' in k.get('_json_safe',{}).get('load_json_dict_safe',{}))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "99992ab70f29",
+ "text_sha": "7d0c2ce09f4c",
+ "verified_2026_11_16": "OPEN (filed 2026-11-16; probe driven at filing here and in the export of HEAD 7a32f2d9a8ba)"
+}

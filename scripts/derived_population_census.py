@@ -193,14 +193,43 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension
     "tests/test_guard_cost_census.py": (
-        3, "c1c859cd360fbd8305ecbb63066d46b9f7b946398c54a2d3f7ed7c8d82f3e628",
+        4, "3b8d77a04a93429509e184cf8822acc00dfdd93b921307b7a83d524787b42051",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
         "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
         "hand literal at tests/test_guard_cost_census.py:304 (set(helper) == keys) before the carried "
         "rule is compared, so a population that shrinks reds there; the third, the live tree's, is "
         "floored at tests/test_guard_cost_census.py:346 and held equal to the census child's own names, "
-        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST.",
+        "and tests/test_guard_cost_census.py:307 holds the two rule bodies one AST. Kept 2026-11-16 "
+        "(DEF-5115): the fourth row parametrizes the census's call kinds (census.KINDS[1:]), each "
+        "held to its decision, everything present safe; the kinds that must be there, the calls each "
+        "first-use accessor exists for, are pinned present by tests/test_guard_compile_ratchet.py's "
+        "test_the_census_times_each_call_a_first_use_compile_exists_for against OPENING_CALLS, which "
+        "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_audit_dead_rules.py": (
+        1, "338df94f8ff7300917ea2b8490702b4207e54851de63bf01de42d9924464f029",
+        "CORRECT_BY_SHAPE",
+        "NEW 2026-11-16 (DEF-5116): the one row is the set of (pattern, flags) the collector under "
+        "test returns (audit.collect_regex_rules()), the side checked, never the required side: a "
+        "collector that narrows leaves a required pattern missing and the row reds. The required "
+        "populations are derived from the module by signature (the zero-argument cached accessors) "
+        "and by type (the first-use objects named _RE), each floored non-empty, and the type "
+        "predicate's population is held to an AST count of the source's _first_use calls by "
+        "tests/test_guard_compile_ratchet.py's test_every_first_use_call_is_a_module_global_the_walk_reaches.",
+    ),
+    # 2 row(s), shapes: comprehension
+    "tests/test_guard_compile_ratchet.py": (
+        2, "850e845805ae4baf2c74d1607347d9472eabae579784880a26116aad1d851247",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084): two comprehensions over a fresh copy of _bash_patterns' globals "
+        "read by type (type(obj) is module._FirstUse). The first forces each and asserts none raises, "
+        "everything present safe; the second counts them and is the remedy for both: it is held "
+        "equal to an AST count of the source's _first_use( calls at "
+        "tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so a "
+        "first-use pattern made anywhere the walk cannot reach, or a predicate that narrows, reds "
+        "there.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_harness_config.py": (
@@ -788,7 +817,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "passing vacuously. ",
     ),
     "tests/test_documented_claims.py": (
-        3, "1500b796e2e38387b2019914d8ba703cb1bae4876d754ed6a952ce21887b72b9",
+        5, "76c81a8b04261343033eb429aa166107bd14d6e39858c419174948432eedb030",
         "MIXED",
         "derives the EXPECTATION and compares it against an independently obtained actual -- the corre..."
         " The second and third rows (2026-10-08) walk `dataclasses.fields(HarnessConfig)` and "
@@ -796,7 +825,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "population-side, so a field deleted from HarnessConfig drops its row silently (inert: a "
         "stale commented line is not a key), while a new field with no line is loud; the sibling "
         "row in the same class holds examples/espalier.toml byte-equal to the render, which reds "
-        "on any change of the render.",
+        "on any change of the render."
+        " GROWTH 3->5 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): the "
+        "plain-key-above-the-first-table test walks the same two populations as that roster and "
+        "asserts each key rendered as a plain line sits above the first commented table header, a "
+        "property any subset keeps (CORRECT_BY_PROPERTY); a key dropped from the roster leaves the "
+        "render and reds on the byte-equal snapshot row, and an empty roster reds on its own "
+        "non-empty assert.",
     ),
     "tests/test_exemplar_parity.py": (
         4, "18964e09c44373cac01ebc7b9c51bc5ac6e292bd6b2de57657bb3cf149f8d89f",
@@ -827,9 +862,24 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_forced_copy_parity.py": (
-        2, "5152aa6464d07a0aa5b3a7984b22f04af2b16a52341d4799c1ccf13fccb3b619",
-        "CORRECT_BY_SHAPE",
-        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
+        6, "8f86890276972d55afedafe22b6feb918213e06119abc2d3a211ff66fb1b7b8f",
+        "MIXED",
+        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre..."
+        " GROWTH 2->4 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): "
+        "TestEngineConfigKeysParity derives the engine's key set from `dataclasses.fields(HarnessConfig)` "
+        "and `config.FOREIGN_KEYS` and holds it equal, both ways, to the hand-written literal "
+        "`_hook_utils.ENGINE_CONFIG_KEYS` (CORRECT_BY_SHAPE: a field dropped from the engine leaves the "
+        "literal holding it, and the copy-minus-engine test reds by name). The fourth row, the zone keys of "
+        "`hook_utils.ADOPTER_ZONE_KEYS` held a subset of that copy, is a property any subset keeps "
+        "(CORRECT_BY_PROPERTY); a zone key renamed or dropped from the roster reds one file over, in "
+        "tests/test_config_fields_consumed.py::TestEveryConfigFieldIsConsumed, whose map names that roster as "
+        "both zone fields' reader."
+        " GROWTH 4->6 adjudicated 2026-11-16, same lane: test_every_key_a_hook_names_is_an_engine_key "
+        "walks `hook_utils.ADOPTER_ZONE_KEYS` and `hook_utils.RELIEF_AGENT_KEYS` beside the constants it "
+        "reads by name and asserts each key is in the hook copy, a property any subset keeps "
+        "(CORRECT_BY_PROPERTY); a dropped zone key reds at TestEveryConfigFieldIsConsumed as above, the "
+        "relief keys are held equal to their two names in this file's relief-shape test, and a renamed "
+        "constant reds on the test's own 'assigns no module-level' read.",
     ),
     # 4 row(s), shapes: comprehension, for-assert
     "tests/test_freshness_semantic_fragments.py": (
@@ -904,9 +954,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     "tests/test_hook_utils.py": (
-        1, "37bedf36f74335da3a86c0ce499d39612e7a8c2100962ebe36678a23a23acbf9",
-        "PRIOR_PASS_UNRECORDED",
-        "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
+        2, "42bbced7206573ce017f8ec9d1594e330ee00d607a11e87bb4bbff2e5c5f2c04",
+        "MIXED_WITH_PRIOR_PASS",
+        "adjudicated in the parametrize/for-assert pass; per-row reason not preserved"
+        " GROWTH 1->2 adjudicated 2026-11-16 (lane/the-zone-key-check-knows-the-engine-keys): "
+        "test_the_quick_bound_never_turns_away_a_key_difflib_would_match takes its zone keys from "
+        "`hu.ADOPTER_ZONE_KEYS` and drives `_may_be_close` against difflib over each; its claim, that the "
+        "bound never turns away a pair the match takes, holds for any subset (CORRECT_BY_PROPERTY), its "
+        "`taken > 50` floor reds a drained roster, and a zone key renamed or dropped from the roster reds "
+        "in tests/test_config_fields_consumed.py::TestEveryConfigFieldIsConsumed. The prior row stays unrecorded.",
     ),
     "tests/test_hooks.py": (
         6, "89b9ab9e0c4c4254a79726f501528b9b6aefa2b5f81b305f0e8e557f50053a05",
@@ -1249,7 +1305,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_redos.py": (
-        4, "9397a001d23c296f864d3dfff657bdcc9c9cb043e7683f6b4904729db39ebcfd",
+        6, "21d2e4b2c3d2fc95d418532b40f1e413a741b1f6f3baf7e03e2f42089027f236",
         "CORRECT_BY_SHAPE",
         "two keyed next() on literal pids (the mixed record at module level, the prefix "
         "record inside the DEF-822 forward pin); each fails closed at import or at the "
@@ -1262,7 +1318,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_reinject_pins.py binds both ways to the anchoring contract's own walk, "
         "and the enrolment it feeds is held equal to an AST read of the same modules' "
         "source, so a module dropped from the roster leaves its accessors compiled and "
-        "unenrolled, which reds there",
+        "unenrolled, which reds there. Kept 2026-11-16 (DEF-2084): the fifth row forces "
+        "each first-use object before any timed search (_FORCED_FLAGS), no check, and a "
+        "missed one times its compile too, failing toward red; the sixth holds every "
+        "first-use object named _RE inside the derivation (everything required present), "
+        "and its type-read population is held to an AST count of the source's _first_use "
+        "calls by tests/test_guard_compile_ratchet.py's "
+        "test_every_first_use_call_is_a_module_global_the_walk_reaches, so a narrowing reds there",
     ),
     # 2 row(s), shapes: for-assert, parametrize
     "tests/test_reflect_memory_candidates.py": (
@@ -1278,10 +1340,20 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "pins the set by value and pins `held` OUT of it. Adjudicated "
         "2026-09-05 with the `held` disposition (DEF-685).",
     ),
-    # 2 row(s), shapes: comprehension, for-assert
+    # 3 row(s), shapes: comprehension, for-assert
     "tests/test_recall.py": (
-        2, "8413df67ce34ac2eb667bc5d2d9aec7b064e81a1a4ddd4dccdd9cd87b3f34601",
-        "CORRECT_BY_PROPERTY",
+        3, "79ce1727db1631f9b01d942e8ffdfa0f7ef44bd88a953726d86fc7d6a477de9b",
+        "CORRECT_BY_REMEDY",
+        "Three rows, two verdicts; the field carries the weaker. (3) CORRECT_BY_REMEDY, NEW "
+        "2026-11-16 (the hooks-guide recall lane): test_the_shipped_guides_carry_no_skip_marker "
+        "walks `_recall.REFERENCE_DOCS` and reads each shipped guide for a recall-skip marker, "
+        "blind to a guide dropped from the tuple. The drop reds one class over, where the "
+        "adopter fixture's questions read the same tuple (tools/cc/hooks/_recall.py:1104): "
+        "dropping docs/TROUBLESHOOTING.md reds tests/test_recall.py:4523 "
+        "(test_the_stop_gate_question_lands_its_section_first) alone, dropping docs/HOOKS.md "
+        "reds tests/test_recall.py:4517 (test_the_write_guard_question_lands_its_section_first) "
+        "and 11 more, and the loop stays "
+        "green under both (driven on a scratch archive, 2026-11-16). (1)-(2) CORRECT_BY_PROPERTY, "
         "NEW 2026-09-12 (the recall lane, DEF-775/DEF-699). The for-assert walks "
         "`_recall.PULL_EXCLUDED_MEMORY_NOTES` asserting each excluded name exists on "
         "disk under exactly that spelling and is absent from the pull corpus -- "
@@ -2021,9 +2093,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "`endswith('-prefix')`) killed with 6 red, allow-arm rows among them. On its own this "
         "row is weak; it is kept because it names the intent at the definition site.",
     ),
-    # 8 row(s), shapes: for-assert, parametrize
+    # 10 row(s), shapes: comprehension, for-assert, parametrize
     "tests/test_write_guard_env_prefix_polarity.py": (
-        9, "c4ef72844d62959d8ed673b85bd9960052f30bc90940065f62e98cbf2b9bba0f",
+        10, "081a30e3932cc5b216c38f6c9c79947505a8095e39e9ca11204a99318f7ce5a7",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-13 (the floor-roster lane): eight rows run this file's hand-written Bash, "
         "PowerShell and cmd populations once per name in `write_guard._HARNESS_ENV_NAMES`, so a "
@@ -2032,7 +2104,10 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "literals in write_guard.py) and this file's :543 (the three names held by hand). "
         "2026-11-13, same lane: a ninth row compares the guard's literal alternation with the "
         "roster's names; a name the roster gains or drops without the literal reds it, and one "
-        "both drop reds this file's :543 as above.",
+        "both drop reds this file's :543 as above. 2026-11-16 (the cmd leading-= lane): a tenth "
+        "row runs the cmd reader's test-run relief pin "
+        "(`test_cmd_s_test_run_relief_reads_the_words_as_typed`) once per roster name, the same "
+        "remedy as the eight; its held row reds a name the check stops reading.",
     ),
     "tests/test_write_guard_pattern_message_coupling.py": (
         6, "def930a6139b4dfa0f7b9d283d6415c07158b9eb7ed525d13943325fd73b87d5",
@@ -2113,6 +2188,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "not read: the first is pinned by the reach assertion over eleven named deployed files in the "
         "same class, the second by the deep-fence walker that pins the grammar's blind spot empty. "
         "The behaviour oracle is the grep over the deployed bodies on an init'd Node tree.",
+    ),
+    # 1 row(s), shapes: comprehension
+    "tests/test_write_guard_time_budget.py": (
+        1, "90e8e94308a20286c43703509f2aea6bde3a5474e556aea6888718f7b0d54136",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-16 (DEF-2084, the review fix F1): one comprehension over _bash_patterns' globals "
+        "read by type (type(value) is bp._FirstUse) names every first-use pattern, and each is broken in "
+        "turn to assert none lets a protected write through a relative chain. Worth having: the "
+        "population is the defect, since any one broken pattern a directory walk swallows was the fail-"
+        "open. Blind to an empty or narrowed walk, and the remedy is both sides: a floor of 200 names in "
+        "the same test, and one file over the same type predicate is held equal to an AST count of the "
+        "source's _first_use( calls at tests/test_guard_compile_ratchet.py:607 (calls == reached > 0), so "
+        "a pattern the walk cannot reach reds there.",
     ),
     "tests/test_zone_watch.py": (
         6, "6d5ef563128ca626a097dada93fbe939fa4f1fa177fb760238d85042b32150a9",

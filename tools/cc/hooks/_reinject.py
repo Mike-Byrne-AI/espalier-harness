@@ -1012,7 +1012,8 @@ _GUARD_PATTERN_MODULE_RE = re.compile(r"(^|/)tools/cc/hooks/(?:_bash_patterns|_s
 #: `global` (a nested block in a step puts the binding deeper); any other is a
 #: function's local, which no census walks.
 _MODULE_LEVEL_COMPILE_RE = re.compile(
-    r"(?m)^(?P<indent>(?:[ ]{4}){0,3})(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
+    r"(?m)^(?P<indent>(?:[ ]{4}){0,3})(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*"
+    r"(?:re\.compile|_first_use)\("
 )
 #: A `global` statement inside a function, and the names it declares.
 _STEP_GLOBAL_RE = re.compile(r"(?m)^[ ]{4,12}global[ \t]+(?P<names>[A-Za-z_][\w, \t]{0,400})$")

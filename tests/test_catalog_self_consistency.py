@@ -239,7 +239,7 @@ _LINE_ANCHOR_RE = re.compile(
 # A code symbol never ends in a file extension. The `sym` group is permissive
 # (it allows dotted names like ``os.replace`` / ``cli.cmd_init``), so it also
 # matches a FILENAME name-dropped in prose -- e.g. ``setup.sh`` sitting 40 chars
-# before ``run_benchmark.py:1859``. Those are not ``symbol``->def anchors; treat
+# before ``run_benchmark.py:2198``. Those are not ``symbol``->def anchors; treat
 # any `sym` ending in one of these (non-``.py``) extensions as prose and skip it.
 # (Same class as the TP-171 1-A ambiguous-basename prose skip below; the trigger
 # here was a ESPALIER_MEMORY.md LICENSE-1 row citing ``setup.sh`` next to a .py anchor.)
@@ -426,7 +426,7 @@ def _check_line_anchors_fresh(text: str, doc_rel: str | None = None) -> None:
             continue
         if sym.lower().endswith(_NON_SYMBOL_SUFFIXES):
             # `sym` is a filename name-dropped in prose (e.g. `setup.sh` next to
-            # `run_benchmark.py:1859`), not a code symbol -- not a stale anchor.
+            # `run_benchmark.py:2198`), not a code symbol -- not a stale anchor.
             continue
         src, status = _resolve_source(file_ref, sym)
         if status == "prose":
@@ -575,11 +575,11 @@ def test_filename_token_before_py_anchor_is_not_an_anchor():
     """A backticked FILENAME (``setup.sh``) sitting before a `.py:NN` anchor is
     prose, not a `symbol`->def anchor -- the scanner skips it. This reproduces the
     self-inflicted red from the ESPALIER_MEMORY.md LICENSE-1 row
-    (``ships the `setup.sh` that `run_benchmark.py:1859` hard-requires``), where
+    (``ships the `setup.sh` that `run_benchmark.py:2198` hard-requires``), where
     the permissive `sym` group matched the filename and the resolver then failed
     looking for a `setup.sh` symbol in bench/run_benchmark.py."""
     prose = (
-        "the sdist ships the `setup.sh` that `run_benchmark.py:1859` "
+        "the sdist ships the `setup.sh` that `run_benchmark.py:2198` "
         "hard-requires.\n"
     )
     _check_line_anchors_fresh(prose)  # no raise: setup.sh is a filename, not a symbol
@@ -1097,7 +1097,7 @@ _MAX_BARE_ANCHORS = 7
 # cannot be derived, declared so that adding to it is visible in review. It is NOT consulted
 # by the ceiling -- the ceiling counts every anchor including these, so growth still reds.
 _ANCHOR_CONVERSION_RESIDUE = {
-    # The resolver's own worked examples. run_benchmark.py:1859 is the canonical
+    # The resolver's own worked examples. run_benchmark.py:2198 is the canonical
     # "filename token before a .py anchor is NOT a symbol->def anchor" case, and
     # cognitive_blueprint.py:212 the canonical ambiguous-basename case. Both appear in
     # comments explaining why the predicate SKIPS them -- rewrite them and the comments

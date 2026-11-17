@@ -80,7 +80,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, NoReturn, TypeVar
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -156,6 +156,11 @@ if __name__ == "__main__":
 # record.
 #: The flag the parent starts its judging child with.
 _JUDGE_FLAG = "--judge"
+#: What the parent adds after ``_JUDGE_FLAG`` where its runner predates the
+#: deadline's readings (``_the_keywords_it_takes``), so the child, which
+#: imports the helpers anyway, says so once inside its own run and the
+#: parent's path to the deadline pays nothing for it.
+_KEPT_RUNNER_FLAG = "--kept-runner"
 #: The parent's deadline, from the hook's first line: half a second above the
 #: child's own budget (`JUDGMENT_BUDGET_S` from the child's first line, a spawn
 #: later: the thin parent priced +40 to +67 ms a call on Windows 3.11.9, about
@@ -170,6 +175,27 @@ HARD_DEADLINE_S = 4.0
 #: Code's clock counts outside this one: the interpreter's start before the
 #: first line, and the exit itself.
 EXIT_BY_S = 4.6
+#: When the parent starts building its refusal, from the hook's first line,
+#: if its child has not answered by then (DEF-2092): the deny's reasons, the
+#: audit record's helpers and the project root, so neither the deny nor the
+#: record waits on a cold import after the deadline, which a loaded box ran
+#: past the exit (9 of DEF-2091's 10 refusals left no record). The build is
+#: ``run_tree_to_deadline``'s ``ahead`` callback, so a call answered before
+#: this pays nothing for it (40ec7f); the build took 34 to 41 ms unloaded on
+#: the Windows box (the reasons 2 to 3 ms), and the slowest ordinary call
+#: DEF-2091 timed on that box under load took 0.715 s for the whole hook.
+_BUILD_THE_REFUSAL_AT_S = 2.0
+#: What the judging child writes on stderr as it begins judging, then its clock
+#: and a newline: at its deadline the parent reads there whether start-up or
+#: judging spent the time (DEF-2091), and from a child that answered it takes
+#: the line out of what it relays. ``time.monotonic`` is one clock across the
+#: two processes on the hosts measured (Windows 3.10, 3.11 and 3.13, 20 spawns
+#: each, 2026-11-16); a reading outside the parent's own is not used.
+_BEGUN_MARK = b"write_guard: judging began at "
+#: The two bounds a refusal names (DEF-2091): the child's thread budget counts
+#: from the child's first line, the parent's deadline from the hook's.
+_CHILD_BOUND = "the judging child's budget, counted from its own start"
+_PARENT_BOUND = "the hook's deadline, counted from its start"
 #: The CPU seconds a judging child may spend (POSIX): the backstop for a child
 #: whose parent was ended from outside before its deadline (its own session
 #: takes it out of that kill). An ordinary judgment spends well under one.
@@ -187,14 +213,299 @@ def _judge_in_this_process(payload: bytes, why: str) -> None:
     sys.stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
 
 
+def _without_the_mark(err: bytes) -> bytes:
+    """A child's stderr without the line it began judging with
+    (``_BEGUN_MARK``): the parent's to read, never the relay's."""
+    at = err.find(_BEGUN_MARK)
+    if at < 0:
+        return err
+    end = err.find(b"\n", at)
+    return err[:at] + (err[end + 1:] if end >= 0 else b"")
+
+
+def _how_the_child_spent_it(heard: list[bytes]) -> tuple[bool | None, float | None, float | None]:
+    """At the parent's deadline, from the stderr drained from the killed child:
+    whether it had begun judging (``None`` where nothing was read), then the
+    seconds of the deadline that start-up and judging took (``None`` where the
+    child's clock reads outside the parent's, so it is not used)."""
+    if not heard:
+        return None, None, None
+    at = heard[0].find(_BEGUN_MARK)
+    if at < 0:
+        return False, HARD_DEADLINE_S, 0.0
+    deadline = _HOOK_STARTED + HARD_DEADLINE_S
+    try:
+        began_at = float(heard[0][at + len(_BEGUN_MARK):].split(b"\n", 1)[0])
+    except (ValueError, TypeError):  # fail-open: ok deliberate -- a mark the kill cut short: the child had begun, when is unread
+        return True, None, None
+    if not _HOOK_STARTED <= began_at <= deadline:
+        return True, None, None
+    return True, began_at - _HOOK_STARTED, deadline - began_at
+
+
+def _spent(began: bool | None, start_up: float | None, judged: float | None) -> str:
+    """What spent a refused judgment's time, in its refusal's words (DEF-2091)."""
+    if began is None:
+        return "whether its judging child had begun judging was not read"
+    if not began:
+        return f"its judging child had not begun judging: start-up took all {start_up or 0.0:.1f} s"
+    if start_up is None or judged is None:
+        return "its judging child had begun judging, at a time not read"
+    return f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging"
+
+
+def _start_up_spent_it(began: bool | None) -> bool:
+    """Whether start-up alone spent the time, so the refusal asks for the
+    re-issue (DEF-2091): the judging child had not begun judging, so no
+    judgment ran and nothing it keeps was spent. A judgment that began may have
+    fired a one-shot nudge whose flag the same command reads as its retry (the
+    discard and kill checkpoints key it on the command), and the re-issue
+    would pass that nudge unseen; so where the child had begun, the split is
+    asked, as before DEF-2091, and ``_spent`` still says how the time split.
+    Where it is unread it is the judging, as every refusal said before."""
+    return began is False
+
+
+def _budget_reason(_denial_reasons: Any, budget: float, bound: str, began: bool | None,  # noqa: N803
+                   start_up: float | None, judged: float | None) -> str:
+    """The time budget's refusal from its two templates: the re-issue where
+    start-up alone spent the time, the split otherwise (DEF-2091). The
+    reasons module comes in as a parameter (the parent builds it on a thread
+    of its own), named as the module it is, so the template census reads its
+    two uses (``tests/test_denial_reasons.py``). A kept, older reasons module
+    that predates the start-up template gives the split, as before it, never a
+    raise (in the judging child an exit 1, which lets the call through)."""
+    template = _denial_reasons.WRITE_GUARD_TIME_BUDGET
+    if _start_up_spent_it(began):
+        try:
+            template = _denial_reasons.WRITE_GUARD_START_UP_BUDGET
+        except AttributeError:  # fail-open: ok text-fallback -- a kept, older _denial_reasons: the split's text, the refusal it gave before DEF-2091
+            pass
+    # Bound to a name, never returned inside str(): the deny-marker census
+    # follows a local and `.format` back to the two templates, not a call.
+    rendered: str = template.format(budget=budget, bound=bound, spent=_spent(began, start_up, judged))
+    return rendered
+
+
+def _plain_remedy(began: bool | None) -> str:
+    """The parent's plain-words fallback's remedy, by the same rule."""
+    if _start_up_spent_it(began):
+        return "Re-issue the same command once: the time went to starting the guard on a busy machine."
+    return "Split it into shorter commands, each judged on its own."
+
+
+class _DeadlineRefusal:
+    """The parent's refusal at its deadline, built while it waits on its
+    judging child (DEF-2092). ``build`` runs on a thread of its own once the
+    child has not answered by ``_BUILD_THE_REFUSAL_AT_S`` (it is
+    ``run_tree_to_deadline``'s ``ahead``): it imports the deny's reasons and
+    the audit record's helpers and reads the project root, then waits for the
+    deny and writes the record in one call, so the deny still goes out first
+    (DEF-3048) and neither waits on a cold import after the deadline. Its
+    events are made at the build or the record, never for a call answered in
+    time."""
+
+    def __init__(self) -> None:
+        self.reasons: Any = None
+        self._write: Callable[[dict], object] | None = None
+        self._details: dict | None = None
+        self._event = "pretooluse_blocked_time_budget"
+        self._building = False
+        self._lock = threading.Lock()
+        self._events: tuple[threading.Event, threading.Event] | None = None
+
+    def _armed(self) -> tuple[threading.Event, threading.Event]:
+        """The deny's event and the build's end, made once."""
+        with self._lock:
+            if self._events is None:
+                self._events = (threading.Event(), threading.Event())
+            return self._events
+
+    def build(self) -> None:
+        deny_out, done = self._armed()
+        with self._lock:
+            if self._building:
+                return
+            self._building = True
+        try:
+            try:
+                import _denial_reasons  # type: ignore[import-not-found]
+                self.reasons = _denial_reasons
+                import _hook_utils  # type: ignore[import-not-found]
+                import _integrity  # type: ignore[import-not-found]
+                root = _hook_utils.resolve_project_root()
+                self._write = functools.partial(_integrity.append_audit, root, quiet=True)
+                # What the write itself would import cold: the log's path (its
+                # override check imports tempfile) and the lock (ctypes on
+                # Windows), read with no record written.
+                _integrity.audit_path(root)
+                import _json_safe  # type: ignore[import-not-found]
+                getattr(_json_safe, "warm_lock", lambda: None)()
+            except Exception:  # noqa: BLE001, S110 -- fail-open: ok deliberate the deny goes out in plain words, and the record is lost as before the build
+                pass
+            deny_out.wait(max(0.0, _HOOK_STARTED + EXIT_BY_S - time.monotonic()))
+            if self._write is not None and self._details is not None:
+                self._write({"event_type": self._event, "details": self._details})
+        finally:
+            done.set()
+
+    def reason(self, began: bool | None, start_up: float | None, judged: float | None) -> str:
+        """The deny's reason from the built reasons; raises where none were
+        built in time, and the caller words it in plain words."""
+        if self.reasons is None:
+            raise LookupError("the refusal's reasons were not built before the deadline")
+        return _budget_reason(self.reasons, HARD_DEADLINE_S, _PARENT_BOUND, began, start_up, judged)
+
+    def record(self, details: dict, *, by: float, event: str = "pretooluse_blocked_time_budget") -> None:
+        """Hand the record (``event``, ``details``) to the build once the deny
+        is out, starting the build where none ran (a runner that raised before
+        ``ahead`` came), and wait for the write until ``by``."""
+        deny_out, done = self._armed()
+        self._event = event
+        self._details = details
+        with self._lock:
+            idle = not self._building
+        if idle:
+            try:
+                threading.Thread(target=self.build, daemon=True).start()
+            except RuntimeError:  # fail-open: ok deliberate -- no thread to write on: the deny is out and the record is lost, as before the build (F5 of DEF-2094's review)
+                return
+        deny_out.set()
+        done.wait(max(0.0, by - time.monotonic()))
+
+
+def _the_runner_ran(tb: Any, runner: object) -> bool:
+    """Whether the raise whose traceback is ``tb`` was raised inside ``runner``
+    (its code is on the traceback), so a judging child may have started
+    (DEF-2094); the traceback, never the exception, is handed in, since an
+    OSError's text reaches no reader raw (the portability contract). A raise that
+    never entered it started none: a ``TypeError`` binding the call's
+    arguments (no frame of the callee: driven on CPython 3.10, 3.11 and 3.13),
+    which a runner whose parameters ``_the_keywords_it_takes`` misread would
+    raise, or an argument that could not be built. A runner whose code cannot
+    be read reads as one that ran: the refusal, never a second judgment."""
+    code = getattr(runner, "__code__", None)
+    if code is None:
+        return True
+    while tb is not None:
+        if tb.tb_frame.f_code is code:
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _runner_fault_reason(refusal: _DeadlineRefusal, named: tuple[dict, dict] | None) -> str:
+    """The refusal of a runner fault (DEF-2094):
+    ``_denial_reasons.WRITE_GUARD_RUNNER_FAULT`` (the file, its line and the
+    restore) from the reasons the build made, or imported here while the
+    deadline is still ahead; past it, unplaced, or from a kept, older reasons
+    module without it, the same facts in plain words, since a cold import
+    there can hold the deny past the wired timeout (DEF-2092). Never the crash
+    guard's texts, which say a read-only call may still pass: every call goes
+    through this runner (the failure-mode review's F3)."""
+    reasons: Any = refusal.reasons
+    if reasons is None and time.monotonic() < _HOOK_STARTED + HARD_DEADLINE_S:
+        try:
+            import _denial_reasons as imported  # type: ignore[import-not-found]
+            reasons = imported
+        # fail-open: ok text-fallback -- a reasons module that cannot import: the plain words below
+        except Exception:  # noqa: BLE001
+            reasons = None
+    # Named as the module it is, so the template census reads the use below.
+    _denial_reasons = reasons
+    fields = named[0] if named is not None else None
+    if _denial_reasons is not None and fields is not None:
+        try:
+            return str(_denial_reasons.WRITE_GUARD_RUNNER_FAULT.format(**fields))
+        # fail-open: ok text-fallback -- a kept, older reasons module: the plain words below
+        except Exception:  # noqa: BLE001, S110
+            pass
+    wedged = ("failing closed. Re-issue once. Refused the same way again, the guard is wedged and refuses"
+              " every call, a read-only one included")
+    if fields is None:
+        return (f"write_guard internal error while it ran its judging child; {wedged}: the repair is made"
+                " from a terminal outside this session.")
+    return (f"write_guard internal error ({fields['error']} at {fields['file']}:{fields['line']}) while it ran"
+            f" its judging child; {wedged}: if {fields['file']} is being edited, restore it to HEAD:"
+            f" {fields['restore']}. Otherwise the repair is made from a terminal outside this session.")
+
+
+#: ``inspect.CO_VARKEYWORDS``, the code flag of a function that takes
+#: ``**kwargs`` (the same bit on every CPython), named here so the parent never
+#: imports ``inspect`` for one bit.
+_CO_VARKEYWORDS = 0x08
+
+
+def _the_keywords_it_takes(runner: object, wanted: dict[str, object]) -> dict[str, object]:
+    """Of ``wanted``, the keyword arguments ``runner`` takes, read from its
+    code without a call: all of them where it takes ``**kwargs`` or its code
+    cannot be read. A kept, older ``tools/cc/_json_safe.py`` from between the
+    hard bound and DEF-2091 has a ``run_tree_to_deadline`` without ``heard``
+    and ``ahead``, and it is still the hard bound, so it is called with what
+    it takes and the child says so once (``_KEPT_RUNNER_FLAG``); before this
+    its ``TypeError`` sent the call to the in-process judgment, which no
+    deadline bounds (DEF-3048), said only as a child that could not start (F1
+    of DEF-2094's review). One from before the hard bound has no runner at
+    all: its ``ImportError`` is judged in process, and ``main`` names the file
+    and its repair."""
+    code = getattr(runner, "__code__", None)
+    if code is None or code.co_flags & _CO_VARKEYWORDS:
+        return wanted
+    names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    return {name: value for name, value in wanted.items() if name in names}
+
+
+def _refuse_a_runner_fault(fault: tuple[str, Any], payload: bytes, refusal: _DeadlineRefusal) -> NoReturn:
+    """The runner raised inside it (``_the_runner_ran``), so a judging child
+    may have started (DEF-2094): refuse the call naming the file that raised
+    and its line, as the crash guard names a fault in a judgment, and let
+    through the one call that repairs it, a Bash restore to HEAD of a file the
+    refusal names (DEF-4025's ``_start_refusal.wedge_restore``, its copy saved
+    first); then exit. The call is never judged again. Before this the fault
+    read as the deadline's lost answer and was refused with the time budget's
+    split: a ``tools/cc/_json_safe.py`` under edit refused every call so, the
+    Edit and the Bash that could repair it included, from 02:50 to 03:29Z on
+    2026-11-16 on seat win, and the way out was the operator's own terminal.
+    The deny goes out before the record, as the deadline's does (DEF-3048)."""
+    # ``fault`` is the raise's class name and its wedge reading, both taken in
+    # the handler, so the exception itself goes no further.
+    error, reading = fault
+    passed: tuple[str, dict] | None = None
+    named: tuple[dict, dict] | None = None
+    try:
+        try:
+            data: object = json.loads(payload.decode("utf-8", errors="replace"))
+        except ValueError:  # fail-open: ok deliberate -- an unread call is no restore: the refusal offers the terminal alone
+            data = None
+        passed = _start_refusal.wedge_restore("write_guard", reading, error, data)
+        if passed is None:
+            named = _start_refusal.crash_refusal(reading, error, isinstance(data, dict))
+    # fail-open: ok text-fallback -- a kept, older _start_refusal: the unplaced refusal below
+    except Exception:  # noqa: BLE001
+        passed, named = None, None
+    out: dict[str, object] = {"hookEventName": "PreToolUse"}
+    if passed is not None:
+        out["additionalContext"] = passed[0]
+        event, details = "pretooluse_failed_open_wedge_restore", {**passed[1], "where": "parent"}
+    else:
+        out.update(permissionDecision="deny", permissionDecisionReason=_runner_fault_reason(refusal, named))
+        event = "pretooluse_blocked_internal_error"
+        details = {"hook": "write_guard", "error": error, "where": "parent", **(named[1] if named else {})}
+    sys.stdout.write(json.dumps({"hookSpecificOutput": out}) + "\n")
+    sys.stdout.flush()
+    refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S, event=event)
+    os._exit(0)
+
+
 def _answer_from_a_judging_child() -> None:
     """The parent: answer with a judging child's verdict, or refuse at the
     deadline, and exit. It returns only where no child ran: a stdin it cannot
     read (the in-process judgment then meets the same stdin and answers it, its
     record and the kill-switch gate included), or a child that could not start
-    (the payload is put back on stdin, and `main` says so once). A child that
-    started is never judged again in this process: its judgment may already
-    have spent a one-shot nudge, which a second judgment reads as the re-issue."""
+    (the payload is put back on stdin, and `main` says so once), a runner the
+    call never entered among them (DEF-2094). A child that may have started is
+    never judged again in this process: its judgment may already have spent a
+    one-shot nudge, which a second judgment reads as the re-issue."""
     try:
         payload = sys.stdin.buffer.read()
     except (OSError, ValueError, AttributeError):  # fail-open: ok deliberate -- an unreadable stdin is the in-process judgment's to answer, with read_stdin_safely's record and the kill-switch gate
@@ -210,44 +521,62 @@ def _answer_from_a_judging_child() -> None:
     except Exception as exc:  # noqa: BLE001 -- a helper that cannot load keeps the judgment, never an allow
         _judge_in_this_process(payload, type(exc).__name__)
         return
-    lost: str | None = None
+    fault: tuple[str, Any] | None = None
+    refusal = _DeadlineRefusal()
+    heard: list[bytes] = []
+    wanted: dict[str, object] = {"heard": heard, "ahead": (_HOOK_STARTED + _BUILD_THE_REFUSAL_AT_S, refusal.build)}
+    readings = _the_keywords_it_takes(run_tree_to_deadline, wanted)
+    kept = [_KEPT_RUNNER_FLAG] if readings.keys() != wanted.keys() else []
     try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
-            [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG],
-            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload,
+            [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG, *kept],
+            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload, **readings,
         )
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
         _judge_in_this_process(payload, type(exc.__cause__ or exc).__name__)
         return
-    # fail-open: ok deliberate -- a child that started and whose answer was lost is refused below, never judged twice
+    # fail-open: ok deliberate -- a raise the runner never saw started no child, and is judged here as above; one inside it is refused below, never judged twice
     except Exception as exc:  # noqa: BLE001
-        answer, lost = None, type(exc).__name__
+        if not _the_runner_ran(exc.__traceback__, run_tree_to_deadline):
+            _judge_in_this_process(payload, type(exc).__name__)
+            return
+        try:
+            reading = _start_refusal.wedge_reading(exc)
+        # fail-open: ok text-fallback -- a kept, older _start_refusal: the unplaced refusal below
+        except Exception:  # noqa: BLE001
+            reading = None
+        answer, fault = None, (type(exc).__name__, reading)
     # A decision is written below (the child's, or the deadline's): from here a
     # raise is no start refusal, which would add a second document after it.
     _start_refusal.body_done()
+    if fault is not None:
+        _refuse_a_runner_fault(fault, payload, refusal)
     if answer is not None:
         code, out, err = answer
         sys.stdout.buffer.write(out)
         sys.stdout.flush()
+        err = _without_the_mark(err)
         if err:
             sys.stderr.buffer.write(err)
             sys.stderr.flush()
         os._exit(code if 0 <= code <= 255 else 1)  # a child ended by a signal fails open, as a crashed hook did
+    # The refusal says which bound it met and what spent the time (DEF-2091);
+    # its reasons and its record were built while the parent waited (DEF-2092).
+    began, start_up, judged = _how_the_child_spent_it(heard)
     try:
-        import _denial_reasons  # type: ignore[import-not-found]
-        reason = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=HARD_DEADLINE_S)
+        reason = refusal.reason(began, start_up, judged)
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
         reason = (f"Command blocked: write_guard ran out of its {HARD_DEADLINE_S} s time budget before it had"
-                  " judged this command, so the call is refused rather than let through unjudged.")
+                  f" judged this command ({_spent(began, start_up, judged)}), so the call is refused rather"
+                  f" than let through unjudged. {_plain_remedy(began)}")
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()
-    record = threading.Thread(target=_start_refusal._record, daemon=True, args=(
-        "pretooluse_blocked_time_budget",
-        {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child", "bytes": len(payload),
-         **({"fault": lost} if lost else {})}))
-    record.start()
-    record.join(max(0.0, _HOOK_STARTED + EXIT_BY_S - time.monotonic()))
+    details: dict[str, object] = {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child",
+                                  "bytes": len(payload), "began": began}
+    if start_up is not None and judged is not None:
+        details.update(start_up_s=round(start_up, 2), judged_s=round(judged, 2))
+    refusal.record(details, by=_HOOK_STARTED + EXIT_BY_S)
     os._exit(0)
 
 
@@ -263,6 +592,69 @@ def _bound_the_judging_child() -> None:
         resource.setrlimit(resource.RLIMIT_CPU, (cap, hard))
     except (ImportError, ValueError, OSError):  # fail-open: ok deliberate -- no resource module (Windows) or a cap the box refuses: the parent's deadline kill still ends the tree
         pass
+
+
+def _say_judging_began() -> None:
+    """The child, as it begins judging: ``_BEGUN_MARK`` and its clock on
+    stderr, one unbuffered write, for the parent's deadline to read (DEF-2091);
+    the parent takes the line out of what it relays. The same reading is kept
+    for the child's own budget (``_JUDGING_BEGAN_AT``), set before the write so
+    a stderr that cannot be written leaves the child's account true."""
+    global _JUDGING_BEGAN_AT
+    began_at = time.monotonic()
+    _JUDGING_BEGAN_AT = began_at
+    try:
+        os.write(2, _BEGUN_MARK + b"%.6f\n" % began_at)
+    except OSError:  # fail-open: ok deliberate -- no stderr to write: a refusal at the parent's deadline then reads this child as still starting up
+        pass
+
+
+#: Set by the judging child alone (the ``__main__`` block at the end), so
+#: `_judge` writes the begun mark once the payload is read and, where the call
+#: loads them, the two pattern modules are imported (`_begin_judging`). An
+#: importer (the tests) and the hook process judging in place write none.
+_MARK_THE_JUDGING = False
+#: The judging child's clock as it wrote its begun mark (`_say_judging_began`),
+#: ``None`` until then: its own budget's refusal reads it, as the parent reads
+#: the mark, so the pattern import a call loads before the mark is start-up at
+#: both bounds (`_how_the_judgment_spent_it`).
+_JUDGING_BEGAN_AT: float | None = None
+
+
+def _loads_the_pattern_path(data: dict) -> bool:
+    """Whether `_run_main` loads the pattern path for this payload: a call
+    carrying a string ``command`` (the secret read parses it, the PowerShell
+    fold before it) and every mutation or MCP call (past the read-only
+    return). A tool name that is not a string loads only through the secret
+    read, and only where it hashes (the read's membership test raises on a
+    list first); without a command the read-only check raises on it. Pinned
+    against `_run_main`'s own loads by
+    tests/test_write_guard_time_budget.py::TestTheMarkFollowsThePatternImport,
+    so a new early load reds there instead of reading as judging."""
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
+        try:
+            hash(tool_name)
+        except TypeError:  # fail-open: ok deliberate -- an unhashable tool name raises in _run_main's secret read before any pattern load, so the mark goes out without the import and _judge's crash guard answers
+            return False
+        return True
+    return isinstance(tool_name, str) and (tool_name in MUTATION_TOOLS or tool_name.startswith("mcp__"))
+
+
+def _begin_judging(data: dict) -> None:
+    """The judging child, once it has read the payload: import the two
+    pattern modules where this call loads them, then write the begun mark
+    (air 594461, DEF-2091's residual). The import is start-up a busy machine
+    spends on any command, never the command's length, and no judgment has
+    run before it, so a refusal at the parent's deadline while it is still
+    going asks for the re-issue, not the split. A module that cannot import
+    raises here, inside `_judge`'s crash guard, which names its file and line
+    as the load in `_run_main` would; no mark is written then, and the deny
+    is the child's answer."""
+    if _loads_the_pattern_path(data):
+        _load_the_pattern_path()
+    _say_judging_began()
 
 
 # The hard bound: the hook process answers through a judging child (or, where
@@ -1191,9 +1583,11 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # starts), or on PowerShell the stop-parsing token's line or a Start-Process
 # argument list -- and its statements are cmd's (`_bash_patterns._cmd_statements`: `^`
 # escapes, quotes keep a separator, a redirection's target is no word), each
-# verb found past `call`, `@` and an `if` condition by the delete reader's
-# prefix walk (`_bash_patterns._cmd_statement_head`). A cmd a statement starts
-# is read the same way, to the delete reader's depth. The polarity is the
+# verb found past `call`, `@`, a leading `=` and an `if` condition by the
+# delete reader's prefix walk (`_bash_patterns._cmd_statement_head`), and the
+# launch read past the same `@` or `=` (`_bash_patterns._cmd_program_word`).
+# A cmd a statement starts is read the same way, to the delete reader's
+# depth. The polarity is the
 # `$env:` arm's: the variable reaches every later statement of the cmd process,
 # so each later statement is scanned for a launch, and a `set` followed by
 # anything else (`&& pytest -q`) is allowed. A launch the outer shell runs once
@@ -1271,12 +1665,23 @@ def _cmd_program_sets_then_launches(program: str, depth: int) -> bool:
     for line in program.splitlines():
         for words in _bash_patterns._cmd_statements(line):
             k = _bash_patterns._cmd_statement_head(words)
-            if (armed and _statement_launches_claude(" ".join(words))
+            program = _bash_patterns._cmd_program_word(words[k]) if k < len(words) else ""
+            # The launch is read from the statement as cmd runs it, its
+            # program word past a leading `@` or `=`. The test-run relief
+            # reads the words as typed, so a test run behind one keeps the
+            # verdict it had before this read did: relieving it would drop
+            # a refusal, which this read's lane kept (a stated cost, pinned
+            # at this reader in the polarity tests beside its relieved plain
+            # twin; the Bash dispatch relieves such a test run before here).
+            said = words
+            if k < len(words) and program != words[k]:
+                said = [*words[:k], program, *words[k + 1:]]
+            if (armed and _statement_launches_claude(" ".join(said))
                     and not _cmd_test_run_holds_no_launch(words[k:])):
                 return True
             if k >= len(words):
                 continue
-            low = words[k].lstrip("@").lower()
+            low = program.lower()
             if low == "set" and _CMD_HARNESS_SET_RE.match(" ".join(words[k + 1:])):
                 armed = True
                 continue
@@ -4662,9 +5067,11 @@ JUDGMENT_BUDGET_S = 3.5
 #: would have judged in milliseconds included. That reverses the trade this
 #: window once made (left uncapped, so such a box still answered an ordinary
 #: call, and a slow judgment's refusal landed after the timeout had let the
-#: call through): on that box an ordinary call is refused, with a reason that
-#: asks for shorter commands the box's start-up earned and the command did not,
-#: where a late answer let a call through unjudged.
+#: call through): on that box an ordinary call is refused, where a late answer
+#: let a call through unjudged. Since DEF-2091 that refusal says start-up
+#: spent the time and asks for the re-issue once where the child had not
+#: begun judging; it asked for shorter commands before, which the box's
+#: start-up earned and the command did not.
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"
@@ -4823,11 +5230,24 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     protocol reads as an allow).
     """
     if _NO_JUDGING_CHILD is not None:
+        said = (f"judging child could not start ({_NO_JUDGING_CHILD}); the hard bound is off, the thread budget"
+                " judges alone")
+        if _NO_JUDGING_CHILD == "ImportError":
+            # The name import failed: a kept, older tools/cc/_json_safe.py
+            # with no runner (every release before it), named with its repair.
+            said += ("; tools/cc/_json_safe.py predates this hook (it has no run_tree_to_deadline):"
+                     " `espalier upgrade --execute .` brings it level")
         _hook_utils.say_once(
             _root_or_dot(), f"judging-child-{_NO_JUDGING_CHILD}", "write_guard",
-            "pretooluse_failed_open_time_budget",
-            f"judging child could not start ({_NO_JUDGING_CHILD}); the hard bound is off, the thread budget judges alone",
-            fault=_NO_JUDGING_CHILD,
+            "pretooluse_failed_open_time_budget", said, fault=_NO_JUDGING_CHILD,
+        )
+    if sys.argv[1:3] == [_JUDGE_FLAG, _KEPT_RUNNER_FLAG]:
+        _hook_utils.say_once(
+            _root_or_dot(), "kept-runner", "write_guard", "pretooluse_failed_open_kept_runner",
+            "tools/cc/_json_safe.py predates this hook (its run_tree_to_deadline takes no heard or ahead): the"
+            " hard bound still holds, but a refusal at it cannot say what spent the time and its record can be"
+            " lost on a busy machine; `espalier upgrade --execute .` brings it level",
+            fault="kept_runner",
         )
     begun = time.monotonic()
     clock = begun if started is None else started
@@ -4871,17 +5291,48 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
         )
         return _judge()
     try:
-        return _verdict_for(verdict, streams, done, deadline, seen, exit_on_budget=exit_on_budget)
+        return _verdict_for(verdict, streams, done, deadline, seen, exit_on_budget=exit_on_budget,
+                            begun=begun, clock=clock)
     finally:
         _set_judgment_deadline(None)
 
 
+def _how_the_judgment_spent_it(
+    begun: float | None, clock: float | None, deadline: float,
+) -> tuple[bool, float | None, float | None]:
+    """At the thread budget's deadline: whether judging had begun, then the
+    seconds of the budget start-up and judging took (``None`` where a clock is
+    unread). In the judging child the begun mark says when judging began
+    (``_JUDGING_BEGAN_AT``), so the pattern import a call loads before the mark
+    is start-up here as at the parent's deadline. Unstalled, the child's own
+    budget refuses first (about 3.6 s from the parent's start, against the
+    parent's 4.0), and it read that import as judging and asked for the split
+    on every interpreter; a planted slow ``find_spec`` hid it, since it holds
+    the global import lock and stalled this refusal's first imports up to 3.13.
+    Anywhere else (the hook process judging in place, an importer) judging
+    began as `main` started its worker (``begun``)."""
+    if _MARK_THE_JUDGING:
+        mark = _JUDGING_BEGAN_AT
+        if mark is None:
+            return False, (deadline - clock if clock is not None else None), 0.0
+        begun = mark
+    start_up = begun - clock if begun is not None and clock is not None else None
+    judged = max(0.0, deadline - begun) if begun is not None else None
+    return True, start_up, judged
+
+
 def _verdict_for(
     verdict: _Verdict, streams: _HeldStreams, done: threading.Event, deadline: float,
-    seen: list[dict], *, exit_on_budget: bool,
+    seen: list[dict], *, exit_on_budget: bool, begun: float | None = None, clock: float | None = None,
 ) -> int:
     """Wait for the judgment until the deadline, claim, and emit the one
-    verdict: the judgment's (replayed), or the refusal."""
+    verdict: the judgment's (replayed), or the refusal. ``begun`` and
+    ``clock`` are when the judgment and the budget's clock started: the
+    refusal says how the budget split between start-up and judging (DEF-2091),
+    read by `_how_the_judgment_spent_it`, and asks for the split where judging
+    had begun, since it may have spent a one-shot nudge
+    (``_start_up_spent_it``), and for the re-issue where a judging child was
+    still before its begun mark."""
     try:
         done.wait(max(0.0, deadline - time.monotonic()))
     except BaseException as exc:  # noqa: BLE001 -- an interrupt in the wait: refuse, as the crash guard refuses one in the judgment
@@ -4897,12 +5348,17 @@ def _verdict_for(
         tool_name = data.get("tool_name", "")
         tool_input = data.get("tool_input", {})
         command = tool_input.get("command") if isinstance(tool_input, dict) else None
-        # Metadata only: the tool, the budget and the command's length, never its text.
+        began, start_up, judged = _how_the_judgment_spent_it(begun, clock, deadline)
+        split = ({"start_up_s": round(start_up, 2), "judged_s": round(judged, 2)}
+                 if start_up is not None and judged is not None else {})
+        # Metadata only: the tool, the budget, the command's length, whether
+        # judging had begun and how the budget split, never the command's text.
         rc = _audit_deny(
             _root_or_dot(), "pretooluse_blocked_time_budget",
-            _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=JUDGMENT_BUDGET_S),
+            _budget_reason(_denial_reasons, JUDGMENT_BUDGET_S, _CHILD_BOUND, began, start_up, judged),
             hook="write_guard", tool=tool_name if isinstance(tool_name, str) else "",
-            budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0,
+            budget_s=JUDGMENT_BUDGET_S, chars=len(command) if isinstance(command, str) else 0, began=began,
+            **split,
         )
         _end_the_refused_call(streams, exit_now=exit_on_budget)
         return rc
@@ -4932,6 +5388,8 @@ def _judge(seen: list[dict] | None = None) -> int:
         data = _hook_utils.read_stdin_safely()
         if seen is not None:
             seen.append(data)
+        if _MARK_THE_JUDGING:
+            _begin_judging(data)
         return _run_main(data)
     except BaseException as exc:  # noqa: BLE001 -- fail-closed crash guard
         # [broad-except] fail-closed: any unhandled error here would
@@ -5349,6 +5807,10 @@ def _run_main(data: dict | None = None) -> int:
 if __name__ == "__main__":
     # The module body ends here: a raise past it is main's crash guard's.
     _start_refusal.body_done()
+    if sys.argv[1:2] == [_JUDGE_FLAG]:
+        # The mark is `_judge`'s to write, past the pattern import where the
+        # call loads it (`_begin_judging`).
+        _MARK_THE_JUDGING = True
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0

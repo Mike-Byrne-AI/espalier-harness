@@ -2929,9 +2929,10 @@ def _report_voice_only_records(root: Path) -> None:
         kind = kind if isinstance(kind, str) and re.fullmatch(r"[a-z0-9_]{1,80}", kind) else "(unnamed type)"
         counts[kind] = counts.get(kind, 0) + 1
     # The declared types first (a policy kill switch), then the RAREST: a
-    # fault said once is the news, and a type that recurs at every start (a
-    # settings read caught mid-write, 77 records in November on the Windows
-    # box) is the one folded into the count. An unnamed type goes last.
+    # fault said once is the news, and a type that recurs at every start (the
+    # settings-read record a command or skill change wrote until DEF-3092's
+    # fix, 77 records in November on the Windows box) is the one folded into
+    # the count. An unnamed type goes last.
     declared: frozenset[str] = getattr(_integrity, "VOICE_ONLY_EVENT_TYPES", frozenset())
     ranked = sorted(counts.items(),
                     key=lambda kv: (kv[0] not in declared, kv[0] == "(unnamed type)", kv[1], kv[0]))

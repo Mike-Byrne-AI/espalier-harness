@@ -177,7 +177,12 @@ into the file, they were the lines every two lanes in flight both rewrote, so th
 nearly every catch-up merge and neither side's number was right after it. Appendix B's strike
 markers and the probe roster are still checked against the member rows. Strike, file and re-pin
 rows with `tools/cc/ledger_row.py strike|file|repin`, never by hand: every verb drives the row's
-probe first, writes both files atomically or neither, and converges the file.
+probe first, writes both files atomically or neither, and converges the file. A row a ruling
+closes while its defect stands (not work, a duplicate of a live row, a declared limit) is struck
+with `strike --declined <ruling id>`, which refuses a probe that reads closed at the head (a fix)
+and writes the ruling and the probe's reading into the struck row; never remove or disable its
+probe first, since every strike refuses a probe the base holds and the tree has lost or emptied
+of its command.
 **Never type a count here:**
 
 ```bash
@@ -759,7 +764,7 @@ _Both independent reclassification passes grouped these members._
 **Unit of work.** One pass over espalier/surface_impact.py: import espalier/mirror_registry.py and render every mirror advisory from its rows - VERIFIED, the registry is imported by tests only, so a row can declare the wrong direction and every guard stays green; give classify_surface an optional repo_root and consult mirror_registry.covers() so editing a curated mirror's SOURCE side names the sync script that must run; add docs/QUICKSTART.md to _hook_demands' hook-count site list, since QUICKSTART's 'twelve entry scripts' is the one hook-count claim no test pins; add a top-level tools/ branch plus an EXPECTED_ count and scan-root entry, since that tree is governed by none of the five surface mechanisms yet carries a CI job; pin the advisory's prefix set and verb demand to their enforcers' actual preconditions; and rewrite the advisory that contradicts _reinject's about the same sync script so both name its two refusal arms.
 
 
-**What this does NOT reach.** It cannot fix the tools/cc side of any advisory by import - tools/cc/ may not import espalier, so the same repair lands twice and the mirror syncs must run. It also does not emit obligations for DELETED paths (emit-obligations-for-what-a-pack-deletes-or-renames), which is a LOGIC_BUG and counted separately. Accepted residue (`DEF-682`, declined 2026-11-02 on air's ruling 90a8cc, the form per b14e69): a mirror source written by a script that was handed its path draws no sync advisory; for a `docs/` source `tests/test_deploy_doc_parity.py` catches the drift in the contract lines and at the landing check. The row stays live because neither verb takes a decline (`tools/cc/ledger_row.py::repin` refuses `--why-not` beside a probe command; `tools/cc/ledger_row.py::_drive_both_sides` refuses a strike whose probe reads open at the head).
+**What this does NOT reach.** It cannot fix the tools/cc side of any advisory by import - tools/cc/ may not import espalier, so the same repair lands twice and the mirror syncs must run. It also does not emit obligations for DELETED paths (emit-obligations-for-what-a-pack-deletes-or-renames), which is a LOGIC_BUG and counted separately. Accepted residue (`DEF-682`, declined 2026-11-02 on air's ruling 90a8cc, the form per b14e69): a mirror source written by a script that was handed its path draws no sync advisory; for a `docs/` source `tests/test_deploy_doc_parity.py` catches the drift in the contract lines and at the landing check. The row was struck on 2026-11-14 with its open probe removed by hand first, since neither verb then took a decline; a ruled close is `tools/cc/ledger_row.py::strike` with `--declined` since `DEF-5114`.
 
 
 **Why one class.** One file and one acceptance rule that closes every member: for each obligation the report emits, break the named thing and require the named enforcer to red; for each enforcer, require the report to name it. DEF-607's false demand has already propagated into authored pack text, which is the evidence that the emitter - not any single obligation - is the unit of work.

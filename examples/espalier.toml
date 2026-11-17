@@ -13,6 +13,7 @@
 #   recall_sources and recall_records are read by /recall on every run.
 #   default_profile       is read when `init` renders settings.json.
 #   goal_snapshot         is read when `init` or `upgrade --execute` deploys.
+#   the keys under Other readers are read by the script each one names.
 #   every other key       is read when the saved plan
 #                         (reports/harness_config.json) is built. After an
 #                         edit, `espalier fingerprint .` rebuilds the plan.
@@ -156,6 +157,22 @@
 # (docs/HOOKS.md, stop_gate).
 # handoff_push = true
 
+# Write each forward-ledger row and its probe as a file of its own under
+# task-packs/ledger.d/ and task-packs/probes.d/ (tools/cc/ledger_row.py),
+# so seats filing in parallel never conflict on the ledger. Off when absent:
+# the verbs write the two files, and every reader takes both forms.
+# ledger_fragments = true
+
+# Catch the checkout up at each fresh session (tools/cc/hooks/session_start.py,
+# through tools/cc/checkout_sync.py): a checkout on origin's default branch,
+# or on a branch deleted at its merge, moves to the remote's tip when nothing
+# is in flight (the merged local branch is then deleted with `git branch -d`),
+# and leftover worktrees under .claude/worktrees/ that hold nothing are
+# removed. Off when absent, since moving a branch unasked is a surprise;
+# ESPALIER_SESSION_CATCH_UP=0 or 1 in the launching shell overrides it.
+# `python3 tools/cc/checkout_sync.py` (or `python`) says what it would do.
+# session_catch_up = true
+
 # Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,
 # and `ledger_row.py mint`, take the lowest free number of this seat's block
 # (the seat is `git config espalier.machine`; a clone that names none mints
@@ -165,12 +182,6 @@
 # [id_blocks]
 # my-laptop = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
 # _unnamed = { DEF = "1000-1999", INV = "32-99", TP = "100-499" }
-
-# Write each forward-ledger row and its probe as a file of its own under
-# task-packs/ledger.d/ and task-packs/probes.d/ (tools/cc/ledger_row.py),
-# so seats filing in parallel never conflict on the ledger. Off when absent:
-# the verbs write the two files, and every reader takes both forms.
-# ledger_fragments = true
 
 # ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
 # Extra actions to add beyond what fingerprinting infers

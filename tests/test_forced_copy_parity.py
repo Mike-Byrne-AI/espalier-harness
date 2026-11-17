@@ -551,3 +551,82 @@ class TestKnobShapeParity:
         assert config.AGENT_NAME_SHAPE.pattern == hook_utils._AGENT_NAME_SHAPE.pattern
         assert config.BUILTIN_AGENT_NAMES == hook_utils.BUILTIN_AGENT_NAMES
         assert set(hook_utils.RELIEF_AGENT_KEYS) == {"code_review_agents", "docs_refresh_agents"}
+
+
+class TestEngineConfigKeysParity:
+    """``_hook_utils.ENGINE_CONFIG_KEYS`` is the hooks' copy of every top-level
+    espalier.toml key the engine knows (``HarnessConfig``'s fields and
+    ``config.FOREIGN_KEYS``), which the zone-key close-match passes over
+    (``exclude_paths`` was read as a misspelled ``protected_paths``). Pinned
+    equal both ways: a key the copy lacks is a false "did you mean" on every
+    tree that sets it, and a key the copy invents hides a real misspelling of a
+    zone key behind a name the engine does not read."""
+
+    def _sets(self):
+        import dataclasses
+
+        from espalier import config
+        from espalier.models import HarnessConfig
+
+        hook_utils = _load(HOOKS_DIR / "_hook_utils.py", "_hu_engine_keys_twin")
+        engine = {f.name for f in dataclasses.fields(HarnessConfig)} | set(config.FOREIGN_KEYS)
+        return hook_utils, engine, set(hook_utils.ENGINE_CONFIG_KEYS)
+
+    def test_the_hook_copy_holds_every_engine_key(self):
+        _, engine, copy = self._sets()
+        assert not engine - copy, f"add to _hook_utils.ENGINE_CONFIG_KEYS: {sorted(engine - copy)}"
+
+    def test_the_hook_copy_holds_no_key_the_engine_lacks(self):
+        _, engine, copy = self._sets()
+        assert not copy - engine, f"remove from _hook_utils.ENGINE_CONFIG_KEYS: {sorted(copy - engine)}"
+
+    def test_the_zone_keys_are_engine_keys(self):
+        """The close-match passes over the engine keys, and that is what keeps
+        a correctly spelled zone key out of it: a zone key missing from the set
+        would match itself at 1.0 and be told "did you mean" its own name."""
+        hook_utils, _, copy = self._sets()
+        assert {key for key, _ in hook_utils.ADOPTER_ZONE_KEYS} <= copy
+
+    def test_the_key_constants_listed_here_are_engine_keys(self):
+        """The top-level espalier.toml keys held by the hook constants listed
+        below are keys the engine declares, or ``load_config`` tells the
+        adopter who set one that it is an unknown key and ignored, and the
+        obvious response, deleting it, turns the hook's behavior off
+        (``session_catch_up`` was, while root CLAUDE.md told adopters to set
+        it, until 2026-11-16). The list is hand-kept, not a scan: a NEW key
+        constant, a key read by a literal at the call site, and one read by
+        ``.get`` on ``read_toml_table``'s table are outside it until DEF-3095's
+        scan lands; add a new hook key constant here. The other hooks'
+        constants are read from their source, not imported: a hook's module
+        body is the hook's to run."""
+        import ast
+
+        def literal(path: Path, name: str) -> object:
+            for node in ast.parse(path.read_text(encoding="utf-8")).body:
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    targets, value = [node.target], node.value
+                else:
+                    continue
+                if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                    return ast.literal_eval(value)
+            raise AssertionError(f"{path.name} assigns no module-level {name}")
+
+        hook_utils, _, copy = self._sets()
+        named = {
+            "session_start.CATCH_UP_KEY": literal(HOOKS_DIR / "session_start.py", "CATCH_UP_KEY"),
+            "plan_guard._ADOPTER_CONFIG_KEY": literal(HOOKS_DIR / "plan_guard.py", "_ADOPTER_CONFIG_KEY"),
+            "_hook_utils.HANDOFF_CONTEXT_KEY": hook_utils.HANDOFF_CONTEXT_KEY,
+        }
+        for key, _family in literal(HOOKS_DIR / "_recall.py", "RECALL_SOURCE_KEYS"):
+            named[f"_recall.RECALL_SOURCE_KEYS[{key}]"] = key
+        for key in hook_utils.RELIEF_AGENT_KEYS:
+            named[f"_hook_utils.RELIEF_AGENT_KEYS[{key}]"] = key
+        for key, _kind in hook_utils.ADOPTER_ZONE_KEYS:
+            named[f"_hook_utils.ADOPTER_ZONE_KEYS[{key}]"] = key
+        undeclared = {where: key for where, key in named.items() if key not in copy}
+        assert not undeclared, (
+            "a hook reads a key the engine does not declare: add it to "
+            f"espalier/config.py::FOREIGN_KEYS with its reader, and to ENGINE_CONFIG_KEYS: {undeclared}"
+        )

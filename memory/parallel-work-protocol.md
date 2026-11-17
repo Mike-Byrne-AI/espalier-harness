@@ -60,7 +60,11 @@ reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
 the tick this repository's workers have run since 2026-10-15, carrying the
 proceed clause and the refresh sentence since 2026-10-24 and the dispatch-model
 sentence since 2026-10-25); the dispatcher
-form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
+form names its duties and ends with `/loop 15m /dispatcher-tick`, whose command
+has the same driver print the board tick (`seat.py tick --role dispatcher`,
+which refuses a worker seat as the worker's refuses this one; a few lines naming
+`tools/cc/board.py` and the duties, in place of `/inbox`'s whole body at every
+fire: job `5154dc`, item (1) of the operator's note `1ea850`). `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
 with its jobs and the same short form, which a session started by hand reads
@@ -367,6 +371,12 @@ launcher did not start the handoff arms nothing and says the window needs a
    both (`ledger_row.py strike --base --guard`, since 2026-10-25: replayed on
    five struck rows, two still read open at the lane head); a probe that
    cannot run at the base is said in the closing text, never skipped silently.
+   A row a ruling closes while its defect stands is struck with
+   `ledger_row.py strike --declined <ruling id>`, which records the ruling
+   and the probe's reading in the struck row, so the dispatcher's ruling
+   that closes a row names the row, that verb and the ruling's own full id,
+   never a hand order (since 2026-11-16: three lanes had removed the open
+   probe and struck, and one ran the verb with its drive replaced).
 
 9. **Run the reviewers your lane's surface earns**: `python scripts/proof_tier.py
    --base origin/main` prints them on its `review:` line (`none`, `code-reviewer`

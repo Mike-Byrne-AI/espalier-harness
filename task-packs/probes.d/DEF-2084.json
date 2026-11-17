@@ -4,7 +4,8 @@
  "cmd": null,
  "open_value": null,
  "why_not": "a refusal under load is a timing, which no one-liner prints deterministically",
- "row_sha": "96b174380346",
- "text_sha": "b77daa388d9f",
- "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing)"
+ "row_sha": "074ebbb645c1",
+ "text_sha": "9b8e89413bd2",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing)",
+ "verified_2026_11_16": "STILL_OPEN (re-pinned value unchanged on 2026-11-16: the lane's first-use move took the pattern import from 175 to 24 ms and ls -la through the hook alone from 0.52 to 0.44 s; the loaded miss is cheaper, not gone, so the row stays live at 0.44 s, and the begun mark now follows the pattern import (DEF-2091's residual), its after-mark compiles filed as DEF-2097) [changed: text]"
 }

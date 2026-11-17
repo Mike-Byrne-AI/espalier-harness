@@ -454,11 +454,17 @@ class TestALongerBoundReadsTheRefusalApart:
         assert len(bounds) == 2, bounds
         hooks = hs._WRITE_GUARD.parent
         reasons = ast.parse((hooks / "_denial_reasons.py").read_text(encoding="utf-8"))
-        template = next(ast.literal_eval(n.value) for n in reasons.body if isinstance(n, ast.Assign)
-                        and any(isinstance(t, ast.Name) and t.id == "WRITE_GUARD_TIME_BUDGET" for t in n.targets))
-        for figure, label in bounds.items():
-            refused = subprocess.CompletedProcess(self.ARGV, 0, stdout=_deny(template.format(budget=figure)))
-            assert hs.refusing_bound(refused) == label, (figure, hs.refusing_bound(refused))
+        # Both of its templates: where judging spent the time, and where
+        # start-up did (DEF-2091).
+        templates = [ast.literal_eval(n.value) for n in reasons.body if isinstance(n, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id in ("WRITE_GUARD_TIME_BUDGET",
+                                                                  "WRITE_GUARD_START_UP_BUDGET") for t in n.targets)]
+        assert len(templates) == 2, templates
+        for template in templates:
+            for figure, label in bounds.items():
+                refused = subprocess.CompletedProcess(
+                    self.ARGV, 0, stdout=_deny(template.format(budget=figure, bound="its bound", spent="spent")))
+                assert hs.refusing_bound(refused) == label, (figure, hs.refusing_bound(refused))
         guard = ast.parse(hs._WRITE_GUARD.read_text(encoding="utf-8"))
         fallbacks = [n for n in ast.walk(guard) if isinstance(n, ast.JoinedStr)
                      and hs.BUDGET_FALLBACK in "".join(v.value for v in n.values if isinstance(v, ast.Constant))]

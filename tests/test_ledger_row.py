@@ -19,6 +19,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -298,6 +299,128 @@ class TestADeferralIntoTheStruckRow:
         text = tree["ledger"].read_text(encoding="utf-8")
         assert "| ~~`DEF-1`~~ | new::home | ✅ **CLOSED 2026-09-06" in text
         assert "| ~~`DEF-1`~~ | §C1 | new::home |" in text
+
+
+class TestFreeTextKeepsItsRowWhole:
+    """Every free text a verb writes into a ledger cell -- a strike's closing
+    text, a filing's body, an anchor -- has each bare pipe escaped as the
+    ledger escapes one (``\\|``), so a quoted pipeline never splits its row.
+    Until DEF-2098 the strike wrote its closing text raw: a closing that
+    quoted a pipeline left a five-cell row the strike accepted, and only the
+    landing gate's completeness test caught it, a CI round later. A code span
+    keeps its backticks, and a pipe already escaped by hand stays escaped
+    once."""
+
+    PIPELINE = "now reads `ls a | head` whole\nand `x \\| y` as typed"
+    ESCAPED = "now reads `ls a \\| head` whole and `x \\| y` as typed"
+
+    @staticmethod
+    def _member_cells(lr, text: str, rid: str) -> list[str]:
+        found = lr._member_line(rid, text, struck_ok=True)
+        assert found is not None, rid
+        try:
+            return lr._cells(found[1])
+        except lr.RowShape as exc:
+            # The defect itself, said as a failure: a bare pipe split the row.
+            pytest.fail(f"{rid}'s row split at a bare pipe: {exc}")
+
+    @staticmethod
+    def _index_cells(lr, text: str, rid: str) -> list[str]:
+        found = lr._index_line(rid, text)
+        assert found is not None, rid
+        return [c.strip() for c in re.split(r"(?<!\\)\|", found[1].strip()[1:-1])]
+
+    @staticmethod
+    def _converged(lr, tree, text: str) -> None:
+        gen = lr._load("generate_ledger_regions")
+        gen._PROBES = tree["probes"]
+        assert gen.find_drift(text) == []
+
+    def test_a_strike_closing_text_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        tree["closing"].write_text(self.PIPELINE, encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        cells = self._member_cells(lr, text, "DEF-1")
+        assert cells[2] == f"✅ **CLOSED 2026-09-06 — {self.ESCAPED}** PRIOR TEXT: what"
+        assert cells[3] == "major"
+        self._converged(lr, tree, text)
+
+    def test_a_strike_anchor_with_a_pipe_keeps_both_rows_whole(self, lr, tree):
+        assert lr.main(_args(tree, "strike", "DEF-1", "--anchor", "a.py::f | b.py::g",
+                             "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "a.py::f \\| b.py::g"
+        assert self._index_cells(lr, text, "DEF-1") == ["~~`DEF-1`~~", "§C1", "a.py::f \\| b.py::g"]
+        self._converged(lr, tree, text)
+
+    def test_a_filed_body_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        tree["body"].write_text("**A new defect.** `ls a | head` reads it.", encoding="utf-8")
+        assert TestFile()._file(lr, tree) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        member = "| `DEF-3` | new/site.py::fn | **A new defect.** `ls a \\| head` reads it. | minor |"
+        assert member in text
+        assert self._member_cells(lr, text, "DEF-3")[3] == "minor"
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        new = [p for p in data["probes"] if p["id"] == "DEF-3"][0]
+        assert new["row_sha"] == hashlib.sha256(member.encode("utf-8")).hexdigest()[:12]
+        self._converged(lr, tree, text)
+
+    def test_a_filed_anchor_and_index_anchor_with_a_pipe_keep_both_rows_whole(self, lr, tree):
+        assert TestFile()._file(lr, tree, "--index-anchor", "c.py | d.py") == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._index_cells(lr, text, "DEF-3") == ["`DEF-3`", "§C1", "c.py \\| d.py"]
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]),
+                             "file", "DEF-4", "--section", "C1", "--after", "DEF-3",
+                             "--anchor", "e.py | f.py", "--text-file", str(tree["body"]),
+                             "--severity", "nit", "--probe-cmd", "echo open=True",
+                             "--open-value", "open=True", "--subject", "body.md")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-4")[1] == "e.py \\| f.py"
+        assert self._index_cells(lr, text, "DEF-4") == ["`DEF-4`", "§C1", "e.py \\| f.py"]
+        self._converged(lr, tree, text)
+
+    def test_a_repin_anchor_with_a_pipe_keeps_both_rows_whole(self, lr, tree):
+        (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "repin", "DEF-1",
+                             "--reason", "moved", "--anchor", "g.py | h.py")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "g.py \\| h.py"
+        assert self._index_cells(lr, text, "DEF-1") == ["`DEF-1`", "§C1", "g.py \\| h.py"]
+        self._repinned(lr, tree, text, "DEF-1")
+
+    def test_a_repin_text_that_quotes_a_pipeline_keeps_the_row_whole(self, lr, tree):
+        (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject
+        tree["body"].write_text(self.PIPELINE, encoding="utf-8")
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "repin", "DEF-1",
+                             "--reason", "reworded", "--text-file", str(tree["body"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[2:] == [self.ESCAPED, "major"]
+        self._repinned(lr, tree, text, "DEF-1")
+
+    def _repinned(self, lr, tree, text: str, rid: str) -> None:
+        """The probe's pin is the sha the checker recomputes from the row as
+        written (escaped), and the regions converge."""
+        line = lr._member_line(rid, text, struck_ok=False)[1]
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        pin = [p for p in data["probes"] if p["id"] == rid][0]
+        assert pin["row_sha"] == lr._load("check_ledger_probes").row_sha(line)
+        self._converged(lr, tree, text)
+
+    def test_a_strike_with_no_anchor_keeps_a_hand_escaped_site_cell_as_it_was(self, lr, tree):
+        rows = ("| `DEF-1` | a.py \\| b.py | what | major |", "| `DEF-2` | site | what | minor |")
+        tree["ledger"].write_text(_ledger(c1_rows=rows), encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert self._member_cells(lr, text, "DEF-1")[1] == "a.py \\| b.py"
+
+    def test_a_class_effort_with_a_pipe_keeps_the_index_row_whole(self, lr, tree):
+        assert lr.main(_args(tree, "class", "C7", "--title", "New", "--population", "HYGIENE",
+                             "--audience", "MAINTAINER", "--effort", "S | M")) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        row = next(ln for ln in text.split("\n") if ln.startswith("| [§C7]"))
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip()[1:-1])]
+        assert cells[1:] == ["New", "HYGIENE", "MAINTAINER", "S \\| M"]
+        self._converged(lr, tree, text)
 
 
 class TestABaselinedIdRefusesTheStrike:
@@ -2730,6 +2853,290 @@ class TestAStrikeReadsTheBaseAndTheHead:
         r = _two_commit_repo(tmp_path, head_fixed=False)
         assert lr.main(_repo_args(r, "--dry-run", "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
         assert "reads its open value '1' at the head too" in capsys.readouterr().err
+
+
+#: A ruling as the mail channel names one (a dispatcher's ack), for the decline.
+_RULING = "20261116T084909Z-air-bd3921"
+
+
+def _fold_into_a_probe_file(r: dict, rid: str = "DEF-1") -> Path:
+    """Move ``rid``'s probe out of ``r``'s roster into its own file under
+    ``task-packs/probes.d/`` (the layout this tree has kept since
+    2026-10-14), commit that on the lane and point ``origin/main`` at the
+    commit, so the base a strike reads holds the file. The file's path."""
+    from tests._git_oracle import _git_env
+    data = json.loads(r["probes"].read_text(encoding="utf-8"))
+    own = next(p for p in data["probes"] if p["id"] == rid)
+    data["probes"] = [p for p in data["probes"] if p["id"] != rid]
+    r["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    path = r["probes"].parent / "probes.d" / f"{rid}.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(own, indent=1) + "\n", encoding="utf-8")
+    env = _git_env()
+    for argv in (["add", "-A"], ["commit", "-q", "-m", "fold"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", *argv], cwd=r["repo"], env=env, check=True, capture_output=True)
+    return path
+
+
+def _drop_from_the_roster(r: dict, rid: str = "DEF-1") -> None:
+    """The hand route on a roster tree: ``rid``'s entry removed by hand."""
+    data = json.loads(r["probes"].read_text(encoding="utf-8"))
+    data["probes"] = [p for p in data["probes"] if p["id"] != rid]
+    r["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+
+class TestARuledCloseIsADecline:
+    """DEF-5114: ``strike --declined <ruling id>`` closes a row a ruling
+    declined (not work, a duplicate, a declared limit) while its defect
+    stands. It drives the probe at the head alone, requires it to read its
+    open value there, writes the ruling and that reading into the struck row
+    and retires the probe itself. Until it, three lanes removed the open
+    probe by hand and struck (ba41e9661, b273081f0, d5169d9c8), and #681 ran
+    the verb with its drive replaced, so each struck row read as an ordinary
+    strike. Each test names the mutation it dies to (tests/CLAUDE.md rule 1)."""
+
+    def test_a_decline_reads_open_at_the_head_and_stamps_the_ruling_and_the_reading(self, lr, tmp_path, capsys):
+        """Mutation: the stamp dropped, or the probe left behind."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 0
+        text = r["ledger"].read_text(encoding="utf-8")
+        assert (f"| ~~`DEF-1`~~ | site | ✅ **CLOSED 2026-10-25 — declined on ruling {_RULING}, read "
+                f"in this checkout at HEAD {r['head'][:12]}: DEF-1's probe read STILL_OPEN (it printed its open "
+                "value '1'); this strike retired its probe. landed with the probe read on both sides** "
+                "PRIOR TEXT: what |") in text, text
+        assert "| ~~`DEF-1`~~ | §C1 | site |" in text
+        assert [p["id"] for p in json.loads(r["probes"].read_text(encoding="utf-8"))["probes"]] == ["DEF-2"]
+        assert "STILL_OPEN at the base" not in capsys.readouterr().err
+
+    def test_a_decline_retires_a_probe_kept_as_its_own_file(self, lr, tmp_path):
+        """Mutation: the decline retiring the roster entry alone."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        path = _fold_into_a_probe_file(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", "bd3921")) == 0
+        assert not path.exists()
+        text = r["ledger"].read_text(encoding="utf-8")
+        assert "declined on ruling bd3921, read in this checkout" in text
+        assert "DEF-1's probe read STILL_OPEN (it printed its open value '1')" in text
+
+    def test_uncommitted_edits_are_said_beside_the_head(self, lr, tmp_path):
+        """The probe reads the checkout, not the commit: a tracked file edited
+        since HEAD is said, so the sha is never the reading's whole account.
+        Mutation: the stamp naming HEAD alone over a dirty tree."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        (r["repo"] / "pkg" / "__init__.py").write_text("# edited\n", encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 0
+        assert (f"read in this checkout at HEAD {r['head'][:12]} with uncommitted edits: DEF-1's probe"
+                in r["ledger"].read_text(encoding="utf-8"))
+
+    def test_a_two_id_cell_is_declined_under_one_stamp(self, lr, tree):
+        """Every id the cell carries closes together, each with its reading.
+        Mutation: the decline reading the addressed id alone."""
+        tree["ledger"].write_text(_ledger(
+            c1_rows=("| `DEF-1` `LG-9` | site | what | major |", "| `DEF-2` | site | what | minor |"),
+            appendix=("| `DEF-1` | §C1 | site |", "| `LG-9` | §C1 | site |", "| `DEF-2` | §C1 | site |"),
+        ), encoding="utf-8")
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        data["probes"].append({"id": "LG-9", "subject": "site", "cmd": "echo z", "open_value": "z",
+                               "why_not": None, "row_sha": "w"})
+        tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        (tree["ledger"].parent.parent / "site").write_text("the probes' subject\n", encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "LG-9", "--text-file", str(tree["closing"]),
+                             "--declined", _RULING)) == 0
+        assert ("DEF-1's probe read STILL_OPEN (it printed its open value 'a'); LG-9's probe read STILL_OPEN "
+                "(it printed its open value 'z'); this strike retired 2 probes.") in tree["ledger"].read_text(
+                    encoding="utf-8")
+
+    def test_a_decline_whose_probe_no_longer_reads_open_is_refused_as_a_fix(self, lr, tmp_path, capsys):
+        """The defect is gone at the head, so the close is a fix and its strike
+        drives both sides. Mutation: the decline taking any reading."""
+        r = _two_commit_repo(tmp_path, head_fixed=True)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 2
+        err = capsys.readouterr().err
+        assert "no longer reads its open value at the head" in err and "strike it without --declined" in err
+        assert _files(r) == before
+
+    def test_a_decline_whose_probe_cannot_be_driven_records_that_reading(self, lr, tmp_path):
+        """DEF-2's subject is on no tree, so its probe reads UNRESOLVED. An
+        ordinary strike takes that with a note, so refusing it here would send
+        a ruled close to the strike that records no ruling (the failure-mode
+        review). Mutation: the undrivable reading refused, or written as open."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 0
+        text = r["ledger"].read_text(encoding="utf-8")
+        assert "DEF-2's probe could not be driven (UNRESOLVED: subject missing: site" in text
+        assert "DEF-2's probe read STILL_OPEN" not in text
+
+    def test_a_plain_closing_text_may_not_carry_the_stamp(self, lr, tmp_path, capsys):
+        """Only --declined writes the stamp after driving the probe. Mutation:
+        a hand-typed stamp written as given."""
+        r = _two_commit_repo(tmp_path)
+        r["closing"].write_text("Declined on ruling bd3921: the probe read open", encoding="utf-8")
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "opens with the decline's stamp" in capsys.readouterr().err
+        assert _files(r) == before
+
+    def test_a_row_with_no_probe_command_is_declined_and_says_so(self, lr, tmp_path):
+        """A row declared unmeasurable has no reading to take; the stamp says
+        so with its reason. Mutation: the row refused, or its reason dropped."""
+        def2 = {"id": "DEF-2", "subject": "site", "cmd": None, "open_value": None,
+                "why_not": "an intermittent red has no steady open value", "row_sha": "y"}
+        r = _two_commit_repo(tmp_path, def2=def2)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 0
+        assert (f"declined on ruling {_RULING}: DEF-2 has no probe command (an intermittent red has no steady "
+                "open value); this strike retired its probe.") in r["ledger"].read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("ruling", ["a|b", "ack bd3921", "", "**x**"])
+    def test_a_ruling_that_is_not_one_token_is_refused(self, lr, tmp_path, capsys, ruling):
+        """The ruling lands in a table cell inside the bold closing text: a
+        pipe would split the row and a space or a mark would read as prose.
+        Mutation: the ruling written as given."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", ruling)) == 2
+        assert "--declined takes one ruling id" in capsys.readouterr().err
+        assert _files(r) == before
+
+    @pytest.mark.parametrize("extra", [["--base", "HEAD"], ["--no-base"],
+                                       ["--guard", "tests/test_guard.py::test_answer"]])
+    def test_a_decline_refuses_the_base_drives_flags(self, lr, tmp_path, capsys, extra):
+        """A decline fixes nothing, so it drives no base and no guard can earn
+        its red; --base beside it would only aim the hand-change check at
+        another commit (the failure-mode review drove HEAD past it). Mutation:
+        any of the three taken and ignored."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING, *extra)) == 2
+        assert f"{extra[0]} speaks to a fix's base drive" in capsys.readouterr().err
+        assert _files(r) == before
+
+    def test_a_dry_run_decline_prints_the_stamped_row_and_writes_nothing(self, lr, tmp_path, capsys):
+        """Mutation: the dry run printing a row without the stamp, or writing."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "--dry-run", "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--declined", _RULING)) == 0
+        out = capsys.readouterr().out
+        assert f"declined on ruling {_RULING}, read in this checkout" in out and "DEF-1's probe read STILL_OPEN" in out
+        assert _files(r) == before
+
+    def test_the_open_at_the_head_refusal_names_the_decline(self, lr, tmp_path, capsys):
+        """A seat whose ruled row reads open at the head is pointed at the
+        verb, never at the probe file. Mutation: the hint dropped."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "strike --declined <ruling id>" in capsys.readouterr().err
+
+
+class TestAProbeRemovedByHandRefusesTheStrike:
+    """DEF-5114's second half: every strike refuses where the base holds a
+    probe entry for an id of the row (its file under ``probes.d/``, or its
+    roster entry) and this tree holds none, so the hand route (remove the
+    open probe, then strike) stops working. A row with its entry is never
+    asked about the base. Each test names the mutation it dies to."""
+
+    def test_a_probe_file_the_base_holds_and_the_tree_lost_refuses(self, lr, tmp_path, capsys):
+        """Mutation: the check removed, so the strike notes the missing entry
+        and writes a row that reads as an ordinary strike."""
+        r = _two_commit_repo(tmp_path)
+        path = _fold_into_a_probe_file(r)
+        path.unlink()
+        before = r["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        err = capsys.readouterr().err
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=r["repo"], capture_output=True, text=True,
+                             encoding="utf-8", check=True).stdout.strip()
+        assert (f"the base {sha[:12]} holds task-packs/probes.d/DEF-1.json and this tree holds no probe "
+                "entry for DEF-1") in err, err
+        assert f"git checkout {sha[:12]} -- task-packs/probes.d/DEF-1.json" in err and "--declined" in err
+        assert r["ledger"].read_text(encoding="utf-8") == before
+
+    def test_a_roster_entry_the_base_holds_and_the_tree_lost_refuses(self, lr, tmp_path, capsys):
+        """The sibling on a tree that keeps a roster (an adopter's ledger
+        may). Mutation: the check reading probe files alone."""
+        r = _two_commit_repo(tmp_path)
+        _drop_from_the_roster(r)
+        before = r["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        err = capsys.readouterr().err
+        assert (f"the base {r['base'][:12]} holds DEF-1 in task-packs/LEDGER_PROBES.json and this tree holds "
+                "no probe entry for DEF-1") in err, err
+        assert r["ledger"].read_text(encoding="utf-8") == before
+
+    @pytest.mark.parametrize("extra", [["--no-base"], ["--declined", _RULING]])
+    def test_neither_no_base_nor_a_decline_passes_the_check(self, lr, tmp_path, capsys, extra):
+        """--no-base skips the base drive, never this read, and a decline of a
+        row whose probe is gone has no reading to record. Mutation: the check
+        run inside the base drive, or skipped for a decline."""
+        r = _two_commit_repo(tmp_path)
+        _fold_into_a_probe_file(r).unlink()
+        before = r["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), *extra)) == 2
+        assert "holds task-packs/probes.d/DEF-1.json and this tree holds no probe entry" in capsys.readouterr().err
+        assert r["ledger"].read_text(encoding="utf-8") == before
+
+    def test_a_probe_disabled_by_hand_refuses(self, lr, tmp_path, capsys):
+        """The sibling of a removed probe: its command emptied and a reason
+        typed in, which no verb writes over a command. Mutation: the check
+        asking only whether an entry exists."""
+        r = _two_commit_repo(tmp_path)
+        path = _fold_into_a_probe_file(r)
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        entry.update(cmd=None, open_value=None, why_not="ruled not work")
+        path.write_text(json.dumps(entry, indent=1) + "\n", encoding="utf-8")
+        before = r["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        err = capsys.readouterr().err
+        assert "holds a probe command for DEF-1 (task-packs/probes.d/DEF-1.json) and this tree's entry has none" in err
+        assert r["ledger"].read_text(encoding="utf-8") == before
+
+    def test_a_base_read_git_did_not_answer_refuses(self, lr, tmp_path, monkeypatch, capsys):
+        """A read that did not answer is never a no (DEF-5079). Mutation: the
+        unanswered read taken as a base that holds nothing."""
+        r = _two_commit_repo(tmp_path)
+        _drop_from_the_roster(r)
+        real = lr._git_read
+
+        def unanswered(root, *args):
+            if args[0] == "show":
+                raise lr._GitUnanswered("git show did not answer in 30s")
+            return real(root, *args)
+        monkeypatch.setattr(lr, "_git_read", unanswered)
+        before = r["ledger"].read_text(encoding="utf-8")
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "git show did not answer in 30s" in capsys.readouterr().err
+        assert r["ledger"].read_text(encoding="utf-8") == before
+
+    def test_a_row_the_base_never_gave_a_probe_strikes_as_before(self, lr, tmp_path, capsys):
+        """A row with no entry on either side (filed before the probes were
+        required) is no hand route. Mutation: a missing entry refused
+        whatever the base holds."""
+        r = _two_commit_repo(tmp_path)
+        _drop_from_the_roster(r, "DEF-2")
+        subprocess.run(["git", "commit", "-qam", "DEF-2 has no probe"], cwd=r["repo"], check=True,
+                       capture_output=True, env=__import__("tests._git_oracle", fromlist=["_git_env"])._git_env())
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=r["repo"], check=True)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]))) == 0
+        assert "carries no probe entry" in capsys.readouterr().err
+
+    def test_a_tree_with_no_base_to_read_says_the_check_did_not_run(self, lr, tree, capsys):
+        """An adopter's clone with no remote: the strike proceeds and says the
+        base was not compared. Mutation: a refusal where no base resolves, or
+        silence."""
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        data["probes"] = [p for p in data["probes"] if p["id"] != "DEF-2"]
+        tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        assert lr.main(_args(tree, "strike", "DEF-2", "--text-file", str(tree["closing"]))) == 0
+        assert "whether the base holds a probe this tree lost or disabled was not read" in capsys.readouterr().err
 
 
 #: How long the guard node's holder sleeps: far past the bound (``scaled(5)``

@@ -68,6 +68,7 @@ class TestInitDeploy:
         18 -> 17. 2026-10-05 added /inbox (the mail channel): 17 -> 18.
         2026-11-15 added /worker-tick (the worker loop's command): 18 -> 19,
         and the command count is read from tests/_surface_expected.py since.
+        2026-11-16 added /dispatcher-tick (the board loop's command): 19 -> 20.
         The three review workflows became the fourth deployed kind."""
         repo = _make_repo(tmp_path)
         _run_init(repo)

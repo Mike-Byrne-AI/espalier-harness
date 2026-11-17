@@ -272,7 +272,7 @@ class TestFirstUse:
     def test_the_text_prints_the_first_use_and_summed_lines(self, tmp_path):
         proc = _run("--compile", "--root", str(_first_use_hooks(tmp_path, n=40)))
         assert proc.returncode == 0, proc.stderr
-        assert "compiled on first use (accessors): 4 patterns, 55 characters" in proc.stdout, proc.stdout
+        assert "compiled on first use (all kinds): 4 patterns, 55 characters" in proc.stdout, proc.stdout
         assert "path plus first use (distinct):    5 patterns, 64 characters" in proc.stdout, proc.stdout
 
     def test_the_carried_rule_is_the_helpers_both_ways(self, tmp_path, monkeypatch):
@@ -344,6 +344,11 @@ class TestFirstUse:
         guard._load_the_pattern_path()   # as the child does, before any accessor is called
         helper = {f"{m.__name__}.{k}": v for m in modules for k, v in first_use_patterns(m).items()}
         assert helper, "the helper reads no first-use pattern on this tree: re-derive this row"
+        # DEF-2084: every first-use object of the modules, read by type, is a name the census read
+        objects = {f"{m.__name__}.{n}" for m in modules for n, v in vars(m).items()
+                   if type(v) is getattr(m, "_FirstUse", None)}
+        assert objects and not objects - set(got["first_use_names"]), (
+            f"first-use objects the census does not read: {sorted(objects - set(got['first_use_names']))}")
         assert got["first_use_names"] == sorted(helper), (got["first_use_names"], sorted(helper))
         chars = sum(len(v.pattern) for v in helper.values() if isinstance(v, re.Pattern))
         assert (got["first_use_patterns"], got["first_use_chars"]) == (len(helper), chars), got
@@ -355,7 +360,7 @@ class TestFirstUse:
 
 
 class TestCallsAgainstTheCheckout:
-    @pytest.mark.parametrize("kind", ["read", "bash", "mcp_read", "mcp_write"])
+    @pytest.mark.parametrize("kind", census.KINDS[1:])
     def test_one_call_of_each_kind_reads_its_decision(self, kind):
         proc = _run("--calls", "1", "--kind", kind, "--json")
         result = json.loads(proc.stdout) if proc.stdout.strip() else {}

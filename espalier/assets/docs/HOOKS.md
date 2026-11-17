@@ -1101,6 +1101,10 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   the imports, does the same. Its refusal names the innermost `tools/cc/` frame
   by exception class and line, never the message. A crash in reading the call
   itself lets nothing through, and its text names the terminal.
+- **The judging child's runner.** `write_guard` judges each call in a child
+  process it runs through `tools/cc/_json_safe.py`. A raise inside that runner
+  is refused the same way, with the same one restore, but every call goes
+  through the runner, so a read-only call is refused too and its text says so.
 - **The other three hooks.** `plan_guard`, `config_guard` and `stop_gate` see no
   Bash call. Their refusals name the same restore, to run from a terminal: a
   Bash call meets `write_guard`, which judges it as any other.
@@ -1191,8 +1195,13 @@ first; the dangerous-command catch is a secondary slip-catcher):
      off for the session. An entry that is not a list of strings, is absolute,
      or would cover the whole tree protects nothing and SAYS so, once a
      session (a stderr line and a `config_zone_ignored` audit record); so
-     does a key name one letter off. `/status --explain <path>` reports both
-     zones.
+     does a top-level key whose nearest key the engine reads is one of the
+     two (the engine loader's close-match at its cutoff, which reaches past
+     one letter: `protect_paths`, `generated_path`), whether or not the other
+     zone is set. A key the engine itself reads, such as `exclude_paths`, is
+     never taken for a misspelled zone, and neither is one nearer another key
+     the engine reads (`excluded_paths`, which the loader names as a near
+     miss of `exclude_paths`). `/status --explain <path>` reports both zones.
 
    The prefixes are read relative to the checkout that contains the path.
    Inside a registered git worktree of the repository — the checkout a
@@ -2263,8 +2272,17 @@ within a budget of 3.5 s from its own start (`JUDGMENT_BUDGET_S` in
 runs out -- a long generated list of paths is the shape that gets there --
 is denied the way the guard denies any call, one deny decision on stdout
 whose reason tells the agent the guard could not finish judging the command
-in time and to split it into shorter commands (batches of a hundred or two
-paths), and it writes one `pretooluse_blocked_time_budget` record that
+in time, names the bound it met and how the time split between start-up and
+judging, and asks for the command split into shorter ones (batches of a
+hundred or two paths). Where the judging child had not begun judging at the
+parent's deadline (below), it asks instead for the same command once more,
+since a busy machine's start-up, not the command, spent the time and no
+judgment ran; a child that had begun keeps the split, since its judgment may
+have spent a one-shot nudge keyed on the command, which the identical
+re-issue would pass unseen (`_denial_reasons.py`'s `WRITE_GUARD_TIME_BUDGET`
+and `WRITE_GUARD_START_UP_BUDGET`; before the start-up was read, 10 ordinary
+calls in a week on a loaded Windows box were refused and each told to
+split). It writes one `pretooluse_blocked_time_budget` record that
 `/status --log` counts. That budget is a thread's wait, and a judgment
 sitting in one long compiled-pattern search holds the interpreter lock for
 the whole call, so the wait can end long past the timeout (40.4 s under
@@ -2272,17 +2290,44 @@ the whole call, so the wait can end long past the timeout (40.4 s under
 from the hook's start (`HARD_DEADLINE_S`) it kills the child and every
 process the child started (the child's own session on POSIX; on Windows
 `taskkill /T` walks the tree while its parents are alive, then a job object
-that kills on close ends what is left in it), writes the same deny, and is
-gone by 4.6 s from the hook's start (`EXIT_BY_S`, the deny's own write of a
-few milliseconds aside), whatever its own `pretooluse_blocked_time_budget`
-record, written after the deny, is still doing. A child that started and whose answer was lost is refused the same
-way, never judged a second time. The child
+that kills on close ends what is left in it), writes the deny, and is gone
+by 4.6 s from the hook's start (`EXIT_BY_S`, the deny's own write of a few
+milliseconds aside), whatever its own `pretooluse_blocked_time_budget`
+record, written after the deny, is still doing. The child writes one line on
+stderr as it begins judging, with its clock: once it has read the payload
+and, for a call that loads the two pattern modules (one carrying a command,
+and every mutation or MCP call), imported them, since that import is
+start-up a busy machine spends on any command and no judgment has run
+before it; the patterns a judgment reads compile on their first use, after
+the line. The parent takes the line out of what it relays and, at its
+deadline, reads it for whether the child had begun and when, so its refusal
+says which of start-up and judging spent the time.
+A child still running 2.0 s after the hook's start (`_BUILD_THE_REFUSAL_AT_S`)
+has the parent build its refusal while it waits: the reasons, the audit
+helpers, the project root, the log's path and the lock's first-use imports,
+so neither the deny nor the record waits on a cold import after the deadline
+(9 of those 10 refusals had left no record); a call answered
+before then pays nothing for it. A raise inside the parent's runner itself (a
+child may have started) is never judged a second time: it is refused naming
+the file that raised and its line, as a fault in a judgment is, with a text
+that says every call is refused while it stands, a read-only one included
+(every call goes through the runner), and the one call let through is a Bash
+restore to HEAD of a file the refusal names, its copy saved first. A raise the
+runner never saw (an argument that could not be built), or a child it could
+not hand its input, started no judgment, and the hook judges the call itself,
+as below. A kept, older `tools/cc/_json_safe.py` whose runner predates the
+deadline's readings is called with the arguments it takes, so the hard
+deadline still holds; its refusal there cannot say what spent the time, its
+record can be lost on a busy machine, and the hook says so once
+(`pretooluse_failed_open_kept_runner`, naming `espalier upgrade --execute .`). The child
 also caps its own CPU time at 10 s on POSIX, for a child whose parent was
 ended from outside. An ordinary call finishes in a small fraction of either
 bound; the second interpreter adds its start to every call (about 30 ms on
 the Air, Python 3.14; +40 to +67 ms on Windows, Python 3.11). Where no child
 can start, the hook process judges the call itself under the 3.5 s budget
-alone and says so once (`pretooluse_failed_open_time_budget`, the record a
+alone and says so once, naming `tools/cc/_json_safe.py` and
+`espalier upgrade --execute .` where a kept, older copy has no runner at all
+(`pretooluse_failed_open_time_budget`, the record a
 judgment thread that cannot start also writes); a stdin the parent cannot
 read is judged in the hook process too, where the reader records it and the
 kill-switch gate still runs. A git the judgment asks (the discard snapshot, a
@@ -3614,7 +3659,17 @@ SubagentStop, ConfigChange) -- and `config_guard`'s
 its stderr routed to the debug log, so for those the record is the voice; the
 family is declared once (`_integrity.is_voice_only_event`), and the next
 SessionStart names what was written since the previous start, past the UTC
-day.)
+day. The other advisory records copy something said where it happened: the
+four `session_*` types each sit beside a banner warning, `post_write_integrity_drift`,
+`post_shell_zone_change`, `posttooluse_frontmatter_not_strict` and
+`posttooluse_incident_driver_shape` are told to Claude (a zone change between
+calls to the operator), and the prompt router names `stop_held_handoff` while
+the hold stands (`_integrity.CHANNELLED_ADVISORY_EVENT_TYPES`);
+`action_justification_missing` is the raw log's copy of a stderr line
+(`_integrity.RAW_LOG_ONLY_EVENT_TYPES`). Neither reader counts these. Every
+type a hook writes sits in exactly one of these families or a tier of the
+table below, and the harness's own tests fail on a type in none of them, or
+in two.)
 
 The records come in two tiers. A **refusal** is a call that did not run. A
 **pause** is once-then-continue: a speed-bump fire lets the re-issued command
@@ -3629,8 +3684,8 @@ inside a window of twenty.
 | `pretooluse_blocked_no_active_plan` | refusal | `plan_guard` denies a source write with no active execution plan |
 | `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set, or (`details.kind` `user_settings_write`) a Write or Edit of the user settings file is denied because its result would turn the hooks off or loosen a gate; `details.findings` names each switch and `details.file_path` the file by label, never the home path |
 | `pretooluse_blocked_secret_path` | refusal | a read of a secret-bearing path (a dotenv file, a `secrets/` directory, a credentials file) is denied — for Read/Edit/Grep, and for a Bash or PowerShell command that would print it |
-| `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
-| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline and `details.bytes` the payload's length |
+| `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); `details.where` is `parent` where `write_guard`'s runner of its judging child raised, with `details.file` and `details.line` where the raise was placed; one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
+| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text, and `details.start_up_s` and `details.judged_s` how the budget split; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline, `details.bytes` the payload's length, `details.began` whether the child had begun judging (`null` where its stderr was not read) and, where its clock was read, `details.start_up_s` and `details.judged_s` |
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_unwired` | refusal | a project settings change that would unwire a governance gate the session runs is denied; `details.findings` names the gates |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |

@@ -8,6 +8,7 @@ Rendered from `.claude/commands/` and saved stable_actions.
 | `/audit-accuracy` | Run the accuracy audit and walk through any failures. |
 | `/commit` | Review uncommitted changes, then stage and commit with a generated message. |
 | `/context-load` | Session resume and degraded-state recovery guidance. |
+| `/dispatcher-tick` | One tick of the dispatcher seat's board loop: have the seat driver print this seat's board tick, then carry it out as this message's instructions. |
 | `/handoff` | End the session cleanly and leave the next Claude Code session with usable continuity. |
 | `/implement-pack` | Execute one or more task packs (`TP-*.md`) end-to-end with the established single-atomic-commit-per-pack workflow. Auto-continues to the next pack unless a defined stop condition fires. |
 | `/implement-task` | Canonical repo-change command. Use for focused changes or coordinated multi-phase work. |

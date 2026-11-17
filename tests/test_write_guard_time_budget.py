@@ -283,6 +283,9 @@ class TestTheBudgetSitsBelowTheWiring:
         timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
         lead = write_guard.HARD_DEADLINE_S - write_guard.JUDGMENT_BUDGET_S
         assert lead >= _CHILD_LEAD_S, f"the child's budget refuses only {lead:.2f} s before the parent's kill"
+        # The refusal is built while the parent still waits (DEF-2092): a build
+        # time at or past the deadline would build nothing ahead of it.
+        assert 0 < write_guard._BUILD_THE_REFUSAL_AT_S < write_guard.HARD_DEADLINE_S
         after_kill = write_guard.HARD_DEADLINE_S + _json_safe.TREE_DRAIN_SECONDS + _DENY_AFTER_DRAIN_S
         assert after_kill <= write_guard.EXIT_BY_S, (
             f"the kill, the drain and the deny need {after_kill:.2f} s, past the exit point {write_guard.EXIT_BY_S} s")
@@ -421,15 +424,22 @@ class TestASlowJudgmentIsRefused:
         # The structured channel, as every other deny: exit 0, one stdout
         # JSON deny object carrying the split-it reason, nothing on stderr.
         assert rc == 0
-        expected = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=_TINY_BUDGET_S)
-        assert _the_one_deny(streams) == expected
+        # The judgment began at the budget's clock (an in-process call), so the
+        # judging spent the time and the split stays the remedy (DEF-2091); the
+        # split's figures are the clock's, so the words around them are pinned.
+        head, tail = _denial_reasons.WRITE_GUARD_TIME_BUDGET.split("{spent}")
+        deny = _the_one_deny(streams)
+        assert deny.startswith(head.format(budget=_TINY_BUDGET_S, bound=write_guard._CHILD_BOUND)), deny
+        assert deny.endswith(tail) and "0.0 s went to start-up" in deny, deny
         assert streams.err.getvalue() == ""
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
         assert len(records) == 1, _types()
         command = tool_input.get("command")
-        assert records[0]["details"] == {
+        details = dict(records[0]["details"])
+        assert details.pop("judged_s") == pytest.approx(_TINY_BUDGET_S, abs=0.01), records
+        assert details == {
             "hook": "write_guard", "tool": tool, "budget_s": _TINY_BUDGET_S,
-            "chars": len(command) if command else 0,
+            "chars": len(command) if command else 0, "start_up_s": 0.0, "began": True,
         }
 
     def test_maintenance_mode_does_not_lift_the_budget(self, monkeypatch, slow):
@@ -440,9 +450,18 @@ class TestASlowJudgmentIsRefused:
         assert "pretooluse_blocked_time_budget" in _types()
 
     def test_the_refusal_names_the_split_and_the_wrong_move(self):
-        text = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=3.5)
+        text = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=3.5, bound="b", spent="s")
         assert "3.5 s" in text
         assert "Don't:" in text and "Do:" in text and "split" in text
+        assert text.isascii()
+
+    def test_the_start_up_refusal_names_the_re_issue_and_the_split_as_the_wrong_move(self):
+        """DEF-2091's twin: where start-up spent the time the split is the
+        wrong move and the re-issue the right one."""
+        text = _denial_reasons.WRITE_GUARD_START_UP_BUDGET.format(budget=4.0, bound="b", spent="s")
+        dont, do = text.split("\n  Don't:")[1].split("\n  Do:")
+        assert "split" in dont and "re-issue the same command once" in do, text
+        assert "split" not in do, text
         assert text.isascii()
 
     def test_a_refused_judgments_late_output_is_discarded(self, monkeypatch, slow):
@@ -627,28 +646,31 @@ class TestTheHookProcessExitsWithoutWaiting:
         assert "pretooluse_blocked_time_budget" in _types()
 
 
-#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. The
-#: payload's parse (``_hook_utils.read_stdin_safely`` calls ``json.loads`` in the
-#: judging thread) first starts a sleeping grandchild and records its pid,
-#: written whole and renamed into place. Then it runs ONE compiled-pattern
-#: search that backtracks for far longer than any bound here. A search holds the
-#: interpreter lock for its whole call, so the thread waiting on the budget
-#: cannot wake; only a bound outside the judging process can answer in time. It
-#: fires on the marker in the command alone, so nothing else in any process the
-#: hook starts is slowed.
+#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. In
+#: the judging child of the row that names a pid file, the begun mark's write
+#: (in the judging thread, past the payload's parse and the pattern import
+#: since air 594461; the parse was this seam until then) first starts a
+#: sleeping grandchild and records its pid, written whole and renamed into
+#: place. Then it runs ONE compiled-pattern search that backtracks for far
+#: longer than any bound here. A search holds the interpreter lock for its
+#: whole call, so the thread waiting on the budget cannot wake; only a bound
+#: outside the judging process can answer in time. Nothing else in any
+#: process the hook starts is slowed.
 _STALL_SITE = textwrap.dedent('''
-    import json, os, re, subprocess, sys
-    _loads = json.loads
-    def _stalling_loads(text, *args, **kwargs):
-        if isinstance(text, str) and "STALL-IN-ONE-C-CALL" in text:
-            sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
-            part = os.environ["STALL_PID_FILE"] + ".tmp"
-            with open(part, "w", encoding="utf-8") as fh:
-                fh.write(str(sleeper.pid))
-            os.replace(part, os.environ["STALL_PID_FILE"])
-            re.match(r"(a+)+$", "a" * 40 + "!")
-        return _loads(text, *args, **kwargs)
-    json.loads = _stalling_loads
+    import os, re, subprocess, sys
+    if sys.argv[1:2] == ["--judge"] and os.environ.get("STALL_PID_FILE"):
+        _write = os.write
+        def _stalling_write(fd, data):
+            written = _write(fd, data)
+            if fd == 2 and bytes(data).startswith(b"write_guard: judging began at "):
+                sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+                part = os.environ["STALL_PID_FILE"] + ".tmp"
+                with open(part, "w", encoding="utf-8") as fh:
+                    fh.write(str(sleeper.pid))
+                os.replace(part, os.environ["STALL_PID_FILE"])
+                re.match(r"(a+)+$", "a" * 40 + "!")
+            return written
+        os.write = _stalling_write
 ''')
 
 #: The strike row's bound on the hook process: it ends only a run the hook
@@ -702,7 +724,7 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
         pid_file = tmp_path / "sleeper.pid"
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path), PYTHONPATH=str(site),
                    STALL_PID_FILE=str(pid_file))
-        payload = _payload("Bash", {"command": "echo STALL-IN-ONE-C-CALL"})
+        payload = _payload("Bash", {"command": "git status"})
         assert _UNANSWERED_RUN_BOUND_S > timeout, "the run's bound must leave the wired timeout room to fail"
         try:
             started = time.monotonic()
@@ -727,6 +749,9 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
             decision = decisions[0]["hookSpecificOutput"]
             assert decision["permissionDecision"] == "deny", decision
             assert "could not finish judging this command within its" in decision["permissionDecisionReason"]
+            # The child began judging and the judging spent the time (DEF-2091):
+            # the split stays the remedy.
+            assert "split it into shorter commands" in decision["permissionDecisionReason"], decision
             overrun_ms = (elapsed - write_guard.HARD_DEADLINE_S) * 1000
             assert overrun_ms < _OVERRUN_CEILING_MS, (
                 f"the deny landed at {elapsed:.2f} s, {overrun_ms:.0f} ms past the {write_guard.HARD_DEADLINE_S} s"
@@ -734,7 +759,8 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
             # The parent's refusal is audited, inside its exit point (DEF-803's
             # visibility class: a deny /status --log never counts).
             refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-            assert [r["details"].get("bound") for r in refusals] == ["child"], refusals
+            assert [(r["details"].get("bound"), r["details"].get("began")) for r in refusals] == [
+                ("child", True)], refusals
             gone_by = time.monotonic() + 5.0
             while _pid_alive(sleeper) and time.monotonic() < gone_by:
                 time.sleep(0.05)
@@ -872,6 +898,11 @@ class TestTheHookAnswersThroughItsJudgingChild:
             payload = (_payload("Bash", {"command": "git status"}) if case == "an allow" else
                        _payload("Write", {"file_path": str(root / ".claude" / "settings.json"), "content": "x"}))
             code, out, err = _run_the_hook(root, payload, judge=judge, site=site)
+            if judge and case != "a start refusal":
+                # The child's first stderr line is the parent's to read
+                # (DEF-2091), and the relay takes it out.
+                assert err.startswith(write_guard._BEGUN_MARK), err
+                err = write_guard._without_the_mark(err)
             answers.append((code, out.replace(name.encode(), b"run-x"), err.replace(name.encode(), b"run-x")))
         hook, child = answers
         assert hook == child, (hook, child)
@@ -898,20 +929,26 @@ class TestTheHookAnswersThroughItsJudgingChild:
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_failed_open_time_budget"]
         assert [r["details"].get("fault") for r in records] == ["OSError"], records
 
-    def test_a_child_whose_answer_is_lost_is_refused_never_judged_again(self, tmp_path):
+    def test_a_child_whose_answer_is_lost_is_refused_naming_the_raiser_never_judged_again(self, tmp_path):
         """Only a child that never started is judged in the hook process; one
         that started and whose answer was lost is refused. Its judgment may
         have spent a one-shot nudge, which a second judgment would read as the
-        re-issue and let through."""
+        re-issue and let through. The refusal names the file that raised and
+        its line, as the crash guard does, never the time budget (DEF-2094)."""
         site = _site(tmp_path, _LOST_ANSWER_SITE)
         code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
         assert code == 0, (code, err)
-        decisions = _decisions(out.decode("utf-8"))
-        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], out
+        decisions = [d["hookSpecificOutput"] for d in _decisions(out.decode("utf-8"))]
+        assert [d["permissionDecision"] for d in decisions] == ["deny"], out
+        reason = decisions[0]["permissionDecisionReason"]
+        assert reason.startswith("write_guard internal error (RuntimeError at tools/cc/_json_safe.py:"), reason
+        assert "git restore --source=HEAD -- tools/cc/_json_safe.py" in reason, reason
+        assert "time budget" not in reason, reason
         assert b"judging child could not start" not in err, err
-        refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [(r["details"].get("bound"), r["details"].get("fault")) for r in refusals] == [
-            ("child", "RuntimeError")], refusals
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_internal_error"]
+        assert [(d.get("where"), d.get("error"), d.get("file")) for d in refusals] == [
+            ("parent", "RuntimeError", "tools/cc/_json_safe.py")], refusals
+        assert "pretooluse_blocked_time_budget" not in _types(), _types()
 
     @pytest.mark.skipif(os.name == "nt", reason="a closed fd 0 across an exec is POSIX's shape")
     def test_a_stdin_the_parent_cannot_read_still_meets_the_kill_switch_gate(self, tmp_path):
@@ -946,6 +983,447 @@ class TestTheHookAnswersThroughItsJudgingChild:
         cap = write_guard._CHILD_CPU_SECONDS
         assert hard == our_hard, (hard, our_hard)
         assert soft == (cap if our_hard == resource.RLIM_INFINITY else min(cap, our_hard)), (soft, hard)
+
+
+#: A ``sitecustomize`` that holds the judging child in its start-up past the
+#: parent's deadline, before any of the guard's own code runs: the shape a
+#: loaded box gave 9 of DEF-2091's 10 refusals. The hook process runs as it is.
+_SLOW_START_UP_SITE = textwrap.dedent('''
+    import sys, time
+    if sys.argv[1:2] == ["--judge"]:
+        time.sleep(60)
+''')
+
+#: The real hook, nothing of it stood in for: the judging child is held in its
+#: start-up past the deadline (a child that never answers), and in the hook
+#: process every import from 4 s after its start costs a second, as a cold
+#: import on a loaded box does (DEF-2092's probe, as a row).
+_SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE = textwrap.dedent('''
+    import sys, time
+    _started = time.monotonic()
+    if sys.argv[1:2] == ["--judge"]:
+        time.sleep(60)
+    else:
+        class _ColdAfterTheDeadline:
+            def find_spec(self, *args, **kwargs):
+                if time.monotonic() - _started > 4.0:
+                    time.sleep(1.0)
+                return None
+        sys.meta_path.insert(0, _ColdAfterTheDeadline())
+''')
+
+#: How long the judging child sleeps in its start-up, before its begun mark,
+#: in the row that pins the mark's clock: under the deadline by more than a
+#: loaded box's interpreter start, so the mark is written before the kill.
+_PRE_MARK_SLEEP_S = 1.0
+
+#: A ``sitecustomize`` that holds the judging child in its start-up for
+#: ``_PRE_MARK_SLEEP_S`` and then, inside `_run_main`'s own work, past the
+#: deadline: the kill-switch scan's parse of the project settings, which the
+#: row seeds with the marker. The payload's parse was this seam until air
+#: 594461 moved the mark past it; the scan is judging, so a mark moved past it
+#: reds this row (the failure-mode review's F4).
+_STALL_AFTER_THE_MARK_SITE = textwrap.dedent(f'''
+    import json, sys, time
+    if sys.argv[1:2] == ["--judge"]:
+        time.sleep({_PRE_MARK_SLEEP_S})
+        _loads = json.loads
+        def _stalled_loads(text, *args, **kwargs):
+            if isinstance(text, str) and "STALL-IN-THE-JUDGMENT" in text:
+                time.sleep(60)
+            return _loads(text, *args, **kwargs)
+        json.loads = _stalled_loads
+''')
+
+#: A ``sitecustomize`` that holds the judging child in the import of the
+#: pattern module past the parent's deadline, the rest of its start-up as it
+#: is: the cost a busy machine spends on any command, which air 594461 moved
+#: ahead of the begun mark (DEF-2091's residual). The time goes to the
+#: module's exec, where a loaded box's compiles spend it. A sleep in
+#: ``find_spec`` runs under the global import lock, which held the child's own
+#: refusal at its first import (driven on Windows 3.11 and 3.13), so the parent
+#: refused in its place and this row passed while the child's reader was wrong;
+#: CI's 3.14 cell refused through it (#691).
+_SLOW_PATTERN_IMPORT_SITE = textwrap.dedent('''
+    import importlib.machinery, sys, time
+    if sys.argv[1:2] == ["--judge"]:
+        class _SlowPatternImport:
+            def find_spec(self, name, path=None, target=None):
+                if name != "_bash_patterns":
+                    return None
+                spec = importlib.machinery.PathFinder.find_spec(name, path, target)
+                real = spec.loader
+
+                class _SlowExec(type(real)):
+                    def exec_module(self, module):
+                        time.sleep(60)
+                        return real.exec_module(module)
+
+                spec.loader = _SlowExec(real.name, real.path)
+                return spec
+        sys.meta_path.insert(0, _SlowPatternImport())
+''')
+
+#: A ``sitecustomize`` under which the judging child cannot import the pattern
+#: module, the rest of it as it is.
+_NO_PATTERN_MODULE_SITE = textwrap.dedent('''
+    import sys
+    if sys.argv[1:2] == ["--judge"]:
+        class _NoPatternModule:
+            def find_spec(self, name, *args, **kwargs):
+                if name == "_bash_patterns":
+                    raise ImportError("planted: the pattern module cannot import")
+                return None
+        sys.meta_path.insert(0, _NoPatternModule())
+''')
+
+
+class TestTheDeadlineRefusalSaysWhatSpentTheTime:
+    """DEF-2091: the parent's refusal at its deadline told the agent the
+    command was too long and to split it, where a loaded box's start-up had
+    spent the time and the same command judges in well under a second. It now
+    names the bound it met and whether its judging child had begun judging,
+    and asks for the re-issue where the child had not begun. DEF-2092: its
+    record, which a cold import after the deadline cut off, lands. Each row's
+    deny lands under the wired timeout, past which Claude Code lets the call
+    through unjudged."""
+
+    def _refused(self, out: bytes) -> str:
+        decisions = _decisions(out.decode("utf-8"))
+        assert len(decisions) == 1, out
+        decision = decisions[0]["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny", decision
+        return decision["permissionDecisionReason"]
+
+    def test_a_child_still_starting_up_is_refused_with_the_re_issue(self, tmp_path):
+        site = _site(tmp_path, _SLOW_START_UP_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        reason = self._refused(out)
+        assert "re-issue the same command once" in reason, reason
+        assert "Do: split" not in reason, reason
+        assert f"its {write_guard.HARD_DEADLINE_S} s time budget (the hook's deadline" in reason, reason
+        assert "had not begun judging" in reason, reason
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], refusals
+
+    def test_a_record_lands_when_imports_after_the_deadline_are_slow(self, tmp_path):
+        site = _site(tmp_path, _SLOW_IMPORTS_AFTER_THE_DEADLINE_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        self._refused(out)
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", False)], (refusals, err)
+
+    def test_a_child_that_had_begun_is_refused_with_the_split_and_its_clock_read(self, tmp_path):
+        """The begun mark carries the child's clock across the two processes:
+        the parent's record splits the deadline at the mark, start-up at least
+        the child's own pre-mark sleep, and the two parts sum to the deadline.
+        A child that had begun keeps the split (its judgment may have spent a
+        one-shot nudge the identical re-issue would pass unseen)."""
+        site = _site(tmp_path, _STALL_AFTER_THE_MARK_SITE)
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"env": {"NOTE": "STALL-IN-THE-JUDGMENT"}}',
+                                                            encoding="utf-8")
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        reason = self._refused(out)
+        assert "Do: split it into shorter commands" in reason, reason
+        assert "s went to start-up and" in reason and "s to judging" in reason, reason
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("bound"), d.get("began")) for d in refusals] == [("child", True)], (refusals, err)
+        start_up, judged = refusals[0]["start_up_s"], refusals[0]["judged_s"]
+        assert start_up >= _PRE_MARK_SLEEP_S, refusals
+        assert start_up + judged == pytest.approx(write_guard.HARD_DEADLINE_S, abs=0.02), refusals
+
+
+class TestTheMarkFollowsThePatternImport:
+    """Air 594461, DEF-2091's residual: the judging child imports the two
+    pattern modules before its begun mark where the call loads them, so a
+    busy machine's import is read as start-up and the refusal asks for the
+    re-issue, not the split. A read-only call still never pays the import."""
+
+    def test_a_slow_pattern_import_is_refused_with_the_re_issue(self, tmp_path):
+        site = _site(tmp_path, _SLOW_PATTERN_IMPORT_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        reason = TestTheDeadlineRefusalSaysWhatSpentTheTime()._refused(out)
+        assert "re-issue the same command once" in reason, reason
+        assert "Do: split" not in reason, reason
+        assert "had not begun judging" in reason, reason
+        # Unstalled, the child's own budget refuses first (its record names no
+        # bound); on a box loaded past the parent's deadline the parent refuses
+        # (``bound`` child). Either way judging had not begun.
+        refusals = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert refusals, err
+        assert all(d.get("bound") in (None, "child") and d.get("began") is False for d in refusals), (refusals, err)
+
+    @pytest.mark.parametrize(("marking", "mark_after_s", "began", "start_up_s"), [
+        (True, None, False, 3.5),
+        (True, 1.0, True, 1.0),
+        (False, None, True, 0.25),
+    ], ids=["child-before-the-mark", "child-past-the-mark", "in-place"])
+    def test_the_child_budget_reads_the_begun_mark(self, monkeypatch, guard_root, capsys,
+                                                   marking, mark_after_s, began, start_up_s):
+        """The child's own budget refusal, driven on `_verdict_for` with no
+        process and no race: a judging child before its mark asks for the
+        re-issue, start-up all of the budget; one past it splits the budget at
+        the mark; the hook judging in place splits it where `main` began."""
+        clock = time.monotonic() - 10.0  # the deadline is past, so the wait returns at once
+        monkeypatch.setattr(write_guard, "_MARK_THE_JUDGING", marking)
+        monkeypatch.setattr(write_guard, "_JUDGING_BEGAN_AT",
+                            None if mark_after_s is None else clock + mark_after_s, raising=False)
+        rc = write_guard._verdict_for(
+            write_guard._Verdict(), write_guard._HeldStreams(), threading.Event(),
+            clock + write_guard.JUDGMENT_BUDGET_S, [_payload("Bash", {"command": "git status"})],
+            exit_on_budget=False, begun=clock + 0.25, clock=clock)
+        assert int(rc) == 0
+        decisions = _decisions(capsys.readouterr().out)
+        assert len(decisions) == 1, decisions
+        reason = decisions[0]["hookSpecificOutput"]["permissionDecisionReason"]
+        if began:
+            assert "split it into shorter commands" in reason and f"{start_up_s:.1f} s went to start-up" in reason, reason
+        else:
+            assert "re-issue the same command once" in reason and "had not begun judging" in reason, reason
+        records = [r["details"] for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(d.get("began"), d.get("start_up_s"), d.get("judged_s")) for d in records] == [
+            (began, round(start_up_s, 2), round(write_guard.JUDGMENT_BUDGET_S - start_up_s, 2))], records
+
+    def test_a_read_only_call_never_imports_the_pattern_modules(self, tmp_path):
+        """The planted import failure is the seam's proof both ways: the
+        Read call answers with its mark (it never imported the module), and
+        the Bash call is refused by the crash guard with no mark (the import
+        ran before it, inside the guard)."""
+        site = _site(tmp_path, _NO_PATTERN_MODULE_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Read", {"file_path": str(tmp_path / "notes.txt")}),
+                                       judge=True, site=site)
+        assert (code, _decisions(out.decode("utf-8"))) == (0, []), (code, out, err)
+        assert err.startswith(write_guard._BEGUN_MARK), err
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), judge=True, site=site)
+        decisions = [d["hookSpecificOutput"]["permissionDecision"] for d in _decisions(out.decode("utf-8"))]
+        assert (code, decisions) == (0, ["deny"]), (code, out, err)
+        assert write_guard._BEGUN_MARK not in err, err
+
+    def test_the_mark_reads_the_loads_run_main_makes(self, monkeypatch, guard_root, capsys):
+        """``_loads_the_pattern_path`` against `_run_main` itself, over every
+        tool the guard names in a set and each input shape, so a load that
+        moves earlier or later than the predicate says reds here (the mark
+        would then read an import as judging, or a read-only call would pay
+        it)."""
+        tools = sorted(write_guard.MUTATION_TOOLS | write_guard._CONTENT_SURFACING_TOOLS) + [
+            "mcp__server__tool", "WebFetch", "TodoWrite", ""]
+        inputs: list[object] = [{}, {"command": "echo hi"}, {"command": 7},
+                                {"file_path": str(guard_root / "notes.txt")}, "not a dict"]
+        payloads: list[dict] = [{"tool_name": t, "tool_input": i} for t in tools for i in inputs]
+        payloads += [{"tool_name": odd, "tool_input": i} for odd in (["Bash"], 7, None)
+                     for i in ({"command": "echo hi"}, {})]
+        real = write_guard._load_the_pattern_path
+        loads: list[int] = []
+
+        def _counted() -> None:
+            loads.append(1)
+            real()
+
+        monkeypatch.setattr(write_guard, "_load_the_pattern_path", _counted)
+        wrong = []
+        for data in payloads:
+            loads.clear()
+            raised = ""
+            try:
+                write_guard._run_main(dict(data))
+            except Exception as exc:  # noqa: BLE001 -- a malformed input (a tool name or command that is no string) raises, and `_judge`'s crash guard denies it in a run; a load before the raise is counted
+                raised = type(exc).__name__
+            if bool(loads) != write_guard._loads_the_pattern_path(dict(data)):
+                wrong.append((data, bool(loads), raised))
+        capsys.readouterr()
+        assert not wrong, wrong
+        assert len(payloads) >= 5 * len(write_guard.MUTATION_TOOLS), len(payloads)
+
+
+class TestABrokenFirstUsePatternRefuses:
+    """DEF-2084's first-use move took a pattern's compile error from import,
+    where the guard refused every call naming the file, into the judgment,
+    where a directory walk's ``except Exception`` read it as no match and a
+    protected write through a relative chain was allowed (the failure-mode
+    review's F1, driven by both reviewers). A pattern that does not compile
+    now raises past those handlers into the crash guard."""
+
+    _COMMAND = "cd .claude && echo x > settings.json"
+
+    def test_every_broken_first_use_pattern_refuses_and_none_allows(self, monkeypatch, guard_root, capsys):
+        import _bash_patterns as bp
+
+        (guard_root / ".claude").mkdir()  # the chain's `cd` lands, so the write is the guard's to refuse
+        write_guard._load_the_pattern_path()
+        payload = _payload("Bash", {"command": self._COMMAND})
+
+        def verdict() -> str:
+            try:
+                rc = write_guard._run_main(dict(payload))
+            except bp.FirstUseCompileError:
+                return "crash guard"
+            return "deny" if '"deny"' in capsys.readouterr().out else f"allow (rc {int(rc)})"
+
+        assert verdict() == "deny", "the control: whole, the guard refuses the write"
+        names = [name for name, value in vars(bp).items() if type(value) is bp._FirstUse]
+        allowed = []
+        for name in names:
+            with monkeypatch.context() as patch:
+                patch.setattr(bp, name, bp._FirstUse("(", 0))
+                if verdict().startswith("allow"):
+                    allowed.append(name)
+        assert len(names) >= 200, names
+        assert not allowed, f"a broken first-use pattern let the write through: {allowed}"
+
+    def test_the_crash_guard_refuses_it_and_names_the_file(self, monkeypatch, guard_root):
+        import _bash_patterns as bp
+
+        (guard_root / ".claude").mkdir()  # the chain's `cd` lands, so the write is the guard's to refuse
+        write_guard._load_the_pattern_path()
+        monkeypatch.setattr(bp, "_DIR_VERB_RE", bp._FirstUse("(", 0))
+        code, streams = _drive(monkeypatch, _payload("Bash", {"command": self._COMMAND}))
+        assert code == 0, streams.err.getvalue()
+        reason = _the_one_deny(streams)
+        assert "_bash_patterns.py" in reason, reason
+
+    @pytest.mark.parametrize("source", ["(", 123, None], ids=["re-error", "int", "none"])
+    def test_any_failure_to_compile_raises_past_the_walkers(self, source):
+        # The broad arm too: a raise other than re.error (a source that is not a
+        # string) must still leave as FirstUseCompileError, its message built
+        # without raising, or a walker's `except Exception` reads it as no match.
+        import _bash_patterns as bp
+
+        with pytest.raises(bp.FirstUseCompileError, match="does not compile"):
+            bp._FirstUse(source, 0).search("x")
+
+
+#: Stands for the guard's begun mark in the parametrize rows below, which
+#: resolve it in the test: a name the guard gained in this lane, read at
+#: collection, would stop the whole module collecting on a tree without it,
+#: and a strike's guard row runs this module at its base.
+_THE_MARK = b"<the begun mark>"
+
+
+class TestTheRefusalReadsWhatSpentTheTime:
+    """DEF-2091's reading and rule, on their own: what the parent drains from
+    a killed child, and which remedy each reading earns."""
+
+    def _mark(self, at: float) -> bytes:
+        return write_guard._BEGUN_MARK + b"%.6f\n" % at
+
+    def test_the_relay_takes_out_the_mark_alone(self):
+        mark = self._mark(12.5)
+        assert write_guard._without_the_mark(b"before\n" + mark + b"after\n") == b"before\nafter\n"
+        assert write_guard._without_the_mark(b"no mark here\n") == b"no mark here\n"
+        assert write_guard._without_the_mark(b"") == b""
+
+    @pytest.mark.parametrize(("heard", "expected"), [
+        ([], (None, None, None)),
+        ([b""], (False, write_guard.HARD_DEADLINE_S, 0.0)),
+        ([b"a traceback, and no mark\n"], (False, write_guard.HARD_DEADLINE_S, 0.0)),
+        ([_THE_MARK], (True, None, None)),
+        ([_THE_MARK + b"not a time\n"], (True, None, None)),
+        ([_THE_MARK + b"-5.0\n"], (True, None, None)),
+    ], ids=["nothing read", "nothing written", "no mark", "a mark cut short", "a mark that is no time",
+            "a time outside the hook's clock"])
+    def test_a_reading_without_a_usable_time(self, heard, expected):
+        heard = [part.replace(_THE_MARK, write_guard._BEGUN_MARK) for part in heard]
+        assert write_guard._how_the_child_spent_it(heard) == expected
+
+    def test_a_mark_inside_the_hooks_clock_splits_the_deadline(self):
+        began = write_guard._HOOK_STARTED + 3.0
+        spent, start_up, judged = write_guard._how_the_child_spent_it([b"x\n" + self._mark(began)])
+        assert spent is True
+        assert start_up == pytest.approx(3.0, abs=1e-5)
+        assert judged == pytest.approx(write_guard.HARD_DEADLINE_S - 3.0, abs=1e-5)
+
+    @pytest.mark.parametrize(("began", "start_up", "judged", "re_issue"), [
+        (False, 4.0, 0.0, True),
+        # A child that had begun judging keeps the split even where start-up
+        # took more of the bound: its judgment may have spent a one-shot nudge
+        # keyed on the command, which the identical re-issue would pass unseen.
+        (True, 3.2, 0.8, False),
+        (True, 0.3, 3.7, False),
+        (True, 2.0, 2.0, False),
+        (True, None, None, False),
+        (None, None, None, False),
+    ], ids=["not begun", "start-up took more", "judging took more", "an even split", "begun, unread",
+            "unread"])
+    def test_the_re_issue_is_asked_only_where_no_judging_began(self, began, start_up, judged, re_issue):
+        assert write_guard._start_up_spent_it(began) is re_issue
+        reason = write_guard._budget_reason(_denial_reasons, 4.0, write_guard._PARENT_BOUND, began, start_up, judged)
+        assert ("re-issue the same command once" in reason) is re_issue, reason
+        assert ("Do: split it into shorter commands" in reason) is (not re_issue), reason
+        assert write_guard._PARENT_BOUND in reason and reason.isascii()
+        if start_up is not None and judged is not None and began:
+            assert f"{start_up:.1f} s went to start-up and {judged:.1f} s to judging" in reason, reason
+
+    def test_a_kept_reasons_module_without_the_start_up_template_gives_the_split(self):
+        """A kept, older ``_denial_reasons.py`` predates the start-up template:
+        the refusal is the split it gave before DEF-2091, never a raise, which
+        in the judging child is an exit 1 that lets the call through."""
+        kept = types.SimpleNamespace(WRITE_GUARD_TIME_BUDGET=(
+            "Command blocked: write_guard could not finish judging this command within its {budget} s time"
+            " budget.\n  Don't: re-issue it.\n  Do: split it into shorter commands."))
+        reason = write_guard._budget_reason(kept, 4.0, write_guard._PARENT_BOUND, False, 4.0, 0.0)
+        assert reason.startswith("Command blocked: write_guard could not finish judging"), reason
+        assert "Do: split it into shorter commands" in reason, reason
+
+
+class TestTheParentReadsItsRunnerAndItsFault:
+    """DEF-2094's failure-mode review, on the parent's own pieces: it calls a
+    kept, older runner with the keywords it takes, so the hard bound holds
+    (F1); a fault in the runner is refused without the crash guard's
+    read-only clause, since every call goes through the runner (F3); and a
+    record with no thread to write on loses the record, never the deny (F5)."""
+
+    def test_the_runner_is_called_with_the_keywords_it_takes(self):
+        wanted: dict[str, object] = {"heard": [], "ahead": (0.0, print)}
+
+        def newer(args, *, deadline, env=None, heard=None, ahead=None):
+            return None
+
+        def kept(args, *, deadline, env=None):
+            return None
+
+        def open_ended(args, **kwargs):
+            return None
+
+        takes = write_guard._the_keywords_it_takes
+        assert takes(newer, wanted) == wanted
+        assert takes(kept, wanted) == {}
+        assert takes(open_ended, wanted) == wanted
+        # A runner whose code cannot be read is given them all: a wrong guess
+        # raises before any child starts, which the parent judges itself.
+        assert takes(object(), wanted) == wanted
+
+    @pytest.mark.parametrize("placed", [False, True], ids=["unplaced", "placed"])
+    @pytest.mark.parametrize("module", ["built", "kept"])
+    def test_a_runner_fault_never_says_a_read_only_call_may_pass(self, placed, module):
+        restore = "`git restore --source=HEAD -- tools/cc/_json_safe.py` is the one call this hook lets through"
+        fields = {"error": "KeyError", "file": "tools/cc/_json_safe.py", "line": 7, "restore": restore}
+        refusal = write_guard._DeadlineRefusal()
+        # A kept, older reasons module has the crash guard's texts and no runner text.
+        refusal.reasons = _denial_reasons if module == "built" else types.SimpleNamespace(
+            WRITE_GUARD_CRASHED_AT=_denial_reasons.WRITE_GUARD_CRASHED_AT,
+            WRITE_GUARD_INTERNAL_ERROR=_denial_reasons.WRITE_GUARD_INTERNAL_ERROR)
+        reason = write_guard._runner_fault_reason(refusal, (fields, {}) if placed else None)
+        assert reason.startswith("write_guard internal error"), reason
+        assert "may still pass" not in reason, reason
+        assert "a read-only one included" in reason, reason
+        assert reason.isascii(), reason
+        if placed:
+            assert "(KeyError at tools/cc/_json_safe.py:7)" in reason and restore in reason, reason
+
+    def test_a_record_with_no_thread_to_write_on_returns(self, monkeypatch):
+        refusal = write_guard._DeadlineRefusal()
+
+        def refuse(self: threading.Thread) -> None:
+            raise RuntimeError("can't start new thread")
+
+        monkeypatch.setattr(threading.Thread, "start", refuse)
+        # It returns, never raises: the raise was this row's red.
+        refusal.record({"hook": "write_guard"}, by=time.monotonic())
 
 
 def _modules_the_guard_reaches() -> list[Path]:

@@ -2163,9 +2163,11 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
 # refusals by default, counts the day's pauses on their own line so the window
 # cannot lose one without a trace, and widens the tail to them under ``--all``.
 #
-# The audit log ALSO carries advisory records (``action_justification_missing``
-# fires on every un-justified write, ``post_write_integrity_drift``,
-# ``session_*``); those are in neither tier so blocks aren't buried under noise.
+# The audit log ALSO carries advisory records, in neither tier so blocks
+# aren't buried under noise: the maintenance-bypass set, the voice-only
+# family, the channelled advisories and the raw-log-only type, all declared
+# below. With the two tiers those families partition every type a hook writes
+# (``CHANNELLED_ADVISORY_EVENT_TYPES`` says how that is held).
 #
 # A crash guard's block sits in the tier of the hook it guards (DEF-803): the
 # PreToolUse and ConfigChange ones refuse the call; the Stop one is a pause
@@ -2280,6 +2282,44 @@ def _voice_only_tokens() -> tuple[str, ...]:
     type written unescaped (the types are ASCII identifiers): a pre-filter
     that spares the JSON parse of every other line. The predicate decides."""
     return (FAIL_OPEN_EVENT_MARKER, *FAIL_OPEN_EVENT_PREFIXES, *sorted(VOICE_ONLY_EVENT_TYPES))
+
+
+#: The advisory records that already speak: each is written beside a channel
+#: that reaches Claude or the operator, so the record is a copy of what was
+#: said and neither reader counts it. A record whose event has no such channel
+#: belongs in the voice-only family above instead. These two sets, the block
+#: tiers, ``MAINTENANCE_BYPASS_EVENT_TYPES`` and the voice-only family
+#: partition every type a hook writes: ``tests/test_governance_audit_log.py``
+#: derives the written types from every ``append_audit`` call and places each
+#: in exactly one family, so a new type outside all of them fails there instead
+#: of reaching neither reader (DEF-3093).
+CHANNELLED_ADVISORY_EVENT_TYPES = frozenset({
+    # session_start: each beside its own [WARN] line in the banner (advise).
+    "session_settings_unreadable",
+    "session_kill_switch_detected",
+    "session_governance_unwired",
+    "session_integrity_drift",
+    # post_write_check: told to Claude (advise_warn).
+    "post_write_integrity_drift",
+    # post_write_check: a change during the shell call is told to Claude
+    # (advise_warn), and one between calls to the operator, once.
+    "post_shell_zone_change",
+    # post_write_check._say_once_to_claude: told to Claude once a session
+    # (advise_warn), then recorded through say_once.
+    "posttooluse_frontmatter_not_strict",
+    "posttooluse_incident_driver_shape",
+    # stop_gate: the hold file task_router names on every prompt while the
+    # hold stands.
+    "stop_held_handoff",
+})
+
+#: The advisory record whose one voice is stderr, by design: the
+#: action-justification nudge fires on every un-justified mutation, so it stays
+#: out of the banner and out of ``/status --log`` (docs/HOOKS.md,
+#: ``post_write_check``), and its record is a copy in the raw log alone.
+RAW_LOG_ONLY_EVENT_TYPES = frozenset({
+    "action_justification_missing",
+})
 
 
 #: SessionStart's read of the voice-only records since the previous start runs

@@ -13,6 +13,8 @@ both modes corrupt cross-repo behavior in ways no other test catches.
 """
 from __future__ import annotations
 
+# slow-exempt: one python child, the difflib-import oracle (a test process has difflib loaded already), 0.34 s for its call, measured 2026-11-16 on Windows; every other test here runs in-process
+
 import sys
 from pathlib import Path
 
@@ -1396,6 +1398,139 @@ class TestAdopterZoneReadingEdges:
         hu = self._fresh(monkeypatch)
         (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
         assert hu.adopter_zone_for("\uff44ata/x.csv", tmp_path) == ("data/", "protected")  # fullwidth d
+
+    @pytest.mark.parametrize(("lines", "zones", "said"), [
+        pytest.param(['exclude_paths = ["vendor/"]'], (), None, id="exclude_paths-alone"),
+        pytest.param(['protected_paths = ["data/"]', 'exclude_paths = ["vendor/"]'],
+                     (("data/", "protected"),), None, id="exclude_paths-beside-a-zone"),
+        pytest.param(['generated_paths = ["out_zz/"]', 'protect_paths = ["data/"]'],
+                     (("out_zz/", "generated"),), ("protect_paths", "protected_paths"),
+                     id="protect_paths-beside-generated_paths"),
+        pytest.param(['protected_paths = ["data/"]', 'generated_path = ["out_zz/"]'],
+                     (("data/", "protected"),), ("generated_path", "generated_paths"),
+                     id="generated_path-beside-protected_paths"),
+        pytest.param(['protected_path = ["data/"]'], (), ("protected_path", "protected_paths"),
+                     id="protected_path-alone"),
+        pytest.param(['excluded_paths = ["vendor/"]'], (), None, id="excluded_paths-alone"),
+        pytest.param(['protected_paths = ["data/"]', 'excluded_paths = ["vendor/"]'],
+                     (("data/", "protected"),), None, id="excluded_paths-beside-a-zone"),
+    ])
+    def test_a_zone_key_misspelling_is_said_and_an_engine_key_never_is(
+        self, tmp_path, monkeypatch, capsys, lines, zones, said,
+    ):
+        """DEF-991's five fixtures. ``exclude_paths`` is a key the engine reads
+        (0.64 from ``protected_paths``) and drew a false "did you mean" with a
+        ``config_zone_ignored`` record; a misspelled zone key beside a correct
+        one was never said, since the check ran only when no zone held a
+        prefix. The zones read the same whatever is said. The last two are the
+        lane's review: ``excluded_paths`` clears the cutoff against
+        ``protected_paths`` too, but its nearest engine key is
+        ``exclude_paths`` (the engine's loader says so), so the guard leaves
+        it to the loader rather than name the wrong key."""
+        hu = self._fresh(monkeypatch)
+        (tmp_path / "espalier.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        assert hu.adopter_protected_prefixes(tmp_path) == zones
+        err = capsys.readouterr().err
+        if said is None:
+            assert "did you mean" not in err, err
+        else:
+            assert f"`{said[0]}` is not a key the guard reads (did you mean `{said[1]}`?)" in err, err
+
+    def test_the_close_match_runs_only_while_say_once_would_speak(self, tmp_path, monkeypatch, capsys):
+        """The check runs in every hook process; a misspelling is said once a
+        session, so a later process in that session (a fresh memo and said-set,
+        the flag under the state dir kept) skips the match it would not say."""
+        import difflib
+
+        hu = self._fresh(monkeypatch)
+        calls: list[str] = []
+        real = difflib.get_close_matches
+        monkeypatch.setattr(difflib, "get_close_matches", lambda word, *a, **k: calls.append(word) or real(word, *a, **k))
+        (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\nprotect_paths = ["x/"]\n', encoding="utf-8")
+        assert hu.adopter_protected_prefixes(tmp_path) == (("data/", "protected"),)
+        assert "did you mean `protected_paths`" in capsys.readouterr().err
+        assert calls == ["protect_paths"]
+        monkeypatch.setattr(hu, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setattr(hu, "_ADOPTER_ZONES_MEMO", {})
+        assert hu.adopter_protected_prefixes(tmp_path) == (("data/", "protected"),)
+        assert calls == ["protect_paths"], "said this session: the next process matches nothing"
+        assert "did you mean" not in capsys.readouterr().err
+
+    def test_difflib_stays_unimported_where_nothing_could_be_said(self, tmp_path):
+        """Importing difflib is the check's cost in a hook process (1.2 to 2.3
+        ms cold against 39 us for one match, measured 2026-11-16 on Windows).
+        With the no-zone gate gone, a tree whose keys the engine all knows, or
+        whose one unknown key looks nothing like a zone key, must still not
+        import it; the misspelled tree, read last, is the control that does."""
+        import subprocess
+
+        from tests._wait_budget import scaled
+
+        trees = {
+            "known-keys-no-zone": 'exclude_paths = ["vendor/"]\nlane_count = 2\n',
+            "known-keys-and-a-zone": 'protected_paths = ["data/"]\nexclude_paths = ["vendor/"]\n',
+            "a-far-unknown-key-beside-a-zone": 'protected_paths = ["data/"]\nlint_cmd = "ruff"\n',
+            "a-misspelling": 'protected_paths = ["data/"]\nprotect_paths = ["x/"]\n',
+        }
+        for name, text in trees.items():
+            (tmp_path / name).mkdir()
+            (tmp_path / name / "espalier.toml").write_text(text, encoding="utf-8")
+        script = (
+            "import sys\n"
+            "sys.dont_write_bytecode = True\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "from pathlib import Path\n"
+            "import _hook_utils\n"
+            "print('before-any-read', 'difflib' in sys.modules)\n"
+            "for name in sys.argv[3:]:\n"
+            "    _hook_utils.adopter_protected_prefixes(Path(sys.argv[2]) / name)\n"
+            "    print(name, 'difflib' in sys.modules)\n"
+        )
+        r = subprocess.run(
+            [sys.executable, "-c", script, str(HOOKS_DIR), str(tmp_path), *trees],
+            capture_output=True, text=True, encoding="utf-8", timeout=scaled(30),
+        )
+        assert r.returncode == 0, r.stderr
+        seen = dict(line.rsplit(" ", 1) for line in r.stdout.splitlines())
+        assert seen.pop("before-any-read", None) == "False", (
+            "difflib was loaded before any read (the interpreter's startup or _hook_utils' "
+            "own import), so this oracle cannot see the check's import", r.stdout)
+        assert seen == {
+            "known-keys-no-zone": "False", "known-keys-and-a-zone": "False",
+            "a-far-unknown-key-beside-a-zone": "False", "a-misspelling": "True",
+        }, (seen, r.stderr)
+
+    def test_the_quick_bound_never_turns_away_a_key_difflib_would_match(self):
+        """The bound that keeps difflib unimported is SequenceMatcher's own
+        ``quick_ratio`` (the characters two names share, counted with
+        repeats), which the ratio never exceeds: it may pass a key the match
+        then rejects, never reject one the match takes. Driven over every
+        engine key, every one-edit misspelling of the two zone keys and a
+        seeded spread of other names."""
+        import difflib
+        import random
+        import string
+
+        import _hook_utils as hu
+        wanted = [key for key, _ in hu.ADOPTER_ZONE_KEYS]
+        population = set(hu.ENGINE_CONFIG_KEYS)
+        for zone in wanted:
+            for i in range(len(zone)):
+                population.add(zone[:i] + zone[i + 1:])
+                population.add(zone[:i] + "x" + zone[i + 1:])
+                population.add(zone[:i] + zone[i + 1:i + 2] + zone[i] + zone[i + 2:])
+        rng = random.Random(991)
+        letters = string.ascii_lowercase + "_"
+        population.update("".join(rng.choice(letters) for _ in range(rng.randint(3, 30))) for _ in range(2000))
+        taken = turned_away = 0
+        for key in sorted(population):
+            for zone in wanted:
+                matched = bool(difflib.get_close_matches(key, [zone], n=1, cutoff=0.6))
+                passed = hu._may_be_close(key, zone, 0.6)
+                assert passed or not matched, (key, zone)
+                taken += matched
+                turned_away += not passed
+        assert taken > 50 and turned_away > 1000, (taken, turned_away)
 
 
 _ON_WINDOWS = sys.platform == "win32"
