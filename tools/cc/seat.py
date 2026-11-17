@@ -13,7 +13,7 @@ session was already in, and nothing on the way in looked. Retiring one had a
 hole: a worktree seat's claims can only be released under its own name, so
 removing the worktree first left them live, warning every other seat forever.
 
-Three verbs, each reading occupancy from ``checkout_sync.occupancy`` (Claude
+Five verbs, each reading occupancy from ``checkout_sync.occupancy`` (Claude
 Code's own session registry, plus the session markers, which can only add a
 session) and every channel fact from ``mail.py``'s local refs:
 
@@ -51,12 +51,6 @@ session) and every channel fact from ``mail.py``'s local refs:
   default, or with ``--role dispatcher`` the board tick), refused for a seat
   of the other role: the seat this checkout answers when none is named,
   composed from the checkout as ``brief`` composes it.
-
-A seat name two or more checkouts answer (a stale twin of a live seat, a
-worktree named back to the clone's own name) is refused by every verb that
-takes one, naming each checkout with its branch, head and sessions, and the
-rename for each but the live one where exactly one holds a session; ``brief``
-and ``tick`` run inside one of them compose from it instead (DEF-3097).
 * ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
   removal first (``checkout_sync``'s rules for that one worktree: clean,
   merged, no plan in progress, nothing ignored it would lose), so a seat that
@@ -67,6 +61,14 @@ and ``tick`` run inside one of them compose from it instead (DEF-3097).
   A mail fetch that fails, at the first read or at the one confirming the
   releases, refuses: the refs as last fetched miss a job given since, and
   ``--no-fetch`` is the way to retire on them, fetching at neither read.
+
+A seat name two or more checkouts answer (a stale twin of a live seat, a
+worktree named back to the clone's own name) is refused by every verb that
+takes one, naming each checkout with its branch, head and sessions, and the
+rename for each but one where that one alone holds a session, a window
+Claude Code's registry lists that is neither a background session nor the
+asker's; else which is the seat is the operator's call. ``brief`` and
+``tick`` run inside one of them compose from it instead (DEF-3097).
 
 Verbs::
 
@@ -446,23 +448,47 @@ class Target:
     is_clone: bool
 
 
+def _weak_evidence(occ: sync.Occupancy) -> str:
+    """Why the sessions in one checkout do not say it is the seat, or '': a
+    session only a marker names (a marker outlives its window when its pid
+    cannot be read), a background one (Claude Code's daemon resumes an old
+    idle session, wherever it was), or the asking session's own (whoever asks
+    from a twin is in the twin). Only a window Claude Code's registry lists
+    and that is not the asker's is read as the seat's."""
+    rows = occ.sessions or []
+    if len(occ.from_registry()) != len(rows):
+        return "only a session marker names it"
+    if any(row.get("kind") == "background" for row in rows):
+        return "it is a background session Claude Code's daemon resumed"
+    caller = occ.caller
+    if caller is not None and any(row.get("pid") == caller.get("pid") for row in rows):
+        return "it is the session asking"
+    return ""
+
+
 def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, str]]]) -> str:
     """Why ``seat`` resolves to none of the checkouts that answer it, with the
-    one remedy the driver can stand behind (DEF-3097). Where exactly one holds
-    a session and who is in each could be told, that one is the seat: each
-    other one, a linked worktree, gets the one ``--worktree`` command that
-    renames it, spelled ``git -C "<path>"`` so it renames that worktree
-    wherever it is pasted, and one command, never a pair chained with ``&&``,
-    which Windows PowerShell 5.1 does not parse. Anything else is the
-    operator's call and gets no command, only each checkout's branch, head and
-    sessions: none holds a session or several do, one's occupancy cannot be
-    told, the clone itself is among the ones to rename (its name is the one
-    every derived seat name is built on), or per-worktree config is off or
-    unread (a ``--worktree`` set then fails, and turning it on is
-    ``mail.naming_steps``' to say, a bare clone's one change included)."""
+    one remedy the driver can stand behind (DEF-3097), and each checkout's
+    branch, head and sessions always said. Where who is in each could be
+    told and exactly one holds a session, a window the registry lists that is
+    neither a background session nor the asker's (:func:`_weak_evidence`),
+    that one is likely the seat: each other one, a linked worktree, gets the
+    one ``--worktree`` command that renames it, spelled ``git -C "<path>"`` so
+    it renames that worktree wherever it is pasted, and one command, never a
+    pair chained with ``&&``, which Windows PowerShell 5.1 does not parse.
+    Anything else is the operator's call and names no checkout to rename:
+    none holds a session or several do, one's occupancy cannot be told, the
+    lone session is weak evidence, the clone itself is among the ones to
+    rename (its name is the one every derived seat name is built on), or
+    per-worktree config is off or unread (a ``--worktree`` set then fails, and
+    turning it on is ``mail.naming_steps``' to say, a bare clone's one change
+    included). Where the clone answers none of them and the set can land, the
+    command's shape is given once, for the operator to run for each checkout
+    that is not the seat. Each path is spelled the one way (``as_posix``), the
+    way the command takes it."""
     head = (f"seat {seat!r} is answered by {len(answering)} checkouts, which write one mail ref, so none of "
             "them is picked")
-    occupied: list[Path] = []
+    occupied: list[tuple[Path, sync.Occupancy]] = []
     told = True
     words: list[str] = []
     for path, block in answering:
@@ -470,25 +496,32 @@ def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, 
         if occ.sessions is None:
             told, who = False, f"who is in it cannot be told ({occ.note})"
         elif occ.sessions:
-            occupied.append(path)
-            who = f"{len(occ.sessions)} live session(s)"
+            occupied.append((path, occ))
+            who = f"{len(occ.sessions)} live session(s): " + " and ".join(
+                sync.describe_session(row) for row in occ.sessions)
         else:
             who = "no session"
         branch = block.get("branch", "").replace("refs/heads/", "") or "a detached HEAD"
-        words.append(f"{path} on {branch} at {block.get('HEAD', '')[:7]}, {who}")
-    others = [path for path, _ in answering if not occupied or sync._norm(path) != sync._norm(occupied[0])]
+        words.append(f"{path.as_posix()} on {branch} at {block.get('HEAD', '')[:7]}, {who}")
+    facts = f"{'; '.join(words)}; `seat.py list` shows the sessions in each"
+    lone = occupied[0][0] if len(occupied) == 1 else None
+    others = [path for path, _ in answering if lone is None or sync._norm(path) != sync._norm(lone)]
     clone_among = any(sync._norm(path) == sync._norm(root) for path in others)
+    weak = _weak_evidence(occupied[0][1]) if lone is not None else ""
     on, unread = mail._worktree_config(root)
-    if told and len(occupied) == 1 and not clone_among and on:
-        renames = "; ".join(f'{path}: git -C "{path.as_posix()}" config --worktree {mail.MACHINE_KEY} <name>'
-                            for path in others)
-        return f"{head}: the live session is in {occupied[0]}, so name each other one, then run this again: {renames}"
+    command = f"config --worktree {mail.MACHINE_KEY} <name>"
+    if told and lone is not None and not weak and not clone_among and on:
+        renames = "; ".join(f'git -C "{path.as_posix()}" {command}' for path in others)
+        return (f"{head}: the only session is in {lone.as_posix()}; if that is the seat, name each other one, "
+                f"then run this again: {renames}. {facts}")
     if not told:
         reason = "who is in each could not be told"
     elif not occupied:
         reason = "none of them holds a session"
     elif len(occupied) > 1:
         reason = f"{len(occupied)} of them hold sessions"
+    elif weak:
+        reason = f"the only session is in {lone.as_posix() if lone else ''}, and {weak}"
     elif clone_among:
         reason = ("the live session is in a worktree that took the clone's own name, and renaming the clone "
                   "moves every seat name derived from it")
@@ -496,8 +529,10 @@ def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, 
         reason = f"whether per-worktree config is on could not be read ({unread})"
     else:
         reason = "per-worktree config is off in this clone, so no worktree here can hold a name of its own yet"
-    return (f"{head}, and which one is the seat is the operator's call ({reason}), so no command is given: "
-            f"{'; '.join(words)}; `seat.py list` shows the sessions in each")
+    clone_answers = any(sync._norm(path) == sync._norm(root) for path, _ in answering)
+    shape = (f"; once the seat is known, name each checkout that is not the seat with "
+             f'git -C "<checkout>" {command}' if on and not clone_answers else ", so no command is given")
+    return f"{head}, and which one is the seat is the operator's call ({reason}){shape}. {facts}"
 
 
 def resolve(root: Path, seat: str) -> Target:
@@ -513,8 +548,10 @@ def resolve(root: Path, seat: str) -> Target:
     checkouts answering it, so a worktree named back to it is a twin too. A
     name two or more checkouts answer, or a match beside a worktree whose name
     could not be read, is :class:`Undecided`, naming each checkout
-    (:func:`_twins_refusal` says what the remedy can be). An empty name is
-    refused first: it would match every worktree that answers none."""
+    (:func:`_twins_refusal` says what the remedy can be); the clone's own name
+    included, since the unread one may be a worktree named back to it. An
+    empty name is refused first: it would match every worktree that answers
+    none."""
     if not seat:
         raise Refused("no seat named: a seat name is lowercase letters, digits and hyphens (`seat.py list` shows "
                       "this clone's)")

@@ -116,10 +116,10 @@ def registry(seat, tmp_path, monkeypatch):
     (cfg / "sessions").mkdir(parents=True)
     monkeypatch.setattr(seat.sync, "claude_config_dirs", lambda: [cfg])
 
-    def add(cwd: Path, *, pid: int | None = None, entrypoint: str = "cli") -> int:
+    def add(cwd: Path, *, pid: int | None = None, entrypoint: str = "cli", kind: str = "interactive") -> int:
         pid = pid or os.getpid()
         (cfg / "sessions" / f"{pid}.json").write_text(json.dumps(
-            {"pid": pid, "sessionId": f"s{pid}", "cwd": str(cwd), "kind": "interactive",
+            {"pid": pid, "sessionId": f"s{pid}", "cwd": str(cwd), "kind": kind,
              "entrypoint": entrypoint, "startedAt": 1792045849132}), encoding="utf-8")
         return pid
 
@@ -317,10 +317,11 @@ class TestTheSeatNamesSayAFailedRead:
 
 
 class TestASeatNameTwoCheckoutsAnswer:
-    """A seat name two worktrees answer (DEF-4125's shape: a stale twin a
+    """A seat name two checkouts answer (DEF-4125's shape: a stale twin a
     seat's process made, answering that seat's name) is refused by every verb
-    that takes a seat, naming each checkout and the board's rename remedy, so
-    none picks the one ``git worktree list`` shows first: ``launch`` would
+    that takes a seat, naming each checkout with its branch, head and
+    sessions, and the rename only where one window alone says which is the
+    seat, so none picks the one ``git worktree list`` shows first: ``launch`` would
     start a second writer on the seat's mail ref, ``brief`` and ``tick``
     compose from the twin, ``retire`` releases claims the live checkout works.
     Dies to: ``resolve`` returning the first worktree whose name matches
@@ -351,22 +352,57 @@ class TestASeatNameTwoCheckoutsAnswer:
             seat.resolve(clone, "box-x")
         said = str(caught.value)
         assert "answered by 2 checkouts" in said and "one mail ref" in said, said
-        assert f"the live session is in {a}" in said and f"{b}: {self._rename(b)}" in said, said
-        assert f'git -C "{a.as_posix()}"' not in said and "&&" not in said, said
+        assert f"the only session is in {a.as_posix()}; if that is the seat" in said, said
+        assert self._rename(b) in said and f'git -C "{a.as_posix()}"' not in said and "&&" not in said, said
+        assert f"{a.as_posix()} on lane/a at" in said and f"{b.as_posix()} on lane/b at" in said, said
+        assert str(a) == a.as_posix() or str(a) not in said, said
         assert self._static(said, clone).isascii(), said
 
-    def test_no_live_checkout_is_the_operators_call_with_no_command(self, seat, clone, registry):
+    def test_no_live_checkout_is_the_operators_call_with_the_shape_once(self, seat, clone, registry):
         """Neither holds a session, so which is the seat is not the driver's
-        to read: no command, and each checkout's branch and head to read it
-        by. Dies to: a rename printed for a checkout picked by listing order."""
+        to read: no checkout is named for a rename, the command's shape is
+        given once for the operator to run, and each checkout's branch and
+        head to read it by. Dies to: a rename printed for a checkout picked by
+        listing order."""
         twins = self._twins(clone)
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box-x")
         said = str(caught.value)
-        assert "the operator's call" in said and "git -C" not in said, said
+        assert "the operator's call (none of them holds a session)" in said, said
+        assert said.count("git -C") == 1 and 'git -C "<checkout>" config --worktree' in said, said
+        assert "each checkout that is not the seat" in said, said
         for path in twins:
-            assert f"{path} on lane/{path.name} at {_out(path, 'rev-parse', '--short=7', 'HEAD')}" in said, said
+            assert (f"{path.as_posix()} on lane/{path.name} at {_out(path, 'rev-parse', '--short=7', 'HEAD')}"
+                    in said), said
         assert self._static(said, clone).isascii(), said
+
+    @pytest.mark.parametrize("case, why", [
+        ("marker", "only a session marker names it"),
+        ("background", "it is a background session Claude Code's daemon resumed"),
+        ("caller", "it is the session asking"),
+    ], ids=["marker", "background", "caller"])
+    def test_a_lone_session_that_is_weak_evidence_gets_no_rename(self, seat, clone, registry, monkeypatch,
+                                                                case, why):
+        """One checkout alone holds a session, but that session does not say
+        it is the seat: a marker outlives its window, the daemon resumes an
+        old session wherever it was, and the asker is wherever it asked from.
+        Dies to: the rename given for the other checkout on any lone session,
+        which renames the live seat out from under its window."""
+        a, b = self._twins(clone)
+        if case == "marker":
+            marker = {"session_id": "m1", "pid": os.getpid(), "cwd": str(a)}
+            monkeypatch.setattr(seat.sync, "_default_marker_reader", lambda: (
+                lambda tree: [marker] if seat.sync._norm(tree) == seat.sync._norm(a) else []))
+        elif case == "background":
+            registry(a, kind="background")
+        else:
+            monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", f"s{registry(a)}")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        said = str(caught.value)
+        assert f"the operator's call (the only session is in {a.as_posix()}, and {why})" in said, said
+        assert self._rename(b) not in said and said.count("git -C") == 1, said
+        assert f"{a.as_posix()} on lane/a at" in said and "1 live session(s): pid" in said, said
 
     def test_a_worktree_named_back_to_the_clones_name_is_refused(self, seat, clone, registry, monkeypatch,
                                                                  capsys):
@@ -378,8 +414,8 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert "answered by 2 checkouts" in said and f"the live session is in {clone}" in said, said
-        assert f"{a}: {self._rename(a)}" in said, said
+        assert "answered by 2 checkouts" in said and f"the only session is in {clone.as_posix()}" in said, said
+        assert self._rename(a) in said, said
         monkeypatch.chdir(a)
         assert seat.main(["launch", "box", "--print"]) == 1
         assert "answered by 2 checkouts" in capsys.readouterr().err
@@ -393,8 +429,31 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert "the operator's call" in said and "git -C" not in said, said
-        assert "espalier.machine" not in said, said
+        assert "the operator's call" in said and "took the clone's own name" in said, said
+        assert "git -C" not in said and "espalier.machine" not in said, said
+
+    def test_brief_of_the_clones_name_from_the_clone_composes_beside_a_twin(self, seat, clone, registry,
+                                                                            monkeypatch, capsys):
+        """The clone's own seat runs `brief <its name>` from the clone while a
+        worktree answers that name too: composed from the clone, never
+        refused; `launch` from the same place stays strict. Dies to: the
+        clone left out of the checkouts the cwd read answers for."""
+        _worktree(clone, "a", name="box")
+        monkeypatch.chdir(clone)
+        assert seat.main(["brief", "box"]) == 0
+        assert capsys.readouterr().out == seat.compose_brief(clone, "box", clone).text + "\n"
+        assert seat.main(["launch", "box", "--print"]) == 1
+        assert "answered by 2 checkouts" in capsys.readouterr().err
+
+    def test_the_clones_name_beside_a_worktree_whose_name_is_unread_is_not_picked(self, seat, clone):
+        """The unread worktree may be one named back to the clone's own name,
+        so the clone's seat is not resolved past it either. Dies to: the
+        clone's name answered before the worktrees were read."""
+        _worktree(clone, "b", name="box-b")
+        (clone / ".git" / "worktrees" / "b" / "config.worktree").write_bytes(b"[espalier\n")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        assert "could not be read" in str(caught.value) and "'box'" in str(caught.value), caught.value
 
     @pytest.mark.parametrize("case, reason", [
         ("untold", "who is in each could not be told"),
@@ -403,14 +462,16 @@ class TestASeatNameTwoCheckoutsAnswer:
     ], ids=["untold", "two-live", "ext-unread"])
     def test_a_rename_is_given_only_where_one_live_checkout_is_told(self, seat, clone, monkeypatch, case, reason):
         """The rename needs one live checkout among checkouts all told, and a
-        clone where a ``--worktree`` set can land. Dies to: a checkout whose
-        occupancy cannot be told read as empty (``untold``: the other one, a
-        marker's session, would be named live), the second live one renamed
-        (``two-live``), and the set printed where whether per-worktree config
-        is on went unread at the remedy's own read (``ext-unread``: the
-        worktrees' names read, so only that read is failed)."""
-        a, _b = self._twins(clone)
-        live = seat.sync.Occupancy([{"pid": 1, "source": "marker"}], "markers")
+        clone where a ``--worktree`` set can land; where it can, the shape is
+        still given once, naming no checkout. Dies to: a checkout whose
+        occupancy cannot be told read as empty (``untold``: the other one would
+        be named live), the second live one renamed (``two-live``), and the set
+        printed where whether per-worktree config is on went unread at the
+        remedy's own read (``ext-unread``: the worktrees' names read, so only
+        that read is failed). The live rows are the registry's, so only the
+        case's own fact keeps the rename back."""
+        a, b = self._twins(clone)
+        live = seat.sync.Occupancy([{"pid": 1, "source": "registry", "kind": "interactive"}], "registry")
         states = {"untold": (live, seat.sync.Occupancy(None, "", "cannot tell")), "two-live": (live, live)}
         first, second = states.get(case, (live, seat.sync.Occupancy([], "registry")))
         monkeypatch.setattr(seat.sync, "occupancy", lambda path, **kw: first if path == a else second)
@@ -421,7 +482,9 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box-x")
         said = str(caught.value)
-        assert f"the operator's call ({reason}" in said and "git -C" not in said, said
+        assert f"the operator's call ({reason}" in said, said
+        assert self._rename(a) not in said and self._rename(b) not in said, said
+        assert said.count("git -C") == (0 if case == "ext-unread" else 1), said
 
     def test_two_folders_one_derived_name_with_per_worktree_config_off(self, seat, clone, registry):
         """With per-worktree config off no worktree holds a name of its own,
@@ -435,7 +498,7 @@ class TestASeatNameTwoCheckoutsAnswer:
             seat.resolve(clone, "box-x-y")
         said = str(caught.value)
         assert "the operator's call (per-worktree config is off in this clone" in said, said
-        assert "git -C" not in said and str(dashed) in said, said
+        assert "git -C" not in said and dashed.as_posix() in said, said
 
     def test_a_derived_name_and_an_own_name_that_meet_are_refused(self, seat, clone):
         """One worktree's own name is another's derived one: both answer it.
@@ -445,7 +508,7 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box-b")
         said = str(caught.value)
-        assert "answered by 2 checkouts" in said and str(own) in said and str(derived) in said, said
+        assert "answered by 2 checkouts" in said and own.as_posix() in said and derived.as_posix() in said, said
 
     def test_brief_and_tick_from_inside_an_answering_checkout_compose_from_it(self, seat, clone, registry,
                                                                               monkeypatch, capsys):
