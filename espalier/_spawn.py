@@ -28,8 +28,19 @@ Every spawn in the engine's own source, timed or not, goes through
 caller feeds it (DEF-928), or, for a child that is itself a tree (a pytest),
 through :func:`run_tree_bounded` with ``stdin=subprocess.DEVNULL`` given at the
 call; ``tests/test_contracts.py::TestEveryEngineSpawnClosesItsChildsStdin``
-refuses one that goes around both, and a tree run that hands on stdin. The
-``tools/cc`` modules the engine loads into its own process (``session_resume``
+refuses one that goes around both, and a tree run that hands on stdin.
+
+A caller that answers in place of a program that never started -- git
+missing, or a shim that is not on PATH -- calls :func:`spawn_checked`, the
+hooks' contract (DEF-985): argv[0] resolved through ``shutil.which`` and a
+:class:`SpawnFailure` handed back, which the caller says with
+:func:`say_unstarted` (once per program per process) before it answers.
+``tests/test_contracts.py::TestNoEngineSpawnFailsToStartInSilence`` refuses
+an ``except`` arm that catches a start failure around a spawn and says
+nothing, and a ``SpawnFailure`` branch that says nothing; an arm whose silence
+is the right answer (an optional program whose fallback answers the same)
+says why on its line, ``# fail-open: ok <kind> <reason>``. The ``tools/cc``
+modules the engine loads into its own process (``session_resume``
 for ``doctor`` and ``recover``, ``_record_fragments`` for the changelog) spawn
 through the ``tools/cc`` copy and still hand on stdin.
 """
@@ -42,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # the annotation only; subprocess stays a lazy import, as in the tools/cc copy
     import subprocess
+    from collections.abc import Sequence
 
 #: What :func:`run_bounded` adds to a timeout on Windows, and
 #: :func:`run_tree_bounded` on every OS: one deadline for the tree kill, the
@@ -123,9 +135,9 @@ def run_no_stdin(args: Any, *, input: Any = None, **kwargs: Any) -> "subprocess.
     ``stdin`` is given (a ``stdin`` of ``None`` counts as none). Every spawn in
     the engine's own source goes through here (DEF-928), but for the tree run's
     callers (:func:`run_tree_bounded`, DEF-5090), which pass that ``stdin``
-    themselves: the chokepoint DEF-985's contract (argv[0] resolved, a failure
-    handed back instead of raised) has still to land on, and those two sites
-    with it.
+    themselves. A caller that answers in place of a program that never started
+    calls :func:`spawn_checked`, which resolves argv[0] first and hands the
+    failure back to be said (DEF-985), rather than this.
 
     A child handed no stdin inherits the parent's, and on Windows a parent whose
     standard-input handle was closed -- by an installer, a CI step or a wrapper
@@ -157,6 +169,197 @@ def run_no_stdin(args: Any, *, input: Any = None, **kwargs: Any) -> "subprocess.
     if input is None and kwargs.get("stdin") is None:
         kwargs["stdin"] = subprocess.DEVNULL
     return run_bounded(args, input=input, **kwargs)
+
+
+#: The characters a Windows ``.cmd`` or ``.bat`` shim re-parses in its
+#: arguments, so one there could run a different command: the hooks'
+#: ``_CMD_SHIM_METACHARS``.
+_CMD_SHIM_METACHARS = frozenset("&|<>^%")
+
+
+class SpawnFailure:
+    """A program that did not start: the engine's twin of
+    ``tools/cc/hooks/_hook_utils.py::SpawnFailure`` (DEF-985), a copy because
+    ``espalier/`` imports nothing from ``tools/cc/``. ``error`` is the
+    exception's class name, or ``Unresolved`` (argv[0] names no program),
+    ``EmptyCommand``, or ``CmdShimMetachar`` (a Windows .cmd/.bat shim re-parses
+    its line, so an argument carrying ``&``, ``|``, ``<``, ``>``, ``^`` or ``%``
+    could run a different command; refused before it starts). ``resolved`` is
+    what argv[0] resolved to, or None; ``detail`` is the exception with its path
+    spelled as a path (``espalier._text.os_error_text``), None where nothing was
+    raised. A plain class, as the hooks' copy is, for the same reason: a test
+    may load this module by path before it is registered."""
+
+    __slots__ = ("argv", "error", "resolved", "detail")
+
+    def __init__(
+        self, argv: "tuple[str, ...]", error: str, resolved: "str | None", detail: "str | None" = None,
+    ) -> None:
+        self.argv = tuple(argv)
+        self.error = error
+        self.resolved = resolved
+        self.detail = detail
+
+    def __repr__(self) -> str:
+        return (
+            f"SpawnFailure(argv={self.argv!r}, error={self.error!r}, "
+            f"resolved={self.resolved!r}, detail={self.detail!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, SpawnFailure) and (
+            (self.argv, self.error, self.resolved, self.detail)
+            == (other.argv, other.error, other.resolved, other.detail)
+        )
+
+    __hash__ = None  # type: ignore[assignment]  # equal by value and mutable: no hash, as a dataclass(eq=True) has none
+
+    @property
+    def resolution(self) -> str:
+        """The clause a sentence carries: whether argv[0] resolved at all, and
+        to what -- "did not resolve" (install it, or put it on PATH) and
+        "resolved to X and still could not start" (X is broken or not
+        runnable here) are fixed differently."""
+        token = self.argv[0] if self.argv else "(empty)"
+        if self.error == "EmptyCommand":
+            return "the command is empty"
+        if self.error == "Unresolved":
+            return f"`{token}` did not resolve to a program"
+        if self.error == "CmdShimMetachar":
+            return (
+                f"`{token}` resolved to `{self.resolved}`, a script shim that re-parses its "
+                "arguments, and an argument carries a shell metacharacter"
+            )
+        return f"`{token}` resolved to `{self.resolved}` and still could not start"
+
+
+def resolve_program(token: str, *, cwd: "str | os.PathLike[str] | None" = None) -> "str | None":
+    """argv[0] to the path that would start, or None: the hooks'
+    ``resolve_program`` for the engine, with one difference on purpose. A bare
+    token is looked up on PATH alone (:func:`_on_path`), honouring PATHEXT on
+    Windows, so ``npm`` finds ``npm.cmd`` where ``subprocess`` alone looks only
+    for ``npm.exe``; never in the current directory, which ``shutil.which``
+    searches first on Windows, so a ``git.cmd`` a cloned tree carries is not
+    run by ``espalier doctor .`` from inside it (the code review of 2026-11-17
+    drove that shape; ``CreateProcess`` appends only ``.exe``, so before the
+    contract only a ``git.exe`` there ran). A token holding a path separator
+    resolves against ``cwd`` (the spawn's own, else this process's), and is
+    kept when it names a file that is not marked runnable, so the start fails
+    and says so."""
+    import shutil
+
+    if not token:
+        return None
+    if os.path.isabs(token) or "/" in token or (os.name == "nt" and "\\" in token):
+        candidate = token if os.path.isabs(token) else os.path.join(
+            os.fspath(cwd) if cwd is not None else os.getcwd(), token)
+        found = shutil.which(candidate)
+        if found:
+            return found
+        return candidate if os.path.isfile(candidate) else None
+    return _on_path(token)
+
+
+def _on_path(token: str) -> "str | None":
+    """The first file ``token`` names in an absolute PATH entry that is not the
+    current directory: on Windows the token as given when it carries a PATHEXT
+    extension, else with each PATHEXT extension in turn (``shutil.which``'s
+    order); elsewhere the token, when it is a runnable file. An empty, relative
+    or ``.`` entry is skipped: each one is the current directory, or a place
+    that moves with it."""
+    here = os.path.normcase(os.path.abspath(os.getcwd()))
+    if os.name == "nt":
+        pathext = [ext for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if ext]
+        names = [token] if any(token.lower().endswith(ext.lower()) for ext in pathext) else [
+            token + ext for ext in pathext]
+    else:
+        names = [token]
+    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        entry = entry.strip('"')
+        if not entry or not os.path.isabs(entry) or os.path.normcase(os.path.abspath(entry)) == here:
+            continue
+        for name in names:
+            candidate = os.path.join(entry, name)
+            if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate
+    return None
+
+
+def spawn_checked(argv: "Sequence[Any]", *, input: Any = None, **kwargs: Any) -> "subprocess.CompletedProcess[Any] | SpawnFailure":
+    """:func:`run_no_stdin` under the hooks' contract (DEF-985): argv[0] is
+    resolved first (:func:`resolve_program`), a Windows script shim with a
+    metacharacter argument is refused, and a program that does not start comes
+    back as a :class:`SpawnFailure` instead of a raise, so the caller says so
+    (:func:`say_unstarted`) where it answers in its place. What a child that
+    started does stays the caller's, as before: ``TimeoutExpired``, a
+    ``check=True`` exit (``CalledProcessError``) and output that does not
+    decode (``UnicodeDecodeError``) propagate. Any other ``OSError`` or
+    ``ValueError`` from the spawn is read as a start that failed: on POSIX
+    ``Popen`` raises the child's ``exec`` error, on Windows ``CreateProcess``'s,
+    and ``ValueError`` is an argument ``Popen`` refuses (a NUL). ``kwargs`` are
+    ``subprocess.run``'s; ``run_no_stdin`` is looked up when this is called, so
+    a test that patches ``espalier._spawn.run_no_stdin`` reaches it, past the
+    resolution."""
+    import subprocess
+
+    # A caller's own keyword clash is the caller's bug, never a start that
+    # failed: raised here, as subprocess.run raises it, before the try below
+    # would read it as one (the failure-mode review of 2026-11-17).
+    if input is not None and kwargs.get("stdin") is not None:
+        raise ValueError("stdin and input arguments may not both be used.")
+    if kwargs.get("capture_output") and (kwargs.get("stdout") is not None or kwargs.get("stderr") is not None):
+        raise ValueError("stdout and stderr arguments may not be used with capture_output.")
+    args = [str(a) for a in argv]
+    if not args:
+        return SpawnFailure((), "EmptyCommand", None)
+    resolved = resolve_program(args[0], cwd=kwargs.get("cwd"))
+    if resolved is None:
+        return SpawnFailure(tuple(args), "Unresolved", None)
+    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")) and any(
+        ch in arg for arg in args[1:] for ch in _CMD_SHIM_METACHARS
+    ):
+        return SpawnFailure(tuple(args), "CmdShimMetachar", resolved)
+    try:
+        # subprocess-contract: ok the engine's checked chokepoint -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
+        return run_no_stdin([resolved, *args[1:]], input=input, **kwargs)
+    except (subprocess.SubprocessError, UnicodeDecodeError):
+        raise  # the child started: what it did is the caller's, as it was before the contract
+    except (OSError, ValueError) as exc:
+        from espalier._text import os_error_text
+
+        return SpawnFailure(tuple(args), type(exc).__name__, resolved, os_error_text(exc))
+
+
+#: The programs :func:`say_unstarted` has named in this process.
+_SAID_UNSTARTED: "set[str]" = set()
+
+
+def say_unstarted(failure: SpawnFailure, consequence: str) -> None:
+    """Say on stderr, once per program per process, that a spawn never started
+    and what the caller answers in its place (DEF-985): ``consequence``
+    completes "so ...". A later failure of the same program says nothing more,
+    so a missing ``git`` is one line from the engine, not one per read; the
+    line makes no promise about later reads, since the stdlib-only freshness
+    scanner keeps its own memo and says its own line. The words are 7-bit
+    ASCII; what the failure carries (a path, the OS's message) is written with
+    backslash escapes where the stream cannot encode it, and a stream that
+    cannot be written at all takes nothing: the caller's answer stands either
+    way."""
+    token = failure.argv[0] if failure.argv else ""
+    if token in _SAID_UNSTARTED:
+        return
+    _SAID_UNSTARTED.add(token)
+    detail = f" ({failure.detail})" if failure.detail else ""
+    line = f"espalier: {failure.resolution}{detail}, so {consequence}\n"
+    stream = sys.stderr
+    if stream is None:
+        return
+    try:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(line.encode(encoding, "backslashreplace").decode(encoding, "replace"))
+        stream.flush()
+    except (OSError, ValueError, LookupError):  # fail-open: ok deliberate -- a closed or unencodable stderr cannot carry the line, and the caller's answer stands without it
+        pass
 
 
 def _is_stdlib_run(run: Any, subprocess_module: Any) -> bool:

@@ -68,7 +68,7 @@ from espalier.scanners.freshness import (
     unplaced_bound_entries,
 )
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
-from espalier._spawn import run_no_stdin
+from espalier._spawn import SpawnFailure, run_no_stdin, say_unstarted, spawn_checked
 from espalier._text import quoted_if_spaced
 
 __all__ = [
@@ -615,11 +615,14 @@ def is_state_cache_stale(
 
 def _git_head_sha_quiet(cwd: Path) -> str | None:
     try:
-        result = run_no_stdin(
+        result = spawn_checked(
             ["git", "-C", str(cwd), "rev-parse", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+    except (subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+        return None
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "the freshness cache reads as stale and is scanned again")
         return None
     if result.returncode != 0:
         return None
@@ -636,11 +639,14 @@ def _git_is_ancestor_within_n(
     candidate_sha: str, ref: str, *, n: int, cwd: Path,
 ) -> bool:
     try:
-        result = run_no_stdin(
+        result = spawn_checked(
             ["git", "-C", str(cwd), "rev-list", f"-n{n}", ref],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+    except (subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+        return False
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "the freshness cache reads as off this branch and is scanned again")
         return False
     if result.returncode != 0:
         return False
@@ -728,11 +734,14 @@ def _pinned_bound_changed_since(repo_root: Path, cache_sha: str) -> bool:
     if not paths:
         return False
     try:
-        result = run_no_stdin(
+        result = spawn_checked(
             ["git", "-C", str(repo_root), "diff", "--quiet",
              cache_sha, "HEAD", "--", *paths],
             capture_output=True, timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
         return True  # cannot compare -> conservatively stale
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "the freshness cache reads as stale and is scanned again")
+        return True
     return result.returncode != 0

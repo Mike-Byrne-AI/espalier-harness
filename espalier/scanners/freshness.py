@@ -145,6 +145,42 @@ def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
         pass
 
 
+#: The programs :func:`_say_unstarted` has named in this process.
+_SAID_UNSTARTED: set[str] = set()
+
+
+def _say_unstarted(kind: type, strerror: "str | None", cmd: list[str], consequence: str) -> None:
+    """On a git read that never started, say once per program per process on
+    stderr what the scan answers in its place (DEF-985): this scanner's form of
+    ``espalier/_spawn.py::say_unstarted``, which it cannot import. ``kind`` is
+    the exception's class and ``strerror`` its OS message (``getattr(exc,
+    "strerror", None)``): never the exception itself, whose text renders a
+    path through ``repr`` (DEF-799); the line names the program instead. A start
+    that failed is an ``OSError``, or a ``ValueError`` that is not a decode
+    error (an argument ``Popen`` refuses); a timeout, or output that did not
+    decode, is a child that ran, and says nothing here. ``consequence``
+    completes "so ...". The words are 7-bit ASCII; what the OS says is written
+    with backslash escapes where the stream cannot encode it, and a stream
+    that cannot be written takes nothing: the scan's answer stands either way."""
+    if issubclass(kind, UnicodeDecodeError) or not issubclass(kind, (OSError, ValueError)):
+        return
+    token = str(cmd[0]) if cmd else ""
+    if token in _SAID_UNSTARTED:
+        return
+    _SAID_UNSTARTED.add(token)
+    said = f"{kind.__name__}: {strerror}" if strerror else kind.__name__
+    line = f"espalier: `{token}` could not start ({said}), so {consequence}\n"
+    stream = sys.stderr
+    if stream is None:
+        return
+    try:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(line.encode(encoding, "backslashreplace").decode(encoding, "replace"))
+        stream.flush()
+    except (OSError, ValueError, LookupError):  # fail-open: ok deliberate -- a closed or unencodable stderr cannot carry the line, and the scan's answer stands without it
+        pass
+
+
 def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
     """Drop embedded-repo subdirs from an os.walk ``dirnames`` in place — parity
     with ``espalier._safe_walk.safe_rglob(skip_nested_repos=True)``. Scanners are
@@ -626,7 +662,9 @@ def _git_log_name_only(
         result = run_bounded(
             cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd,
+                       "no commit since a fragment's pin reads as touching its bound files")
         return {}
     if result.returncode != 0:
         return {}
@@ -735,11 +773,12 @@ def _place_symbol(repo_root: Path, path: str, symbol: str) -> tuple[tuple[int, i
         # Bytes, parsed as bytes: ``ast.parse`` honours a PEP 263 coding line
         # and the line numbers are the same, where a UTF-8 decode here would
         # fail a latin-1 source before it was read.
+        cmd = ["git", "-C", str(repo_root), "show", f"HEAD:{path}"]
         shown = run_bounded(
-            ["git", "-C", str(repo_root), "show", f"HEAD:{path}"],
-            stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd, "a bound symbol is reported as not placed")
         return None, "git did not answer"
     if shown.returncode != 0:
         return None, f"not at HEAD (git show exited {shown.returncode})"
@@ -800,7 +839,9 @@ def _git_log_symbol_commits(
         result = run_bounded(
             cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd,
+                       "a bound symbol's commits since its pin are not read")
         return None
     if result.returncode != 0:
         return None
@@ -899,7 +940,8 @@ def _git_status_dirty(repo_root: Path, paths: list[str]) -> dict[str, str]:
         result = run_bounded(
             cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd, "no uncommitted change to a bound file is seen")
         return {}
     if result.returncode != 0:
         return {}
@@ -935,7 +977,9 @@ def _git_diff_old_ranges(repo_root: Path, path: str) -> list[tuple[int, int]] | 
         result = run_bounded(
             cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd,
+                       "a working-tree change to a bound symbol is not placed")
         return None
     if result.returncode != 0:
         return None
@@ -1054,7 +1098,9 @@ def _manifest_fragments_at_head(repo_root: Path) -> dict[str, Any] | None:
         result = run_bounded(
             cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd,
+                       "the manifest reads as not at HEAD and the hand-edit check stands down")
         return None
     if result.returncode != 0:
         return None
@@ -1386,12 +1432,13 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
 
 
 def _head_sha(repo_root: Path) -> str:
+    cmd = ["git", "-C", str(repo_root), "rev-parse", "HEAD"]
     try:
         result = run_bounded(
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)
+        _say_unstarted(type(exc), getattr(exc, "strerror", None), cmd, "the scan records no head commit")
         return ""
     if result.returncode != 0:
         return ""

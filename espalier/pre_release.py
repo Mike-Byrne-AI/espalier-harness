@@ -23,7 +23,7 @@ from espalier._safe_walk import is_own_git_repo, safe_rglob, visible
 from espalier.release_noise import SECRET_FILES
 from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, _tree_walk, create_release_zip
 from espalier.scan_composition import REPORT_FILES
-from espalier._spawn import run_no_stdin, run_tree_bounded
+from espalier._spawn import SpawnFailure, run_tree_bounded, say_unstarted, spawn_checked
 from espalier._text import os_error_text
 
 
@@ -809,11 +809,14 @@ def _run_command(
 def _parity_runnable() -> bool:
     """True only when `python -m build` can be executed here (needed for parity)."""
     try:
-        result = run_no_stdin(
+        result = spawn_checked(
             [sys.executable, "-m", "build", "--help"],
             capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+    except (subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+        return False
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "the wheel-parity check reads `python -m build` as not runnable here")
         return False
     return result.returncode == 0 and "usage" in (result.stdout + result.stderr).lower()
 

@@ -283,7 +283,19 @@ discipline applies in spirit, not just to that directory.
   `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a
   typed `SpawnFailure` instead of a raise) and a reporter's own spawn
   carries `# spawn: ok <reason>`; `tests/test_spawn_chokepoint.py` is that
-  gate. A spawn with a timeout, anywhere under `tools/cc`, calls `run_bounded`
+  gate. The engine keeps its own copy of that contract,
+  `espalier/_spawn.py::spawn_checked` (DEF-985): an engine site that answers
+  in place of a program that never started (git missing, a shim off PATH)
+  routes through it and says so with `say_unstarted`, one line on stderr per
+  program per process, before it gives its old answer; a child that started
+  and answered no (a non-git tree's `git`) says nothing.
+  `tests/test_contracts.py::TestNoEngineSpawnFailsToStartInSilence` refuses an
+  `except` arm that catches a start failure around a raising spawn and says
+  nothing, and a `SpawnFailure` branch that says nothing; an arm whose silence
+  is the right answer (ripgrep, whose Python fallback answers the same)
+  carries `# fail-open: ok <kind> <reason>` on its `except` line. Unlike the
+  hooks' copy, the engine's never resolves a bare name in the current
+  directory. A spawn with a timeout, anywhere under `tools/cc`, calls `run_bounded`
   (`_json_safe`, re-exported by `_hook_utils`; `spawn_checked` is built on
   it), never a raw `subprocess.*` call: on Windows `subprocess.run` waits past
   its timeout for a grandchild holding the pipe (`docs/SHARP_EDGES.md`), and

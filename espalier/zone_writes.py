@@ -229,7 +229,7 @@ def _tracked_dirs(root: Path, prefixes: list[str], checkout: str = "") -> frozen
     checkout once, so a None here would re-read at every declaration."""
     import subprocess
 
-    from espalier._spawn import run_no_stdin
+    from espalier._spawn import SpawnFailure, say_unstarted, spawn_checked
 
     where = root / checkout if checkout else root
     specs = _pathspecs(checkout, prefixes)
@@ -237,11 +237,14 @@ def _tracked_dirs(root: Path, prefixes: list[str], checkout: str = "") -> frozen
         return frozenset()
     env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS} if checkout else None
     try:
-        result = run_no_stdin(["git", "ls-files", "-z", "--", *(_LITERAL_ICASE + s for s in specs)],
-                              cwd=str(where), env=env, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S,
-                              check=False)
-    except (OSError, subprocess.SubprocessError):
+        result = spawn_checked(["git", "ls-files", "-z", "--", *(_LITERAL_ICASE + s for s in specs)],
+                               cwd=str(where), env=env, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S,
+                               check=False)
+    except subprocess.SubprocessError:
         return frozenset()  # no tracked set: the walk prunes as it did before git was asked
+    if isinstance(result, SpawnFailure):
+        say_unstarted(result, "the zone walk prunes without git's tracked set, as it did before git was asked")
+        return frozenset()
     if result.returncode != 0:
         return frozenset()
     head = checkout + "/" if checkout else ""

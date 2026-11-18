@@ -390,6 +390,11 @@ _ENGINE_INTERPRETER_MEMOS = (
     ("espalier._python_floor", "_BANNER_VERDICTS"),
     ("espalier.cli", "_VENV_ONLY_VERDICTS"),
     ("espalier.cli", "_WRITERS_GATE_VERDICTS"),
+    # The programs the engine and the freshness scanner have said never
+    # started (DEF-985): a no-git test leaves `git` in them, and the next test
+    # that asks for the line would read nothing (the failure-mode review).
+    ("espalier._spawn", "_SAID_UNSTARTED"),
+    ("espalier.scanners.freshness", "_SAID_UNSTARTED"),
 )
 
 

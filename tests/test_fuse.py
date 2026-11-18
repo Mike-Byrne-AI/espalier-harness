@@ -668,16 +668,18 @@ class TestFuseInitFailure:
         out.mkdir()
 
         self._stage_workflow(out, commit=False)  # on disk, so absence is not the reason
-        real_run = subprocess.run
+        real_spawn = fuse.spawn_checked
 
         def _no_git(argv, *a, **k):  # only the workflow probe loses git
             if argv[:1] == ["git"] and fuse._WORKFLOW_REL in argv:
-                raise FileNotFoundError("git")
-            return real_run(argv, *a, **k)
+                return fuse.SpawnFailure(tuple(argv), "Unresolved", None)
+            return real_spawn(argv, *a, **k)
 
-        # fuse's own view of the spawn, not the shared stdlib attribute: its
-        # spawns go through its `run_no_stdin` name (DEF-3004, DEF-928)
-        monkeypatch.setattr(fuse, "run_no_stdin", _no_git)
+        # fuse's own view of the spawn, not the shared stdlib attribute: the
+        # workflow probe goes through its `spawn_checked` name, which hands a
+        # start that failed back as a SpawnFailure (DEF-985; before it, its
+        # `run_no_stdin`, DEF-3004, DEF-928)
+        monkeypatch.setattr(fuse, "spawn_checked", _no_git)
         assert fuse._workflow_tracked(out) is None
         assert self._unwired_active_gate(tmp_path, monkeypatch, out) == 0
         captured = capsys.readouterr().out

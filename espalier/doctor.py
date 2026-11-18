@@ -41,7 +41,7 @@ from espalier._python_floor import (
     interpreter_start_unconfirmed, is_python3_banner, start_unconfirmed_of,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
-from espalier._spawn import run_no_stdin
+from espalier._spawn import SpawnFailure, run_no_stdin, say_unstarted, spawn_checked
 from espalier.audit_accuracy import extract_count_for_label
 from espalier.diffing import diff_repo
 from espalier.managed_markers import seed_is_untouched
@@ -1582,12 +1582,15 @@ def _probe_deployed_stop_gate(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = run_no_stdin(  # a read-only probe of the deployed hook
+        proc = spawn_checked(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _STOP_GATE_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
         )
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (subprocess.SubprocessError, ValueError):
+        return None
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "the doctor reads nothing of what the deployed stop gate runs")
         return None
     if proc.returncode != 0:
         return None
@@ -1628,14 +1631,17 @@ def _probe_recall_corpus(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = run_no_stdin(  # a read-only probe of the deployed hook
+        proc = spawn_checked(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _RECALL_FACTS_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
         )
     except subprocess.TimeoutExpired:
         return {"error": "timeout"}
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (subprocess.SubprocessError, ValueError):
+        return {"error": "no_answer"}
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "the doctor reads the recall corpus as not readable")
         return {"error": "no_answer"}
     if proc.returncode != 0:
         return {"error": "no_facts"}
@@ -1733,7 +1739,7 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> tu
         printed = exc.stdout or b""
         text = printed.decode("utf-8", "replace") if isinstance(printed, bytes) else str(printed)
         how = "timeout"
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (OSError, subprocess.SubprocessError, ValueError):  # fail-open: ok deliberate -- "unspawnable" is said: the caller's _never_started renders it as the warning "the probe's interpreter could not run"
         return None, "unspawnable"
     started = False
     answers: dict = {}
@@ -1898,12 +1904,15 @@ def _check_frontmatter_line_endings(repo_root: Path) -> list[str]:
     try:
         # -z: NUL-separated path, attribute, value triples, so a path git
         # would otherwise quote (a non-ASCII name) comes back as written.
-        proc = run_no_stdin(  # a read-only attribute query
+        proc = spawn_checked(  # a read-only attribute query
             ["git", "check-attr", "-z", "eol", "--", *sorted(at_risk)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=10,
         )
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (subprocess.SubprocessError, ValueError):
+        return []
+    if isinstance(proc, SpawnFailure):
+        say_unstarted(proc, "the doctor shows no row for frontmatter that needs LF line endings")
         return []
     if proc.returncode != 0:
         return []
