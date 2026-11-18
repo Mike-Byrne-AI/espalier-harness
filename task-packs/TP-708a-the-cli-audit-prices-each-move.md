@@ -861,6 +861,7 @@ and graded on nothing until the call's ruling:
 | Census at `aa3fa7d01` (as committed) | 15 / 126 | 33 | 275 | 6.35 | unmeasured |
 | Census at `e592d0b5f` (the defects fixed) | 15 / 126 | 42 | 277 | 6.31 | unmeasured |
 | Census at `ae313a4a8` (the review folds) | 15 / 126 | 42 | 277 | 6.24 | unmeasured |
+| Census at `e26e0f25f` (the second fold) | 15 / 126 | 42 | 277 | 6.24 | unmeasured |
 | air-work alone, the confirmed seat (**post hoc**, not pre-registered) | 14 / 82 | 88 | 558.5 | 4.21 | unmeasured |
 
 **What moved from `e592d0b5f` to `ae313a4a8`, and why** [verified: two runs on this box at P,
@@ -886,10 +887,142 @@ only through the spread of ln E (pooled SD 2.709 to 2.691), and the verdict stay
 Beside it, never graded: with only the control lanes that edit a Python file, the MDR moves from
 3.60 to 3.56.
 
-Beside them, never graded: the forks' reads of the CLI modules on the 15 lanes sum to 6,786 lines
-(1,635 before the worktree fix), and air-work's median R plus its forks' is 416. Search calls on
-the CLI modules: 77. The air seat has one cli.py lane in the window (#349), so the reading cost on
-this box is in effect air-work's, as step 1 said.
+**What moved from `ae313a4a8` to `e26e0f25f`, and why** [verified: one run on this box at P,
+2026-11-18 09:41-09:47Z, empty stderr, the JSON whole; compared lane by lane with `ae313a4a8`'s
+run of 08:30Z]. The input is the same: the population block lists the same 391 and 206 files with
+the same record counts at P. The mail refs read are later oids, and each holds the earlier one,
+cut at P by its messages' own stamps. So the move is the second fold's code alone, and that fold
+was made after these reads had been seen. Its reader items (stdin, `git show` paths,
+`head --lines`, refused `Read`s, a here-document's delimiter) are where a line count can move.
+Which item moved which lane is not read [probable].
+- R and the search calls are unchanged on all 15 cli.py lanes.
+- E moved on one cli.py lane (#530, 371 to 510) and on five control lanes, four up and one down,
+  net +77 lines (#353 +34, #461 +14, #591 +25, #632 -1, #654 +5). The total lines read moved
+  on two of those control lanes (#591 +1, #632 -1). Median E stays 277. The pooled
+  SD of ln E moves from 2.691 to 2.692, and the MDR stays 6.24. With only the control lanes that
+  edit a Python file, median E moves from 888 to 889 and the MDR stays 3.56.
+- Subagent R moved on one lane (#669, 3,761 to 3,888), so the forks' sum is 6,913.
+- The seats' own read calls rose from 27,697 to 27,698 and the subagents' from 31,138 to 31,140.
+  The 7,814 unattributed calls and the 109 moved off a merged branch are unchanged.
+- Two counts are newly disclosed, each beside the figures and never a grade:
+  - `calls.unlexed`: Bash commands the lexer refuses, own 17 and subagents 5. They book no read
+    and are named under `unread`.
+  - `calls.heredoc_tag_missed`: own 4 and subagents 2. These are candidates where the scanner may
+    have read a here-document's body as commands. They still book reads, so a count can be wrong
+    in either direction, and they are a count to look at, never a verdict.
+
+  None of them holds a CLI module's path in its literal spelling (`espalier/cli.py`, a substring
+  match). A relative or variable spelling would go uncounted, so "R lost no read to them" is
+  probable, not verified. E may be off in either direction on those 21 own commands, unread.
+- `skipped_never_named` now lists one worktree, `.claude/worktrees/agent-a0bed478225d3241f`. It
+  is this seat's second-fold builder (branch `fold2-census`, commit `7066f5c09`, cherry-picked as
+  `e26e0f25f` with the same patch id). It is labelled `air` because it has no per-worktree
+  `espalier.machine`, so git falls back to the clone's shared `.git/config`, which names `air`
+  [verified, `git config --show-origin`]. It has no transcript folder, so no read is lost. The
+  list is read from the checkouts on the box at the run, not at P, and so is the set of transcript
+  folders read. So "two runs at one pin print the same section" (Pass criteria) holds only for
+  two runs with the same checkouts present.
+
+Beside them, never graded: at `e26e0f25f` the forks' reads of the CLI modules on the 15 lanes sum
+to 6,913 lines. That figure was 6,786 at `ae313a4a8` and 1,635 before the worktree fix. air-work's
+median R plus its forks' reads is 416. Search calls on the CLI modules: 77. The air seat has one
+cli.py lane in the window (#349), so the reading cost on this box is in effect air-work's, as
+step 1 said.
+
+**The scope of R against E** (F5 of Task 9's reasoning review) [verified, the code:
+`scripts/cli_cost_census.py`'s transcripts row books a line to `r` when its path is a CLI module,
+and to `e` when its path is one the lane edited].
+- R counts the lines read of the CLI modules, which is one module at P (`espalier/cli.py`).
+- E counts the lines read of every file the lane edited, docs and tests included.
+
+So R < E is likely by construction: a cli.py lane's reads of its own tests, docs and other
+modules are in neither its R nor any control lane's E. Three reads at `e26e0f25f`, each beside
+the grade and never graded:
+- *R's share of the lane's total lines read* (`beside.r_share_of_total`, step 1's beside
+  figure), per lane in PR order: 0, 0, 0.017, 0.236, 0, 0.17, 0, 0.134, 0, 0.026, 0.002, 0.033,
+  0.336, 0.284, 0.58. The median share is 0.026: on 8 of the 15 lanes, cli.py was 2.6% or less of
+  what the seat read.
+- *On the same scope*, every edited file (post hoc): the cli.py lanes' own E has a median of
+  1,412. That E counts every file they edited, cli.py included. The control lanes' median E is
+  277, or 889 for the 71 that edit a non-test `.py` file. The medians of all lines read are 2,373
+  against 1,469.5 (2,108).
+- *What this does not say* [probable: the medians; the cause unmeasured]:
+  - how much of that gap is lane size, since a cli.py lane may edit more files;
+  - how much is file size. Step 1's control rule leaves out any lane with a non-test `.py` file of
+    3,000 lines or more at its merge-base (`CONTROL_MAX_LINES`), while every cli.py lane edits a
+    file of 17,817 lines;
+  - how much is cli.py itself.
+
+So on the same scope, the cli.py lanes read more, not less. The direction that R against E
+suggests cannot be told apart from the scope difference, and this design reads no direction for
+a relative reading cost. What it can bound is the absolute one, below.
+
+#### Item 3's (a) alone
+
+**Post hoc, never graded** (F2 of Task 9's reasoning review). Threshold (a) is a bound on R alone:
+median R ≥ 1,500. It needs no E, no control lane and no minimum detectable ratio. Item 3's two
+causes of *unmeasured* sit elsewhere:
+- the MDR is the comparison with E, (b) and (c);
+- the attribution fails on air's lanes, and only one of them (#349) is a cli.py lane.
+
+So (a) can be read on its own, with #349 taken at its hand read.
+
+- **The 15 R values at `e26e0f25f`**, ascending: 0, 0, 0, 0, 0, 8, 33, 42, 134, 165, 187, 403,
+  897, 1,057, 1,951. #349 is one of the five 0s.
+- **#349 at its hand read.** The census credits #349 with 0 lines. Its sessions read 1,607 lines
+  of the lane's own files in the six hours before its claim (the hand sample above). The lane
+  edited 49 files, `espalier/cli.py` among them, so at most 1,607 of those lines are R. How many
+  were cli.py's is not read. Taking all 1,607, the values become 0, 0, 0, 0, 8, 33, 42, 134, 165,
+  187, 403, 897, 1,057, 1,607, 1,951. The bound below does not rest on the hand read: x(12) is at
+  most 897 whatever #349's R is, and at most 1,128 whatever its R plus forks' reads is, since
+  #349 then sits above the 12th of the other 14.
+- **The bound.**
+  - The rule: for any distribution with median m, the k-th smallest of n draws, x(k), falls below
+    m only when k or more draws do. So P(x(k) ≥ m) ≥ P(Bin(n, 1/2) ≤ k - 1), and ties at 0 only
+    raise the coverage.
+  - For n = 15, the smallest k at 95% is 12: P(Bin(15, 1/2) ≤ 11) = 0.982, against 0.941 at
+    k = 11. So x(12), the 4th-largest, is a one-sided upper bound on the population median R at
+    98.2% or more: the median R of air-work's cli.py lanes, assuming the lanes are independent.
+  - The bounds, each under 1,500:
+
+    | R as read | x(12), the bound at 98.2% or more, one-sided |
+    |---|---|
+    | the census's R | 403 |
+    | with #349 at its hand read | 897 (at most 897 for any value of #349's R) |
+    | R plus the forks' reads, #349 at its hand read | 1,128 (at most 1,128 for any value of #349's) |
+
+    The third row adds the forks' reads, which threshold (a) does not price and step 1 put beside.
+    It is the largest reading of the seat's cli.py cost any figure here supports.
+- **What it assumes** [judgment]:
+  - It treats the 15 lanes as independent draws from one population of cli.py lanes.
+  - They are not independent: one seat ran 14 of them one after another, and its habit of handing
+    cli.py work to forks carries from lane to lane. How much that narrows the true coverage is not
+    read.
+  - They are the window's whole set of cli.py lanes for two seats, and 14 of them are
+    air-work's. So the bound speaks for air-work's way of working over these 30 days. It does not
+    speak for a seat that reads otherwise, or for the Windows seats.
+  - The hand sample confirms air-work's attribution, 3 lanes of 3.
+- **What it is, and is not.**
+  - The order statistic and the level were chosen after the R values were seen: the reasoning
+    review proposed this read after the first read at P. It changes no verdict. Item 3 stays
+    *unmeasured*, as step 1 grades it, because step 1 allows *not real* only with an MDR at or
+    under 2.0.
+  - It bounds the size of the seat's cli.py reading. It says nothing on (b), the cost relative to
+    other files.
+  - It is a candidate for the next pin's pre-registration, never a change to step 1's.
+- **The next pin's design** (named here, not committed) [judgment, untested]:
+  1. The bound on (a) alone as above, committed before the read: *not real on (a)* when the 95%
+     upper bound on median R is under 1,500, whatever the MDR.
+  2. For (b), a within-lane paired design: each cli.py lane's reads of cli.py against the same
+     lane's reads of its other edited files. Pairing within a lane drops the between-lane spread,
+     which is the obstacle named in *How far a decidable read is*.
+     - The unit of the comparison is open. Per line of the file decides the direction in advance:
+       a 17,817-line file read in slices always shows a small rate, and a small file read whole
+       shows a rate near 1. That measures coverage, not context cost.
+     - Lines read per edited symbol or per hunk is one candidate. Pairing against lanes that edit
+       another large file is another.
+
+  Who authors that pre-registration, and when, is left to air's call on TP-708's later waves.
 
 ### Task 0 Item 2 at P: the collision read
 
@@ -1569,7 +1702,7 @@ graded after the operator ruled on call `20261118T032647Z-air-7a763a`: (A), cont
 |---|---|---|---|
 | 1. Do the authoring figures hold? | **Refuted on one figure; ruled continue** | Every structural row reproduces exactly, and every windowed row but one is explained. The 18 cross-seat claim-overlap pairs reproduce under neither stated window: 10 over the 30 days to P, 20 over the 42 days to `17d83e0`. The 18 grades nothing | Item 1 at P; the list above |
 | 2. Is there a collision cost? | **Not real**, on point estimates | C1 1 against 4. C2 15 of 33 lanes (45.5%) against 50%, two lanes short. C3 2 holds against 8. C4 1 replay conflict, not graded. At 95% only C3 is decided: C1's upper bound is 4.74 and C2's 61.1% | Item 2 at P |
-| 3. Is there a reading cost? | **Unmeasured** | Two causes, each enough alone. The hand sample confirms 3 of 3 air-work lanes and 0 of 2 air lanes, so the attribution fails for the two-seat population. And the realised minimum detectable ratio is 6.24, above the committed 2.0 [to re-read after the second fold] | The transcripts read |
+| 3. Is there a reading cost? | **Unmeasured** | Two causes, each enough alone. The hand sample confirms 3 of 3 air-work lanes and 0 of 2 air lanes, so the attribution fails for the two-seat population. And the realised minimum detectable ratio is 6.24 at `e26e0f25f`, above the committed 2.0. Post hoc and never graded: the median R of air-work's cli.py lanes is under (a)'s 1,500 at 98.2% one-sided, assuming independent lanes | The transcripts read; *Item 3's (a) alone* |
 
 **The exit cell: collision not real, reading unmeasured. The exit table has no such cell.** Its
 row for "collision not real" has two cells: no refactor waves (reading not real), and
@@ -1577,12 +1710,19 @@ decomposition waves graded on reading (reading real). Task 0 says what an unmeas
 never a silent kill and never a license. So this read licenses no wave. It also cannot support
 striking `DEF-4123` as "no cost". The call says both.
 
-**Beside the verdict, never graded** [to re-read after the second fold]. The observed direction
-runs against a reading cost. On the median cli.py lane, the seat read 42 lines of the CLI
-modules. Threshold (a) is 1,500. On the median control lane, the seat read 277 lines of the files
-it edited. Add the forks' reads, and air-work's median cli.py lane read 416, still under a
-third of (a). These are medians of an unmeasured read. They say which way it leans, not that it is
-settled.
+**Beside the verdict, never graded** (at `e26e0f25f`). On the median cli.py lane, the seat read
+42 lines of the CLI modules, and threshold (a) is 1,500. Post hoc, the one-sided upper bound on
+the median R of air-work's cli.py lanes is 403 lines, at 98.2% or more with the lanes assumed
+independent. It is 897 with #349 at its hand read, and 1,128 with the forks' reads added, so each
+reading is under 1,500 (*Item 3's (a) alone*). That bounds the size of the seat's cli.py reading.
+It says nothing on (b).
+
+The comparison with E says less than it seems to. R counts one module, while E counts a lane's
+whole edit set. On the same scope, the cli.py lanes read more of their edited files than the
+control lanes do: medians of 1,412 against 277 (*The scope of R against E*). Two size confounds
+are unread: lane size, and the control rule that leaves out files of 3,000 lines or more. So this
+read gives no direction on a relative reading cost, and it gives a post hoc upper bound on an
+absolute one, for air-work's lanes.
 
 **How far a decidable read is** [probable: the step-1 formula at the observed spread; nothing was
 read for it]. The committed minimum detectable ratio is exp(2.49 · s · √(1/n_t + 1/n_c)). At P,
@@ -1615,8 +1755,10 @@ In order:
    edits no row (Status). A strike says there is no cost, and Item 3 cannot say that. Each of the
    row's two premises, as read at P:
    - "collides with the next lane in it": not real on every graded component;
-   - "reads a file of more than 17,000 lines": unmeasured as a cost, and the observed medians sit
-     far below the threshold.
+   - "reads a file of more than 17,000 lines": unmeasured as a cost. Post hoc and never graded,
+     the median R of air-work's cli.py lanes on this box is under threshold (a) at 98.2%
+     one-sided, assuming independent lanes (*Item 3's (a) alone*). No other seat is read, and no
+     direction is read for a cost relative to other files.
 
    The size and the accretion stand [verified, Task 2]. The re-scoped row names what reopens it:
    C2 at or over 50% in two consecutive 30-day windows, or C2's 95% lower bound at or over 50%
@@ -1643,7 +1785,7 @@ unmeasured.
 - `::cmd_upgrade` grew from 498 to 929 lines since the seed, through about 12 row guards in one
   arm, and it cites 26 ids [verified, Task 2].
 - The seats hand cli.py work to forks (#357, #429, #540). The forks' reads of the CLI modules sum
-  to 6,786 lines on the 15 lanes, against the seats' own median of 42.
+  to 6,913 lines on the 15 lanes at `e26e0f25f`, against the seats' own median of 42.
 - C2 says nearly half the cli.py lanes overlap another seat's live claim on the file. C1, C3 and
   C4 say almost none of those overlaps became a conflict or a hold. That could be the claim
   protocol working at a cost no census counts: mail `45df70` placed code "by function, to stay
@@ -1805,7 +1947,7 @@ never this one's.
 
 | Component | Baseline at P | Committed threshold | Graded at P | Recommended to grade a wave |
 |---|---|---|---|---|
-| Primary: lines of the CLI modules a lane's seat read | median R 42; median E 277; MDR 6.24 [to re-read after the second fold] | (a) median R ≥ 1,500, (b) ≥ 2 × E, (c) p < 0.05; not real only with MDR ≤ 2.0 | unmeasured | no, until a decidable read |
+| Primary: lines of the CLI modules a lane's seat read | median R 42; median E 277; MDR 6.24 (at `e26e0f25f`). Post hoc, never graded: the 98.2% upper bound on air-work's median R is 403 (897 with #349's hand read), assuming independent lanes | (a) median R ≥ 1,500, (b) ≥ 2 × E, (c) p < 0.05; not real only with MDR ≤ 2.0 | unmeasured | no, until a decidable read |
 | `lane_read` (secondary) | 36 lanes, median 337, max 2,784, summed 26,298 | none: only beside the primary | not graded | never alone |
 | C1. Uncertified concurrent cli.py pairs | 1 | 4 | not real | no: reported |
 | C2. Share of cli.py lanes in a cross-seat claim overlap | 45.5% (15 of 33) | 50% | not real, near | no: a split lowers it by construction. A symbol-aware form, pre-registered at the next pin, could |
@@ -1858,7 +2000,9 @@ unmeasured at P (Task 0's verdicts above).
     - F3, the deferral cost: re-read here at the three commits, folded into the steelman, with
       alternatives (iv) and (v);
     - F4, the bounds on Item 2: re-computed, in Item 2 at P;
-    - F5, the scope of R against E: the transcripts read;
+    - F5, the scope of R against E: the transcripts read, *The scope of R against E*, with the
+      "Beside the verdict" paragraph corrected to match (on the same scope the medians lean the
+      other way, with two size confounds unread);
     - F6 and F10, the pre-registration's addendum: verified against the diff from `b958adb42`;
     - F7, a clone missing seats' mail refs read with nothing unread: fixed in the census
       (`::mail_seats_named`, its tests red on the unfixed script), with the pin's oids recorded;
@@ -1866,6 +2010,21 @@ unmeasured at P (Task 0's verdicts above).
 
     F9 stands as a gap: no methods review of Item 3's statistics ran, and F2, F4 and F5 are each
     a methods finding. A methods read is owed before the next pin's pre-registration;
+  - **the verifier of the transcripts re-run's fold** (a fresh general-purpose reviewer, read-only,
+    working from the two runs' JSON, the census code and git). It re-derived every figure of the
+    `e26e0f25f` row, its "what moved" list, *The scope of R against E* and *Item 3's (a) alone*,
+    and every figure reproduced. It found 3 wrong statements: the builder worktree's seat label,
+    `has_py`'s scope, and "the median lane". It found 4 overclaims:
+    - `naming_cli`'s literal match;
+    - "matched scopes" with `CONTROL_MAX_LINES` unnamed;
+    - "an artefact";
+    - the bound's population left out of the verdict row, the Gate A row and `DEF-4123`'s premise.
+
+    It also gave a stronger form of the bound (it does not rest on #349's hand read) and two
+    correlations the assumptions left out. It found that a per-line unit in the paired design
+    decides its direction in advance. Each load-bearing finding was verified here in the code or
+    git, and each is folded. It read the fold's new statistics and not step 1's design, so F9
+    stands;
   - **the code review the tier names**, three reviewers in snapshot clones, on the first fold
     (`5bb09b9e3`) and on `ae313a4a8`:
     - rv-ab (pin through `move_cost`, `census`, `main`): no BLOCKER, no MAJOR, MINOR 6;
