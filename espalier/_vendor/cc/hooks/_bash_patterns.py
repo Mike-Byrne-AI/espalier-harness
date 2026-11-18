@@ -15177,6 +15177,9 @@ def _ps_stdin_program_spans(
 _PS_NEW_ITEM_RE = _first_use(
     _PS_CMD_POS + r"\b(?:New-Item|ni)\b" + _QUOTED_VERB_TAIL, re.IGNORECASE
 )
+# ⚠ The zone leg's link test, the spaced `-ItemType SymbolicLink` alone; the
+# secret leg's reads every link item type by `_PS_LINK_ITEM_TYPES` and
+# `_ps_link_reading` below (DEF-5123), so a fix to one test is not the other's.
 _PS_SYMLINK_ITEMTYPE_RE = _first_use(r"-ItemType\s+SymbolicLink\b", re.IGNORECASE)
 _PS_LINK_LOCATION_RE = _first_use(r"-(?:Path|Name)\s+([^\s;|&]+)", re.IGNORECASE)
 # Positional -Path: the first non-flag token right after New-Item/ni
@@ -15207,6 +15210,69 @@ def powershell_symlink_linknames(command: str) -> list[str]:
     if positional:
         names.append(raw_operand(raw, positional, powershell=True))
     return names
+
+
+#: New-Item's item types that make a link (DEF-5123), as the FileSystem
+#: provider names them. What such an item's value names is where the link
+#: points; any other item type's value is the file's content (driven on
+#: Windows PowerShell 5.1: a `File` whose `-Value` was a dotenv file's name
+#: held that name as its text, and a `HardLink` to a file held the file's).
+_PS_LINK_ITEM_TYPES = frozenset({"symboliclink", "hardlink", "junction"})
+#: New-Item's item-type and value parameters by their full names and the
+#: aliases 5.1 declares for them (`Type`, `Target`; `Get-Command New-Item`).
+_PS_ITEM_TYPE_PARAMETERS = frozenset({"-itemtype", "-type"})
+_PS_LINK_TARGET_PARAMETERS = frozenset({"-value", "-target"})
+
+
+def _ps_link_reading(raw: str, scan: str, m: "re.Match[str]") -> tuple[list[str], int]:
+    """What the `New-Item` (or `ni`) the scan matched at ``m`` links to, and
+    where its argument span ends: the value of its `-Target` or `-Value`,
+    spaced or bound by a colon, where its `-ItemType` or `-Type` names a
+    link item type (`_PS_LINK_ITEM_TYPES`), else no target. The PowerShell
+    twin of the Bash reader's `ln` and `ln -s` target (DEF-5123).
+
+    The arguments run from the head to the statement's end (a `\\n`, `;`,
+    `|` or `&` on the scan, at most 512 characters on, carried through a
+    quote the span opened) or to the close of the block or group the
+    New-Item sits in (`_ps_unmatched_closer`, as the remove arm's span is
+    cut, DEF-3069: read past it, a later statement's File value was taken
+    for this link's target), read from the raw text, each redirect and its
+    target dropped first, so a stream's file is never the value (DEF-5120's
+    R4). The caller skips a head inside a span already read, as `finditer`
+    never overlaps the sibling arms' spans, so a flood of heads is read
+    once, not 512 characters a head.
+
+    The plain spellings only, by the dispatcher's assign (87e5f5, under
+    40ec7f's rule): a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`,
+    `-Va`), an item type cut to one (`-ItemType hard`) and a target bound
+    from the pipeline are declared limits, each of which 5.1 binds
+    (docs/HOOKS.md, the coverage contract)."""
+    start = m.end()
+    limit = min(len(scan), start + 512)
+    stops = [i for i in (scan.find(c, start, limit) for c in "\n;|&") if i >= 0]
+    end = _span_end_through_quotes(raw, start, min(stops, default=limit), powershell=True)
+    close = _ps_unmatched_closer(scan[start:end], certain=False)
+    if close >= 0:
+        end = start + close
+    tokens = _ps_redirect_free(_ps_operand_tokens(raw[start:end]))
+    linked = False
+    targets: list[str] = []
+    for k, tok in enumerate(tokens):
+        if not tok or tok[0] not in _PS_PARAMETER_LEAD_CHARS:
+            continue
+        name = _ps_parameter_name(tok).lower()
+        if name not in _PS_ITEM_TYPE_PARAMETERS and name not in _PS_LINK_TARGET_PARAMETERS:
+            continue
+        # a quoted value bound by a colon is the tokenizer's next token, as
+        # 5.1 binds `-Target: x` (the colon, a blank, the value) too
+        _name, _colon, value = tok.partition(":")
+        if not value:
+            value = tokens[k + 1] if k + 1 < len(tokens) else ""
+        if name in _PS_ITEM_TYPE_PARAMETERS:
+            linked = linked or _ps_operand_text(value).lower() in _PS_LINK_ITEM_TYPES
+        elif value:
+            targets.extend(_ps_list_targets(value))
+    return (targets if linked else []), end
 
 
 def powershell_removal_is_recognized_safe(command: str, raw: str | None = None) -> bool:
@@ -20776,7 +20842,7 @@ def _ps_stage_is_variable(stage: str, name: str) -> bool:
 _PS_CLOSER_ENDS_RE = _first_use(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
 
 
-def _ps_unmatched_closer(span: str) -> int:
+def _ps_unmatched_closer(span: str, *, certain: bool = True) -> int:
     """The offset in ``span`` of the first `)` or `}` that closes a group the
     span did not open, where that closer certainly ends the statement a
     remove's argument span reads, else -1 (DEF-3069): the close of the block
@@ -20796,7 +20862,12 @@ def _ps_unmatched_closer(span: str) -> int:
     quoted run counts nothing, and an unterminated quote or a stop-parsing
     `--%` (after which a closer is literal text) is no cut. One pass over
     the span; the walk that asks it resumes at the cut, so a line of many
-    one-remove blocks reads each block's span once more."""
+    one-remove blocks reads each block's span once more.
+
+    ``certain=False`` cuts at the first such closer whatever follows it:
+    the New-Item link reader's span (`_ps_link_reading`, DEF-5123), whose
+    parameters a word after the group's close never is, so an array's next
+    element (`@(ni ...), (ni ... -Value .env)`) is not read as its own."""
     if "--%" in span:
         return -1
     depth = 0
@@ -20816,6 +20887,8 @@ def _ps_unmatched_closer(span: str) -> int:
             depth += 1
         elif ch in ")}":
             if depth == 0:
+                if not certain:
+                    return i
                 rest = span[i + 1:]
                 ends = _PS_CLOSER_ENDS_RE.match(rest) or (ch == ")" and rest.lstrip(" \t").startswith("+"))
                 return i if ends else -1
@@ -21808,7 +21881,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     `[IO.Directory]::Delete`, the interpreter delete literals), `move`
     (a move verb's source by positional or `-Path`, `Rename-Item`, `git mv`,
     `[IO.File]::Move`'s source, the interpreter rename literals), `archive`
-    (`Compress-Archive`'s input) and `read` (an interpreter literal read).
+    (`Compress-Archive`'s input), `alias` (the target of a `New-Item` link
+    item type, DEF-5123) and `read` (an interpreter literal read).
     Same-line literal bindings inlined first, then scan pair and cap, as the
     write extractor's; a `bash -c` program and a piped PowerShell program
     are read one level down."""
@@ -21906,6 +21980,19 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
             out.append(("move", args[0]))
     for m in _PS_COMPRESS_ARCHIVE_RE.finditer(scan):
         out.extend(("archive", p) for p in named_targets(m))
+    # DEF-5123: a New-Item link item type's target, the twin of the Bash
+    # reader's `ln` and `ln -s` arms, so the secret leg refuses a link to a
+    # dotenv file on this tool as on Bash (the zone leg reads no alias).
+    # Gated on the head's letters, so a call naming no New-Item pays one
+    # lowercase pass; a head inside a span already read is that span's
+    lowered = scan.lower()
+    if "new-item" in lowered or "ni" in lowered:
+        read_to = -1
+        for m in _PS_NEW_ITEM_RE.finditer(scan):
+            if m.start() < read_to:
+                continue
+            targets, read_to = _ps_link_reading(raw, scan, m)
+            out.extend(("alias", p) for p in targets)
     for interp, body in _ps_inline_program_bodies(raw, scan):
         out.extend(_program_effects(interp, body))
     for head, segment in _ps_stdin_program_bodies(raw, scan):
@@ -21946,5 +22033,5 @@ _MUTATION_ARMS: tuple[str, ...] = (
 )
 _SECRET_EFFECT_ARMS: tuple[str, ...] = (
     "_TAR_CREATE_RE", "_ZIP_RE", "_DD_IF_RE", "_LN_S_RE", "_LN_CP_INVOCATION_RE",
-    "_PS_COMPRESS_ARCHIVE_RE",
+    "_PS_COMPRESS_ARCHIVE_RE", "_PS_NEW_ITEM_RE",
 )

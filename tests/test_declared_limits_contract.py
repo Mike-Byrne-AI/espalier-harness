@@ -381,7 +381,14 @@ class TestTheSentenceSplitter:
 #: name alone, so the seeded docs stay at the ceiling. Later the same day
 #: (air's 95a719) a program named as su's or runuser's shell (`-s` /
 #: `--shell`) joined that sentence and its pin, so the census is unmoved.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 45, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 45 -> 46 on 2026-11-17 (the dispatcher's 87e5f5, on a New-Item link
+#: to a secret): a parameter name cut to a prefix, an item type cut to one
+#: and a target piped into the cmdlet, one sentence pinned in
+#: `TestTheNewItemLinkLimits::test_the_declared_link_limits_are_pinned_as_allows`;
+#: its cite's hit is paid by the directory walk's indirection cite, which sits
+#: in no declaring sentence and is now cited by class and test name alone, so
+#: the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 46, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
