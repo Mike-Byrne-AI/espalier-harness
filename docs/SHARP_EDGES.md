@@ -6401,6 +6401,19 @@ it too. It does not release them itself: a release is a
 push to origin, and a claim nobody released usually marks work someone abandoned. A
 worktree removed by hand (`git worktree remove`) still strands its seat's claims and jobs.
 
+**A worktree added from inside a named one is its twin (driven 2026-11-17, git 2.52.0):**
+`git worktree add` copies the per-worktree config of the checkout it runs in (all but
+`core.bare` and `core.worktree`), so a scratch worktree a seat adds from its own checkout
+answers that seat's name, and one added from a main checkout given a `--worktree` name
+answers that; one added from a main checkout with none answers the clone's. The seat's
+next send from either writes one mail ref. Since DEF-3098, `tools/cc/mail.py::checkout_names`
+reads every checkout git lists by the name it writes under, wherever its folder is, and the
+board, `tools/cc/seat.py::resolve` and `name_this_worktree` all read through it: the
+board flags such a twin while a session holds it, and `seat.py` refuses the name with the
+facts of each checkout. Name the copy at once
+(`git -C "<copy>" config --worktree espalier.machine <name>`), or make the scratch copy a
+clone of its own.
+
 ## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
 
 **What it is:** `tools/cc/record_merge.py::run` gives a spawned program a bounded wait and

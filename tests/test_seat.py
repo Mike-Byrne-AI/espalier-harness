@@ -636,6 +636,119 @@ class TestASeatNameTwoCheckoutsAnswer:
         assert feat.is_dir()
 
 
+def _outside(work: Path, folder: str, *, name: str | None = None) -> Path:
+    """A worktree outside ``.claude/worktrees/``, as ``git worktree add`` makes
+    one for a reviewer's scratch copy (air's cf1b9f; this box's ``C:/tmp/wt*``)."""
+    path = work.parent / folder
+    _git(work, "worktree", "add", "--quiet", "-b", f"lane/{folder}", str(path), "origin/main")
+    if name:
+        _git(path, "config", "--worktree", "espalier.machine", name)
+    return path
+
+
+class TestEveryListedCheckoutIsRead:
+    """DEF-3098: the resolver reads every checkout git lists, each by the name
+    it writes under (``mail.checkout_names``, the reader the board reads too),
+    so a twin the board flags is one the seat driver refuses. Dies to: the
+    population taken from ``.claude/worktrees/`` (the outside twin resolved
+    past in silence), or the main checkout read at the clone's ``--local``
+    scope (one name to the resolver, another to the writer)."""
+
+    def test_a_twin_outside_the_worktrees_folder_is_refused(self, seat, clone, registry):
+        """The row's probe shape: one inside, one outside, both ``box-x``."""
+        inside, outside = _worktree(clone, "a", name="box-x"), _outside(clone, "outside", name="box-x")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        said = str(caught.value)
+        assert "answered by 2 checkouts" in said and "one mail ref" in said, said
+        assert f"{inside.as_posix()} on lane/a at" in said and f"{outside.as_posix()} on lane/outside at" in said, said
+
+    def test_a_seat_named_outside_the_folder_resolves_to_its_checkout(self, seat, clone):
+        outside = _outside(clone, "solo", name="box-solo")
+        target = seat.resolve(clone, "box-solo")
+        assert (target.path, target.exists, target.is_clone) == (outside, True, False), target
+
+    def test_a_worktree_named_back_to_the_clone_outside_the_folder_is_its_twin(self, seat, clone, registry):
+        """A ``--worktree`` setting of the clone's own name writes under the
+        clone's ref, with no session or with one (DEF-3097's rule, now read
+        outside the folder too). Dies to: the outside worktree skipped."""
+        back = _outside(clone, "back", name="box")
+        registry(clone)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert f'git -C "{back.as_posix()}" config --worktree espalier.machine <name>' in said, said
+        assert f'git -C "{clone.as_posix()}"' not in said, said
+
+    def test_a_nameless_worktree_is_the_clones_twin_only_while_a_session_holds_it(self, seat, clone, registry):
+        """A worktree with no name of its own writes under the clone's name,
+        but only a session writes: a dormant one (a reviewer's scratch copy)
+        is no twin, while one a session holds is, inside the folder or out,
+        and one under the folder keeps its derived launch name. Dies to: every
+        nameless worktree read as a twin (the clone refused beside each
+        scratch copy), or none (a live writer on the clone's ref unseen)."""
+        scratch, plain = _outside(clone, "scratch"), _worktree(clone, "plain")
+        assert seat.resolve(clone, "box").path == clone
+        assert seat.resolve(clone, "box-plain").path == plain
+        # The derived name is the folder's rule: one outside it was not made by
+        # the launcher, so `launch box-scratch` makes .claude/worktrees/scratch.
+        target = seat.resolve(clone, "box-scratch")
+        assert (target.path, target.exists) == (clone / ".claude" / "worktrees" / "scratch", False), target
+        for live in (scratch, plain):
+            pid = registry(live)
+            with pytest.raises(seat.Undecided) as caught:
+                seat.resolve(clone, "box")
+            assert f"{live.as_posix()} on lane/" in str(caught.value), caught.value
+            (registry.dir / "sessions" / f"{pid}.json").unlink()
+        assert seat.resolve(clone, "box-plain").path == plain
+
+    def test_the_main_checkout_answers_its_own_worktree_name(self, seat, clone):
+        """A ``--worktree`` name set in the main checkout is the name its mail
+        is written under (the writer's effective read), so the resolver reads
+        the same; asked for the clone's name it is refused by name, and the
+        derived names stay built on the clone's. Dies to: the main checkout
+        resolved by the clone's ``--local`` name."""
+        # Added first: `git worktree add` copies the per-worktree config of the
+        # checkout it runs in (driven on git 2.52.0), so one added after would
+        # answer box-main too.
+        plain = _worktree(clone, "plain")
+        _git(clone, "config", "--worktree", "espalier.machine", "box-main")
+        assert seat.resolve(clone, "box-main").path == clone
+        with pytest.raises(seat.Refused) as caught:
+            seat.resolve(clone, "box")
+        assert not isinstance(caught.value, seat.Undecided), caught.value
+        assert "the main checkout answers 'box-main', not its clone's name 'box'" in str(caught.value), caught.value
+        assert seat.resolve(clone, "box-plain").path == plain
+
+    def test_the_list_shows_a_named_or_live_worktree_outside_the_folder(self, seat, clone, registry):
+        """So the twin refusal's pointer (`seat.py list`) shows the twin; a
+        dormant one with no name of its own is left out, and none outside the
+        folder is ever offered for removal. Dies to: the listing kept to the
+        folder."""
+        named, back = _outside(clone, "named", name="box-n"), _outside(clone, "back", name="box")
+        dormant, live = _outside(clone, "dormant"), _outside(clone, "live")
+        registry(live)
+        found, _note = seat.seats(clone, fetch=False)
+        rows = {s.path: (s.name, s.naming, s.where, s.removal) for s in found}
+        assert str(dormant) not in rows, rows
+        assert rows[str(named)] == ("box-n", "own", named.as_posix(), seat.OUTSIDE_KEPT), rows
+        assert rows[str(back)] == ("box", "own", back.as_posix(), seat.OUTSIDE_KEPT), rows
+        assert rows[str(live)] == ("box", "inherited", live.as_posix(), seat.OUTSIDE_KEPT), rows
+        text = seat.render(found, "")
+        assert "(no name of its own: it answers its clone's)" in text and "kept -- outside .claude/worktrees/" in text
+        assert text.isascii()
+
+    def test_retire_refuses_a_seat_outside_the_folder_before_anything_is_sent(self, seat, clone, registry):
+        solo = _outside(clone, "solo", name="box-solo")
+        sent = _send(seat, solo, "box-solo", "claim", "a lane", lane="lane/solo")
+        with pytest.raises(seat.Refused) as caught:
+            seat.cmd_retire(clone, "box-solo", dry_run=False, fetch=True)
+        said = str(caught.value)
+        assert seat.OUTSIDE_KEPT in said and "nothing was released or removed" in said, said
+        assert f"--ack {sent['id']}" in said, said
+        assert solo.is_dir()
+
+
 class TestLaunch:
     def test_an_occupied_seat_is_refused_and_a_gone_session_is_not_occupancy(self, seat, clone, registry, no_claude,
                                                                              capsys):

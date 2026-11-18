@@ -244,7 +244,7 @@ class Seat:
     name: str
     path: str
     where: str                      # "the clone" or ".claude/worktrees/<dir>"
-    naming: str                     # own | derived | clone | unnamed
+    naming: str                     # own | derived | clone | inherited | unnamed | unread
     branch: str = ""
     head: str = ""
     oracle: str = ""
@@ -256,15 +256,35 @@ class Seat:
     naming_note: str = ""           # why the name could not be read, where naming is "unread"
 
 
-def _blocks(root: Path) -> list[dict[str, str]]:
-    listing = _git(root, "worktree", "list", "--porcelain")
-    if listing is None:
-        raise Refused("git could not list this clone's worktrees")
-    return sync.parse_worktrees(listing)
-
-
 def _home(root: Path) -> Path:
     return root.joinpath(*WORKTREES_REL)
+
+
+#: Why a worktree outside ``.claude/worktrees/`` is never removed here: the
+#: reaper removes only the worktrees the driver makes, under that folder.
+OUTSIDE_KEPT = "outside .claude/worktrees/, which retire never removes"
+
+
+def _listed(root: Path) -> list[dict]:
+    """Every checkout git lists, each with the seat name it writes under,
+    through ``mail.checkout_names``, the one reader (DEF-3098); a listing git
+    cannot give is refused, never read as no checkouts."""
+    try:
+        return mail.checkout_names(root)
+    except mail.Unresolvable as exc:
+        raise Refused(f"{exc}, so no seat of this clone can be read; {mail.RETRY_HINT}") from None
+
+
+def _block(row: dict) -> dict[str, str]:
+    """The listing fields of one ``mail.checkout_names`` row, in the shape
+    ``git worktree list --porcelain`` gives them (what the twin refusal and
+    the listing print)."""
+    block = {"worktree": row["path"], "HEAD": row["head"]}
+    if row["branch"]:
+        block["branch"] = f"refs/heads/{row['branch']}"
+    if row["detached"]:
+        block["detached"] = ""
+    return block
 
 
 def _own_name(path: Path) -> tuple[str, str, str]:
@@ -354,33 +374,61 @@ def seats(root: Path, *, fetch: bool = True, sessions: object = _READ) -> tuple[
     the channel read. ``sessions`` defaults to the live registry read."""
     clone, clone_how = mail.clone_machine(root)
     clone_unread = clone_how if clone is None and clone_how.startswith(mail.MACHINE_UNREAD) else ""
-    blocks = _blocks(root)
+    listed = _listed(root)
     live = sync.live_sessions() if sessions is _READ else sessions
     registry = live if isinstance(live, list) else None
-    checkouts = [Path(b["worktree"]) for b in blocks if b.get("worktree") and "prunable" not in b]
+    checkouts = [Path(r["path"]) for r in listed if not r["prunable"]]
     claims, jobs, channel_note = _read_channel(root, fetch=fetch) if clone else ([], [], "")
     if clone_unread:
         channel_note = (f"the clone's machine name could not be read ({clone_unread}), so no seat's claims or "
                         "jobs were read")
     rows, marker_live = reap_inputs(root, registry)
     found: list[Seat] = []
-    for index, block in enumerate(blocks):
-        path = Path(block.get("worktree", ""))
+    for index, row in enumerate(listed):
+        path, block = Path(row["path"]), _block(row)
+        outside = False
         if index == 0:
-            seat = Seat(clone or "", str(path), "the clone",
-                        "clone" if clone else "unread" if clone_unread else "unnamed", naming_note=clone_unread)
+            # The name it writes under (mail.checkout_names, DEF-3098): its
+            # clone's, or a --worktree name set there, said beside it.
+            name = (clone or "") if row["bare"] or row["unread"] or clone_unread else row["name"]
+            naming = ("unread" if clone_unread or row["unread"] else "clone" if name and name == clone
+                      else "own" if name else "unnamed")
+            seat = Seat(name, str(path), "the clone", naming, naming_note=clone_unread or row["unread"])
         elif sync.within(path, _home(root)):
             name, how, why = _seat_name(clone, path, clone_unread)
             seat = Seat(name, str(path), "/".join(WORKTREES_REL + (path.name,)), how, naming_note=why)
-        else:
+        elif row["gone"]:
             continue
+        else:
+            # Outside .claude/worktrees/: listed where it answers a name of its
+            # own (a twin of a seat there, the resolver's DEF-3098 case) or a
+            # session holds it; a dormant one with none of its own writes nothing.
+            outside = True
+            if row["unread"]:
+                name, how, why = "", "unread", row["unread"]
+            elif row["name"] and row["name"] == clone:
+                # Named back to the clone, or no name of its own.
+                own, state, why = _own_name(path)
+                if state == "unread":
+                    name, how = "", "unread"
+                elif own:
+                    name, how = own, "own"
+                else:
+                    name, how = row["name"], "inherited"
+            else:
+                name, how, why = row["name"], ("own" if row["name"] else "unnamed"), row["how"]
+            seat = Seat(name, str(path), path.as_posix(), how, naming_note=why if how == "unread" else "")
         seat.branch = block.get("branch", "").replace("refs/heads/", "") or ("detached" if "detached" in block else "")
         seat.head = block.get("HEAD", "")[:7]
         occ = sync.occupancy(path, sessions=registry, checkouts=checkouts)
         seat.sessions, seat.oracle, seat.note = occ.sessions, occ.oracle, occ.note
+        if outside and seat.naming == "inherited" and seat.sessions == []:
+            continue    # dormant, with no name of its own: only a read that says no session drops it
         seat.claims = [c for c in claims if seat.name and c.get("from") == seat.name]
         seat.jobs = [j for j in jobs if seat.name and (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat.name]
-        if index:
+        if outside:
+            seat.removal = OUTSIDE_KEPT
+        elif index:
             seat.removal = _removal_verdict(root, path, rows, marker_live)
         found.append(seat)
     return found, channel_note
@@ -417,7 +465,10 @@ def render(found: list[Seat], channel_note: str) -> str:
     for seat in found:
         on = f"on {seat.branch} at {seat.head}" if seat.branch else f"at {seat.head}"
         named = {"derived": " (name derived; SessionStart sets it)", "unnamed": " (no seat name)",
-                 "unread": f" (seat name unread: {seat.naming_note})"}.get(seat.naming, "")
+                 "unread": f" (seat name unread: {seat.naming_note})",
+                 "inherited": " (no name of its own: it answers its clone's)"}.get(seat.naming, "")
+        if seat.where == "the clone" and seat.naming == "own":
+            named = " (a --worktree name set in the main checkout, not its clone's)"
         lines.append(f"seat {seat.name or '?'}{named} -- {seat.where} ({seat.path}), {on}")
         lines.append(f"  sessions: {_sessions_words(seat)}")
         lines.append(f"  claims:   {_lanes(seat.claims)}")
@@ -561,8 +612,15 @@ def resolve(root: Path, seat: str) -> Target:
     Every worktree is read before any answer (DEF-3097): the first match
     returned in listing order handed ``launch``, ``brief``, ``tick <seat>``
     and ``retire`` a stale twin of the live seat (DEF-4125's shape). The
+    checkouts are every one git lists, inside ``.claude/worktrees/`` or not,
+    each read by the name it writes under (``mail.checkout_names``, the one
+    reader the board reads too, DEF-3098): a twin outside the folder is a twin,
+    and the main checkout answers its own ``--worktree`` name where one is set
+    there (asked for its clone's name then, it is refused by name). The
     clone's own name is read the same way, the clone counted among the
-    checkouts answering it, so a worktree named back to it is a twin too. A
+    checkouts answering it, so a worktree named back to it is a twin too, and
+    so is a worktree with no name of its own while a session holds it (that
+    session writes under the clone's name). A
     name two or more checkouts answer, or a match beside a worktree whose name
     could not be read, is :class:`Undecided`, naming each checkout
     (:func:`_twins_refusal` says what the remedy can be); the clone's own name
@@ -578,20 +636,82 @@ def resolve(root: Path, seat: str) -> Target:
             raise Refused(f"{clone_how}, so no seat of this clone can be resolved; {mail.RETRY_HINT}")
         raise Refused(f"this clone names no machine, so it has no seats: `git config {mail.MACHINE_KEY} <name>` "
                       "names it (lowercase letters, digits and hyphens)")
-    blocks = _blocks(root)
+    listed = _listed(root)
     registered: dict[str, tuple[Path, str]] = {}
     unread: list[str] = []
-    answering: list[tuple[Path, dict[str, str]]] = [(root, blocks[0] if blocks else {})] if seat == clone else []
-    for block in blocks[1:]:
-        path = Path(block.get("worktree", ""))
-        if not sync.within(path, _home(root)):
+    answering: list[tuple[Path, dict[str, str]]] = []
+    main_name: str | None = None
+    registry: object = _READ
+    for row in listed:
+        path, block = Path(row["path"]), _block(row)
+        if row["main"]:
+            if row["unread"]:
+                unread.append(f"{path} ({row['unread']})")
+                continue
+            # The main checkout answers the name it writes under: its clone's,
+            # or a --worktree name set there (DEF-3098); a bare clone's entry
+            # is the repository itself, which answers its clone's.
+            main_name = clone if row["bare"] else row["name"]
+            if main_name == seat:
+                answering.append((path, block))
             continue
-        name, how, why = _seat_name(clone, path) if path.is_dir() else ("", "gone", "")
-        if name == seat:
-            answering.append((path, block))
-        elif how == "unread":
+        name = row["name"]
+        if row["gone"] or row["unread"]:
+            if row["unread"]:
+                unread.append(f"{path} ({row['unread']})")
+            registered[sync._norm(path)] = (path, "")
+            continue
+        home = sync.within(path, _home(root))
+        if name != clone:
+            # A name of its own (or none: a value the channel refuses), read
+            # wherever the worktree is: a twin outside .claude/worktrees/ is a
+            # twin (DEF-3098, air's cf1b9f).
+            if name and name == seat:
+                answering.append((path, block))
+            registered[sync._norm(path)] = (path, name)
+            continue
+        # It writes under the clone's name: named back to it, or no name of its
+        # own. Which one is read only where it decides the answer: under
+        # .claude/worktrees/ (a nameless one there is given <clone>-<folder>
+        # at its next session), or when the clone's own name is asked for.
+        if not home and seat != clone:
+            registered[sync._norm(path)] = (path, name)
+            continue
+        own, state, why = _own_name(path)
+        if state == "unread":
             unread.append(f"{path} ({why})")
-        registered[sync._norm(path)] = (path, name)
+            registered[sync._norm(path)] = (path, "")
+            continue
+        if own:
+            if own == seat:
+                answering.append((path, block))   # named back to the clone: a twin of it (DEF-3097)
+            registered[sync._norm(path)] = (path, own)
+            continue
+        # No name of its own. Under .claude/worktrees/, `seat.py launch` and
+        # `claude --worktree` made it, with the hooks that name it at its next
+        # session, so it answers the name it derives (its launch target).
+        # Wherever it is, a session in it that was not named writes under the
+        # clone's name now, so while one holds it, it answers that (the board
+        # flags it the same way); a dormant one writes nothing.
+        derived = (mail.worktree_seat_name(clone, path.name) or "") if home else ""
+        if derived and derived == seat:
+            answering.append((path, block))
+        elif seat == clone:
+            if registry is _READ:
+                registry = sync.live_sessions()
+            occ = sync.occupancy(path, sessions=registry if isinstance(registry, list) else None,
+                                 checkouts=[Path(r["path"]) for r in listed if not r["prunable"]])
+            if occ.sessions is None:
+                unread.append(f"{path} (it has no seat name of its own, and who is in it cannot be told: "
+                              f"{occ.note})")
+            elif occ.sessions:
+                answering.append((path, block))
+        registered[sync._norm(path)] = (path, derived)
+    if seat == clone and main_name is not None and main_name != clone:
+        answers = repr(main_name) if main_name else "no seat name"
+        raise Refused(f"the main checkout answers {answers}, not its clone's name {clone!r} (a --worktree "
+                      f"setting is set there), so {seat!r} names no checkout to act on: `seat.py list` shows what "
+                      "each answers")
     if len(answering) > 1:
         raise Undecided(_twins_refusal(root, seat, answering))
     if unread:
@@ -1647,6 +1767,14 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
             raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and "
                           f"{by_hand_release(root, clone, seat, claim_ids)}")
         raise Refused(f"seat {seat} has no worktree and nothing on the channel: nothing to retire")
+    if not sync.within(target.path, _home(root)):
+        # resolve reads every listed worktree (DEF-3098); the reaper removes
+        # only its own folder's, so this is said before anything is sent.
+        held_claims = ("; its live claims are released by id from inside it, never by lane (a lane release reads "
+                       "as the lane shipped): "
+                       + ", ".join(f"python tools/cc/mail.py send --type release --ack {cid}" for cid in claim_ids)
+                       if mine else "")
+        raise Refused(f"seat {seat} is {target.path}, {OUTSIDE_KEPT}: nothing was released or removed{held_claims}")
     _refuse_occupied(seat, target.path, unchecked=unchecked, verb="retire")
     if held and not return_jobs:
         raise Refused(f"seat {seat} holds {len(held)} job(s) from the dispatcher ({_lanes(held)}): retired, nobody "

@@ -1625,6 +1625,68 @@ def worktree_seat_name(clone: str, worktree_dir: str) -> str | None:
     return name if _MACHINE_RE.match(name) and name != clone else None
 
 
+#: How :func:`checkout_names` opens the reason when git could not list the
+#: clone's checkouts: then no checkout's name is read, and a caller says so.
+LISTING_UNREAD = "git could not list this clone's checkouts"
+
+
+def checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> list[dict]:
+    """Every checkout ``git worktree list`` gives for the clone at ``root``,
+    in its order (the main checkout first), each with the seat name it
+    writes under: ``{"path", "main", "gone", "bare", "branch", "head",
+    "detached", "prunable", "name", "how", "unread"}``.
+
+    The one reader of which checkouts answer a seat name (DEF-3098), for the
+    board's ``seats:`` line, ``seat.py``'s resolver and listing, and
+    :func:`name_this_worktree`'s sibling check. ``name`` is what
+    :func:`machine_setting` reads in that checkout at git's effective scope,
+    the read :func:`send` makes before it writes, so the name is the mail ref
+    the checkout's sessions write to: a linked worktree's own ``--worktree``
+    name, or its clone's when it has none of its own (it shares that ref), and
+    the main checkout's own ``--worktree`` name where one was set there. ''
+    where it answers none (``how`` says why: not set, or a value the channel
+    refuses); ``unread`` is ``how`` where git could not be asked, never read
+    as no name. A worktree outside ``.claude/worktrees/`` is read like the
+    rest: the population is git's listing, never a folder. A listed folder
+    that is gone, and a bare repository's entry, are listed with no name read
+    (nothing in either runs a session that writes mail). Raises
+    :class:`Unresolvable`, opening with :data:`LISTING_UNREAD`, where git
+    could not list the checkouts at all."""
+    try:
+        rc, listing, err = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(),
+                               timeout=timeout)
+    except Unresolvable as exc:
+        raise Unresolvable(f"{LISTING_UNREAD} ({exc})") from exc
+    if rc != 0:
+        lines = err.strip().splitlines()
+        raise Unresolvable(f"{LISTING_UNREAD} (git exited {rc}" + (f": {lines[-1][:160]})" if lines else ")"))
+    # Each block opens with its `worktree <path>` line (git's porcelain
+    # format), so a block starts there whether or not a blank line ends the one
+    # before it.
+    blocks: list[dict[str, str]] = []
+    for line in listing.splitlines():
+        if line.startswith("worktree "):
+            blocks.append({"worktree": line[len("worktree "):].strip()})
+        elif line.strip() and blocks:
+            key, _, value = line.partition(" ")
+            blocks[-1][key] = value.strip()
+    rows: list[dict] = []
+    for index, block in enumerate(blocks):
+        path = block["worktree"]
+        bare = "bare" in block
+        gone = not bare and not Path(path).is_dir()
+        name, how, unread = "", "", ""
+        if not (bare or gone):
+            named, how = machine_setting(Path(path), run=run, timeout=timeout)
+            name = named or ""
+            unread = how if named is None and how.startswith(MACHINE_UNREAD) else ""
+        rows.append({"path": path, "main": index == 0, "gone": gone, "bare": bare,
+                     "branch": block.get("branch", "").removeprefix("refs/heads/"), "head": block.get("HEAD", ""),
+                     "detached": "detached" in block, "prunable": "prunable" in block,
+                     "name": name, "how": how, "unread": unread})
+    return rows
+
+
 def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
     """Give a linked worktree of a named clone its own machine name, once:
     ``(the name set, what to tell the operator)``, or ``(None, why not)``, or
@@ -1681,18 +1743,23 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
         if ext_on is None:
             return None, (f"this worktree answers the clone's name {clone!r}, and whether per-worktree config is "
                           f"on could not be read ({ext_why}); {by_hand()}")
-        # With the extension off no worktree holds a name of its own, so none
-        # can already answer the derived one: the siblings are read only when on.
-        rc, listing, _ = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(), timeout=timeout)
+        # With the extension off no worktree holds a name of its own, so every
+        # checkout answers the shared name and none the derived one: the
+        # siblings are read only when on, through the one reader of which
+        # checkouts answer a name (DEF-3098), each by the name it writes under.
+        try:
+            listed = checkout_names(root, run=run, timeout=timeout) if ext_on else []
+        except Unresolvable as exc:
+            # Read as no sibling, the worktree was named past a twin unseen.
+            return None, (f"this worktree answers the clone's name {clone!r}, and whether another checkout "
+                          f"already answers `{name}` could not be told ({exc}); {by_hand()}")
         here = Path(top.strip()).resolve()
-        for line in listing.splitlines() if rc == 0 and ext_on else []:
-            if not line.startswith("worktree "):
-                continue
-            other = Path(line[len("worktree "):].strip())
-            if not other.is_dir() or other.resolve() == here:
+        for row in listed:
+            other = Path(row["path"])
+            if row["gone"] or row["bare"] or other.resolve() == here:
                 continue          # a prunable entry (its directory is gone) holds no name to read
-            theirs, their_how = machine_setting(other, run=run, timeout=timeout, scope="worktree")
-            if their_how.startswith(MACHINE_UNREAD):
+            theirs, their_how = row["name"], row["unread"]
+            if their_how:
                 return None, (f"this worktree answers the clone's name {clone!r}, and whether {other} already "
                               f"answers `{name}` could not be told ({their_how}); {by_hand()}")
             if theirs == name:
@@ -1739,8 +1806,9 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
     its own: ``git config extensions.worktreeConfig true``, then ``git config
     --worktree espalier.machine <name>`` (with ``in_dir``, said to run there;
     with ``at``, for a reader in another checkout such as the board, as two
-    quoted ``git -C <at>`` commands and the fresh session by that path, since a
-    bare ``--worktree`` command run where it was read renames that checkout).
+    quoted ``git -C <at>`` commands, one a line, and the fresh session by that
+    path, since a bare ``--worktree`` command run where it was read renames
+    that checkout).
     Where the clone's shared config sets ``core.bare`` (or ``core.worktree``),
     it is ONE change and no command: the key moved out of the shared config
     into the main worktree's ``config.worktree``, at the absolute path read
@@ -1758,8 +1826,11 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
     was handed the pair, which pointed the worktree at the main checkout's
     files, measured)."""
     if at is not None:
-        steps = (f'git -C "{at}" config extensions.worktreeConfig true && git -C "{at}" '
-                 f"config --worktree {MACHINE_KEY} <name>")
+        # One command a line, never a pair chained with `&&`, which Windows
+        # PowerShell 5.1 does not parse (DEF-3098; the seat driver's twin
+        # refusal gives one command since DEF-3097): each line runs alone.
+        steps = (f'git -C "{at}" config extensions.worktreeConfig true\n'
+                 f'git -C "{at}" config --worktree {MACHINE_KEY} <name>')
     else:
         steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
     for key in ("core.bare", "core.worktree"):
