@@ -3585,10 +3585,16 @@ Until 2026-09-29 it allowed, with one line on stderr and no record: the gate
 you had armed was green on every Stop. On Windows that was the plain spelling
 of any Node command, because `npm`, `npx` and `pnpm` are `.cmd` shims and a
 process started without a shell finds only `.exe`. Since 2026-09-30 the gate
-resolves the first token through `shutil.which` (which honours PATHEXT) before
-it spawns, so the plain `npm test` starts and no respelling is needed; a
-`.cmd` shim with a `cmd.exe` metacharacter in an argument is refused before
-the shim can re-parse it.
+resolves the first token with PATHEXT before it spawns, so the plain `npm
+test` starts and no respelling is needed; a `.cmd` shim with a `cmd.exe`
+metacharacter in an argument is refused before the shim can re-parse it.
+Since 2026-11-17 that lookup reads absolute PATH entries alone: it used to be
+`shutil.which`, which searches the current folder first on Windows, so a
+`git.cmd` a cloned tree held at its root ran in git's place at every gate read
+(DEF-2102). An empty, `.` or relative PATH entry (`./bin`, `node_modules/.bin`)
+is skipped too. A script in your project folder is named by its path from the
+root, with its extension on Windows (`./run_tests.cmd`; Python 3.11 adds none
+to a path), never by its bare name.
 
 **Why once a session and not every Stop.** The variable is read when Claude
 Code launches, so nothing done inside the session repairs it. A block on

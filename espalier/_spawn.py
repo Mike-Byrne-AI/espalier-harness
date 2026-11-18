@@ -32,7 +32,8 @@ refuses one that goes around both, and a tree run that hands on stdin.
 
 A caller that answers in place of a program that never started -- git
 missing, or a shim that is not on PATH -- calls :func:`spawn_checked`, the
-hooks' contract (DEF-985): argv[0] resolved through ``shutil.which`` and a
+hooks' contract (DEF-985): argv[0] resolved first (a bare name on PATH alone,
+never in the current directory) and a
 :class:`SpawnFailure` handed back, which the caller says with
 :func:`say_unstarted` (once per program per process) before it answers.
 ``tests/test_contracts.py::TestNoEngineSpawnFailsToStartInSilence`` refuses
@@ -235,8 +236,10 @@ class SpawnFailure:
 
 def resolve_program(token: str, *, cwd: "str | os.PathLike[str] | None" = None) -> "str | None":
     """argv[0] to the path that would start, or None: the hooks'
-    ``resolve_program`` for the engine, with one difference on purpose. A bare
-    token is looked up on PATH alone (:func:`_on_path`), honouring PATHEXT on
+    ``resolve_program`` for the engine, a path token read against ``cwd`` where
+    the hooks read it against the root they are handed. A bare
+    token is looked up on PATH alone (:func:`_on_path`, one function in both
+    trees since DEF-2102), honouring PATHEXT on
     Windows, so ``npm`` finds ``npm.cmd`` where ``subprocess`` alone looks only
     for ``npm.exe``; never in the current directory, which ``shutil.which``
     searches first on Windows, so a ``git.cmd`` a cloned tree carries is not
@@ -266,10 +269,17 @@ def _on_path(token: str) -> "str | None":
     extension, else with each PATHEXT extension in turn (``shutil.which``'s
     order); elsewhere the token, when it is a runnable file. An empty, relative
     or ``.`` entry is skipped: each one is the current directory, or a place
-    that moves with it."""
-    here = os.path.normcase(os.path.abspath(os.getcwd()))
+    that moves with it. A current directory removed under this process skips
+    no absolute entry, since none can name it, and the lookup goes on: the
+    hooks read this before a gate's spawn, where a raise would end the gate.
+    One function twice, here and in the other tree's spawn module, held equal
+    by ``tests/test_bounded_spawn.py`` (DEF-2102)."""
+    try:
+        here = os.path.normcase(os.path.abspath(os.getcwd()))
+    except OSError:  # fail-open: ok deliberate -- a current directory removed under this process is no absolute entry's place, so only the empty, relative and dot entries below are skipped
+        here = ""
     if os.name == "nt":
-        pathext = [ext for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if ext]
+        pathext = [ext for ext in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if ext]
         names = [token] if any(token.lower().endswith(ext.lower()) for ext in pathext) else [
             token + ext for ext in pathext]
     else:

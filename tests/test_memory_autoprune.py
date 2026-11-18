@@ -690,7 +690,7 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         (repo / ".espalier").mkdir(parents=True)
         (repo / "docs").mkdir()
         mod = self._hook(monkeypatch)
-        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: None)
         monkeypatch.setattr(mod._hook_utils, "executable_word", lambda: word)
         monkeypatch.setattr(mod._hook_utils.sys, "platform", "win32")
         _make_over_cap_memory(repo)
@@ -710,7 +710,7 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         words, and the PATH binary, whatever install answers the name, never
         gets the file. Dies to: a fall-through on every non-zero rung."""
         mod = self._hook(monkeypatch)
-        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: "/stale/bin/espalier")
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/stale/bin/espalier")
         _make_over_cap_memory(fresh_repo)
         calls: list[list[str]] = []
 
@@ -755,7 +755,7 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         cannot import (pipx, uv tool): the module rung answers no module, the
         PATH rung prunes, and the advisory is the success line."""
         mod = self._hook(monkeypatch)
-        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: "/tool/venv/bin/espalier")
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/tool/venv/bin/espalier")
         memory_path = _make_over_cap_memory(fresh_repo)
         calls: list[list[str]] = []
 
@@ -772,3 +772,33 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         assert [c[0] for c in calls] == [sys.executable, "/tool/venv/bin/espalier"], calls
         said = " ".join(mod._hook_utils._ADVISORIES)
         assert "autoprune:" in said and "failed" not in said, said
+
+    def test_an_espalier_the_current_folder_holds_is_never_the_path_rung(self, fresh_repo, monkeypatch):
+        """DEF-2102's sibling, found by its review: the PATH rung looked the
+        name up with ``shutil.which``, which searches the current folder first
+        on Windows (an empty or ``.`` PATH entry elsewhere), so on a pipx or
+        uv-tool install, where the module rung answers no module, a cloned
+        tree's ``espalier.cmd`` ran ``memory prune`` in the engine's place. The
+        rung resolves through the chokepoint now: the planted file is never
+        started, whatever else answers the name on PATH."""
+        from tests._stubs import write_stub
+        mod = self._hook(monkeypatch)
+        planted = write_stub(fresh_repo / ("espalier.cmd" if os.name == "nt" else "espalier"),
+                             "@echo planted" if os.name == "nt" else "#!/bin/sh\necho planted",
+                             crlf=os.name == "nt")
+        monkeypatch.chdir(fresh_repo)
+        monkeypatch.setenv("PATH", os.pathsep.join([".", "", os.environ.get("PATH", "")]))
+        _make_over_cap_memory(fresh_repo)
+        calls: list[list[str]] = []
+
+        def run_bounded(cmd, **kw):
+            calls.append(list(cmd))
+            if cmd[0] == sys.executable:
+                return subprocess.CompletedProcess(cmd, 1, "", f"{sys.executable}: No module named espalier\n")
+            return subprocess.CompletedProcess(cmd, 1, "", "a stand-in that prunes nothing\n")
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", run_bounded)
+        mod._maybe_autoprune_memory(fresh_repo, "ESPALIER_MEMORY.md")
+        assert calls and calls[0][0] == sys.executable, "the module rung was never asked"
+        started = [os.path.normcase(os.path.abspath(c[0])) for c in calls[1:]]
+        assert os.path.normcase(str(planted)) not in started, f"the planted espalier was started: {calls}"

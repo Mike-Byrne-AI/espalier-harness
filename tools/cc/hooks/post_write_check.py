@@ -183,7 +183,6 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     nothing. Subprocess only -- no espalier IMPORT here, per the
     ``tools/cc/`` isolation rule.
     """
-    import shutil
     import subprocess
 
     if rel_path != _MEMORY_FILENAME:
@@ -204,7 +203,11 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     # This interpreter's module first, the PATH binary below it (the
     # docstring says why, and when the lower rung runs).
     invocations: list[list[str]] = [[sys.executable, "-m", "espalier.cli"]]
-    espalier_bin = shutil.which("espalier")
+    # The chokepoint's resolver, so a bare name is looked up on PATH alone:
+    # ``shutil.which`` searches the current folder first on Windows, where an
+    # ``espalier.cmd`` a cloned tree holds would prune in the engine's place
+    # (DEF-2102, found by its review).
+    espalier_bin = _hook_utils.resolve_program("espalier", root=repo_root)
     if espalier_bin is not None:
         invocations.append([espalier_bin])
 

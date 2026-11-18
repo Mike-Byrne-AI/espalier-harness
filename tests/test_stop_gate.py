@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -162,7 +161,7 @@ class TestEnvOverrideGate1:
     def test_failing_env_cmd_blocks(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         monkeypatch.setattr(
             mod.subprocess, "run",
             lambda *a, **k: types.SimpleNamespace(
@@ -174,7 +173,7 @@ class TestEnvOverrideGate1:
     def test_passing_env_cmd_allows(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         monkeypatch.setattr(
             mod.subprocess, "run",
             lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
@@ -183,7 +182,7 @@ class TestEnvOverrideGate1:
 
     def test_timeout_blocks(self, monkeypatch, tmp_path):
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
 
         def _timeout(*a, **k):
             raise mod.subprocess.TimeoutExpired(cmd="slow", timeout=1)
@@ -195,7 +194,7 @@ class TestEnvOverrideGate1:
         self, monkeypatch, tmp_path, capsys,
     ):
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
 
         def _boom(*a, **k):
             raise FileNotFoundError(2, "No such file or directory")
@@ -291,7 +290,7 @@ class TestEnvOverrideGate1:
     def test_the_override_runs_at_the_repo_root(self, monkeypatch, tmp_path):
         import types
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # the stub below is the spawn; resolution is the chokepoint's and is tested in test_spawn_chokepoint.py
         seen: dict = {}
 
         def _capture(*a, **k):
@@ -798,7 +797,7 @@ class TestSpawnChokepointInTheStopGate:
             return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(mod.subprocess, "run", _capture)
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: r"C:\node\npm.cmd" if tok == "npm" else None)
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: r"C:\node\npm.cmd" if tok == "npm" else None)
         assert mod._run_command_gate(tmp_path, ("npm test",), source="env") == 0
         assert seen["argv"] == [r"C:\node\npm.cmd", "test"], (
             "mutation: a gate that bypasses the resolver starts the bare token and never finds the shim"
@@ -806,7 +805,7 @@ class TestSpawnChokepointInTheStopGate:
 
     def test_an_unresolvable_override_says_it_did_not_resolve(self, monkeypatch, tmp_path, capsys):
         mod = self._load()
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: None)
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: None)
         capsys.readouterr()
         assert mod._run_command_gate(tmp_path, ("espalier-no-such-command-xyz --run",), source="env") == 1
         reason = json.loads(capsys.readouterr().out)["reason"]

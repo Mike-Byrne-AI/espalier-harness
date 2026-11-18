@@ -525,10 +525,9 @@ class TestTheDeclaredTestCommand:
         entry blocks naming it; a red first entry blocks before the second is
         spawned. Dies to a loop that runs only the first entry (a mutation that
         survived the lane's first test set)."""
-        import shutil as _shutil
         import types
         mod = _load_stop_gate()
-        monkeypatch.setattr(_shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)
+        monkeypatch.setattr(mod._hook_utils, "_on_path", lambda tok: "/resolved/" + tok)  # a bare name's lookup (DEF-2102); the stub below is the spawn
         seen: list[list[str]] = []
 
         def _run(argv, **kw):

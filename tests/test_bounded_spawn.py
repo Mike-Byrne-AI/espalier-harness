@@ -1418,9 +1418,12 @@ class TestTheEngineSpawnHandsBackAStartThatFailed:
     def test_the_contract_reads_as_the_hooks_copy_does(self):
         """The engine's copy and ``tools/cc/hooks/_hook_utils.py``'s are held
         to the same shim refusal and the same sentences, so a fix to one
-        reaches the other. Where they part, on purpose: the engine never
-        resolves a bare name in the current directory, and reads a decode
-        error as a child that ran."""
+        reaches the other. They parted twice until DEF-2102 brought the hooks'
+        copy to the engine's reading: a bare name is never resolved in the
+        current directory (the lookup below is one function in both trees),
+        and a decode error is a child that ran (each copy's own test drives
+        it). What still differs is the signature: the hooks resolve a path
+        token against the root they are handed, the engine against ``cwd``."""
         from espalier import _spawn
         hooks = _load_hook_utils()
         assert _spawn._CMD_SHIM_METACHARS == hooks._CMD_SHIM_METACHARS
@@ -1428,6 +1431,48 @@ class TestTheEngineSpawnHandsBackAStartThatFailed:
                      (("npm", "a&b"), "CmdShimMetachar", "C:/x/npm.cmd"),
                      (("git",), "FileNotFoundError", "/usr/bin/git", "[Errno 2] gone")]:
             assert _spawn.SpawnFailure(*args).resolution == hooks.SpawnFailure(*args).resolution, args
+
+    def test_the_path_lookup_is_one_function_in_both_trees(self):
+        """``_on_path`` is copied, since ``espalier/`` imports nothing from
+        ``tools/cc/``: compared as parsed code, its docstring included, so a fix
+        to the lookup in one tree that the other misses reds here (DEF-2102:
+        the hooks' copy had kept ``shutil.which`` and its current-folder
+        search after the engine's moved off it)."""
+        import ast
+
+        def lookup(path: Path) -> str:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_on_path"]
+            assert len(found) == 1, f"{path}: one module-level _on_path, found {len(found)}"
+            return ast.dump(found[0])
+
+        engine = lookup(TOOLS_CC.parents[1] / "espalier" / "_spawn.py")
+        assert lookup(TOOLS_CC / "hooks" / "_hook_utils.py") == engine, (
+            "tools/cc/hooks/_hook_utils.py::_on_path differs from espalier/_spawn.py::_on_path: "
+            "make the same change in both (the hooks' copy is imported by write_guard on every "
+            "tool call, so rehearse its edit in a scratch clone first), then run "
+            "scripts/sync_vendor_cc.py for the vendored copy")
+
+    def test_both_copies_refuse_a_program_the_current_folder_holds(self, tmp_path, monkeypatch):
+        """The two resolvers driven on one planted tree: each finds nothing
+        for a bare name the current folder holds, with ``.`` and an empty
+        entry on PATH, and each finds the same file once its folder is an
+        absolute PATH entry."""
+        from espalier import _spawn
+        from tests._stubs import write_stub
+        hooks = _load_hook_utils()
+        name = "twin2102"
+        here = tmp_path / "project"
+        here.mkdir()
+        write_stub(here / (name + ".cmd" if os.name == "nt" else name),
+                   "@echo planted" if os.name == "nt" else "#!/bin/sh\necho planted", crlf=os.name == "nt")
+        monkeypatch.chdir(here)
+        monkeypatch.setenv("PATH", os.pathsep.join([".", "", os.environ.get("PATH", "")]))
+        assert (_spawn.resolve_program(name), hooks.resolve_program(name, root=here)) == (None, None)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(here), os.environ.get("PATH", "")]))
+        engine, hook = _spawn.resolve_program(name), hooks.resolve_program(name, root=here)
+        assert engine and engine == hook, (engine, hook)
 
     @pytest.mark.skipif(sys.platform != "win32", reason="PATHEXT and the .cmd shim are Windows's")
     def test_a_cmd_shim_starts_where_a_bare_spawn_cannot_find_it(self, tmp_path, monkeypatch):

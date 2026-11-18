@@ -280,7 +280,9 @@ discipline applies in spirit, not just to that directory.
   gate; `tests/test_hook_voice_reaches_claude.py` drives each repaired hook to
   the channel; `_bash_patterns.py` carries a file-level `text-fallback`
   declaration on line 1. The same rule for spawns: a gate spawns through
-  `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a
+  `_hook_utils.spawn_checked` (argv[0] resolved on absolute PATH entries
+  alone with PATHEXT, never in the current folder, which `shutil.which`
+  searches first on Windows, nor through an empty, `.` or relative entry; a
   typed `SpawnFailure` instead of a raise) and a reporter's own spawn
   carries `# spawn: ok <reason>`; `tests/test_spawn_chokepoint.py` is that
   gate. The engine keeps its own copy of that contract,
@@ -293,9 +295,10 @@ discipline applies in spirit, not just to that directory.
   `except` arm that catches a start failure around a raising spawn and says
   nothing, and a `SpawnFailure` branch that says nothing; an arm whose silence
   is the right answer (ripgrep, whose Python fallback answers the same)
-  carries `# fail-open: ok <kind> <reason>` on its `except` line. Unlike the
-  hooks' copy, the engine's never resolves a bare name in the current
-  directory. A spawn with a timeout, anywhere under `tools/cc`, calls `run_bounded`
+  carries `# fail-open: ok <kind> <reason>` on its `except` line. Neither
+  copy resolves a bare name in the current directory: both look it up through
+  one `_on_path`, held equal across the two trees by
+  `tests/test_bounded_spawn.py`. A spawn with a timeout, anywhere under `tools/cc`, calls `run_bounded`
   (`_json_safe`, re-exported by `_hook_utils`; `spawn_checked` is built on
   it), never a raw `subprocess.*` call: on Windows `subprocess.run` waits past
   its timeout for a grandchild holding the pipe (`docs/SHARP_EDGES.md`), and
