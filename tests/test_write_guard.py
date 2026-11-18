@@ -27512,7 +27512,7 @@ class TestARedirectInsideAHandedDownProgramKeepsTheVerdict:
         # arithmetic holds no program
         'x "$((a >b))"',
         # a body the close walk cannot read ends its word's reading: the stop
-        # that keeps the walk linear on one word (`_nested_program_spans`)
+        # that keeps the walk linear on one word (`_programs_handed_down`)
         'x "$((a >b)) $(c 2>d)"',
         # a body holding a backslash or a backtick is left as before
         'x "$(a \\x 2>b c)"',

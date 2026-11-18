@@ -7706,7 +7706,7 @@ def _substitution_close(scan: str, at: int, stop: int) -> int:
     return -1
 
 
-def _nested_program_spans(scan: str, start: int, end: int) -> list[tuple[int, int]]:
+def _programs_handed_down(scan: str, start: int, end: int) -> list[tuple[int, int]]:
     """The offsets of each program the quoted word ``scan[start:end]`` hands
     down one level (DEF-5121), its quotes and a substitution's `$(` and `)`
     left out: the word itself, where it is a program the outer scan reads in
@@ -7739,7 +7739,7 @@ def _nested_program_spans(scan: str, start: int, end: int) -> list[tuple[int, in
 def _nested_programs_blanked(scan: str, start: int, end: int, chars: "list[str] | None") -> "list[str] | None":
     """``chars`` (the view under construction, or None while it is the scan)
     with the redirects of each program the quoted word ``scan[start:end]``
-    hands down one level (`_nested_program_spans`) blanked, each by the view
+    hands down one level (`_programs_handed_down`) blanked, each by the view
     of that program's own text (`_redirects_blanked`, called by name, so a
     test that blinds the view blinds this reading too) spliced at its
     offset, the same length (DEF-5121). A body's own view reads the one
@@ -7749,7 +7749,7 @@ def _nested_programs_blanked(scan: str, start: int, end: int, chars: "list[str] 
     holds no double quote. A quoted word that hands nothing down is a
     mention and stays as the scan has it, so a redirect written inside an
     echoed string is data on the view as on the scan."""
-    for lo, hi in _nested_program_spans(scan, start, end):
+    for lo, hi in _programs_handed_down(scan, start, end):
         program = scan[lo:hi]
         if ">" not in program and "<" not in program:
             continue
@@ -8692,13 +8692,13 @@ def _nested_heredoc_operators_kept(scan: str, view: str, start: int, end: int,
                                    chars: "list[str] | None") -> "list[str] | None":
     """`_heredoc_opener_view_built`'s reading of the quoted word
     ``scan[start:end]``: each program it hands down one level
-    (`_nested_program_spans`), whose redirects the view blanked by that
+    (`_programs_handed_down`), whose redirects the view blanked by that
     program's own view, read by that program's own heredoc view
     (`_heredoc_opener_view`, called by name) and spliced at its offset, so a
     heredoc or here-string operator inside it is as the scan has it, as at
     the top level (DEF-5121's failure-mode review, F1). ``chars`` is the
     heredoc view under construction, or None while it is ``view``."""
-    for lo, hi in _nested_program_spans(scan, start, end):
+    for lo, hi in _programs_handed_down(scan, start, end):
         program = scan[lo:hi]
         if "<<" not in program:
             continue
