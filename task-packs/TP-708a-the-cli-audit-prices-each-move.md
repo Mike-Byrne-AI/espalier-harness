@@ -227,8 +227,11 @@ python3 scripts/cli_cost_census.py --at <P> collision transcripts   # Task 0's t
 - **"The CLI modules"** means `espalier/cli.py` plus every module that receives a moved
   definition, an existing one included (`espalier/_python_floor.py` and `espalier/_venv.py` are
   the likeliest homes for the interpreter core). A re-run after a wave takes that set as an
-  argument. Every component is counted over the set, so a move cannot zero a component by
-  changing the file the events land on.
+  argument. C1, C3 and C4 are counted over the set, so a move cannot zero them by changing the
+  file the events land on. **C2 is not** (Task 9's reasoning review; verified, `::claim_overlaps`):
+  it counts an overlap only where another seat's claim names the same CLI module the lane
+  changed, so any split of cli.py, an arbitrary one included, lowers it by construction. The
+  Gate A decisions say what follows.
 
 **The `transcripts` section** reads the session transcripts of the seats on this box. These are
 `~/.claude/projects/<the project folder of each checkout of this clone>/*.jsonl`: the main
@@ -684,8 +687,20 @@ returned, over a shorter window than the census reads. Every threshold below was
 the ruling arrived and is committed as drafted: the threshold handoff set the draft aside in
 commit `b958adb42` at 2026-11-18T02:29:20Z, 16 minutes before the ruling, and the diff from it to
 this commit changes no threshold. That commit is on no branch (the restore's soft reset took it
-off), so the check runs only on this box's reflog [verified locally]. Only the counting rules
-changed.
+off), so the check runs only on this box's reflog [verified locally; a second witness is the
+dispatcher's note `20261118T025422Z-air-6fe8f9`, read from the objects there, which stays on
+origin]. Only the counting rules changed.
+
+*Added at Task 9's reasoning review, after every read below* [verified, the diff from
+`b958adb42`]. "Only the counting rules changed" undersells one of them. The subagent exclusion
+under *Whose reads*, and its reason that a subagent's reads do not spend the seat's budget, entered
+this commit after the ruling's count of 479 subagent calls against the seats' 259 was known. The
+exclusion moves R toward *not real*. For (a) the harm is bounded by the forks' beside figure
+(air-work's median with its forks is 416, under 1,500). For (b) no fork figure was read for the
+control arm, so the harm there is unbounded by any read. Two premises were also never put to the
+operator: the weekly-tax rule and "an overlap grades only when it is the norm" (C2's 50%) are the
+author's judgment. When C2's threshold was set, the known 18 pairs over 70 lanes already bounded
+the share at 51.4% or under [probable].
 
 **The rule for the collision thresholds: a weekly standing tax.** A collision event that
 recurs about once a week is a standing cost on the dispatcher or a seat. One that is rarer is an
@@ -924,7 +939,38 @@ grade is the same under either figure, and the committed 8 stands.
 **Item 2: not real.** No graded component is at or above its threshold: C1 1 against 4, C2 45.5%
 against 50%, C3 2 against 8. C2's margin is the one to watch.
 
+**Graded on point estimates, which Item 3 is not** (Task 9's reasoning review; the arithmetic
+re-run here [probable]). Item 3 needs a decidable read. Item 2 is graded on its counts as read. At
+95% one-sided:
+- C1's 1 has a Poisson upper bound of 4.74, at or over its threshold of 4;
+- C2's 15 of 33 has a Clopper-Pearson upper bound of 61.1%, over 50%;
+- only C3 is decided: its 2 has an upper bound of 6.30, under 7 or 8.
+
+So *not real* is the committed rule's grade, and it stands. But it is not a bound that excludes a
+collision cost, and it does not by itself support striking `DEF-4123` for collisions.
+
+**The own-lane bucket, re-read** (Task 9's reasoning review; verified, the three messages in the
+dispatcher's mail). Three of the 8 that "order the seat's own lanes" hold one of a seat's
+cli.py lanes for its other (`516427`, `38360b`, `f6ff33`). The committed rule reads a hold as one
+lane held for another's, and these were read as the seat's own ordering. Counted as holds, C3 is
+5, still under 7 or 8: the grade does not move.
+
 Beside them, never graded: 49 of the window's 246 catch-up merges carry cli.py.
+
+**The census's mail refs at P** (the collision run's `pin.mail_refs`, 08:37-08:41Z [verified,
+its output]). The run read four seats, each cut at P by its messages' own stamps:
+
+| Seat | Mail ref read |
+|---|---|
+| air | `10f67fc59ef3744b8504919695b6827dd22b359d` |
+| air-work | `801c51e766d69fbdec45aef6a06f241e5e2ca431` |
+| win | `70319476b7f5c1296223ed441d45aff04f650d0d` |
+| win-2 | `ccf326526f8e48b2cc89f0a3b7769cd34badc973` |
+
+Mail refs only grow, so a later ref holds each of these. Before Task 9's reasoning review, a
+clone holding only some of the refs read C2 and C3 over those seats alone, with nothing unread:
+the reviewer's clone held 2 of 4 [verified, its run]. The census now names a seat the mail names
+whose ref the clone lacks as unread.
 
 ### Task 2: the accretion read, the eight longest definitions at P
 
@@ -1522,7 +1568,7 @@ graded after the operator ruled on call `20261118T032647Z-air-7a763a`: (A), cont
 | Item | Verdict | The read at P | Where it is read |
 |---|---|---|---|
 | 1. Do the authoring figures hold? | **Refuted on one figure; ruled continue** | Every structural row reproduces exactly, and every windowed row but one is explained. The 18 cross-seat claim-overlap pairs reproduce under neither stated window: 10 over the 30 days to P, 20 over the 42 days to `17d83e0`. The 18 grades nothing | Item 1 at P; the list above |
-| 2. Is there a collision cost? | **Not real** | C1 1 against 4. C2 15 of 33 lanes (45.5%) against 50%, two lanes short. C3 2 holds against 8. C4 1 replay conflict, not graded | Item 2 at P |
+| 2. Is there a collision cost? | **Not real**, on point estimates | C1 1 against 4. C2 15 of 33 lanes (45.5%) against 50%, two lanes short. C3 2 holds against 8. C4 1 replay conflict, not graded. At 95% only C3 is decided: C1's upper bound is 4.74 and C2's 61.1% | Item 2 at P |
 | 3. Is there a reading cost? | **Unmeasured** | Two causes, each enough alone. The hand sample confirms 3 of 3 air-work lanes and 0 of 2 air lanes, so the attribution fails for the two-seat population. And the realised minimum detectable ratio is 6.24, above the committed 2.0 [to re-read after the second fold] | The transcripts read |
 
 **The exit cell: collision not real, reading unmeasured. The exit table has no such cell.** Its
@@ -1573,11 +1619,18 @@ In order:
      far below the threshold.
 
    The size and the accretion stand [verified, Task 2]. The re-scoped row names what reopens it:
-   C2 at or over 50% in a later 30-day window, or a decidable reading read.
-2. **Re-read the collision section at a later pin.** That is one census run, not a lane. C2 is
-   the one component near its threshold: 17 of 33 lanes would have crossed it. A later window can
-   cross it with no change in how the seats work. Expected: C2 near 45% again, the rest at their
-   floors [judgment].
+   C2 at or over 50% in two consecutive 30-day windows, or C2's 95% lower bound at or over 50%
+   in one; or a decidable reading read. One window at 50% does not reopen it: at P's share of
+   45.5%, a window reads 17 or more of 33 by noise alone with probability 0.30 (Task 9's
+   reasoning review [probable]). A C2 reopening reopens the collision premise only. It does not
+   license a module move, which C2 cannot grade (the Gate A decisions, 4).
+2. **Re-read the collision section at a later pin.** That is one census run plus a hand grade
+   against step 1's table, not a lane. C1 to C3 have no verdict function in the census, as
+   Item 3 has. The run needs a clone holding every seat's mail ref: the census names a seat
+   that the mail names but whose ref the clone lacks as unread, and the pin's oids are under
+   "The census's mail refs at P" below. C2 is the one component near its threshold: 17 of 33
+   lanes would have crossed it. A later window can cross it with no change in how the seats
+   work. Expected: C2 near 45% again, the rest at their floors [judgment].
 3. **Land the census as the standing instrument.** It lands under every cell (Status). Each later
    read is one run at a new pin.
 
@@ -1595,10 +1648,17 @@ unmeasured.
   C4 say almost none of those overlaps became a conflict or a hold. That could be the claim
   protocol working at a cost no census counts: mail `45df70` placed code "by function, to stay
   off the live claims".
+- Deferral compounds (Task 9's reasoning review). The patch sites on cli went from 39 (on 18
+  targets) at the seed to 102 (29) at the window's start and 150 (44) at P. Over the same
+  commits, cli.py went from 11,084 to 15,939 to 17,817 lines, +61% in 55 days [verified: the census's
+  `patches` at `d00f6de45`, `397799c8b` and P; the lines by `git show`].
 
 Each of these is real or plausible. None is a measured cost to a seat:
 - The size and the growth are lengths. Task 0 says a function's length decides nothing, since a
-  move keeps it.
+  move keeps it. That answers length, not move cost. A later move touches more patch sites
+  than one now, so deferral has a price [verified, the figures above]. That price argues for the
+  options that cap it without moving anything, (iv) and (v) below, and not for a wave whose
+  payoff is unmeasured [judgment].
 - The forks' reads spend the forks' context, not the seat's, and the seat's is what threshold (a)
   prices. Counted with them, air-work's median is 416, still under 1,500 by more than three times.
 - The protocol's placement cost is a hypothesis with one mail behind it. No section reads it
@@ -1609,12 +1669,24 @@ What holds is narrower. `::cmd_upgrade`'s "nothing to do" arm is a stack of row 
 and a table of check, clause and remedy is a cut worth testing [hand, Task 2; a hypothesis].
 That is a lane for a row that names its cost, not a refactor wave.
 
+**What the audit does not price** (Task 9's reasoning review). The pack's "maintainer" is read
+as a Claude seat on this box. Three costs fall outside that read, and none was scoped out by name:
+- human and outside contributors to a tree about to be open-sourced;
+- the dispatcher's review reads of cli.py, which sit inside the 8,504 unplaced calls;
+- defect density. The reviewer's rough read is 1.68 live ledger rows per thousand lines for
+  cli.py, against 1.62 to 1.82 for `tools/cc/hooks/session_start.py`, `tools/cc/hooks/_hook_utils.py`
+  and `espalier/doctor.py` [probable, the reviewer's; not re-read here]. If it holds, cli.py's
+  size buys no more defects per line than the other large files, which supports the
+  recommendation.
+
 ### The alternatives, priced
 
 **(i) Strike or re-scope `DEF-4123` now.** Neither costs a lane: either is one edit to the
 row, made by the operator or the dispatcher.
-- *Strike:* says there is no cost. Item 2 supports that for collisions. Item 3 does not support it
-  for reading, and the row's who-is-hurt goes with it. Not recommended.
+- *Strike:* says there is no cost. Item 2 grades collisions not real on point estimates, and at
+  95% only C3 excludes a cost (Item 2 at P), so Item 2 does not support a strike by a bound
+  either. Item 3 does not support it for reading, and the row's who-is-hurt goes with it. Not
+  recommended.
 - *Re-scope:* keeps the row live with its premises re-read at P and its reopening condition
   named (the recommendation, item 1). New evidence comes only from later census runs.
   Recommended.
@@ -1661,11 +1733,31 @@ row, made by the operator or the dispatcher.
   the reading premise, this is the one whose cost is near zero and whose risk to the code is
   none.
 
+**(iv) Stop the accretion** (Task 9's reasoning review named it; not priced by any read).
+- *What it is:* new commands land in new modules, pinned by a guard that refuses a new top-level
+  command in cli.py outside an allow-list.
+- *Cost* [judgment]: one small lane for the guard, plus a rule every later CLI lane follows.
+  Where a new command goes is the operator's call, not this pack's.
+- *What it touches:* nothing in cli.py now.
+- *What it can move:* the growth of the move cost (the patch sites above), which no component
+  grades. It is never a payoff under Task 7.
+
+**(v) Land wave 1's re-pointing check now** (Task 9's reasoning review named it).
+- *What it is:* the static check that every `cli.<name>` patch a move's diff leaves is
+  re-pointed (Task 4). It is wave 1's oracle in either re-export branch.
+- *Cost* [judgment]: one tools lane, with its tests. It moves nothing.
+- *What it can move:* nothing at P. It lowers the risk of any later move, whichever shape is
+  approved, and so prices deferral down.
+- *Evidence it would produce:* none that grades. Like (iv), it is a hedge, not a payoff.
+
 ### The Gate A decisions
 
 **1. Re-exports or none (Task 4).** Moot under no waves. If a wave is approved: **none**, with cli
 reaching the moved names through the module (`newmod.X`), and the static re-pointing check on the
-lane's diff as wave 1's oracle in either branch. The figures, all at P:
+lane's diff as wave 1's oracle in either branch. One inconsistency, moot under no waves (Task 9's
+reasoning review): `newmod.X` rewrites cli's remaining call sites to the moved names, while
+Task 6's triage judges against a move whose bodies are copied verbatim, so that `before` is empty
+by construction. A wave's approval settles which first. The figures, all at P:
 - *With re-exports,* for interpreter core: 65 of its 68 patch sites go stale, and 55 of those stay
   green through a loader left in cli. Its 5 latches split.
 - *Without:* 54 sites fail loudly, which is a cost, not a risk. 42 patch sites (the 39
@@ -1701,21 +1793,29 @@ only for a unit that has to move one of them. The figures at P [verified, `citat
   `scripts/sync_vendor_cc.py` [judgment on what that costs].
 
 **4. Which components grade a wave (Task 7).** Moot for now; it is needed at the next pin.
-Recommended: **C2 grades a module move. C1 and C3 are reported and graded on nothing. The primary
-grades nothing until a read of it can be decided. `lane_read` never grades alone, and C4 never.**
+Recommended: **no component grades a module move as the census reads it at P. C1 and C3 are
+reported and graded on nothing. The primary grades nothing until a read of it can be decided.
+`lane_read` never grades alone, and C4 never.** Task 8 recommended C2 here. Task 9's reasoning
+review found that any split of cli.py lowers C2 by construction (Task 1, corrected; verified,
+`::claim_overlaps`), which is `lane_read`'s must-not-pass shape. A module move needs a
+move-invariant overlap first: C2 counted on the definitions both claims name, wherever they
+sit among the CLI modules, with a must-not-pass fixture (an arbitrary split must not read as a
+payoff). That is a new component with a new baseline, so it is the next pin's pre-registration,
+never this one's.
 
 | Component | Baseline at P | Committed threshold | Graded at P | Recommended to grade a wave |
 |---|---|---|---|---|
 | Primary: lines of the CLI modules a lane's seat read | median R 42; median E 277; MDR 6.24 [to re-read after the second fold] | (a) median R ≥ 1,500, (b) ≥ 2 × E, (c) p < 0.05; not real only with MDR ≤ 2.0 | unmeasured | no, until a decidable read |
 | `lane_read` (secondary) | 36 lanes, median 337, max 2,784, summed 26,298 | none: only beside the primary | not graded | never alone |
 | C1. Uncertified concurrent cli.py pairs | 1 | 4 | not real | no: reported |
-| C2. Share of cli.py lanes in a cross-seat claim overlap | 45.5% (15 of 33) | 50% | not real, near | **yes**, for a module move |
+| C2. Share of cli.py lanes in a cross-seat claim overlap | 45.5% (15 of 33) | 50% | not real, near | no: a split lowers it by construction. A symbol-aware form, pre-registered at the next pin, could |
 | C3. Dispatcher holds over a cli.py overlap | 2 | 8 | not real | no: reported |
 | C4. Replay conflicts on cli.py | 1 | not graded (floor) | not graded | never |
 
 Why. Task 7 pays a wave on a component only when that component falls at least 30% from its
 baseline at P. C2's baseline is 45.5%, so a 30% fall is to 31.8% or under, a share a 30-day
-window can show. C1's baseline is 1 pair and C3's is 2 holds. With counts that small, one event
+window can show. That is why Task 8 chose it. But a split shows that fall whether or not the
+seats' work separated, so the fall would not be a payoff. C1's baseline is 1 pair and C3's is 2 holds. With counts that small, one event
 missing reads as a fall of 100% or 50%, which is noise, not a payoff [judgment]. The primary is
 unmeasured at P (Task 0's verdicts above).
 
@@ -1745,8 +1845,39 @@ unmeasured at P (Task 0's verdicts above).
       match the fix;
     - W4: the test-selection rule and the three hand-set lists;
     - N1, N2, N4, N5, N6 and N7 in the text, N8 in the row, and N9 in the row's fix shape;
-  - the reasoning review on the Audit result and the census: pending;
-  - the code review the tier names: pending.
+  - **the reasoning review on the Audit result and the census** (Task 9; checklist v1,
+    failure-mode reviewer, in a snapshot clone at `d5a81e110` with Task 0's *Expected at
+    authoring* paragraph withheld): REQUEST CHANGES, PASS 7, GAP 6, BIAS 4, UNCHECKED 3. It
+    re-derived every static figure and matched each one. It found that the recommendation follows
+    from the verdicts, and that four places could mislead the call. Every finding is folded, each
+    load-bearing one verified here first:
+    - F1, C2 lowered by any split: verified in `::claim_overlaps`. Task 1 and the census's
+      docstring are corrected, decision 4 no longer has C2 grade a move, and the reopener needs
+      two windows or a lower bound;
+    - F2, a decidable bound on (a) alone: the transcripts read, *Item 3's (a) alone*;
+    - F3, the deferral cost: re-read here at the three commits, folded into the steelman, with
+      alternatives (iv) and (v);
+    - F4, the bounds on Item 2: re-computed, in Item 2 at P;
+    - F5, the scope of R against E: the transcripts read;
+    - F6 and F10, the pre-registration's addendum: verified against the diff from `b958adb42`;
+    - F7, a clone missing seats' mail refs read with nothing unread: fixed in the census
+      (`::mail_seats_named`, its tests red on the unfixed script), with the pin's oids recorded;
+    - F8, F11 and F12, in the text.
+
+    F9 stands as a gap: no methods review of Item 3's statistics ran, and F2, F4 and F5 are each
+    a methods finding. A methods read is owed before the next pin's pre-registration;
+  - **the code review the tier names**, three reviewers in snapshot clones, on the first fold
+    (`5bb09b9e3`) and on `ae313a4a8`:
+    - rv-ab (pin through `move_cost`, `census`, `main`): no BLOCKER, no MAJOR, MINOR 6;
+    - rv-c (collision, `lane_read`, transcripts, the splitter): REQUEST CHANGES, BLOCKER 0,
+      MAJOR 1, MINOR 6;
+    - rv-sib (`ae313a4a8`): BLOCKER 0, MAJOR 1, MINOR 6, with 89 real-shell cases.
+
+    All of them are folded as 19 items in one fix batch (`e26e0f25f`), each defect's test red on
+    the unfixed script (48 failed, 280 passed, read here; the builder read 49) and green after
+    (328 passed). The named mutants are killed except the effect-equivalent M23b, M26, m05, m15 and
+    m17 (the builder's runs). The static sections read the same at P as rv-ab's run there, except
+    the new `citations.rule.fragments` key [verified, a diff here].
 - Pre-registration commit: `6a91bc51b` (2026-11-18T02:46:56Z), "the cli audit's thresholds are
   fixed before any metric is read"
 - Deviation, not a pass: the criterion that `git diff --name-only origin/main...HEAD` lists only
