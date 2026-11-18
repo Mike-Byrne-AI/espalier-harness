@@ -2281,10 +2281,12 @@ CP_MCP_SIDEEFFECT = SpeedBump(
 #   `seat.py launch` and the terminal that started the seat, whose cwd is the
 #   root checkout (driven 2026-11-02, air's c8e05b), so "any parent" would
 #   nudge every kill of one's own run;
-# - or that is, or runs under, the box lock's holder (the record the file
-#   `$ESPALIER_BOX_LOCK` names, never a default path, which moves) when the
-#   record's seat or lane is not this checkout's. A seat's own fresh-clone gate
-#   writes seat `?` (its clone has no local config) and is nudged once, declared.
+# - or that is, or runs under, a holder of the box lock's slots (the records in
+#   the lock file `$ESPALIER_BOX_LOCK` names and, on a box of several slots, in
+#   each `<lock>.slot<k>` beside it; never a default path, which moves) when
+#   that record's seat or lane is not this checkout's. A seat's own fresh-clone
+#   gate writes seat `?` (its clone has no local config) and is nudged once,
+#   declared.
 #
 # The reader is checkout_sync's (`process_cwds`, `cwd_checkout`,
 # `ancestors_of`), the one the Loose: line and the reaper read. A pid no table
@@ -2443,24 +2445,51 @@ def _seat_name(checkout: Path) -> str:
     return machine or ""
 
 
-def _box_lock_holder() -> dict[str, Any] | None:
-    """The box lock's holder (seat, lane, pid) from the record in the file
-    `$ESPALIER_BOX_LOCK` names, or None: unset, unreadable, half-written, or
-    no positive pid. Seat and lane read ``?`` where the record has no string,
-    as its writer spells a failed read (``tests/_box_lock.py::build_record``)."""
-    path = os.environ.get(_BOX_LOCK_ENV, "")
-    if not path:
-        return None
+def _box_lock_record(path: str) -> dict[str, Any] | None:
+    """One slot's holder (seat, lane, pid) from the record in ``path``, or
+    None: unreadable, half-written, or no positive pid. Seat and lane read
+    ``?`` where the record has no string, as its writer spells a failed read
+    (``tests/_box_lock.py::build_record``)."""
     try:
         with open(path, encoding="utf-8") as handle:
             record = json.loads(handle.read(8192))
-    except (OSError, ValueError):  # fail-open: ok deliberate -- a lock record that cannot be read names no holder; the cwd arm still reads
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a slot record that cannot be read names no holder; the cwd arm still reads
         return None
     pid = record.get("pid") if isinstance(record, dict) else None
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return None
     seat, lane = record.get("seat"), record.get("lane")
     return {"pid": pid, "seat": seat if isinstance(seat, str) else "?", "lane": lane if isinstance(lane, str) else "?"}
+
+
+def _box_lock_slot_files(path: str) -> list[str]:
+    """Every slot file of the box lock at ``path``: the lock itself, and on a
+    box of several slots ``<lock>.slot<k>``, by the count beside it
+    (``tools/cc/_json_safe.py::box_lock_slots``, the one reader). The lock
+    alone where the deployed primitive predates the slots, the box of one it
+    ran."""
+    try:
+        from _json_safe import box_lock_slots
+    except ImportError:  # fail-open: ok deliberate -- a primitive that predates the slots locks the one file it always did
+        return [path]
+    return box_lock_slots(path)[0]
+
+
+def _box_lock_holders() -> list[dict[str, Any]]:
+    """Every holder of the box lock's slots (seat, lane, pid), each pid once,
+    from the records in the slot files `$ESPALIER_BOX_LOCK` names; empty where
+    it is unset or no slot's record names a positive pid. One record, the
+    lock's own, was read before (DEF-2105): on a box of several slots a kill
+    of slot 2's tree got no nudge."""
+    path = os.environ.get(_BOX_LOCK_ENV, "")
+    if not path:
+        return []
+    holders: list[dict[str, Any]] = []
+    for slot in _box_lock_slot_files(path):
+        holder = _box_lock_record(slot)
+        if holder is not None and all(seen["pid"] != holder["pid"] for seen in holders):
+            holders.append(holder)
+    return holders
 
 
 def _unread_kill_nudge(parents: list[int], unplaced: list[int],
@@ -2490,15 +2519,16 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
     targets = _named_kill_targets(tool_name, tool_input)
     if not targets:
         return None
-    holder = _box_lock_holder()
+    holders = _box_lock_holders()
     checkouts = [root, *sibling_checkouts(root)]
-    if len(checkouts) < 2 and holder is None:
+    if len(checkouts) < 2 and not holders:
         return None   # one checkout and no lock held: no other seat's run to read, so nothing spawns
     sync = load_checkout_sync()
     if sync is None:
         return None
-    if holder is not None and sync.pid_alive(holder["pid"]) is False:
-        holder = None   # the record a holder killed hard left behind names nobody
+    # The records a holder killed hard left behind name nobody.
+    holders = [held for held in holders if sync.pid_alive(held["pid"]) is not False]
+    holder: dict[str, Any] | None = None   # the holder the first box-lock hit runs under
     # A table that could not be read is None, and empty from a checkout_sync
     # older than that (no host has an empty one): either is unread, never a
     # host with no processes (DEF-2046).
@@ -2546,14 +2576,17 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
             first = first or (pid, owner, home)
             continue
         # No checkout holds a process of the chain (Windows reads no cwd, and a
-        # fresh-clone gate's clone is no checkout): the box lock decides.
-        if holder is not None and holder["pid"] in chain:
+        # fresh-clone gate's clone is no checkout): the box lock decides, by
+        # whichever slot's holder the chain runs under.
+        under = next((held for held in holders if held["pid"] in chain), None)
+        if under is not None:
             lane = _git_word(sync, root, "rev-parse", "--abbrev-ref", "HEAD")
             mine = _seat_name(root)
-            if holder["seat"] == mine and holder["lane"] == lane and mine not in ("", "?") and lane not in ("", "?", "HEAD"):
-                continue   # this checkout's own run holds the lock
+            if under["seat"] == mine and under["lane"] == lane and mine not in ("", "?") and lane not in ("", "?", "HEAD"):
+                continue   # this checkout's own run holds the slot
             hits.append(pid)
-            first = first or (pid, holder["pid"], None)
+            if first is None:
+                first, holder = (pid, under["pid"], None), under
         elif unanswered and sync.pid_alive(pid) is not False:
             # No reading placed it and one did not answer: never "nobody's". A
             # gone pid has no run to protect (and lsof reads none as unread).

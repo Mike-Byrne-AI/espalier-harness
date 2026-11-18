@@ -466,11 +466,47 @@ class TestTheBoxLocksHolder:
             lock = tmp_path / "box.lock"
             lock.write_text(body, encoding="utf-8")
             monkeypatch.setenv("ESPALIER_BOX_LOCK", str(lock))
-            assert _speedbump._box_lock_holder() is None, body
+            assert _speedbump._box_lock_holders() == [], body
         monkeypatch.setenv("ESPALIER_BOX_LOCK", str(tmp_path / "missing.lock"))
-        assert _speedbump._box_lock_holder() is None
+        assert _speedbump._box_lock_holders() == []
         monkeypatch.delenv("ESPALIER_BOX_LOCK")
-        assert _speedbump._box_lock_holder() is None, "no default path: the variable alone names the lock"
+        assert _speedbump._box_lock_holders() == [], "no default path: the variable alone names the lock"
+
+    def test_a_child_of_slot_twos_holder_for_another_seat_is_nudged(self, tmp_path, children, monkeypatch):
+        """DEF-2105, 8dda84's fourth blocker: on a box of two slots the reading
+        read the lock file's record alone, so a kill of the tree holding slot 2
+        got no nudge on Windows, where the box lock is the only arm. Mutation:
+        slot 1 read alone; the count beside the lock not read."""
+        main, other = _clone(tmp_path)
+        lock = tmp_path / "box.lock"
+        (tmp_path / "box.lock.slots").write_text("2", encoding="utf-8")
+        lock.write_text("", encoding="utf-8")
+        (tmp_path / "box.lock.slot2").write_text(json.dumps({**_record(other), "slot": 2}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(lock))
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        child = children(scratch)
+        time.sleep(0.3)
+        fired = _fire(main, f"kill {child.pid}")
+        assert fired is not None and fired[0] == "CP-KILL", fired
+        assert f"runs under the box lock's holder (pid {os.getpid()}, seat other-seat" in fired[1], fired[1]
+
+    def test_every_slots_holder_is_read_once_by_the_count_beside_the_lock(self, tmp_path, monkeypatch):
+        """A serial line's record is in every slot and is one holder; a slot
+        past the count is not read, nor a count file that holds no count.
+        Mutation: a holder per slot; slot files read by a glob, not the count."""
+        lock = tmp_path / "box.lock"
+        serial = {"seat": "s", "lane": "l", "pid": 4242, "slot": "every"}
+        for name in ("box.lock", "box.lock.slot2"):
+            (tmp_path / name).write_text(json.dumps(serial), encoding="utf-8")
+        (tmp_path / "box.lock.slot3").write_text(json.dumps({**serial, "pid": 5151}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(lock))
+        (tmp_path / "box.lock.slots").write_text("2", encoding="utf-8")
+        assert _speedbump._box_lock_holders() == [{"pid": 4242, "seat": "s", "lane": "l"}]
+        (tmp_path / "box.lock.slots").write_text("3", encoding="utf-8")
+        assert [h["pid"] for h in _speedbump._box_lock_holders()] == [4242, 5151]
+        (tmp_path / "box.lock.slots").write_text("many", encoding="utf-8")
+        assert [h["pid"] for h in _speedbump._box_lock_holders()] == [4242]
 
 
 class TestTheKillWords:

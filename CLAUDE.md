@@ -294,9 +294,10 @@ After `espalier init .`, the typical session flow is:
    its cwd is whatever folder its test moved to, so one hop proves nothing.
    A cwd or an ancestor in another checkout of this clone (`git worktree
    list`; a worktree sits inside the main checkout's folder, so the deepest
-   match is the owner) is that checkout's run, and so is the pid that
-   `$ESPALIER_BOX_LOCK`'s file names, where it is set, with every process
-   under it: leave it and ask the session working there, or the dispatcher
+   match is the owner) is that checkout's run, and so is each pid the box
+   lock's slot files name (`$ESPALIER_BOX_LOCK`'s file and, on a box of
+   several slots, each `<lock>.slot<k>` beside it), where it is set, with every
+   process under it: leave it and ask the session working there, or the dispatcher
    where none is. Seats on one box share one process table; on 2026-10-31
    one seat killed another's tier as a stray of its own, and the tier re-ran
    for about 45 minutes. The `Loose:` line names the checkout each pid's

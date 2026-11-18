@@ -446,6 +446,49 @@ def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> bool:
     return True
 
 
+#: The box lock's slot count is one whole number in the file this suffix
+#: names beside the lock (``<lock>.slots``); the most it may name is
+#: ``BOX_LOCK_MAX_SLOTS``.
+BOX_LOCK_SLOTS_SUFFIX = ".slots"
+BOX_LOCK_MAX_SLOTS = 8
+
+
+def box_lock_slots(lock: str) -> "tuple[list[str], str]":
+    """The box lock's slot files, slot 1 first, and a note ('' when none).
+
+    One box may let more than one test tier run at once: how many is one
+    whole number in the file beside the lock (``<lock>.slots``), which every
+    run on the box reads, so one stray export in one seat's shell cannot put
+    two tiers on a box that holds one (the review in air's 8dda84, DEF-2105).
+    Absent, the box has one slot, the lock itself, which is how every box ran
+    before; slot k from 2 on is ``<lock>.slot<k>``. A file that cannot be
+    read, or holds anything but a whole number from 1 to
+    ``BOX_LOCK_MAX_SLOTS``, reads as one slot, and the note says so (ASCII).
+    The file is read through :func:`decode_bom`, so the count Windows
+    PowerShell 5.1 writes (``echo 2 > <file>`` is UTF-16, ``Set-Content
+    -Encoding UTF8`` carries a BOM) reads as the number it holds. The suite's
+    plugin (``tests/_box_lock.py``), the guard cost census and the speed
+    bump's kill reading read the slots here alone."""
+    path = f"{lock}{BOX_LOCK_SLOTS_SUFFIX}"
+    raw: "str | None" = None
+    note = ""
+    try:
+        with open(path, "rb") as fh:
+            raw = decode_bom(fh.read(64)).strip()
+    except FileNotFoundError:  # fail-open: ok deliberate -- no count file is a box of one slot, as before
+        pass
+    except (OSError, ValueError) as exc:  # a ValueError: undecodable bytes, or a path open() refuses
+        note = f"box lock: {path} could not be read ({type(exc).__name__}); the box has one slot"
+    count = 1
+    if raw is not None:
+        if raw.isascii() and raw.isdigit() and 1 <= int(raw) <= BOX_LOCK_MAX_SLOTS:
+            count = int(raw)
+        else:
+            note = (f"box lock: {path} holds {raw[:20]!r}, not a slot count from 1 to {BOX_LOCK_MAX_SLOTS}; "
+                    "the box has one slot")
+    return [lock, *(f"{lock}.slot{k}" for k in range(2, count + 1))], note.encode("ascii", "replace").decode("ascii")
+
+
 #: What :func:`run_bounded` adds to a timeout on Windows, and
 #: :func:`run_tree_bounded` (and :func:`communicate_tree_bounded`) on every
 #: OS: one deadline for the tree kill, the drain of what was written and the

@@ -139,7 +139,9 @@ launcher did not start the handoff arms nothing and says the window needs a
    xdist run of the suite at a time by construction: such a run takes a lock
    on the box's lock file (`ESPALIER_BOX_LOCK`, set by `seat.py launch`, one
    path per host), waits while another run holds it and prints the holder and
-   its age; every tier line is an xdist run, the contract slice included, and
+   its age (a box whose `<lock>.slots` file names more slots runs that many
+   parallel lines at once, and any run at one worker still takes every slot,
+   once every checkout on the box carries the slots: `DEF-2105`); every tier line is an xdist run, the contract slice included, and
    a tier's lines each take and release the lock, so two tiers interleave
    line by line; a run without `-n` (a node-id or file run) takes no lock; a
    note on the mail channel announces nothing; and a tool that runs pytest as
