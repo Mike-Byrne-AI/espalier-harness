@@ -985,7 +985,7 @@ _MCP_WRITE_VERB_SUBSTRINGS = _hook_utils.MCP_WRITE_VERB_SUBSTRINGS
 
 
 def _check_action_justification_for_mutation(
-    root: Path, tool_name: str, tool_input: dict
+    root: Path, tool_name: str, tool_input: dict, sid: object = None, agent: object = None
 ) -> None:
     """If the active blueprint has no matching action_justification
     within the 60s window, emit advisory + audit-log entry. Always
@@ -993,19 +993,24 @@ def _check_action_justification_for_mutation(
     latest = root / "cc" / "blueprints" / "latest.json"
     if not latest.exists():
         return
+    # A non-UTF-8 latest.json raises UnicodeDecodeError (a ValueError, not
+    # OSError), and one that parses to a list or null holds no blueprint: each
+    # degrades rather than escape this reporter, and Claude is told once a
+    # session that the justification check is skipped while it lasts, beside
+    # the record, whose type the next session's banner counts (DEF-3101).
     try:
         bp = json.loads(latest.read_text(encoding="utf-8"))
+        why = fault = "" if isinstance(bp, dict) else type(bp).__name__
+        why = why and f"a JSON {why}, not an object"
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-        # A non-UTF-8 latest.json raises UnicodeDecodeError (a ValueError, not
-        # OSError); degrade rather than escape this reporter -- and say once
-        # that the justification check cannot run on this blueprint.
-        _hook_utils.say_once(
-            root, "blueprint-unreadable", "post_write_check", "posttooluse_failed_open_blueprint_read",
-            f"blueprint unreadable ({type(exc).__name__}); the action-justification check is skipped this session",
-            fault=type(exc).__name__,
+        why = fault = type(exc).__name__
+    if fault:
+        _say_once_to_claude(
+            root, sid, "blueprint-unreadable", "posttooluse_failed_open_blueprint_read",
+            f"blueprint unreadable ({why}); the action-justification check is skipped "
+            "while it stays so (said once a session)",
+            agent, fault=fault,
         )
-        return
-    if not isinstance(bp, dict):
         return
 
     target = ""
@@ -1282,20 +1287,25 @@ def _zone_names(unaccounted: dict, only: "list[str] | None" = None) -> str:
     return text + (f"; and {more} more" if more > 0 else "")
 
 
-def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line: str) -> bool:
+def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line: str,
+                        agent: object = None, **details: object) -> bool:
     """A once-a-session notice Claude reads (``advise``) as well as the
     record ``say_once`` writes: an exit-0 hook's stderr reaches no one. Keyed
-    by session, so a sibling session's notice does not silence this one's.
-    True when this call told Claude, so a caller can tell the operator once too."""
+    by session, so a sibling session's notice does not silence this one's,
+    and by the payload's agent where a caller passes one, so a subagent told
+    first (its context thrown away at its end) does not silence its parent.
+    ``details`` ride the record, as ``say_once``'s do (metadata only). The
+    flag is read through ``said_once``, which spells the key as ``say_once``
+    writes it (an unsafe character in a key part read a raw name before, and
+    the notice came every call). True when this call told Claude, so a caller
+    can tell the operator once too."""
     full_key = f"{key}-{_hook_utils.safe_session_id(sid) or 'nosid'}"
-    flag = root / _hook_utils.STATE_DIR / (_hook_utils.ONCE_FLAG_PREFIX + full_key)
-    try:
-        said = flag.exists()
-    except OSError:  # fail-open: ok deliberate -- an unreadable flag: say it; say_once keeps it to once a process
-        said = False
+    if agent:
+        full_key += f"-{_hook_utils.safe_session_id(agent) or 'agent'}"
+    said = _hook_utils.said_once(root, full_key)
     if not said:
         _hook_utils.advise_warn(line)
-    _hook_utils.say_once(root, full_key, "post_write_check", event_type, line)
+    _hook_utils.say_once(root, full_key, "post_write_check", event_type, line, **details)
     return not said
 
 
@@ -1310,11 +1320,24 @@ def _zone_check(data: dict, tool_name: str, tool_input: dict, root: Path, operat
     sid = data.get("session_id")
     try:
         import _zone_watch  # noqa: E402 -- lazily: only the calls it judges pay its import
-    except ImportError as exc:  # a deploy that predates the helper: said once, never every call
-        _hook_utils.say_once(
-            root, "zone-watch-import", "post_write_check", "posttooluse_failed_open_zone_import",
-            f"tools/cc/hooks/_zone_watch.py could not be imported ({type(exc).__name__}); "
-            "the protected-file check after shell calls is off -- run espalier upgrade --execute",
+    # Any fault in the helper turns the check off, not only a missing file: a
+    # deploy that predates it, a session that deleted it, or one that left it
+    # unable to compile or raising at its top level (a SyntaxError is no
+    # ImportError, and reached the every-call failure line below). Told to
+    # Claude once a session with its fault's class in the key, beside the
+    # record, whose type the next session's banner counts (DEF-3101). A file
+    # that is there but broken gets its error, line included, and no redeploy
+    # advice: the redeploy is for a helper that is not there at all.
+    except Exception as exc:  # noqa: BLE001 -- said once a session, never every call
+        missing = isinstance(exc, ModuleNotFoundError) and exc.name == "_zone_watch"
+        remedy = ("restore that file (espalier upgrade --execute redeploys it)" if missing
+                  else "repair that file, or restore it from the last commit")
+        _say_once_to_claude(
+            root, sid, f"zone-watch-import-{type(exc).__name__}", "posttooluse_failed_open_zone_import",
+            f"tools/cc/hooks/_zone_watch.py could not be imported ({type(exc).__name__}: "
+            f"{_hook_utils.os_error_text(exc)}); the protected-file check is off until it imports "
+            f"again (said once a session) -- {remedy}",
+            data.get("agent_id"), fault=type(exc).__name__,
         )
         return
     if tool_name not in _SHELL_TOOLS:
@@ -1398,7 +1421,8 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # path-consistency checks below remain Write/Edit-only via the
     # existing early-return). Non-blocking — never affects return value.
     root_for_aj = _resolve_project_root()
-    _check_action_justification_for_mutation(root_for_aj, tool_name, tool_input)
+    _check_action_justification_for_mutation(
+        root_for_aj, tool_name, tool_input, data.get("session_id"), data.get("agent_id"))
 
     # The zones after a shell call, or the file tool's refresh.
     # Runs for every tool this hook is matched on, before the write-only

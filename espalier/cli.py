@@ -241,7 +241,8 @@ INIT_HOOK_SCRIPTS = [
     # raises ModuleNotFoundError in a fresh target repo.
     "tools/cc/hooks/_explain_path.py",
     # The protected-file check after shell calls, imported by post_write_check and
-    # session_start; undeployed, each call says its import failed.
+    # session_start; undeployed, post_write_check tells Claude once a session
+    # that the check is off.
     "tools/cc/hooks/_zone_watch.py",
 ]
 

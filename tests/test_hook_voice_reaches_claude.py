@@ -150,6 +150,33 @@ class TestPostWriteCheckWarningsFoldIntoItsObject:
         context = _one_object(r.stdout)
         assert ".claude/settings.json contains invalid JSON" in context, context
 
+    @pytest.mark.parametrize("text,why", [("{oops", "JSONDecodeError"), ("[]", "a JSON list, not an object")],
+                             ids=["not-json", "not-an-object"])
+    def test_an_unreadable_blueprint_is_named_in_the_object_once_a_session(self, tmp_path, text, why):
+        """A blueprint the action-justification check cannot read, or one that
+        parses to no object, turns that check off while it lasts: Claude is
+        told in the object, once a session, beside the record (DEF-3101: the
+        record alone reached no one, an exit-0 hook's stderr going to the debug
+        log, and a list or null said nothing at all)."""
+        bp = tmp_path / "cc" / "blueprints" / "latest.json"
+        bp.parent.mkdir(parents=True)
+        bp.write_text(text, encoding="utf-8")
+        payload = {"tool_name": "Bash", "tool_input": {"command": "git status"},
+                   "hook_event_name": "PostToolUse", "session_id": "s-1"}
+        first, second = (_hook("post_write_check", payload, tmp_path) for _ in range(2))
+        assert first.returncode == 0 and second.returncode == 0, (first.stderr, second.stderr)
+        assert f"blueprint unreadable ({why})" in _one_object(first.stdout), first.stdout
+        assert "blueprint unreadable" not in second.stdout, second.stdout
+        assert len(_records("posttooluse_failed_open_blueprint_read")) == 1
+        # Keyed by the payload's session: a sibling session is told too.
+        sibling = _hook("post_write_check", {**payload, "session_id": "s-2"}, tmp_path)
+        assert "blueprint unreadable" in _one_object(sibling.stdout), sibling.stdout
+        # And by its agent: a subagent told first does not silence its parent.
+        sub = _hook("post_write_check", {**payload, "session_id": "s-3", "agent_id": "a-1"}, tmp_path)
+        parent = _hook("post_write_check", {**payload, "session_id": "s-3"}, tmp_path)
+        assert "blueprint unreadable" in _one_object(sub.stdout), sub.stdout
+        assert "blueprint unreadable" in _one_object(parent.stdout), parent.stdout
+
     def test_a_syntax_error_under_tools_cc_is_named(self, tmp_path):
         target = tmp_path / "tools" / "cc" / "broken.py"
         target.parent.mkdir(parents=True)
