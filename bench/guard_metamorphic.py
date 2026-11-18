@@ -546,7 +546,14 @@ _SHELL_BUILTIN_HEADS = frozenset({
 
 def _head_is_resolvable(head: str) -> bool:
     """Ask bash itself whether `head` resolves -- a builtin (`cd`, `[`, `test`,
-    `echo`) has no PATH entry, so `shutil.which` alone would call it absent."""
+    `echo`) has no PATH entry, so `shutil.which` alone would call it absent.
+    A head the reachability bench must also hear ANSWER
+    (`reachability_differential._MUST_ANSWER`: `python3`, `python`) runs that
+    probe too: a Microsoft Store alias stub resolves as `python3` and, run,
+    exits 49 without running anything, so on that host the head is absent,
+    never dead (the perturbed CI cell, air's ack f06ec9). The probe is the
+    bench's own, not the head's `_HEAD_ARGS` spelling, so a bad spelling
+    still reads dead where the interpreter answers."""
     if head in _SHELL_BUILTIN_HEADS:
         # a builtin has no PATH entry and, on a Windows runner, the bash
         # group below answered non-zero for `cd` and `echo` and called them
@@ -555,9 +562,15 @@ def _head_is_resolvable(head: str) -> bool:
         return True
     if not shutil.which("bash"):
         return True  # no shell to ask; never classify as absent on a guess
-    from bench.reachability_differential import run_bash_group
+    from bench.reachability_differential import _MUST_ANSWER, run_bash_group
     rc, _timed_out = run_bash_group(
         ["bash", "-c", 'command -v -- "$1" > /dev/null 2>&1', "_", head], timeout=10,
+    )
+    probe = _MUST_ANSWER.get(head)
+    if rc != 0 or probe is None:
+        return rc == 0
+    rc, _timed_out = run_bash_group(
+        ["bash", "-c", '"$@" > /dev/null 2>&1', "_", head, *probe], timeout=10,
     )
     return rc == 0
 

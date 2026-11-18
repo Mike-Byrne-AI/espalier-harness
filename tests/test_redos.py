@@ -1655,6 +1655,22 @@ def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout(monkeypatch
 # carries the same reasoning.
 _WALKER_FLOOD_LEN = _ROLE_MAP_CAP - 64
 
+def _numbered_units(fmt: str, n: int) -> str:
+    """``fmt`` repeated with ``{i}`` counting up from 0, as many whole units
+    as fit in ``n`` characters: a flood whose units differ, for a reader
+    memoised by its text."""
+    out: list[str] = []
+    size = 0
+    i = 0
+    while True:
+        unit = fmt.format(i=i)
+        if size + len(unit) > n:
+            return "".join(out)
+        out.append(unit)
+        size += len(unit)
+        i += 1
+
+
 # One MAKER per flood, a function of the byte count, so one list sizes both
 # walker rows: the ceiling row's population is every maker at
 # `_WALKER_FLOOD_LEN`, and the scaling row sizes each consumer at a half and a
@@ -1708,6 +1724,27 @@ _WALKER_FLOOD_MAKERS = [
     # slashed `watch`/`script` are still quadratic, by ruling, and are rows
     # (DEF-3051, DEF-3050), so they are not floods here yet.
     ("slashed_wrapper_flag_argument_run", lambda n: "find build" + " -exec /a/env" * ((n - 17) // 13) + " -print"),
+    # DEF-5121: the redirect view reads one level into a program the command
+    # hands down (an in-place `-c` or `eval` quoted word, each `$(...)` body of
+    # a double-quoted word, a here-string of a substitution kept as the loop's
+    # feed), each program by a view of its own text. Every unit is numbered,
+    # since the view is memoised by its text and a repeated body would time a
+    # lookup. The four cover: the in-place word with a substitution body two
+    # levels down; the feed; the blank walk back to the exec quote across a
+    # long blank run; and words each holding several bodies, spliced into one
+    # view. The bounds that keep the reading itself linear (the exec quote's
+    # lookback window, the stop at a body the close walk cannot read) are
+    # timed on the view alone, `test_the_redirect_view_is_linear_on_handed_down_programs`:
+    # at the five consumers' scale the window removed read about two times
+    # slower and still passed this row (DEF-5121's mutant run), and one word
+    # of many bodies reads under the masker's sample floor here.
+    ("handed_down_redirect_run",
+     lambda n: _numbered_units("bash -c 'rm a{i} 2>/dev/null'; echo \"$(eval 'rm b{i} 2>&1')\"; ", n)),
+    ("here_string_substitution_feed_run",
+     lambda n: _numbered_units('while read f; do rm "$f"; done <<< "$(git 2>/dev/null ls-files a{i})"; ', n)),
+    ("exec_quote_blank_run", lambda n: "eval" + " " * (n - 24) + "'rm a 2>/dev/null'"),
+    ("quoted_word_substitutions_run",
+     lambda n: _numbered_units('echo "$(rm a{i} 2>/dev/null)$(rm b{i} 2>&1)$(rm c{i} >/dev/null)"; ', n)),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]
@@ -3556,6 +3593,52 @@ def test_the_started_shell_reader_is_linear_on_an_opener_flood(label, seed):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+#: DEF-5121's reading one level into a handed-down program, timed on the
+#: redirect view alone: label, the small sample's size in body caps (the big
+#: one is twice it), and a maker of the flood at ``n`` characters, every
+#: unit numbered, since the view is memoised by its text
+_HANDED_DOWN_VIEW_FLOODS = [
+    # an in-place `-c` word a unit: the exec quote's search runs once a word,
+    # inside its lookback window (`_EXEC_QUOTE_LOOKBACK`)
+    ("exec_quoted_words", 2, lambda n: _numbered_units("sh -c 'a{i} 2>b'; ", n)),
+    # one double-quoted word of many closed bodies: the close walk and a
+    # nested view a body
+    ("one_word_of_bodies", 2, lambda n: 'echo "' + _numbered_units("$(a{i} 2>b)", n - 7) + '"'),
+    # one word of unclosed openers holding an angle: the close walk runs to
+    # the word's end once, and the stop ends the word's reading there; one
+    # linear walk is its whole cost, so it is sized four times the others
+    ("one_word_of_unclosed_openers", 8, lambda n: 'echo "' + "$(a >b " * ((n - 7) // 7) + '"'),
+]
+
+
+@pytest.mark.parametrize("label,caps,make", _HANDED_DOWN_VIEW_FLOODS, ids=[r[0] for r in _HANDED_DOWN_VIEW_FLOODS])
+def test_the_redirect_view_is_linear_on_handed_down_programs(label, caps, make):
+    """DEF-5121: the redirect view reads one level into a program a quoted
+    word hands down, and two bounds keep that reading linear where the
+    walker rows' five consumers cannot show it: the exec quote's lookback
+    window (removed, the view alone read 0.24 / 0.91 s at 16 / 32 KB, ratio
+    3.8, where the window reads 6 / 12 ms, and the walker scaling rows still
+    passed: the lane's mutant run and its failure-mode review's F3) and the
+    stop at a body the close walk cannot read, which a walk that went on to
+    the next opener would turn into a re-walk of the word from each (F2).
+    Judged by the pair rule on the view alone, each flood at twice its
+    small size in body caps, so the linear reading's small sample clears
+    the sample floor on a host twice as fast (the hook's cap is the entry's, not the
+    reader's). POSIX-only (signal.alarm). Who: the collaborator whose long
+    generated command of `-c` words or substitutions a quadratic view would
+    hold past the time budget."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+
+    def view(payload: str) -> str:
+        return _bash_patterns._redirects_blanked(payload, powershell=False)
+
+    verdict = _ps_body_scaling_verdict(
+        view, make(2 * caps * _WORST_CASE_BODY_LEN), make(caps * _WORST_CASE_BODY_LEN), make(64),
+    )
+    assert verdict is None, f"{label}: {verdict}"
 
 
 @pytest.mark.parametrize("name,_pattern,verb", _VERB_EXTRACTION_REGEXES)

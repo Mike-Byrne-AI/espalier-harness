@@ -2513,12 +2513,24 @@ spellings of them are work:
   any other stream stays in both readings, since it changes what a shell
   runs or what a pipe carries, and so does an error-stream redirect whose
   target holds a quote, a backtick or a substitution. The second reading is
-  of the command as written, at its top level, and the hard checks' alone,
-  unlike the glued reading below: the speed bump is not judged on it, and a
-  program handed to a shell as a quoted string (`bash -c '...'`) is read as
-  the first reading reads it, so an error-stream redirect inside that string
-  is not blanked. One level of such a string is in the contract above, so a
-  verdict lowered there is a defect, tracked for its own fix.
+  of the command as written and the hard checks' alone, unlike the glued
+  reading below: the speed bump is not judged on it. On Bash it reads one
+  level into a program the command hands down where it stands, as the
+  readers that take an operand by its place do: a quoted word a shell runs
+  as its program (`bash -c '...'`, `eval '...'`; one quoted span holding no
+  quote, backslash, `$` or backtick) and the body of each command
+  substitution inside a double-quoted word (`"$(...)"`, read in order up to
+  the first one the reading cannot follow: an arithmetic `$((`, or a body
+  holding a double quote, a backslash or a backtick) have their
+  error-stream redirects blanked as the top level's are, and a here-string
+  of a substitution
+  (`done <<< "$(...)"`) stays the loop's feed. A quoted word of any other
+  kind is a mention and stays as written. A quoted program of another shape
+  (behind a switch cluster such as `bash -lc`, or holding a quote, a
+  backslash, `$` or a backtick) is handed one level down to the check that
+  judges it, which reads it as a command of its own. A program nested inside
+  such a program is past the one level the contract keeps, and no reading of
+  it is promised here.
 - **The PowerShell comment reader, by ruling (2026-11-12).** A `<#` block
   comment is read where PowerShell opens one, a `<#` glued to the token
   before it included where that token lets PowerShell open it (a variable in
