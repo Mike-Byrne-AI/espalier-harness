@@ -2428,7 +2428,7 @@ class TestSeats:
             assert seated == [("air-x", str(live), 1)], (order, seated)
             text = self._text(board, rows)
             assert "air-x: last mail 6 h 25 min ago (note); 1 live session in .claude/worktrees/live" in text, text
-            assert "stale" not in text and "name it:" not in text, text
+            assert "stale" not in text and "name it" not in text, text
         # The collision: both live. The one listed first keeps the bare row, and
         # it is listed against path order and holds fewer sessions, so neither a
         # path sort nor a most-sessions-first sort can pass for the listing's order.
@@ -2441,7 +2441,7 @@ class TestSeats:
         rows = board.seat_rows({"air-y": [note]}, local, _NOW)
         assert [(r["seat"], r["path"], r.get("name_shared_with")) for r in rows if r["name"] == "air-y"] == [
             ("air-y", str(one), None), ("air-y [.claude/worktrees/a-two]", str(two), ".claude/worktrees/b-one")], rows
-        assert "name it:" in self._text(board, rows)
+        assert "name it" in self._text(board, rows)
 
     def test_a_worktree_answering_the_clones_name_is_flagged_with_its_remedy(self, board, tmp_path):
         """The inherited-name state (docs/SHARP_EDGES.md, "The worktrees of one
@@ -2454,9 +2454,27 @@ class TestSeats:
         [row] = rows
         assert row["seat"] == "air [.claude/worktrees/work]" and row["name"] == "air"
         text = self._text(board, rows)
+        # One command a line, each indented under the row, never a pair chained
+        # with `&&`, which Windows PowerShell 5.1 does not parse (DEF-3098).
         assert ("air [.claude/worktrees/work]: the seat name of the main checkout too (one mail ref for both); "
-                f'1 live session in .claude/worktrees/work; name it: git -C "{work}" config extensions.worktreeConfig '
-                f'true && git -C "{work}" config --worktree espalier.machine <name>') in text, text
+                "1 live session in .claude/worktrees/work; name it, one command a line:\n"
+                f'            git -C "{work}" config extensions.worktreeConfig true\n'
+                f'            git -C "{work}" config --worktree espalier.machine <name>\n') in text, text
+        assert "&&" not in text, text
+
+    def test_the_remedy_is_the_last_thing_on_a_seat_line(self, board):
+        """A remedy's commands come one a line, so the remedy goes last: text
+        after it would land on its last command's line and be pasted with it
+        (DEF-3098's review). A coverage pin of the order. Dies to: an extra
+        appended after the remedy."""
+        commands = ['git -C "x" config extensions.worktreeConfig true',
+                    'git -C "x" config --worktree espalier.machine <name>']
+        row = {"seat": "air [x]", "name_shared_with": "the main checkout", "sessions": [{"pid": 1}], "checkout": "x",
+               "note": "it answers air, not its clone's name box (a --worktree name was set here)",
+               "remedy": "name it, one command a line:\n" + "\n".join(commands)}
+        first, *rest = board._seat_line(row, False).split("\n")
+        assert rest == commands, rest
+        assert row["note"] in first and first.endswith("; name it, one command a line:"), first
 
     def test_a_bare_clones_worktree_gets_the_core_bare_step_not_the_commands(self, board, tmp_path):
         """Naming a bare clone's worktree takes one change, core.bare moved
