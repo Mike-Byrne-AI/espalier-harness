@@ -321,9 +321,14 @@ block, through the reservation record every worktree of the clone shares.
 Only a fresh session (`startup` or `clear`) is named. A resumed or compacted
 session keeps the name its claims were made under.
 
-It does not name the worktree when the derived name is another worktree's, or
-when the clone's shared config sets `core.worktree` or `core.bare`. The line
-then says why, and what naming the worktree by hand takes.
+It does not name the worktree when the derived name is another worktree's,
+when git cannot list the clone's checkouts or read the name another one
+answers (a twin could then go unseen; it stops at the first such checkout and
+asks no further), or when the clone's shared config sets `core.worktree` or
+`core.bare`. The line then says why, and what naming the worktree by hand
+takes. The derived name is one rule for every linked worktree, inside
+`.claude/worktrees/` or not: `seat.py` resolves a worktree with no name of its
+own by the same name, so a launch targets the name the hook gives it.
 
 On such a clone that is one change: the key moved out of the shared config into
 the main worktree's `config.worktree` (`$GIT_COMMON_DIR/config.worktree`; the

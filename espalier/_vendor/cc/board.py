@@ -1916,10 +1916,13 @@ def _seat_line(row: dict, mail_unread: bool) -> str:
         if row.get("shared"):
             named = ", ".join(f"pid {s.get('pid')} session {str(s.get('session_id') or '?')[:8]}" for s in sessions)
             text += f" ({named}): {_SHARED}"
-    for extra in (row.get("note"), row.get("remedy")):
-        if extra:
-            text += f"; {extra}"
-    return text
+    if row.get("note"):
+        text += f"; {row['note']}"
+    # The remedy goes last, at the return, so nothing is ever appended after
+    # it: its commands can come one a line (mail.naming_steps), and text added
+    # here later would land on the last command's line, pasted with it.
+    remedy = row.get("remedy")
+    return f"{text}; {remedy}" if remedy else text
 
 
 def _job(re_: dict) -> str:

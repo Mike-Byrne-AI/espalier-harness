@@ -1061,6 +1061,28 @@ class TestTheNameReadersSayAFailedRead:
             name, said = mail.name_this_worktree(wt, run=run)
             assert name is None and "could not be told" in said and mail.LISTING_UNREAD in said, said
 
+    def test_name_this_worktree_asks_no_sibling_past_its_first_answer(self, mail, tmp_path):
+        """Inside SessionStart's 13 s wall each sibling's read is a bounded git
+        call, so the naming stops at the first sibling that answers it, one
+        unread or one holding the name, and a sibling listed after it is never
+        asked. Dies to: every sibling read before any is compared (k hung
+        siblings cost k timeouts; DEF-3098's review)."""
+        for label, sibling in (("unread", (128, "", "fatal: bad config line 3")), ("taken", (0, "air-wt\n", ""))):
+            sub = tmp_path / label
+            sub.mkdir()
+            third = sub / "third"
+            third.mkdir()
+            listing = (0, f"worktree {sub / 'wt'}\nworktree {sub / 'other'}\nworktree {third}\n", "")
+            wt, run = self._naming(sub, clone=(0, "air\n", ""), sibling=sibling, listing=listing)
+            asked: list[str] = []
+
+            def recording(argv, cwd=None, run=run, asked=asked, **kw):
+                asked.append(str(cwd))
+                return run(argv, cwd=cwd, **kw)
+            name, said = mail.name_this_worktree(wt, run=recording)
+            assert name is None and "other" in said, (label, said)
+            assert str(third) not in asked, (label, asked)
+
     def test_a_failed_read_back_is_named_as_one(self, mail, tmp_path):
         """Dies to a read-back that failed reported as a name that did not read
         back, which sends the operator looking at the wrong thing."""

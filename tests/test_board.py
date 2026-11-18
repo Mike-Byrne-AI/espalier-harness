@@ -2462,6 +2462,20 @@ class TestSeats:
                 f'            git -C "{work}" config --worktree espalier.machine <name>\n') in text, text
         assert "&&" not in text, text
 
+    def test_the_remedy_is_the_last_thing_on_a_seat_line(self, board):
+        """A remedy's commands come one a line, so the remedy goes last: text
+        after it would land on its last command's line and be pasted with it
+        (DEF-3098's review). A coverage pin of the order. Dies to: an extra
+        appended after the remedy."""
+        commands = ['git -C "x" config extensions.worktreeConfig true',
+                    'git -C "x" config --worktree espalier.machine <name>']
+        row = {"seat": "air [x]", "name_shared_with": "the main checkout", "sessions": [{"pid": 1}], "checkout": "x",
+               "note": "it answers air, not its clone's name box (a --worktree name was set here)",
+               "remedy": "name it, one command a line:\n" + "\n".join(commands)}
+        first, *rest = board._seat_line(row, False).split("\n")
+        assert rest == commands, rest
+        assert row["note"] in first and first.endswith("; name it, one command a line:"), first
+
     def test_a_bare_clones_worktree_gets_the_core_bare_step_not_the_commands(self, board, tmp_path):
         """Naming a bare clone's worktree takes one change, core.bare moved
         into the main worktree's config.worktree (the bare repository's own,

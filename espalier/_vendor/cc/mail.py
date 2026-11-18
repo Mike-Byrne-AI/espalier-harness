@@ -81,7 +81,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 # A kept, older sibling is named with its repair, never a traceback that names
 # an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
@@ -1617,7 +1617,13 @@ def clone_machine(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tu
 def worktree_seat_name(clone: str, worktree_dir: str) -> str | None:
     """``<clone>-<worktree directory>`` in the machine-name grammar (lowercase
     letters, digits and hyphens, 32 at most), or None when nothing of the
-    directory survives. Deterministic, so one worktree always derives one name."""
+    directory survives. Deterministic, so one worktree always derives one name.
+    The one rule for every linked worktree, inside ``.claude/worktrees/`` or
+    not: :func:`name_this_worktree` sets it at a session's start (a copy made
+    by hand outside that folder carries the hooks' settings file too, 7 of 10
+    here, measured 2026-11-18), and ``seat.py``'s resolver reads a worktree
+    with no name of its own by it, so the name a launch targets is the name
+    the hook gives (DEF-3098)."""
     slug = re.sub(r"[^a-z0-9]+", "-", worktree_dir.lower()).strip("-")
     if not slug:
         return None
@@ -1651,7 +1657,18 @@ def checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> l
     that is gone, and a bare repository's entry, are listed with no name read
     (nothing in either runs a session that writes mail). Raises
     :class:`Unresolvable`, opening with :data:`LISTING_UNREAD`, where git
-    could not list the checkouts at all."""
+    could not list the checkouts at all. :func:`iter_checkout_names` gives
+    the same rows one at a time, for a caller that stops at its first answer."""
+    return list(iter_checkout_names(root, run=run, timeout=timeout))
+
+
+def iter_checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> Iterator[dict]:
+    """:func:`checkout_names`' rows one at a time, each checkout's name read
+    as its row is taken, so a caller that stops at its first answer asks git
+    nothing more: :func:`name_this_worktree` runs inside SessionStart's 13 s
+    wall, where one bounded read per sibling it never needed was a timeout
+    each (DEF-3098's review). The listing is read at the first row taken, and
+    raises there as :func:`checkout_names` does."""
     try:
         rc, listing, err = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(),
                                timeout=timeout)
@@ -1670,7 +1687,6 @@ def checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> l
         elif line.strip() and blocks:
             key, _, value = line.partition(" ")
             blocks[-1][key] = value.strip()
-    rows: list[dict] = []
     for index, block in enumerate(blocks):
         path = block["worktree"]
         bare = "bare" in block
@@ -1680,11 +1696,10 @@ def checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> l
             named, how = machine_setting(Path(path), run=run, timeout=timeout)
             name = named or ""
             unread = how if named is None and how.startswith(MACHINE_UNREAD) else ""
-        rows.append({"path": path, "main": index == 0, "gone": gone, "bare": bare,
-                     "branch": block.get("branch", "").removeprefix("refs/heads/"), "head": block.get("HEAD", ""),
-                     "detached": "detached" in block, "prunable": "prunable" in block,
-                     "name": name, "how": how, "unread": unread})
-    return rows
+        yield {"path": path, "main": index == 0, "gone": gone, "bare": bare,
+               "branch": block.get("branch", "").removeprefix("refs/heads/"), "head": block.get("HEAD", ""),
+               "detached": "detached" in block, "prunable": "prunable" in block,
+               "name": name, "how": how, "unread": unread}
 
 
 def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
@@ -1746,25 +1761,26 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
         # With the extension off no worktree holds a name of its own, so every
         # checkout answers the shared name and none the derived one: the
         # siblings are read only when on, through the one reader of which
-        # checkouts answer a name (DEF-3098), each by the name it writes under.
+        # checkouts answer a name (DEF-3098), each by the name it writes under,
+        # one at a time: the first unread one or the first match answers, and
+        # no sibling after it is asked (each read is a timeout when git hangs).
+        here = Path(top.strip()).resolve()
         try:
-            listed = checkout_names(root, run=run, timeout=timeout) if ext_on else []
+            for row in iter_checkout_names(root, run=run, timeout=timeout) if ext_on else ():
+                other = Path(row["path"])
+                if row["gone"] or row["bare"] or other.resolve() == here:
+                    continue          # a prunable entry (its directory is gone) holds no name to read
+                if row["unread"]:
+                    return None, (f"this worktree answers the clone's name {clone!r}, and whether {other} already "
+                                  f"answers `{name}` could not be told ({row['unread']}); {by_hand()}")
+                if row["name"] == name:
+                    return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, "
+                                  f"`{name}`, is taken by {other}; {by_hand()}")
         except Unresolvable as exc:
-            # Read as no sibling, the worktree was named past a twin unseen.
+            # The listing itself (a sibling's failed read is a row, never a
+            # raise): read as no sibling, the worktree was named past a twin unseen.
             return None, (f"this worktree answers the clone's name {clone!r}, and whether another checkout "
                           f"already answers `{name}` could not be told ({exc}); {by_hand()}")
-        here = Path(top.strip()).resolve()
-        for row in listed:
-            other = Path(row["path"])
-            if row["gone"] or row["bare"] or other.resolve() == here:
-                continue          # a prunable entry (its directory is gone) holds no name to read
-            theirs, their_how = row["name"], row["unread"]
-            if their_how:
-                return None, (f"this worktree answers the clone's name {clone!r}, and whether {other} already "
-                              f"answers `{name}` could not be told ({their_how}); {by_hand()}")
-            if theirs == name:
-                return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, `{name}`, "
-                              f"is taken by {other}; {by_hand()}")
         # The extension lives in the clone's shared config: written only when
         # it is off, so a second worktree starting at once does not contend
         # for git's config lock with the first.
