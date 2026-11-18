@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import checkout_glob
 from tests._spaced_paths import quoted, spaced
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -807,11 +808,13 @@ class TestOneConditionSetServesBothLegs:
     copy refused its twin). They are one set in
     `bench/real_shell_confinement.py`; each leg declares a profile."""
 
-    #: Every bench file that builds a profile, read from the tree, so a third
-    #: leg is held to the contract below without being listed here
-    #: (DEF-2099's failure-mode review).
+    #: Every bench file that builds a profile, read from git's view of the
+    #: checkout (a local script git ignores is no leg), so a third leg is
+    #: held to the contract below without being listed here (DEF-2099's
+    #: failure-mode review).
     LEGS = tuple(sorted(
-        path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "bench").glob("*.py")
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in checkout_glob(REPO_ROOT / "bench", "*.py", root=REPO_ROOT)
         if "_confinement.Shell(" in path.read_text(encoding="utf-8")))
 
     def test_the_legs_are_read_from_the_tree(self):
