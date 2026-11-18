@@ -7,16 +7,24 @@ test names, in its docstring, the mutation it dies to. The fixture's values and
 positions disagree with a wrong reading in both directions: a shadowed local
 that must give no edge beside a load that must, and a working-tree edit that
 must not be read beside the committed text that must."""
-# slow-exempt: a few `git init`/`commit` spawns per test in tmp_path, measured under 2 s for the module; the collision and
-# lane_read classes build small branch histories (about 30 spawns the largest), each test measured under 3 s
+# slow-exempt: a few `git init`/`commit` spawns per test in tmp_path, each short; the collision, lane_read and worktree classes
+# build small branch histories (about 30 spawns the largest), the slowest test 1.2 s; 242 tests in 39 s serial for the module,
+# measured 2026-11-18 on the Air at load 3.9
 from __future__ import annotations
 
+import ast
+import collections
 import copy
 import importlib.util
+import itertools
 import json
 import os
 import pathlib
+import re
+import statistics
 import subprocess
+import symtable
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -639,7 +647,24 @@ class TestTheCitations:
         out = _CENSUS.census(repo, _head(repo), ["citations"])["citations"]
         assert out["split"]["swept_live"] is None and out["split"]["unchecked_live"] is None
         assert "tests/test_doc_source_citations.py::_swept_docs" in out["unread"]["swept_live"]
-        assert out["split"]["struck"]["struck_fragments"]["path_symbol"]["occurrences"] == 2
+        # A struck row is one the sweep's own line rule skips: with that rule unread, so is what
+        # it strikes, and the fragments' citations are unread with the rest of its population.
+        assert out["split"]["struck"]["struck_fragments"]["path_symbol"]["occurrences"] == 0
+        assert "task-packs/ledger.d/DEF-1.md" in out["split"]["unread"]["unread"]["paths"]
+        assert out["split"]["record"]["record_set"]["path_symbol"]["occurrences"] == 1
+
+    def test_a_row_is_struck_by_the_sweep_s_line_rule_never_by_its_fragment_s_id_cell(self, repo):
+        """Dies to: a whole fragment filed struck because its line-2 id cell starts `~~`, where
+        the sweep strikes line by line and only a backticked `~~` span: `~~DEF-7~~`, no
+        backticks, is a row the sweep reads (it goes red after a move), and is live. The
+        authoring's file-level read, kept beside, still strikes it whole."""
+        _add(repo, {**_CITING, "task-packs/ledger.d/DEF-7.md": "<!-- -->\n| ~~DEF-7~~ | `espalier/cli.py::_helper` | x |\n"})
+        out = _CENSUS.census(repo, _head(repo), ["citations"])["citations"]
+        live = out["split"]["swept_live"]["live_fragments"]
+        assert live["paths"] == ["task-packs/ledger.d/DEF-2.md", "task-packs/ledger.d/DEF-7.md"]
+        assert _occ(live)["path_symbol"] == 3
+        assert _occ(out["split"]["struck"]["struck_fragments"])["path_symbol"] == 2
+        assert out["beside"]["substring_by_part"]["struck/struck_fragments"] == {"occurrences": 3, "files": 2}
 
 
 _PROBES = {
@@ -688,8 +713,18 @@ class TestTheProbes:
         read live), or a probe with no row given a state it does not have."""
         out, rows = section
         assert (rows["DEF-1"]["row"], rows["DEF-2"]["row"], rows["DEF-5"]["row"]) == ("live", "struck", "no row")
-        assert out["by_row"] == {"live": 2, "struck": 1, "no row": 1}
+        assert out["by_row"] == {"live": 2, "struck": 1, "not a row": 0, "no row": 1}
         assert out["live_reading_cli"] == 1
+
+    def test_a_fragment_whose_second_line_is_no_row_is_not_read_as_live(self, repo):
+        """Dies to: a probe's fragment whose line 2 is no table row (no cells, so no `~~` to
+        find) read as a live row, which counts it among the live rows a move would strike."""
+        _add(repo, {**_PROBES, "task-packs/ledger.d/DEF-5.md": "<!-- -->\nno table on this line\n"})
+        out = _CENSUS.census(repo, _head(repo), ["probes"], extra={"concerns": {}})["probes"]
+        rows = {r["id"]: r for r in out["rows"]}
+        assert rows["DEF-5"]["row"] == "not a row"
+        assert out["not_a_row"] == ["DEF-5"]
+        assert out["by_row"] == {"live": 2, "struck": 1, "not a row": 1, "no row": 0}
 
     def test_each_probe_names_its_symbols_and_their_owners(self, section):
         """Dies to: an AST read's symbol (`getattr(n, 'name', '') == '_setter'`) dropped, so the
@@ -976,9 +1011,11 @@ def test_a(monkeypatch):
     monkeypatch.setattr(cli, "_SAID", True, raising=False)
     monkeypatch.setattr(cli, "plural", str)
     monkeypatch.setattr(cli, "_NEW_FLAG", 1, raising=False)
+    monkeypatch.setattr(cli._deploy, "__doc__", "patched through cli")
     cli._ANSWER = 2
     assert cli._deploy() and _core() and plural and cli.__file__
 ''',
+    "pyproject.toml": '[project.scripts]\nespalier = "espalier.cli:main"\n',
     "tests/test_n.py": '''\
 from espalier.cli import _core, cmd_scan
 
@@ -1189,9 +1226,9 @@ class TestTheMoveCost:
         names nothing), or every probe read against every unit."""
         mc, units = section
         assert units[("core", "members")]["probes"] == {"ids": ["DEF-1", "DEF-4"], "pairs": 3,
-                                                        "by_row": {"live": 1, "struck": 0, "no row": 1}}
+                                                        "by_row": {"live": 1, "struck": 0, "not a row": 0, "no row": 1}}
         assert units[("deploy", "members")]["probes"] == {"ids": ["DEF-2"], "pairs": 1,
-                                                          "by_row": {"live": 0, "struck": 1, "no row": 0}}
+                                                          "by_row": {"live": 0, "struck": 1, "not a row": 0, "no row": 0}}
         assert units[("cmd_scan", "owned")]["probes"]["ids"] == []
         assert mc["not_attributed"]["probes"] == {"reading_cli_no_symbol": ["DEF-5"], "subject_only": ["DEF-3"]}
 
@@ -1307,6 +1344,34 @@ class TestTheMoveCost:
             "names": ["cmd_init", "cmd_install_ci"], "test_import_pairs": 0, "patch_sites": 0,
             "outside_importer_pairs": 2, "loud_sites": 5}
         assert setup["stale_in_both"] == units[("setup", "owned")]["with_reexports"]["stale_in_both"]
+
+    def test_what_no_unit_is_charged_is_named_beside_the_units(self, section):
+        """Dies to: the sites the move cost attributes to no unit dropped from its output (the
+        path joins of test_r.py, the line form in docs/GUIDE.md, the patch of `_deploy.__doc__`
+        through cli), so a reader takes the per-unit figures for the whole of what reads cli."""
+        mc, _units = section
+        na = mc["not_attributed"]
+        assert na["reader_sites"] == {"path_literal": 0, "path_join": 2}
+        assert na["citation_line_form"] == 1
+        assert na["patches_through_cli"] == {"sites": 1, "targets": ["_deploy.__doc__"],
+                                             "first_part_defined_in_cli": ["_deploy"]}
+
+    def test_in_split_sums_only_the_parts_that_were_read(self, moving):
+        """Dies to: `in_split` summing the `unread` part too, which MOVE_RULES says it leaves out:
+        under a sweep whose rule differs at the pin, every unit's `in_split` then equals its whole
+        `occurrences`, as if the swept and unchecked splits had been read; or the partition
+        checked over split cells it knows are partial (it is named unchecked instead)."""
+        changed = _SWEEP_COPY.replace('("docs/", "memory/", "changelog.d/")', '("docs/", "memory/", "bench/")')
+        _add(moving, {"tests/test_doc_source_citations.py": changed})
+        out = _CENSUS.census(moving, _head(moving), ["move_cost"], extra=dict(_MOVE_EXTRA))
+        mc = out["move_cost"]
+        core = next(u for u in mc["units"] if (u["unit"], u["set"]) == ("core", "members"))["citations"]
+        unread_part = core["split"]["unread"]["unread"]["occurrences"]
+        assert unread_part > 0
+        assert core["in_split"] == core["occurrences"] - unread_part
+        assert core["split"]["swept_live"] is None
+        assert "citations" in mc["partition"]["unchecked"]
+        assert "the sweep's rule differs" in out["unread"]["move_cost.citations.swept_live"]
 
     def test_the_concern_units_partition_the_file_and_their_figures_sum(self, section):
         """Dies to: a concern unit priced over a set other than what it owns, or a per-unit
@@ -1467,8 +1532,13 @@ class TestTheReplayReadsAConflictOnTheCliModule:
     def test_a_conflicting_catch_up_is_listed_and_clean_merges_are_not(self, repo):
         """Three merges, none a pull request's: `main` into lane/x with the same line edited on both
         sides (resolved in the merge), `main` into lane/y (a README only) and lane/y into lane/x.
-        Dies to: `replay_merges` reading rc 1 from `git merge-tree` as clean (then the conflict
-        on espalier/cli.py is lost and the count reads 0), or a clean merge listed as a conflict."""
+        lane/y then lands as #5, the pin's `.gitattributes` gives cli.py the union driver, and
+        lane/x lands as #7. Dies to: `replay_merges` reading rc 1 from `git merge-tree` as clean
+        (then the conflict on espalier/cli.py is lost and the count reads 0), or a clean merge
+        listed as a conflict; the drivers-on arm replayed without the pin's attributes (it then
+        reads the conflict the union driver merges clean, as the drivers-off arm does); or the
+        catch-ups read off anything but each pull request's own commits (#7 carries the one that
+        conflicts, #5 a clean one, and the lowest number is 5)."""
         _trunk(repo)
         base = _head(repo)
         _git(repo, "checkout", "-q", "-b", "lane/y", base)
@@ -1491,15 +1561,20 @@ class TestTheReplayReadsAConflictOnTheCliModule:
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "--no-edit")
         conflicted = _head(repo)
         _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'lane/y' into lane/x", "lane/y")
+        _land(repo, 5, "lane/y")
+        (repo / ".gitattributes").write_text("espalier/cli.py merge=union\n", encoding="utf-8")
+        _commit_all(repo, "the union driver for cli.py")
+        _land(repo, 7, "lane/x")
         out = _CENSUS.conflicts(_ctx(repo))
         side = out["lane_side"]
         assert side["merges"] == 3
-        for arm in ("drivers_on", "drivers_off"):
-            assert side[arm]["conflicted_any_file"] == 1
-            assert [(r["oid"], r["paths"]) for r in side[arm]["on_cli_modules"]] == [
-                (conflicted, ["espalier/cli.py"])]
-            assert side[arm]["on_cli_modules"][0]["date"] == _UNTIL
-        assert out["catch_ups"]["prs"] == 0
+        assert side["drivers_on"] == {"conflicted_any_file": 0, "on_cli_modules": []}
+        assert side["drivers_off"]["conflicted_any_file"] == 1
+        assert [(r["oid"], r["paths"], r["date"]) for r in side["drivers_off"]["on_cli_modules"]] == [
+            (conflicted, ["espalier/cli.py"], _UNTIL)]
+        cu = out["catch_ups"]
+        assert (cu["prs"], cu["lowest_pr"], cu["catch_up_merges"], cu["conflicted_any_file"]) == (2, 5, 2, 1)
+        assert cu["on_cli_modules"] == [{"oid": conflicted, "pr": 7, "paths": ["espalier/cli.py"]}]
 
 
 class TestConcurrentPairsAreGradedBySymbol:
@@ -1959,9 +2034,9 @@ class TestTheTranscriptsSection:
                 _result("t5", "", {"file": {"numLines": 500}})]
         (proj / "s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
 
-        def run():
+        def run(extra_checkouts=()):
             ctx = _ctx(repo, _mail_at=mail, projects_dir=str(tmp_path / "projects"),
-                       checkouts=[{"path": root, "seat": "air-work", "folder": "Proj-Work"}])
+                       checkouts=[{"path": root, "seat": "air-work", "folder": "Proj-Work"}, *extra_checkouts])
             return _CENSUS.section_transcripts(ctx)
         return run
 
@@ -1984,3 +2059,1036 @@ class TestTheTranscriptsSection:
         """Dies to: an unsorted walk or a clock read inside the section: two runs at one pin must
         print the same transcripts section (Pass criteria)."""
         assert json.dumps(section(), sort_keys=True, default=sorted) == json.dumps(section(), sort_keys=True, default=sorted)
+
+    def test_a_checkout_whose_seat_cannot_be_read_is_named_not_dropped(self, section):
+        """Dies to: a checkout with no seat read (its directory gone, so no config to read; or no
+        `espalier.machine`) dropped from the population in silence: its transcripts are a box
+        seat's or not, and the census cannot tell which."""
+        out = section([{"path": "/gone/wt", "seat": None, "folder": "-gone-wt", "gone": True},
+                       {"path": "/plain", "seat": None, "folder": "-plain"}])
+        assert out["checkouts_without_a_seat"] == [
+            {"path": "/gone/wt", "folder": "-gone-wt", "why": "directory gone"},
+            {"path": "/plain", "folder": "-plain", "why": "no espalier.machine"}]
+        assert section()["checkouts_without_a_seat"] == []
+
+    def test_a_clone_with_no_box_seat_checkout_is_unread(self, repo, tmp_path):
+        """Dies to: no checkout naming a box seat (an unnamed machine, a failed worktree list)
+        read as a population of nothing: every lane 0 lines and the verdict `not real`."""
+        (tmp_path / "projects").mkdir()
+        ctx = _ctx(repo, _mail_at={}, projects_dir=str(tmp_path / "projects"),
+                   checkouts=[{"path": str(repo), "seat": None, "folder": "x"}])
+        with pytest.raises(_CENSUS.Unread, match="no checkout of this clone is a box seat"):
+            _CENSUS.section_transcripts(ctx)
+
+    def test_a_population_with_no_record_up_to_the_pin_is_unread(self, repo, tmp_path):
+        """Dies to: a box seat's folder whose every record is stamped after the pin (or none at
+        all) read as lanes that read nothing."""
+        proj = tmp_path / "projects" / "proj"
+        proj.mkdir(parents=True)
+        late = _use("t1", "Read", "2020-01-03T00:00:00Z", "main", file_path=f"{repo}/espalier/cli.py")
+        (proj / "s1.jsonl").write_text(json.dumps(late) + "\n", encoding="utf-8")
+        ctx = _ctx(repo, _mail_at={}, projects_dir=str(tmp_path / "projects"),
+                   checkouts=[{"path": str(repo), "seat": "air", "folder": "proj"}])
+        with pytest.raises(_CENSUS.Unread, match="hold no record up to"):
+            _CENSUS.section_transcripts(ctx)
+
+
+# ---------------------------------------------------------------- the review fold: a failed read is unread
+
+def _raises(exc: BaseException):
+    def reader(ctx):
+        raise exc
+    return reader
+
+
+_READ_FAILURES = [
+    subprocess.TimeoutExpired(["git", "show"], 120.0),
+    FileNotFoundError(2, "No such file or directory", "git"),
+    SyntaxError("invalid syntax"),
+    ValueError("substring not found"),
+    json.JSONDecodeError("Expecting value", "", 0),
+    SystemExit("merge_cost_census: replay failed"),
+]
+
+
+class TestAFailedReadIsUnreadNeverAnAbort:
+    @pytest.mark.parametrize("exc", _READ_FAILURES, ids=lambda e: type(e).__name__)
+    def test_each_read_failure_names_its_section_and_the_rest_still_read(self, repo, monkeypatch, exc):
+        """Dies to: `_section` catching `Unread` alone, so git past its timeout, a program or a
+        file that is not there, a source that does not parse, a short read, bad JSON or a loaded
+        census's `SystemExit` aborts the whole run and no section prints."""
+        monkeypatch.setitem(_CENSUS.SECTION_READERS, "readers", _raises(exc))
+        out = _CENSUS.census(repo, _head(repo), ["functions", "readers"])
+        assert out["readers"] is None
+        assert out["unread"]["readers"].startswith(type(exc).__name__ + ": ")
+        assert out["functions"]["functions"] == 6
+
+    def test_a_cli_that_does_not_parse_is_unread_not_an_abort(self, repo):
+        """Dies to: `ast.parse` in `parse_cli` raising `SyntaxError` through the run, so a pin
+        whose cli.py does not parse prints nothing where it should name what it cannot read."""
+        _add(repo, {"espalier/cli.py": "def broken(:\n    pass\n"})
+        out = _CENSUS.census(repo, _head(repo), ["functions", "layers"])
+        assert out["functions"] is None and out["layers"] is None
+        assert out["unread"]["functions"].startswith("SyntaxError: ")
+
+    def test_a_collision_component_that_exits_is_unread_and_the_others_read(self, repo, monkeypatch):
+        """Dies to: the replay's `SystemExit` (a scratch clone git refuses) escaping the collision
+        section, so one failed component aborts the run and the catch-ups after it never print;
+        or a component skipped by the caller read as an empty one."""
+        _trunk(repo)
+
+        def exits(ctx):
+            raise SystemExit("merge_cost_census: git clone failed")
+
+        monkeypatch.setattr(_CENSUS, "conflicts", exits)
+        out = _CENSUS.census(repo, _head(repo), ["collision"],
+                             extra={"skip_components": ("pairs", "claims", "holds")})["collision"]
+        assert out["conflicts"] is None
+        assert out["unread"]["conflicts"] == "SystemExit: merge_cost_census: git clone failed"
+        assert out["catch_ups"] == {"graded": False, "catch_ups_in_window": 0, "carrying_a_cli_module": 0}
+        assert out["pairs"] is None and out["unread"]["pairs"] == "skipped by the caller"
+
+    @pytest.mark.parametrize("body, why", [(None, "FileNotFoundError"), ("{not json", "JSONDecodeError"),
+                                           ('{"number": 1}', "malformed")], ids=["missing", "bad-json", "no-list"])
+    def test_a_saved_pull_request_list_that_cannot_be_read_leaves_the_pairs_unread(self, repo, tmp_path, body, why):
+        """Dies to: a `--prs-json` file that is not there, or holds bad JSON or no list, raising
+        through the run (the whole census aborts) or read as no pull requests (every lane then
+        reads as one with no open time)."""
+        saved = tmp_path / "prs.json"
+        if body is not None:
+            saved.write_text(body, encoding="utf-8")
+        _trunk(repo)
+        out = _CENSUS.census(repo, _head(repo), ["collision"], extra={
+            "prs_json": str(saved), "skip_components": ("conflicts", "claims", "holds", "catch_ups")})["collision"]
+        assert out["pairs"] is None
+        assert why in out["unread"]["pairs"] and "--prs-json" in out["unread"]["pairs"]
+
+    def test_a_saved_pull_request_list_is_read_and_a_row_with_no_times_left_out(self, repo, tmp_path):
+        """Dies to: `--prs-json` not read (then `gh` runs, which this tmp repo has no remote for),
+        or a pull request with no `createdAt` given a stamp it does not have."""
+        saved = tmp_path / "prs.json"
+        saved.write_text(json.dumps([
+            {"number": 3, "createdAt": "2020-01-01T00:00:00Z", "mergedAt": "2020-01-01T01:00:00+00:00"},
+            {"number": 4, "createdAt": None, "mergedAt": "2020-01-01T02:00:00Z"}]), encoding="utf-8")
+        assert _CENSUS.pr_meta(_ctx(repo, prs_json=str(saved))) == {
+            3: {"created": "2020-01-01T00:00:00Z", "merged": "2020-01-01T01:00:00Z"}}
+
+    def test_a_pin_without_pyproject_names_the_console_entry_unread(self, repo):
+        """Dies to: `console_entry` set to None where the pin holds no pyproject.toml with nothing
+        under unread, which reads as a console entry no move need keep."""
+        out = _CENSUS.census(repo, _head(repo), ["importers"])
+        assert out["importers"]["entry_points"]["console_entry"] is None
+        assert "pyproject.toml is not in" in out["unread"]["importers.console_entry"]
+
+
+class TestTheClustersWithTheImportersUnread:
+    @staticmethod
+    def _fails(root, at):
+        raise _CENSUS.Unread("git ls-tree failed")
+
+    def test_dead_is_no_claim_when_the_importers_cannot_be_read(self, repo, monkeypatch):
+        """Dies to: the importers read failing in silence, so `unreached_dead` still names TABLE
+        and Thing, which another module or a test may well import, with nothing under unread."""
+        monkeypatch.setattr(_CENSUS, "tracked_at", self._fails)
+        out = _CENSUS.census(repo, _head(repo), ["clusters"], extra={"concerns": {}})
+        by = out["clusters"]["by_command"]
+        assert (by["unreached_external"], by["unreached_tests_only"], by["unreached_dead"]) == (None, None, None)
+        assert "git ls-tree failed" in out["unread"]["clusters.importers"]
+        assert out["clusters"]["external_names_read"] is False
+
+    def test_an_unsplit_definition_s_owner_is_unreached_and_unplaced(self, repo, monkeypatch):
+        """Dies to: a definition the failed split cannot place read as dead, or as one cli does not
+        define (`not_in_cli`), by the sections that name owners (probes, ledger rows, doctor)."""
+        monkeypatch.setattr(_CENSUS, "tracked_at", self._fails)
+        owners = _CENSUS._owners(_ctx(repo, concerns={}))
+        assert owners["TABLE"] == {"unreached": None}
+        assert owners["build_parser"] == {"unreached": "entry"}
+
+    def test_a_concern_command_the_pin_does_not_hold_is_named(self, repo):
+        """Dies to: a hand concern's command that is gone at the pin dropped in silence, so the
+        concern is priced over fewer commands than its grouping names, with nothing said."""
+        out = _CENSUS.census(repo, _head(repo), ["clusters"], extra={"concerns": {"pair": ("cmd_alpha", "cmd_gone")}})
+        assert out["clusters"]["concerns"]["missing_commands"] == ["cmd_gone"]
+
+
+class TestAFileThatDoesNotParseIsNamed:
+    @pytest.fixture
+    def out(self, repo):
+        _add(repo, {**_MOVE_FILES,
+                    "tests/test_bad.py": 'from espalier import cli\nKEYS = {("espalier/cli.py", "_core"): 1}\ndef f(:\n'})
+        return _CENSUS.census(repo, _head(repo), ["readers", "importers", "patches", "move_cost"],
+                              extra=dict(_MOVE_EXTRA))
+
+    def test_each_section_that_parses_the_file_names_it(self, out):
+        """Dies to: a file that fails `ast.parse` landing in `unparsed` with nothing under unread,
+        so the readers, importers and patches figures read as complete while one file's sites
+        (here a symbol key, an import and its alias loads) were never seen."""
+        for part in ("readers.unparsed", "importers.unparsed", "patches.unparsed"):
+            assert "tests/test_bad.py" in out["unread"][part]
+
+    def test_the_move_cost_names_the_ingredients_it_reads_in_part(self, out):
+        """Dies to: `_move_inputs` reading `symbol_keys`, the import tallies and the patch tallies
+        as complete over a section read in part; they are kept (a lower bound) and named."""
+        for k in ("symbol_keys", "test_imports", "importers_outside", "patch_sites", "patch_targets"):
+            assert "lower bound" in out["unread"][f"move_cost.{k}"]
+        assert out["move_cost"]["sums"]["symbol_keys"]["section_total"] == 3
+
+
+class TestAFileGitCannotReadIsNamed:
+    def test_each_section_reading_the_tracked_texts_names_what_it_could_not_read(self, repo):
+        """Dies to: `_tracked_texts`' unread files (here a gitlink, which `cat-file` reports
+        missing) surfaced only as the citations section's `files_unread`, so the readers,
+        probes, ledger rows and citations figures read as complete with nothing under unread."""
+        _add(repo, _CITING)
+        _git(repo, "update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,sub")
+        _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "a gitlink")
+        _CENSUS.source_at.cache_clear()
+        out = _CENSUS.census(repo, _head(repo), ["readers", "citations", "probes", "ledger_rows"], extra={"concerns": {}})
+        for section in ("readers", "citations", "probes", "ledger_rows"):
+            assert "['sub']" in out["unread"][f"{section}.texts"]
+        assert out["citations"]["files_unread"] == ["sub"]
+
+
+class TestTheLaneReadOfAModuleTheBaseDoesNotHold:
+    def test_a_module_the_lane_adds_reads_no_definition_and_no_crash(self, repo):
+        """Dies to: the early return for a module absent at the merge-base carrying no
+        `by_definition`, so `section_lane_read` raises KeyError on the first lane that adds a CLI
+        module (a move's new module: the very lane the census is for)."""
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/n", "main")
+        (repo / "espalier" / "newmod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        _edit(repo, "    return 1\n", "    return 2\n")
+        _commit_all(repo, "a new module")
+        _land(repo, 1, "lane/n")
+        ctx = _ctx(repo)
+        ctx["modules"] = (_CENSUS.CLI, "espalier/newmod.py")
+        out = _CENSUS.section_lane_read(ctx)
+        assert out["rows"] == [{"pr": 1, "lines": 2, "definitions": ["_helper"]}]
+
+    def test_a_read_git_fails_is_unread_and_an_absent_path_none(self, repo):
+        """Dies to: `source_at` returning None on any failure of git (a commit git cannot find,
+        which git words as a path not in it), so a failed read reads as a file the commit does
+        not hold, of length 0."""
+        _CENSUS.source_at.cache_clear()
+        assert _CENSUS.source_at(repo, _head(repo), "nope.py") is None
+        with pytest.raises(_CENSUS.Unread, match="failed"):
+            _CENSUS.source_at(repo, "1" * 40, "espalier/cli.py")
+
+
+class TestTheHoldsWhereTheRecordIsMissingOrOutOfOrder:
+    @pytest.fixture
+    def toml(self, repo):
+        (repo / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        _commit_all(repo, "toml")
+        return repo
+
+    def test_a_dispatcher_with_no_mail_at_the_pin_is_unread(self, toml):
+        """Dies to: a dispatcher the mail refs do not hold read as one that held nothing
+        (`declared: []`, a measured zero)."""
+        with pytest.raises(_CENSUS.Unread, match="no mail of the dispatcher 'air'"):
+            _CENSUS.holds(_ctx(toml, _mail_at={"other": []}))
+
+    def test_the_record_starts_at_the_earliest_message_in_any_order(self, toml):
+        """Dies to: the record's start read off the file's first line, which a mail file whose
+        lines are not in stamp order does not hold."""
+        messages = list(reversed(TestTheHolds._MESSAGES))
+        out = _CENSUS.holds(_ctx(toml, _mail_at={"air": messages}))
+        assert out["record_from"] == "2020-01-01T03:04:05Z" and out["record_days"] == 1.0
+
+
+class TestACatchUpDiffGitCannotGiveIsUnread:
+    def test_a_failed_diff_is_unread_never_a_catch_up_that_carried_nothing(self, repo, monkeypatch):
+        """Dies to: `if rc == 0 and _touches_cli(...)` counting a `git diff` that failed as a
+        catch-up that brought no CLI change."""
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/a", "main")
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        _commit_all(repo, "lane a")
+        _git(repo, "checkout", "-q", "main")
+        _edit(repo, "    return 1\n", "    return 2\n")
+        _commit_all(repo, "main brings a cli change")
+        _git(repo, "checkout", "-q", "lane/a")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/a", "main")
+        ctx = _ctx(repo)
+        real = _CENSUS.git
+
+        def diff_fails(root, *args):
+            return (128, "", "fatal: bad object") if args[:1] == ("diff",) else real(root, *args)
+
+        monkeypatch.setattr(_CENSUS, "git", diff_fails)
+        with pytest.raises(_CENSUS.Unread, match="git diff"):
+            _CENSUS.catch_ups_carrying(ctx)
+
+
+# ---------------------------------------------------------------- the review fold: git output by NUL
+
+class TestGitOutputIsSplitOnNul:
+    def test_a_path_git_would_quote_is_read_as_itself(self, repo):
+        """Dies to: `git ls-tree` without `-z`, which quotes a path holding a non-ASCII byte
+        (`"tests/test_caf\\303\\251.py"`): the quoted name then reads as no file, so its patch
+        site and its citation are dropped and the file is named unread."""
+        _add(repo, {**_CITING,
+                    "tests/test_café.py": 'from espalier import cli\n\n\ndef test_x(monkeypatch):\n'
+                                          '    monkeypatch.setattr(cli, "_helper", None)\n',
+                    "docs/café.md": "See `espalier/cli.py::_reader`.\n"})
+        out = _CENSUS.census(repo, _head(repo), ["patches", "citations"])
+        assert (out["patches"]["sites"], out["patches"]["files"]) == (1, 1)
+        assert out["citations"]["files_unread"] == []
+        assert out["citations"]["per_symbol"]["_reader"] == {"struck/struck_fragments": 1, "swept_live/docs": 1}
+
+    def test_a_lane_s_files_name_a_path_git_would_quote_as_itself(self, repo):
+        """Dies to: `git diff --name-only` without `-z`, so a lane that edits `docs/café.md`
+        lists a quoted name no lane edited (a control lane's E then misses its reads)."""
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/u", "main")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "café.md").write_text("x\n", encoding="utf-8")
+        _commit_all(repo, "u")
+        _land(repo, 1, "lane/u")
+        (pr,) = _CENSUS._prs(_ctx(repo))
+        assert pr["files"] == ["docs/café.md"]
+
+    def test_a_subject_holding_a_line_separator_is_one_record(self, repo):
+        """Dies to: `git log` output split with `splitlines`, which also splits at U+2028: a merge
+        subject holding one breaks into two rows (the second has no date, and `_stamp('')`
+        raises), and a lane commit's subject into a phantom second commit."""
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/s", "main")
+        _edit(repo, "    return 1\n", "    return 2\n")
+        _commit_all(repo, "edit\u2028beside a separator")
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m",
+             "Merge pull request #1 from owner/lane/s\u2028and more", "lane/s")
+        rows = _CENSUS.merges_at(repo, _head(repo))
+        assert len(rows) == 1 and rows[0]["subject"].endswith("\u2028and more")
+        (pr,) = _CENSUS.pr_merges(repo, _head(repo))
+        assert [c["messageHeadline"] for c in _CENSUS.lane_commits(repo, pr)] == ["edit\u2028beside a separator"]
+
+    def test_the_file_s_lines_are_counted_as_ast_numbers_them(self, repo):
+        """Dies to: the file's lines counted with `splitlines`, which also breaks a line at a form
+        feed and at \\x85 where Python's tokenizer does not, so `lines` and `file_lines` run past
+        the last ast line number."""
+        text = _CLI_FIXTURE.replace("_LATCH = False\n", "_LATCH = False\n\x0c\n# a page\x85 break\n")
+        _add(repo, {"espalier/cli.py": text})
+        out = _CENSUS.census(repo, _head(repo), ["functions", "clusters"], extra={"concerns": {}})
+        last = max(n.end_lineno for n in ast.parse(text).body)
+        assert out["functions"]["lines"] == out["clusters"]["file_lines"] == last
+
+    def test_a_rule_s_digest_reads_its_lines_where_ast_places_them(self):
+        """Dies to: `rule_digest` indexing `splitlines()` by ast line numbers, so a form feed above
+        the function shifts every line it reads and the pinned digest goes unmatched."""
+        body = "def _is_struck_row(line):\n    return line.startswith('|')\n"
+        assert _CENSUS.rule_digest("# page\x0c one\n\n" + body, "_is_struck_row") == \
+            _CENSUS.rule_digest("# page one\n\n" + body, "_is_struck_row")
+
+
+class TestTheBatchReadKeepsEachPathToItsOwnText:
+    def test_a_tree_entry_s_body_is_stepped_over(self, repo):
+        """Dies to: a non-blob entry (a tree) skipped before its body is stepped over, so the next
+        path's header is read out of the tree's bytes and a later path takes another's text."""
+        _add(repo, {"docs/a.md": "alpha\n"})
+        assert _CENSUS.blobs_at(repo, _head(repo), ["espalier", "docs/a.md", "nope.md"]) == {"docs/a.md": "alpha\n"}
+
+    def test_a_reply_cut_short_is_unread_never_a_short_text(self, repo, monkeypatch):
+        """Dies to: a body the batch cut short decoded as the file's whole text."""
+        def short(argv, **_kw):
+            return subprocess.CompletedProcess(argv, 0, stdout=b"0123 blob 10\nshort", stderr=b"")
+
+        monkeypatch.setattr(_CENSUS, "run_bounded", short)
+        with pytest.raises(_CENSUS.Unread, match="short"):
+            _CENSUS.blobs_at(repo, "HEAD", ["a.md"])
+
+
+# ---------------------------------------------------------------- the review fold: reads the census missed
+
+class TestAPatchOnCliReachedThroughAnImportCall:
+    _TEST = '''\
+import importlib
+import sys
+
+
+def test_it(monkeypatch):
+    monkeypatch.setattr(__import__("espalier.cli").cli, "_helper", lambda: 2)
+    with monkeypatch.context() as m:
+        m.setattr(importlib.import_module("espalier.cli"), "_reader", lambda: 0)
+    monkeypatch.setattr(getattr(importlib.import_module("espalier." + "cli"), "os"), "sep", "/")
+    monkeypatch.setattr(sys.modules[__name__], "FLAG", 1)
+'''
+
+    def test_each_import_call_spelling_of_cli_is_a_site_and_a_dynamic_owner_is_counted(self, repo):
+        """Dies to: `_dotted` returning None for a call, so `__import__("espalier.cli").cli` and
+        `importlib.import_module("espalier.cli")` patch cli unseen (tests/test_bounded_spawn.py's
+        `_git_ignorecase` at 3330a5a), or an owner the census cannot resolve dropped uncounted."""
+        _add(repo, {"tests/test_imp.py": self._TEST})
+        out = _CENSUS.census(repo, _head(repo), ["patches"])["patches"]
+        assert (out["sites"], out["targets"]) == (2, 2)
+        assert sorted(out["per_target"]) == ["_helper", "_reader"]
+        assert out["unresolved_owner"] == {"calls": 2, "by_file": {"tests/test_imp.py": 2}}
+
+
+#: Each command, the one Bash call it is, and the reads the census books for it (40 lines out).
+_SHELL_ROWS = [
+    ("# the dispatch\nsed -n 1,40p espalier/cli.py", [("espalier/cli.py", 40)]),
+    ("cd /work/repo\n# look\nsed -n 1,40p espalier/cli.py", [("espalier/cli.py", 40)]),
+    ("sed -n 1,40p espalier/cli.py # the first forty", [("espalier/cli.py", 40)]),
+    ("sed -n 1,40p \\\n  espalier/cli.py", [("espalier/cli.py", 40)]),
+    ('cat <<< "x"\nsed -n 1,40p espalier/cli.py', [("espalier/cli.py", 40)]),
+    ("sed -n 1,40p < espalier/cli.py", [("espalier/cli.py", 40)]),
+    ("head -c 400 espalier/cli.py", [("espalier/cli.py", 40)]),
+    ("git --no-pager show HEAD:espalier/cli.py", [("espalier/cli.py", 40)]),
+    ("git -P -c core.pager=cat -C /work/repo show HEAD:espalier/cli.py", [("espalier/cli.py", 40)]),
+]
+
+
+class TestTheShellIsReadAsTheShellReadsIt:
+    @pytest.mark.parametrize("command, reads", _SHELL_ROWS, ids=[f"row{i}" for i in range(len(_SHELL_ROWS))])
+    def test_a_read_the_shell_runs_is_booked(self, command, reads):
+        """Dies to: a `#` comment line dropping every later line (shlex's own commenters over a
+        `" ; "`-joined text), a backslash-newline splitting one command in two, a here-string
+        matching the heredoc pattern and stripping the rest, a file fed on stdin read as never a
+        read, `head -c`'s count taken as a file, or git's global options left in front of `show`."""
+        calls = _calls([_use("t1", "Bash", "2020-01-01T01:00:00Z", "lane/a", command=command),
+                        _result("t1", "", {"stdout": _lines(40)})])
+        assert [c["reads"] for c in calls] == [reads]
+
+    @pytest.mark.parametrize("command, text", [
+        ("echo ${#x} a#b '#q' \"#d\" # c", "echo ${#x} a#b '#q' \"#d\" "),
+        ("echo a\\ #b", "echo a\\ #b"),
+        ("x=1 # c\ny=2", "x=1 \ny=2"),
+        ('python3 -c "\n# inside the quotes\nprint(1)"', 'python3 -c "\n# inside the quotes\nprint(1)"'),
+        ("echo 'a\\\nb' \\\nc", "echo 'a\\\nb' c"),
+    ], ids=["word-starts", "escaped-space", "per-line", "multi-line-quote", "continuation"])
+    def test_a_comment_is_a_word_starting_hash_outside_quotes_and_ends_at_its_line(self, command, text):
+        """Dies to: a `#` inside a word, a quote or `${#x}` read as a comment, a comment taking the
+        lines after its own, or a backslash-newline joined inside single quotes."""
+        assert _CENSUS.shell_text(command) == text
+
+    def test_the_lexer_splits_on_the_operators_and_marks_the_pipe(self):
+        """Dies to: the pipe's two sides not marked (then a piped read is charged whole), or `&&`
+        not splitting one simple command from the next."""
+        assert _CENSUS.simple_commands("cat a | head -3 && sed -n 1p b") == [
+            (["cat", "a"], True), (["head", "-3"], True), (["sed", "-n", "1p", "b"], False)]
+        assert _CENSUS.simple_commands("# the dispatch\nsed -n 1,40p espalier/cli.py") == [
+            (["sed", "-n", "1,40p", "espalier/cli.py"], False)]
+
+    @pytest.mark.parametrize("argv, got", [
+        (["head", "-n", "5", "a"], ("read", ["a"], 5)),
+        (["head", "-5", "a"], ("read", ["a"], 5)),
+        (["head", "a"], ("read", ["a"], 10)),
+        (["tail", "-n", "+3", "a"], ("read", ["a"], None)),
+        (["head", "-c", "100", "a"], ("read", ["a"], None)),
+        (["sed", "-n", "2,7p", "a"], ("read", ["a"], 6)),
+        (["sed", "-i", "s/a/b/", "a"], None),
+        (["awk", "-f", "prog.awk", "a"], ("read", ["a"], None)),
+        (["cat", "a", ">", "b"], ("read", ["a"], None)),
+        (["cat", "a", "2>/dev/null"], ("read", ["a"], None)),
+        (["X=1", "cat", "a"], ("read", ["a"], None)),
+        (["cat", "<<", "EOF"], ("read", [], None)),
+        (["cat", "<<<", "word"], ("read", [], None)),
+        (["cat", "<a"], ("read", ["a"], None)),
+        (["git", "show", "HEAD:a", "b:c"], ("read", ["a", "c"], None)),
+        (["git", "--git-dir=.git", "--work-tree", ".", "show", "HEAD:a"], ("read", ["a"], None)),
+        (["git", "grep", "-n", "foo", "a", "b"], ("search", ["a", "b"], None)),
+        (["rg", "foo", "a"], ("search", ["a"], None)),
+        (["echo", "a"], None),
+    ])
+    def test_each_operand_shape_is_read_by_its_rule(self, argv, got):
+        """Dies to: an option's argument taken as a file (`-n 5`, `-c 100`, `-f prog.awk`), a
+        written target or a heredoc tag read as one, a sed script read as a file, `sed -i` read
+        as a read, or a range read from the wrong option."""
+        assert _CENSUS.read_operands(argv) == got
+
+
+# ---------------------------------------------------------------- the review fold: scope and bucketing
+
+_SCOPED_CLI = '''\
+import os
+
+
+def helper():
+    return 1
+
+
+def other():
+    return 2
+
+
+def outer():
+    key = lambda helper: helper
+    rows = [other for other in range(3)]
+    return helper(), key, rows
+
+
+def nested():
+    def inner(helper=helper):
+        return helper
+    return inner
+
+
+def nonlocal_user():
+    other = 1
+
+    def inner():
+        nonlocal other
+        other = 2
+        return other
+    return inner
+
+
+class Holder:
+    helper = 3
+
+    def method(self):
+        return helper()
+
+
+def walrus():
+    return [(other := x) for x in range(2)], other
+
+
+def handler():
+    try:
+        return os.sep
+    except ValueError as helper:
+        return helper
+
+
+def writer():
+    def inner():
+        global other
+        other = 3
+    return inner
+
+
+def shadow_global():
+    global other
+
+    def inner():
+        other = 1
+        return other
+    return other
+'''
+
+
+def _symtable_globals(text: str) -> dict[str, set[str]]:
+    """Each top-level function's and class's module names by Python's own symbol table: every
+    name it, or a scope nested in it, reads as global."""
+    def names(table) -> set[str]:
+        found = {s.get_name() for s in table.get_symbols() if s.is_referenced() and s.is_global()}
+        for child in table.get_children():
+            found |= names(child)
+        return found
+    return {t.get_name(): names(t) for t in symtable.symtable(text, "cli.py", "exec").get_children()}
+
+
+class TestNamesResolveScopeByScope:
+    @pytest.fixture
+    def graph(self, repo):
+        _add(repo, {"espalier/cli.py": _SCOPED_CLI})
+        tree, defs = _CENSUS.parse_cli(repo, _head(repo))
+        return defs, _CENSUS.graph(tree, defs)
+
+    def test_a_nested_scope_s_binding_shadows_only_inside_it(self, graph):
+        """Dies to: names bound anywhere inside a definition pooled as its own locals, so a
+        lambda's parameter, a comprehension's target, a nested function's parameter or a class
+        body's name hides the definition's real load of the module's `helper`; or a nested
+        function's local store of a name the outer declares `global` read as a write."""
+        _defs, g = graph
+        edges = g["edges"]
+        assert (edges["outer"], edges["nested"], edges["Holder"]) == (["helper"], ["helper"], ["helper"])
+        assert (edges["nonlocal_user"], edges["walrus"], edges["handler"]) == ([], [], [])
+        assert g["writes"] == {"writer": ["other"]}
+        assert edges["shadow_global"] == ["other"]
+
+    def test_the_loads_agree_with_symtable_on_every_definition(self, graph):
+        """Dies to: any scope rule `_module_refs` gets wrong where Python's symbol table, the
+        oracle, gets it right: each definition's loads are the module definitions it, or a scope
+        in it, reads as global."""
+        defs, g = graph
+        names = {d["name"] for d in defs}
+        oracle = _symtable_globals(_SCOPED_CLI)
+        for d in defs:
+            if d["kind"] != _CENSUS.NAME:
+                assert g["loads"][d["name"]] == sorted((oracle[d["name"]] & names) - {d["name"]}), d["name"]
+
+    def test_a_module_level_name_definition_s_loads_are_edges(self, repo):
+        """Dies to: a module-level name's own loads (a dispatch table) left out of the graph, so a
+        command reached only through the table reads as reached by nothing."""
+        _add(repo, {"espalier/cli.py": _CLI_FIXTURE + '\n\nHANDLERS = {"alpha": cmd_alpha, "key": lambda cmd_beta: cmd_beta}\n'})
+        tree, defs = _CENSUS.parse_cli(repo, _head(repo))
+        assert _CENSUS.graph(tree, defs)["edges"]["HANDLERS"] == ["cmd_alpha"]
+
+
+class TestAnImportAtModuleLevelIsTopLevel:
+    def test_an_import_in_a_module_level_try_or_if_is_not_lazy(self):
+        """Dies to: `lazy` read off `tree.body` alone, so `try: from espalier.cli import main` at
+        module level (it runs at import time) reads as an import inside a function."""
+        tree = ast.parse("try:\n    from espalier.cli import main\nexcept ImportError:\n    main = None\n"
+                         "if True:\n    from espalier import cli as _cli\nX = _cli.TABLE\n\n\n"
+                         "def f():\n    from espalier.cli import Thing\n    return Thing\n")
+        found = {(f["via"], tuple(f["names"])): f["lazy"] for f in _CENSUS.imports_of_cli("espalier/x.py", tree)}
+        assert found == {("from", ("main",)): False, ("from", ("Thing",)): True, ("alias _cli", ("TABLE",)): False}
+
+
+class TestAPatchOfCliIsBucketedOneWay:
+    _TEST = '''\
+from unittest import mock
+
+from espalier import cli
+from espalier import cli as _cli
+
+
+def test_it(monkeypatch):
+    monkeypatch.setitem(cli.REG, "k", 1)
+    with mock.patch.dict(cli.REG, {}):
+        pass
+    with mock.patch.dict("espalier.cli.REG", {}):
+        pass
+    monkeypatch.setitem(cli.os.environ, "K", "1")
+    something.object(cli, "Z")
+    dict(cli.TABLE)
+
+
+def test_fixture(cli, monkeypatch):
+    cli.Y = 1
+    monkeypatch.setattr(cli, "W", 1)
+    monkeypatch.setattr(_cli, "V", 1)
+'''
+
+    def test_setitem_and_patch_dict_patch_cli_s_own_dict_in_every_spelling(self, repo):
+        """Dies to: `setitem(cli.REG, "k", v)` booked as `REG.k` through cli and
+        `patch.dict(cli.REG)` as `REG`, while `patch.dict("espalier.cli.REG")` is a cli target:
+        one patch of cli's own dict bucketed two ways. `cli.os.environ` is another module's."""
+        _add(repo, {"tests/test_bucket.py": self._TEST})
+        out = _CENSUS.census(repo, _head(repo), ["patches"])["patches"]
+        assert out["per_target"]["REG"] == {"sites": 3, "loaders": 0}
+        assert out["through_cli"] == {"sites": 1, "targets": ["os.environ"]}
+
+    def test_a_call_that_patches_nothing_and_a_shadowed_alias_are_no_sites(self, repo):
+        """Dies to: `_PATCHERS` matched on the last attribute alone (`something.object(cli, "Z")`
+        and a builtin `dict(...)` read as patches), a fixture parameter named `cli` read as the
+        import it shadows (it is a parameter the census cannot resolve), or that parameter
+        hiding a patch through another alias of cli (`_cli`, still the import)."""
+        _add(repo, {"tests/test_bucket.py": self._TEST})
+        out = _CENSUS.census(repo, _head(repo), ["patches"])["patches"]
+        assert sorted(out["per_target"]) == ["REG", "V"]
+        assert out["unresolved_owner"] == {"calls": 2, "by_file": {"tests/test_bucket.py": 2}}
+
+
+class TestANamespaceIsReadInItsOwnScope:
+    def test_a_namespace_built_in_one_function_is_no_argument_in_another(self):
+        """Dies to: the module scope walked whole, so a Namespace one function builds flags a
+        call in another (b takes `ns` as its parameter), while one the module builds and a
+        function passes on (c) is still flagged."""
+        tree = ast.parse("from argparse import Namespace\nfrom espalier.cli import cmd_x\nSHARED = Namespace(top=1)\n\n"
+                         "def a():\n    ns = Namespace(one=1)\n    return 0\n\n"
+                         "def b(ns):\n    return cmd_x(ns)\n\n"
+                         "def c():\n    return cmd_x(SHARED)\n\n"
+                         "def d():\n    ns = Namespace(two=2)\n    return cmd_x(ns)\n")
+        assert _CENSUS.namespace_calls(tree, {"cmd_x"}, set()) == [
+            {"name": "cmd_x", "line": 13, "attributes": ["top"]}, {"name": "cmd_x", "line": 17, "attributes": ["two"]}]
+
+
+class TestALatchReadsItsOwnInitialValue:
+    def test_a_tuple_unpacked_or_signed_name_reads_its_own_value(self):
+        """Dies to: a tuple-unpacked latch (`_A, _B = False, None`) read as `tuple`, a signed
+        number as `unaryop`, or every other constant named by one type (`int`), so a bool or
+        None latch leaves the split latches it belongs to."""
+        tree = ast.parse("_A, _B = False, None\n_C: bool = True\n_D = _E = None\n_F = -1\n_G = 'x'\n_H = 2.5\n_I = {}\n")
+        assert {d["name"]: _CENSUS._initial_value(d) for d in _CENSUS.definitions(tree)} == {
+            "_A": "bool", "_B": "None", "_C": "bool", "_D": "None", "_E": "None", "_F": "int", "_G": "str",
+            "_H": "float", "_I": "dict"}
+
+
+# ---------------------------------------------------------------- the review fold: tests that could not fail
+
+class TestThePinIsReadInUtc:
+    def test_an_offset_stamp_is_read_as_the_same_instant_in_utc(self):
+        """Dies to: `_iso_z` formatting the stamp's own clock time with a `Z`, so a committer
+        date at +02:00 reads two hours late and every window shifts."""
+        assert _CENSUS._iso_z(datetime(2020, 1, 2, 5, 4, 5, tzinfo=timezone(timedelta(hours=2)))) == "2020-01-02T03:04:05Z"
+        assert _CENSUS._stamp("2020-01-02T05:04:05+02:00") == _CENSUS._stamp("2020-01-02T03:04:05Z")
+
+
+class TestTheGraphAlgorithms:
+    def test_a_cycle_is_one_component_and_the_order_is_bottom_up(self):
+        """Dies to: Tarjan's low-link not carried up from a child, so a cycle a -> b -> c -> a
+        splits into three components, or the components out of their bottom-up order."""
+        edges = {"a": ["b"], "b": ["c"], "c": ["a"], "d": ["a"], "e": []}
+        assert _CENSUS.sccs(edges) == [["a", "b", "c"], ["d"], ["e"]]
+
+    def test_a_closure_never_enters_a_stopped_node(self):
+        """Dies to: `stop` ignored, so a command's closure runs on through another command."""
+        assert _CENSUS.closure({"a": ["b"], "b": ["c"], "c": []}, ["a"], stop={"b"}) == {"a"}
+
+    def test_an_edge_into_a_higher_unit_is_a_cycle_and_one_inside_or_below_is_not(self):
+        """Dies to: `order_cycles` never emitting, or counting an edge inside its own unit (`>=`)."""
+        edges = {"a": ["b", "a2"], "a2": [], "b": ["a"]}
+        units = [("low", {"a", "a2"}), ("high", {"b"})]
+        assert _CENSUS.order_cycles(edges, units) == [{"unit": "low", "member": "a", "calls": "b", "above": "high"}]
+        assert _CENSUS.order_cycles({"a": ["a2"], "a2": []}, [("low", {"a", "a2"})]) == []
+
+    def test_a_tie_pulled_in_is_closed_under_what_it_calls(self):
+        """Dies to: the tie-closed set grown by the tie's users alone, never re-closed, so a pulled
+        writer's own callee (`h`) is left behind."""
+        edges = {"r": ["L"], "s": ["L", "h"], "h": [], "L": []}
+        assert _CENSUS.tie_closure(edges, {"r", "L"}, {"L": ("latch", {"r", "s"})}, set()) == {"r", "L", "s", "h"}
+
+    def test_a_definition_in_a_module_level_if_or_try_is_top_level(self):
+        """Dies to: `_top_statements` not flattening a module-level `if` (or `try`), so a function
+        defined in both branches, or in an `except`, is no definition."""
+        tree = ast.parse("if X:\n    def a():\n        pass\nelse:\n    def a():\n        pass\n"
+                         "try:\n    import y\nexcept ImportError:\n    def b():\n        pass\n")
+        defs = _CENSUS.definitions(tree)
+        assert [(d["name"], d.get("rebinds", 0)) for d in defs] == [("a", 1), ("b", 0)]
+
+    def test_a_memo_filled_through_a_method_is_a_memo(self, repo):
+        """Dies to: the memo mutators read as no call at all, so a dict filled by `.setdefault`
+        has no writer and moves apart from the function that fills it."""
+        _add(repo, {"espalier/cli.py": "_CACHE = {}\n\n\ndef fill():\n    _CACHE.setdefault('k', 1)\n    return _CACHE\n"})
+        out = _CENSUS.census(repo, _head(repo), ["functions"])["functions"]
+        assert out["memos"] == {"_CACHE": {"writers": ["fill"], "readers": ["fill"]}}
+
+
+class TestTheSmallReaders:
+    @pytest.mark.parametrize("path, kind", [("task-packs/TP-1.md", "records"), ("memory/x.md", "records"),
+                                            ("tests/test_x.py", "tests"), ("docs/RUN.md", "docs"),
+                                            ("scripts/run.py", "code")])
+    def test_a_module_run_is_classed_by_where_it_lives(self, path, kind):
+        """Dies to: `_run_kind` reading a record or a test as code (a pack's dated mention then
+        reads as a run no move may change)."""
+        assert _CENSUS._run_kind(path) == kind
+
+    def test_a_relative_import_resolves_against_its_file_s_package(self):
+        """Dies to: `_absolute` ignoring the level past one dot, so `from ..x import y` in
+        espalier/sub/mod.py reads as espalier.sub.x."""
+        node = ast.parse("from ..x import y\nfrom . import z\nfrom .. import w\n").body
+        got = [_CENSUS._absolute("espalier/sub/mod.py", n) for n in node]
+        assert got == ["espalier.x", "espalier.sub", "espalier"]
+
+    @pytest.mark.parametrize("path, module", [("espalier/__init__.py", "espalier"), ("espalier/sub/__init__.py", "espalier.sub"),
+                                              ("espalier/cli.py", "espalier.cli")])
+    def test_a_package_s_init_is_the_package(self, path, module):
+        """Dies to: `_module_of` keeping `.__init__`, so `from espalier import doctor` never
+        matches the package's own module name."""
+        assert _CENSUS._module_of(path) == module
+
+    def test_a_top_level_import_binds_its_first_name_or_its_alias(self):
+        """Dies to: `import a.b` bound to `a.b` (it binds `a`), or a module-level try's import
+        left out."""
+        tree = ast.parse("import os.path\nimport a.b as c\nfrom espalier import doctor, fuse as f\nfrom espalier.cli import *\n"
+                         "try:\n    import tomllib\nexcept ImportError:\n    tomllib = None\n")
+        assert _CENSUS.import_bindings(tree, _CENSUS.CLI, {"espalier.doctor"}) == {
+            "os": "os", "c": "a.b", "doctor": "espalier.doctor", "f": "espalier", "tomllib": "tomllib"}
+
+    def test_a_definition_s_lazy_imports_name_every_module_they_load(self):
+        """Dies to: a plain `import x` inside a definition left out of its outbound edges."""
+        node = ast.parse("def f():\n    import json, os.path\n    from espalier import fuse\n").body[0]
+        assert _CENSUS.lazy_targets(node, _CENSUS.CLI, {"espalier.fuse"}) == [
+            {"line": 2, "modules": ["json", "os.path"]}, {"line": 3, "modules": ["espalier.fuse"]}]
+
+    def test_a_global_import_a_definition_rebinds_is_still_a_load_of_it(self):
+        """Dies to: a name declared `global` read as the definition's local where it assigns it,
+        so its load of cli's top-level import is no import the new module needs."""
+        tree = ast.parse("from espalier._text import plural\n\n\ndef f():\n    global plural\n    plural = plural or str\n"
+                         "    return plural\n")
+        (d,) = _CENSUS.definitions(tree)
+        assert _CENSUS._bound_loads(d, _CENSUS.import_bindings(tree, _CENSUS.CLI, set())) == {"plural"}
+
+    def test_a_nested_definition_is_keyed_by_its_bare_name_too(self):
+        """Dies to: a method keyed by `Class::method` alone, so a hand reader naming the bare
+        method is reported missing."""
+        spans = _CENSUS.named_spans(ast.parse("class A:\n    def m(self):\n        pass\n"))
+        assert spans == {"A": [(1, 3)], "A::m": [(2, 3)], "m": [(2, 3)]}
+
+    def test_the_bare_spelling_needs_no_dash_before_it(self):
+        """Dies to: the bare spelling's lookbehind without `-`, so `my-cli.py::x` reads as a
+        citation of cli.py."""
+        bare = _CENSUS.citation_patterns(("espalier/cli.py",))["bare_symbol"]
+        assert bare.findall("my-cli.py::x, test_cli.py::y, a/cli.py::z, a.cli.py::v and cli.py::w") == ["w"]
+
+    @pytest.mark.parametrize("line, struck", [
+        ("| 12 | ~~`DEF-1`~~ | x |", True),
+        ("| ~~`DEF-1`~~ | `espalier/cli.py::a` |", True),
+        ("| `DEF-1` | x |", False),
+        ("   | ~~`DEF-1`~~ | x |", True),
+        ("    | ~~`DEF-1`~~ | x |", False),
+        ("| a long first cell | ~~`DEF-1`~~ |", False),
+    ])
+    def test_a_struck_row_is_read_by_the_sweep_s_own_rule(self, line, struck):
+        """Dies to: the port reading the first cell alone (`[1:2]`: a row number before the id
+        cell hides the strike), or an indent past three spaces read as a row."""
+        sweep = {"cell_split": re.compile(r"(?<!\\)\|"), "codespan": re.compile(r"`[^`]*`"),
+                 "struck_span": re.compile(r"~~`[^`]+`~~"), "row_max": 8}
+        assert _CENSUS._is_struck_line(line, sweep) is struck
+
+    def test_a_command_that_is_no_python_is_read_as_text(self):
+        """Dies to: the text fallback dropped, so a probe whose command greps cli.py (no
+        `python -c`) reads cli by nothing and names no symbol."""
+        got = _CENSUS.probe_reads({"subject": "docs/x.md", "cmd": "grep -n cmd_alpha espalier/cli.py"},
+                                  ("espalier/cli.py",), {"cmd_alpha", "_helper"})
+        assert got == {"by": ["path (text)"], "symbols": ["cmd_alpha"], "parsed": False}
+
+    def test_a_binary_file_is_left_out_and_counted(self, repo):
+        """Dies to: a blob holding a NUL read as text (its citation counted), or the binary count
+        left at zero, so the files read and the files counted cannot be reconciled."""
+        _add(repo, _CITING)
+        (repo / "docs" / "blob.bin").write_bytes(b"\x00 espalier/cli.py::_helper\n")
+        _commit_all(repo, "a binary file")
+        _CENSUS.source_at.cache_clear()
+        out = _CENSUS.census(repo, _head(repo), ["citations"])["citations"]
+        assert out["binary"] == 1
+        assert out["totals"]["path_symbol"] == {"occurrences": 12, "files": 9}
+
+    def test_a_fragment_whose_second_line_is_no_row_is_named(self, repo):
+        """Dies to: a ledger fragment with no table row on line 2 (or too few cells) dropped from
+        the tiers in silence, or counted as a live row."""
+        _add(repo, {**_ROWS, "task-packs/ledger.d/DEF-18.md": "<!-- -->\nno table here\n",
+                    "task-packs/ledger.d/DEF-19.md": "<!-- -->\n| `DEF-19` |\n"})
+        out = _CENSUS.census(repo, _head(repo), ["ledger_rows"], extra={"concerns": {}})["ledger_rows"]
+        assert out["not_a_row"] == ["task-packs/ledger.d/DEF-18.md", "task-packs/ledger.d/DEF-19.md"]
+        assert (out["fragments"], out["live"]) == (10, 6)
+
+
+class TestTheWorkingTreeIsNeverRead:
+    def test_an_import_or_a_patch_only_the_working_tree_holds_is_not_counted(self, repo):
+        """Dies to: the importers or the patches read from the working tree, where an uncommitted
+        import and an uncommitted patch sit beside the committed ones."""
+        _add(repo, {"tests/test_x.py": "from espalier import cli\n\n\ndef test_a(monkeypatch):\n"
+                                       "    monkeypatch.setattr(cli, '_helper', None)\n"})
+        (repo / "tests" / "test_x.py").write_text(
+            "from espalier import cli\nfrom espalier.cli import Thing\n\n\ndef test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(cli, '_helper', None)\n    monkeypatch.setattr(cli, '_reader', None)\n",
+            encoding="utf-8")
+        out = _CENSUS.census(repo, _head(repo), ["importers", "patches"])
+        assert out["importers"]["tests"] == {"files": 1, "distinct_names": 0}
+        assert (out["patches"]["sites"], sorted(out["patches"]["per_target"])) == (1, ["_helper"])
+
+    def test_a_target_s_own_definition_is_no_loader_of_it(self, repo):
+        """Dies to: a recursive function counted as a loader of itself, so a patched target whose
+        only loader is its own body reads as loaded (and stays green under a move)."""
+        _add(repo, {"espalier/cli.py": "def _rec(n):\n    return _rec(n - 1) if n else 0\n",
+                    "tests/test_rec.py": "from espalier import cli\n\n\ndef test_r(monkeypatch):\n"
+                                         "    monkeypatch.setattr(cli, '_rec', None)\n"})
+        out = _CENSUS.census(repo, _head(repo), ["patches"])["patches"]
+        assert out["per_target"] == {"_rec": {"sites": 1, "loaders": 0}}
+        assert out["no_loader"] == ["_rec"]
+
+
+class TestTheDoctorBoundaryInDepth:
+    _CLI = TestTheDoctorBoundary._CLI + "\n\ndef _via_alias():\n    from espalier import doctor as d\n    return d.verdict()\n"
+    _DOCTOR = '''\
+def outer():
+    from espalier.cli import _shared, _via_alias
+
+    def inner():
+        from espalier.cli import _probe
+        return _probe()
+    return _shared(), _via_alias(), inner
+'''
+
+    def test_the_innermost_holder_is_the_nested_function_and_a_lazy_alias_calls_back(self, repo):
+        """Dies to: the innermost holder read as the outermost (`max` for `min`: the import in
+        `inner` held by `outer`), or a cli member's lazy `from espalier import doctor as d`
+        left out of the calls back into doctor."""
+        _add(repo, {"espalier/cli.py": self._CLI, "espalier/doctor.py": self._DOCTOR})
+        out = _CENSUS.census(repo, _head(repo), ["doctor_boundary"], extra={"concerns": {}})["doctor_boundary"]
+        assert out["doctor_functions"] == ["outer"]
+        assert out["doctor_functions_innermost"] == 2
+        assert out["calls_back_into_doctor"]["_via_alias"] == ["verdict"]
+
+
+class TestTheMannWhitneyP:
+    @staticmethod
+    def _by_hand(xs, ys):
+        """The normal approximation written out: U by pairs, the tie-corrected variance, the
+        continuity correction."""
+        n1, n2 = len(xs), len(ys)
+        u = sum(1.0 for x in xs for y in ys if x > y) + sum(0.5 for x in xs for y in ys if x == y)
+        n = n1 + n2
+        ties = sum(t ** 3 - t for t in collections.Counter([*xs, *ys]).values())
+        var = n1 * n2 / 12 * ((n + 1) - ties / (n * (n - 1)))
+        return 1 - statistics.NormalDist().cdf((u - n1 * n2 / 2 - 0.5) / var ** 0.5)
+
+    @staticmethod
+    def _exact(xs, ys):
+        pool, n1 = [*xs, *ys], len(xs)
+        def u_of(a, b):
+            return sum(1.0 for x in a for y in b if x > y) + sum(0.5 for x in a for y in b if x == y)
+        observed, hits, total = u_of(xs, ys), 0, 0
+        for idx in itertools.combinations(range(len(pool)), n1):
+            picked = set(idx)
+            a = [pool[i] for i in idx]
+            b = [pool[i] for i in range(len(pool)) if i not in picked]
+            total += 1
+            hits += u_of(a, b) >= observed
+        return hits / total
+
+    @pytest.mark.parametrize("xs, ys", [([3, 5, 8, 9, 11, 14], [1, 2, 4, 6, 7, 10]),
+                                        ([0, 0, 0, 5, 6], [0, 0, 1, 2, 3, 3])], ids=["no-ties", "ties"])
+    def test_the_p_is_the_tie_corrected_normal_approximation(self, xs, ys):
+        """Dies to: the ranks of a tie not averaged, the tie correction dropped from the variance,
+        or the continuity correction dropped: each moves the p off its written-out value."""
+        got = _CENSUS.mann_whitney_greater([float(v) for v in xs], [float(v) for v in ys])
+        assert got == pytest.approx(self._by_hand(xs, ys), abs=1e-12)
+
+    def test_the_approximation_sits_near_the_exact_permutation_p(self):
+        """Dies to: the one-sided direction turned round (xs above ys must read a small p, under
+        0.05 here, and within 0.01 of the exact permutation p)."""
+        xs, ys = [3, 5, 8, 9, 11, 14, 15], [1, 2, 4, 6, 7, 10, 12]
+        got = _CENSUS.mann_whitney_greater([float(v) for v in xs], [float(v) for v in ys])
+        assert got == pytest.approx(self._exact(xs, ys), abs=0.01)
+        assert _CENSUS.mann_whitney_greater([float(v) for v in ys], [float(v) for v in xs]) > 0.5
+
+    def test_an_empty_or_an_all_tied_read_has_no_p(self):
+        """Dies to: a p made up where there is no variance to read one from (an empty arm, every
+        value tied)."""
+        assert _CENSUS.mann_whitney_greater([], [1.0]) is None
+        assert _CENSUS.mann_whitney_greater([1.0, 1.0], [1.0, 1.0]) is None
+
+    def test_both_arms_reading_zero_everywhere_is_unmeasured(self):
+        """Dies to: two all-zero arms graded `not real` (no spread, so the minimum detectable ratio
+        reads 1.0 and the rule calls the effect absent), where a read that saw nothing measured
+        nothing; one arm of zeros beside one that read is a measurement."""
+        out = _CENSUS.item3_verdict([0] * 9, [0] * 9)
+        assert out["verdict"] == "unmeasured" and "zero" in out["why"]
+        assert _CENSUS.item3_verdict([0] * 9, [5] * 9)["verdict"] == "not real"
+
+
+class TestTheMailAtThePin:
+    _MESSAGES = [{"id": "m1", "type": "note", "from": "air", "at": "2020-01-01T00:00:00Z", "re": {}, "text": "before"},
+                 {"id": "m2", "type": "note", "from": "air", "at": "2020-01-02T03:04:05Z", "re": {}, "text": "at the pin"},
+                 {"id": "m3", "type": "note", "from": "air", "at": "2020-01-03T00:00:00Z", "re": {}, "text": "after"}]
+
+    @pytest.fixture
+    def mailed(self, repo):
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "mail-air")
+        (repo / "mail.jsonl").write_text("".join(json.dumps(m) + "\n" for m in self._MESSAGES) + "not json\n",
+                                         encoding="utf-8")
+        _commit_all(repo, "mail")
+        _git(repo, "update-ref", "refs/remotes/origin/mail/air", "HEAD")
+        _git(repo, "checkout", "-q", "main")
+        return repo
+
+    def test_the_refs_are_read_by_machine(self, mailed):
+        """Dies to: a mail ref keyed by its whole name, so the census looks for machine
+        `refs/remotes/origin/mail/air` and finds no dispatcher's mail."""
+        assert _CENSUS.mail_refs(mailed) == {"air": _git(mailed, "rev-parse", "mail-air").strip()}
+
+    def test_a_message_after_the_pin_is_not_in_a_read_at_it(self, mailed):
+        """Dies to: the mail read whole (m3, sent a day after the pin, counted at it), or cut
+        before the pin's own second (m2 dropped)."""
+        ctx = _ctx(mailed)
+        ctx["pin"]["mail_refs"] = _CENSUS.mail_refs(mailed)
+        assert [m["id"] for m in _CENSUS.mail_at(ctx)["air"]] == ["m1", "m2"]
+
+    def test_no_mail_refs_is_unread(self, repo):
+        """Dies to: a clone with no mail refs read as a record of no claims and no holds."""
+        with pytest.raises(_CENSUS.Unread, match="no mail refs"):
+            _CENSUS.mail_at(_ctx(repo))
+
+
+class TestTheClaimIntervals:
+    def test_a_released_claim_closes_and_an_open_one_runs_to_the_pin(self):
+        """Dies to: every claim read as closed, or an open claim's end left at its start or empty
+        rather than the pin's date (it then overlaps nothing after it)."""
+        mail = {"s": [{"id": "c1", "type": "claim", "from": "s", "at": "2020-01-01T00:00:00Z",
+                       "re": {"lane": "lane/a", "paths": ["espalier/cli.py"]}},
+                      {"id": "r1", "type": "release", "from": "s", "at": "2020-01-01T02:00:00Z", "re": {"lane": "lane/a"}},
+                      {"id": "c2", "type": "claim", "from": "s", "at": "2020-01-01T03:00:00Z",
+                       "re": {"lane": "lane/b", "paths": ["docs/x.md"]}}]}
+        rows = {r["id"]: r for r in _CENSUS.claim_intervals(mail, _UNTIL)}
+        assert (rows["c1"]["end"], rows["c1"]["closed"], rows["c1"]["paths"]) == (
+            "2020-01-01T02:00:00Z", True, ["espalier/cli.py"])
+        assert (rows["c2"]["end"], rows["c2"]["closed"]) == (_UNTIL, False)
+
+
+class TestTheHunkPoints:
+    def test_each_hunk_shape_falls_on_its_base_lines(self):
+        """Dies to: a deletion's lines not each placed, an omitted count read as zero (a change of
+        one line read as an insertion), or an insertion placed on the line after it."""
+        diff = "@@ -5,2 +4,0 @@\n-a\n-b\n@@ -9 +7 @@\n-c\n+d\n@@ -12,0 +11,2 @@\n+e\n+f\n"
+        assert _CENSUS.hunk_points(diff) == [(5, False), (6, False), (9, False), (12, True)]
+
+
+class TestTheCheckoutsOfAClone:
+    def test_each_worktree_is_read_with_its_seat_and_a_gone_one_is_flagged(self, repo, tmp_path):
+        """Dies to: a checkout whose directory is gone given a seat, or dropped unflagged; the
+        seat not read; or the project folder derived otherwise than Claude Code names it."""
+        _git(repo, "config", "espalier.machine", "air")
+        side, gone = tmp_path / "side.wt", tmp_path / "gone.wt"
+        _git(repo, "worktree", "add", "-q", "-b", "side", str(side))
+        _git(repo, "worktree", "add", "-q", "-b", "gone", str(gone))
+        os.rename(gone, tmp_path / "moved.wt")
+        rows = {pathlib.Path(r["path"]).name: r for r in _CENSUS.checkouts(repo)}
+        assert (rows["repo"]["seat"], rows["side.wt"]["seat"], rows["gone.wt"]["seat"]) == ("air", "air", None)
+        assert (rows["side.wt"]["gone"], rows["gone.wt"]["gone"]) == (False, True)
+        assert rows["side.wt"]["folder"] == re.sub(r"[^A-Za-z0-9]", "-", rows["side.wt"]["path"])
+
+    def test_a_worktree_list_git_refuses_is_unread(self, tmp_path, monkeypatch):
+        """Dies to: a `git worktree list` that fails read as a clone with no checkouts, which the
+        transcripts section then reads as a population of nothing."""
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        with pytest.raises(_CENSUS.Unread, match="git worktree list failed"):
+            _CENSUS.checkouts(plain)
+
+    def test_a_windows_path_is_compared_with_its_backslashes_as_slashes(self):
+        """Dies to: a path, a cwd or a root spelled with backslashes compared as it is, so a
+        Windows seat's read of cli.py maps onto no repository path."""
+        assert _CENSUS._relative("C:\\work\\repo\\espalier\\cli.py", "", ["C:/work/repo"]) == "espalier/cli.py"
+        assert _CENSUS._relative("espalier\\cli.py", "C:\\work\\repo", ["C:\\work\\repo"]) == "espalier/cli.py"
+        assert _CENSUS.project_folder("C:\\work\\repo") == _CENSUS.project_folder("C:/work/repo") == "C--work-repo"
+
+
+class TestAReadPastTheEndCountsNoLines:
+    def test_a_read_whose_result_holds_no_line_counts_zero(self):
+        """Dies to: `numLines` 0 falling back to the result's text, which counts a warning (three
+        lines of system reminder) as three lines of cli.py read."""
+        calls = _calls([_use("t1", "Read", "2020-01-01T01:00:00Z", "lane/a",
+                             file_path=f"{_ROOT}/espalier/cli.py", offset=5000, limit=40),
+                        _result("t1", "<system-reminder>\nWarning: the file is shorter\n</system-reminder>",
+                                {"file": {"numLines": 0}})])
+        assert [c["reads"] for c in calls] == [[("espalier/cli.py", 0)]]
+
+
+class TestTheCensusAsACommand:
+    def test_the_census_imports_at_module_level_only(self):
+        """Dies to: an `import` inside a function (`import shlex` in simple_commands, which the
+        module already imports; `import math` in item3_verdict), which a reader of the module's
+        imports misses."""
+        tree = ast.parse(_SCRIPT.read_text(encoding="utf-8"))
+        local = [(fn.name, s.lineno) for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 for s in ast.walk(fn) if isinstance(s, (ast.Import, ast.ImportFrom))]
+        assert local == []
+
+    def test_text_mode_says_where_it_cuts_and_prints_each_part_unread(self, repo, capsys):
+        """Dies to: text mode cutting a section at 400 characters with no word that it did, or
+        leaving a `<section>.<part>` unread entry out of the report, so a part read in silence
+        reads as whole."""
+        assert _CENSUS.main(["functions", "importers", "--at", _head(repo), "--root", str(repo)]) == 0
+        out = capsys.readouterr().out
+        assert "functions: {" in out and "[cut at 400 of" in out
+        assert "importers.console_entry: UNREAD (pyproject.toml is not in" in out
+
+    def test_an_unknown_section_is_refused_by_name(self, repo, capsys):
+        """Dies to: an unknown section read as an empty one, or run as every section."""
+        with pytest.raises(SystemExit) as exc:
+            _CENSUS.main(["nonsense", "--at", _head(repo), "--root", str(repo)])
+        assert exc.value.code == 2
+        assert "unknown section(s) ['nonsense']" in capsys.readouterr().err
+
+    def test_a_module_and_a_skip_reach_the_census(self, repo, capsys):
+        """Dies to: `--module` not added to the CLI modules (the pin reads cli.py alone), or
+        `--skip` not handed to the collision section (a skipped component then runs)."""
+        _trunk(repo)
+        argv = ["collision", "--at", _head(repo), "--root", str(repo), "--json", "--module", "espalier/x.py"]
+        for component in ("conflicts", "pairs", "claims", "holds"):
+            argv += ["--skip", component]
+        assert _CENSUS.main(argv) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["pin"]["modules"] == ["espalier/cli.py", "espalier/x.py"]
+        assert out["collision"]["unread"] == {k: "skipped by the caller" for k in ("conflicts", "pairs", "claims", "holds")}
+        assert out["collision"]["catch_ups"]["catch_ups_in_window"] == 0

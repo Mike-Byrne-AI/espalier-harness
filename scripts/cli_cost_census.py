@@ -39,11 +39,14 @@ import hashlib
 import importlib.util
 import itertools
 import json
+import math
 import os
+import posixpath
 import re
 import shlex
 import shutil
 import statistics
+import subprocess
 import sys
 import textwrap
 import tomllib
@@ -84,6 +87,37 @@ class Unread(Exception):
     """A section that could not be read: its reason goes under ``unread``."""
 
 
+#: The failures that leave a section (or one part of one) unread, never a value:
+#: git past ``GIT_TIMEOUT`` (``TimeoutExpired``), a program or a file that is not
+#: there (``OSError``: no git, no gh, a missing ``--prs-json``), a source that
+#: does not parse (``SyntaxError``), a short read or bad JSON (``ValueError``,
+#: ``JSONDecodeError`` among them) and the ``SystemExit`` a loaded census raises
+#: (``merge_cost_census``'s replay and scratch clone).
+_READ_FAILURES = (Unread, subprocess.TimeoutExpired, OSError, SyntaxError, ValueError, SystemExit)
+
+
+def _unread(exc: BaseException) -> Unread:
+    """``exc`` as an ``Unread``, its type named where it was not one already."""
+    return exc if isinstance(exc, Unread) else Unread(f"{type(exc).__name__}: {exc}")
+
+
+def _partial(ctx: dict, section: str, part: str, why: str) -> None:
+    """Name ``<section>.<part>`` under the run's ``unread``: a part of a section
+    that could not be read while the rest of it was."""
+    ctx.setdefault("_partial_unread", {}).setdefault(section, {})[part] = why
+
+
+def _ast_lines(text: str) -> list[str]:
+    """``text``'s lines as Python's tokenizer numbers them, which ``ast`` line
+    numbers index: split on ``\\r\\n``, ``\\r`` and ``\\n`` alone, where
+    ``str.splitlines`` also splits on ``\\f``, ``\\v``, ``\\x1c`` to ``\\x1e``,
+    ``\\x85``, U+2028 and U+2029."""
+    lines = re.split(r"\r\n|\r|\n", text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 # ---------------------------------------------------------------- git, at the pin
 
 def git(root: Path, *args: str) -> tuple[int, str, str]:
@@ -116,37 +150,63 @@ def resolve_pin(root: Path, at: str) -> dict:
 
 @functools.lru_cache(maxsize=None)
 def source_at(root: Path, at: str, path: str) -> str | None:
-    """``path``'s text at commit ``at``, or ``None`` where the commit has no such file."""
-    rc, out, _err = git(root, "show", f"{at}:{path}")
-    return out if rc == 0 else None
+    """``path``'s text at commit ``at``, or ``None`` where the commit has no
+    such file: ``git show`` fails and ``git ls-tree`` lists no entry at that
+    path (asked of git, never read off its words, which a translated git
+    words otherwise and which name a commit git cannot find as a path not in
+    it). Any other failure (a commit git cannot read, a git that cannot run)
+    is ``Unread``: a failed read is never an absent file."""
+    rc, out, err = git(root, "show", f"{at}:{path}")
+    if rc == 0:
+        return out
+    rc, listed, _err = git(root, "--literal-pathspecs", "ls-tree", "-z", "--name-only", at, "--", path)
+    if rc == 0 and not listed:
+        return None
+    raise Unread(f"git show {at[:12]}:{path} failed: {err.strip()[:200]}")
 
 
 def tracked_at(root: Path, at: str) -> list[str]:
-    rc, out, err = git(root, "ls-tree", "-r", "--name-only", at)
+    """Every path tracked at ``at``, NUL-separated (``-z``): without it git
+    quotes a path holding a non-ASCII byte, and the quoted name then reads as
+    no file."""
+    rc, out, err = git(root, "ls-tree", "-r", "--name-only", "-z", at)
     if rc != 0:
         raise Unread(f"git ls-tree {at} failed: {err.strip()}")
-    return [line for line in out.splitlines() if line]
+    return [p for p in out.split("\0") if p]
 
 
 def blobs_at(root: Path, at: str, paths: list[str]) -> dict[str, str]:
     """Each path's text at ``at``, read in one ``git cat-file --batch``. A path
-    git cannot read is left out, so a caller counts what it read."""
-    if not paths:
+    git cannot read (absent, not a blob, or a name holding a newline, which
+    the batch's line protocol cannot carry) is left out, so a caller counts
+    what it read. A reply the batch cut short is ``Unread``: every entry but a
+    ``missing`` one carries a body, which is stepped over whatever its type,
+    so no path's text is read as another's."""
+    asked = [p for p in paths if "\n" not in p]
+    if not asked:
         return {}
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
-    proc = run_bounded(["git", "cat-file", "--batch"], input="".join(f"{at}:{p}\n" for p in paths).encode(),
+    proc = run_bounded(["git", "cat-file", "--batch"], input="".join(f"{at}:{p}\n" for p in asked).encode(),
                        capture_output=True, timeout=GIT_TIMEOUT, env=env, cwd=str(root))
     if proc.returncode != 0:
         raise Unread(f"git cat-file --batch at {at[:12]} failed")
     data, out, pos = proc.stdout, {}, 0
-    for path in paths:
-        end = data.index(b"\n", pos)
-        header = data[pos:end].split()
+    for path in asked:
+        end = data.find(b"\n", pos)
+        if end < 0:
+            raise Unread(f"git cat-file --batch at {at[:12]} replied short: no header for {path}")
+        header = data[pos:end]
         pos = end + 1
-        if len(header) < 3 or header[1] != b"blob":
+        if header.endswith((b" missing", b" ambiguous")):
             continue
-        size = int(header[2])
-        out[path] = data[pos:pos + size].decode("utf-8", errors="replace")
+        parts = header.split()
+        if len(parts) != 3 or not parts[2].isdigit():
+            raise Unread(f"git cat-file --batch at {at[:12]}: a header it cannot read for {path}: {header[:80]!r}")
+        size = int(parts[2])
+        if pos + size + 1 > len(data):
+            raise Unread(f"git cat-file --batch at {at[:12]} replied short: {path}'s body is cut")
+        if parts[1] == b"blob":
+            out[path] = data[pos:pos + size].decode("utf-8", errors="replace")
         pos += size + 1
     return out
 
@@ -208,27 +268,107 @@ def definitions(tree: ast.Module) -> list[dict]:
     return list(seen.values())
 
 
-def _locally_bound(node: ast.AST) -> tuple[set[str], set[str]]:
-    """``(bound, declared_global)`` over a definition and every scope nested in
-    it. A load of a module name that the definition binds locally reads the
-    local; a name declared ``global`` anywhere in it is the module's."""
-    bound: set[str] = set()
-    declared: set[str] = set()
-    for sub in ast.walk(node):
-        if isinstance(sub, (ast.Global, ast.Nonlocal)):
-            if isinstance(sub, ast.Global):
-                declared.update(sub.names)
-        elif isinstance(sub, ast.Name) and isinstance(sub.ctx, (ast.Store, ast.Del)):
-            bound.add(sub.id)
-        elif isinstance(sub, ast.arg):
-            bound.add(sub.arg)
-        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and sub is not node:
-            bound.add(sub.name)
-        elif isinstance(sub, (ast.Import, ast.ImportFrom)):
-            bound.update((a.asname or a.name).split(".")[0] for a in sub.names)
-        elif isinstance(sub, ast.ExceptHandler) and sub.name:
-            bound.add(sub.name)
-    return bound - declared, declared
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _new_scope(kind: str, parent: dict | None) -> dict:
+    return {"kind": kind, "parent": parent, "bound": set(), "global": set(), "nonlocal": set()}
+
+
+def _resolves_to_module(name: str, start: dict) -> str | None:
+    """``"module"`` where a name used in scope ``start`` is the module's own
+    binding, ``"global"`` where it reaches the module through a ``global``
+    declaration, ``None`` where a scope on the way binds it. A class body is
+    seen only from inside itself, never from a scope nested in it."""
+    scope, first = start, True
+    while scope["kind"] != "module":
+        if first or scope["kind"] != "class":
+            if name in scope["global"]:
+                return "global"
+            if name in scope["nonlocal"] or name in scope["bound"]:
+                return None
+        scope, first = scope["parent"], False
+    return "module"
+
+
+def _module_refs(root: ast.AST) -> tuple[set[int], set[int]]:
+    """``(refs, writes)``: the ``id`` of each ``ast.Name`` under ``root`` (a
+    module-level statement or expression) that names the module's own binding,
+    resolved scope by scope as Python resolves it. A function, a lambda, a
+    comprehension and a class body each bind their own names (parameters,
+    targets, imports, nested definitions, ``except`` names, match captures; a
+    walrus binds in the scope around its comprehension), so a nested scope's
+    binding shadows only inside it; a definition's decorators, defaults and
+    annotations, and a comprehension's first iterable, are read in the scope
+    around it. ``writes``: the stores and deletes that reach the module through
+    a ``global`` declaration (a module-level statement's own target is none)."""
+    module = _new_scope("module", None)
+    names: list[tuple[ast.Name, dict]] = []
+    stack: list[tuple[ast.AST, dict]] = [(root, module)]
+
+    def push(nodes, scope: dict) -> None:
+        stack.extend((n, scope) for n in nodes if n is not None)
+
+    def args_of(args: ast.arguments) -> list[ast.arg]:
+        return [a for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg) if a is not None]
+
+    while stack:
+        node, cur = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            params = args_of(node.args)
+            push([*getattr(node, "decorator_list", ()), *(a.annotation for a in params), *node.args.defaults,
+                  *node.args.kw_defaults, getattr(node, "returns", None)], cur)
+            inner = _new_scope("function", cur)
+            inner["bound"].update(a.arg for a in params)
+            inner["bound"].update(p.name for p in getattr(node, "type_params", ()))
+            if isinstance(node, ast.Lambda):
+                push([node.body], inner)
+            else:
+                cur["bound"].add(node.name)
+                push(node.body, inner)
+        elif isinstance(node, ast.ClassDef):
+            cur["bound"].add(node.name)
+            push([*node.decorator_list, *node.bases, *(k.value for k in node.keywords)], cur)
+            push(node.body, _new_scope("class", cur))
+        elif isinstance(node, _COMPREHENSIONS):
+            push([node.generators[0].iter], cur)
+            inner = _new_scope("comprehension", cur)
+            for i, gen in enumerate(node.generators):
+                push([gen.target, *gen.ifs, *([gen.iter] if i else [])], inner)
+            push([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt], inner)
+        elif isinstance(node, ast.NamedExpr):
+            home = cur
+            while home["kind"] == "comprehension":
+                home = home["parent"]
+            home["bound"].add(node.target.id)
+            names.append((node.target, home))
+            push([node.value], cur)
+        elif isinstance(node, ast.Name):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                cur["bound"].add(node.id)
+            names.append((node, cur))
+        elif isinstance(node, ast.Global):
+            cur["global"].update(node.names)
+        elif isinstance(node, ast.Nonlocal):
+            cur["nonlocal"].update(node.names)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            cur["bound"].update((a.asname or a.name).split(".")[0] for a in node.names if a.name != "*")
+        else:
+            bound = getattr(node, "name", None) if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) \
+                else getattr(node, "rest", None) if isinstance(node, ast.MatchMapping) else None
+            if bound:
+                cur["bound"].add(bound)
+            push(ast.iter_child_nodes(node), cur)
+    refs: set[int] = set()
+    writes: set[int] = set()
+    for node, scope in names:
+        how = _resolves_to_module(node.id, scope)
+        if how is None:
+            continue
+        refs.add(id(node))
+        if how == "global" and isinstance(node.ctx, (ast.Store, ast.Del)):
+            writes.add(id(node))
+    return refs, writes
 
 
 def _module_aliases(tree: ast.Module) -> dict[str, str]:
@@ -256,7 +396,9 @@ def graph(tree: ast.Module, defs: list[dict]) -> dict:
     graph cannot read is counted per definition, never dropped: a ``getattr``
     with a constant name, a string constant equal to a definition's name, an
     attribute load through an imported module, and a lazy import inside the
-    definition (its outbound edge to another module)."""
+    definition (its outbound edge to another module). Every name is resolved
+    scope by scope (``_module_refs``): a lambda's parameter or a nested
+    function's local shadows a module name inside that scope alone."""
     names = {d["name"] for d in defs}
     aliases = _module_aliases(tree)
     loads: dict[str, set[str]] = {n: set() for n in names}
@@ -264,22 +406,17 @@ def graph(tree: ast.Module, defs: list[dict]) -> dict:
     unresolved: dict[str, dict] = {}
     for d in defs:
         node, me = d["node"], d["name"]
-        if d["kind"] == NAME:
-            local: set[str] = set()
-            declared: set[str] = set()
-            walk_root = node.value if getattr(node, "value", None) is not None else node
-        else:
-            local, declared = _locally_bound(node)
-            walk_root = node
+        walk_root = node.value if d["kind"] == NAME and getattr(node, "value", None) is not None else node
+        refs, stores = _module_refs(walk_root)
         u = unresolved.setdefault(me, {"getattr": 0, "string_names": 0, "through_module": 0,
                                        "lazy_imports": []})
         for sub in ast.walk(walk_root):
             if isinstance(sub, ast.Name):
                 if sub.id not in names or sub.id == me and d["kind"] == NAME:
                     continue
-                if isinstance(sub.ctx, ast.Load) and (sub.id not in local or sub.id in declared):
+                if isinstance(sub.ctx, ast.Load) and id(sub) in refs:
                     loads[me].add(sub.id)
-                elif isinstance(sub.ctx, (ast.Store, ast.Del)) and sub.id in declared:
+                elif id(sub) in stores:
                     writes[me].add(sub.id)
             elif isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == "getattr":
                 if len(sub.args) >= 2 and isinstance(sub.args[1], ast.Constant):
@@ -287,7 +424,7 @@ def graph(tree: ast.Module, defs: list[dict]) -> dict:
             elif isinstance(sub, ast.Constant) and isinstance(sub.value, str) and sub.value in names:
                 u["string_names"] += 1
             elif (isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name)
-                  and sub.value.id in aliases and sub.value.id not in local):
+                  and sub.value.id in aliases and id(sub.value) in refs):
                 u["through_module"] += 1
             elif isinstance(sub, ast.ImportFrom) and d["kind"] != NAME:
                 u["lazy_imports"].append({"module": "." * sub.level + (sub.module or ""),
@@ -361,7 +498,7 @@ def section_functions(ctx: dict) -> dict:
     fns = [d for d in defs if d["kind"] == FUNCTION]
     lazy = sum(len(u["lazy_imports"]) for u in g["unresolved"].values())
     return {
-        "lines": len(text.splitlines()) if text else 0,
+        "lines": len(_ast_lines(text)) if text else 0,
         "functions": len(fns),
         "public_functions": sum(1 for d in fns if not d["name"].startswith("_")),
         "classes": sum(1 for d in defs if d["kind"] == CLASS),
@@ -604,9 +741,11 @@ def section_clusters(ctx: dict) -> dict:
     call (``external``), from the tests' imports alone (``tests_only``), and
     the rest (``dead``). The two import reads come from the importers
     section; where it cannot be read they are ``None``, never an empty list,
-    and ``dead`` is then no claim. Each split is
+    and ``dead`` is then ``None`` too, no claim, with ``clusters.importers``
+    named under ``unread``. Each split is
     given over every definition and over functions alone, and the census
-    asserts the sum."""
+    asserts the sum. A command a hand concern names that the pin does not hold
+    is named under ``missing_commands``, never dropped in silence."""
     _tree, defs, g = _functions_ctx(ctx)
     edges = g["edges"]
     kinds = {d["name"]: d["kind"] for d in defs}
@@ -617,17 +756,23 @@ def section_clusters(ctx: dict) -> dict:
     external, tested = ctx.get("_external_names"), ctx.get("_test_names")
     if external is None:
         try:
-            files = _importers(ctx)["files"].values()
-        except Unread:
-            files = None
-        if files is not None:
+            imp = _importers(ctx)
+        except _READ_FAILURES as exc:
+            imp = None
+            _partial(ctx, "clusters", "importers", f"the importers read failed, so dead is no claim: {_unread(exc)}")
+        if imp is not None:
+            files = imp["files"].values()
             external = sorted({n for f in files if not f["test"] for n in f["names"]})
             tested = sorted({n for f in files if f["test"] for n in f["names"]})
+            if imp["unparsed"]:
+                _partial(ctx, "clusters", "importers", f"the importers read left {len(imp['unparsed'])} file(s) "
+                                                       f"unparsed, so external, tests_only and dead are partial: "
+                                                       f"{imp['unparsed'][:5]}")
     outside = closure(edges, [n for n in external or () if n in edges], stop=set(commands))
     in_tests = closure(edges, [n for n in tested or () if n in edges], stop=set(commands))
     fns = {n for n in edges if kinds[n] == FUNCTION}
     total_lines = sum(lines[n] for n in fns)
-    file_lines = len((source_at(ctx["root"], ctx["pin"]["at"], CLI) or "").splitlines())
+    file_lines = len(_ast_lines(source_at(ctx["root"], ctx["pin"]["at"], CLI) or ""))
     concerns = dict(ctx.get("concerns", CONCERNS))
 
     def size(s: set[str]) -> dict:
@@ -648,7 +793,7 @@ def section_clusters(ctx: dict) -> dict:
                 "unreached_entry": sorted(unreached & from_entry),
                 "unreached_external": None if external is None else sorted(rest & outside),
                 "unreached_tests_only": None if tested is None else sorted(rest - outside & in_tests),
-                "unreached_dead": sorted(rest - outside - in_tests),
+                "unreached_dead": None if external is None or tested is None else sorted(rest - outside - in_tests),
                 "per_root": {r: {**size(set(ms)), "members": ms} for r, ms in per.items()},
                 "shared_by": {m: sorted(reached[m]) for m in sorted(shared)}}
 
@@ -675,6 +820,8 @@ def section_clusters(ctx: dict) -> dict:
     return {"definitions": len(defs), "commands": len(commands), "function_lines": total_lines,
             "file_lines": file_lines, "by_command": by_command,
             "concerns": {"cluster_source": "hand", "groups": {k: list(v) for k, v in concerns.items()},
+                         "missing_commands": sorted({c for group in concerns.values() for c in group
+                                                     if c not in edges}),
                          "closure_sizes": overlap, "concern_size": unions, **by_concern},
             "external_names_read": external is not None}
 
@@ -705,8 +852,10 @@ def imports_of_cli(path: str, tree: ast.Module) -> list[dict]:
     (relative spellings resolved), and an alias bound to the module itself
     (``from espalier import cli as _cli``, ``import espalier.cli``), whose
     names are the attributes loaded through it. ``lazy`` is an import inside
-    a function or class body: an outbound edge that loads at call time."""
-    top = {id(n) for n in tree.body}
+    a function or class body: an outbound edge that loads at call time. One in
+    a module-level ``if`` or ``try`` (``try: from espalier.cli import main``)
+    runs at import time, so it is top-level (``_top_statements``)."""
+    top = {id(n) for n in _top_statements(tree.body)}
     out: list[dict] = []
     aliases: dict[str, bool] = {}
     for node in ast.walk(tree):
@@ -750,20 +899,72 @@ def _is_namespace_call(node: ast.AST) -> bool:
         or (isinstance(node.func, ast.Attribute) and node.func.attr == "Namespace"))
 
 
+_FUNCTION_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _own_nodes(scope: ast.AST):
+    """The nodes of one scope (the module or one function or class): its body,
+    a nested function's or class's body left to that scope, whose decorators,
+    defaults, bases and keywords are this scope's (as its own are the scope
+    around it)."""
+    stack = list(scope.body) if isinstance(scope.body, list) else [scope.body]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, _FUNCTION_SCOPES):
+            stack.extend(n for n in (*getattr(node, "decorator_list", ()), *getattr(node, "bases", ()),
+                                     *(k.value for k in getattr(node, "keywords", ()))) if n is not None)
+            if not isinstance(node, ast.ClassDef):
+                stack.extend(n for n in (*node.args.defaults, *node.args.kw_defaults) if n is not None)
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
 def namespace_calls(tree: ast.Module, names: set[str], aliases: set[str]) -> list[dict]:
     """Each call, in one importer of cli, of a name it takes from cli that is
     handed an ``argparse.Namespace`` built by hand: passed directly, or through
-    a name bound to one in the same scope. The attributes it sets are a
-    contract no parser checks, so a move that changes the command's attributes
-    breaks the caller with nothing to catch it. ``names`` are the names the
-    file takes; ``aliases`` the names it binds to cli itself (``_cli.cmd_x(ns)``)."""
+    a name bound to one, read as Python resolves the name: in the call's own
+    function, else the functions around it, else the module (a class body is
+    not seen from a method). A Namespace one function builds is no argument of
+    a call in another. The attributes it sets are a contract no parser checks,
+    so a move that changes the command's attributes breaks the caller with
+    nothing to catch it. ``names`` are the names the file takes; ``aliases``
+    the names it binds to cli itself (``_cli.cmd_x(ns)``)."""
+    scopes: list[ast.AST] = [tree, *(n for n in ast.walk(tree) if isinstance(n, _FUNCTION_SCOPES))]
+    parent_of: dict[int, ast.AST | None] = {id(tree): None}
+    for scope in scopes:
+        for node in _own_nodes(scope):
+            if isinstance(node, _FUNCTION_SCOPES):
+                parent_of[id(node)] = scope
+    bound: dict[int, set[str]] = {}
+    built: dict[int, dict[str, ast.Call]] = {}
+    for scope in scopes:
+        here: set[str] = set()
+        made: dict[str, ast.Call] = {}
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            a = scope.args
+            here |= {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg) if x is not None}
+        for node in _own_nodes(scope):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                here.add(node.id)
+            elif isinstance(node, _FUNCTION_SCOPES):
+                here.add(getattr(node, "name", ""))
+            if isinstance(node, ast.Assign) and _is_namespace_call(node.value):
+                made.update({t.id: node.value for t in node.targets if isinstance(t, ast.Name)})
+        bound[id(scope)], built[id(scope)] = here, made
+
+    def namespace_named(name: str, scope: ast.AST) -> ast.Call | None:
+        cur, first = scope, True
+        while cur is not None:
+            if first or not isinstance(cur, ast.ClassDef):
+                if name in bound[id(cur)]:
+                    return built[id(cur)].get(name)
+            cur, first = parent_of.get(id(cur)), False
+        return None
+
     out: dict[tuple[str, int], dict] = {}
-    for scope in ast.walk(tree):
-        if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        built = {t.id: sub.value for sub in ast.walk(scope) if isinstance(sub, ast.Assign)
-                 and _is_namespace_call(sub.value) for t in sub.targets if isinstance(t, ast.Name)}
-        for sub in ast.walk(scope):
+    for scope in scopes:
+        for sub in _own_nodes(scope):
             if not isinstance(sub, ast.Call):
                 continue
             f = sub.func
@@ -772,7 +973,7 @@ def namespace_calls(tree: ast.Module, names: set[str], aliases: set[str]) -> lis
             if called not in names:
                 continue
             for arg in [*sub.args, *(k.value for k in sub.keywords)]:
-                ns = arg if _is_namespace_call(arg) else built.get(arg.id) if isinstance(arg, ast.Name) else None
+                ns = arg if _is_namespace_call(arg) else namespace_named(arg.id, scope) if isinstance(arg, ast.Name) else None
                 if ns is not None:
                     out[(called, sub.lineno)] = {"name": called, "line": sub.lineno,
                                                  "attributes": sorted(k.arg for k in ns.keywords if k.arg)}
@@ -808,6 +1009,7 @@ def _importers(ctx: dict) -> dict:
                 namespaces[path] = namespace_calls(tree, set(files[path]["names"]),
                                                    {f["via"].split(" ", 1)[1] for f in found if f["via"] != "from"})
     ctx["_importers"] = {"files": files, "unparsed": unparsed, "read": len(texts), "tracked_py": len(py),
+                         "unread": sorted(set(py) - set(texts)),
                          "tracked": tracked, "statements": statements, "namespaces": namespaces}
     return ctx["_importers"]
 
@@ -817,13 +1019,29 @@ def section_importers(ctx: dict) -> dict:
     each file with the names it takes, whether lazily, and the totals outside
     tests and in them, kept apart. Then the two runs no move may change: the
     console entry in ``pyproject.toml`` and each tracked file that runs
-    ``python -m espalier.cli`` (read as text, every file type)."""
+    ``python -m espalier.cli`` (read as text, every file type). A ``.py`` file
+    that does not parse or cannot be read, a file the run scan cannot read, and
+    a pin with no ``pyproject.toml`` (``console_entry`` is ``None``) are each
+    named under ``unread`` as ``importers.<part>``."""
     imp = _importers(ctx)
     root, at = ctx["root"], ctx["pin"]["at"]
     outside = {p: f for p, f in imp["files"].items() if not f["test"]}
     tests = {p: f for p, f in imp["files"].items() if f["test"]}
     pyproject = source_at(root, at, "pyproject.toml")
-    texts = blobs_at(root, at, [p for p in imp["tracked"] if p not in ctx["modules"]])
+    scanned = [p for p in imp["tracked"] if p not in ctx["modules"]]
+    texts = blobs_at(root, at, scanned)
+    if imp["unparsed"]:
+        _partial(ctx, "importers", "unparsed", f"{len(imp['unparsed'])} .py file(s) that name cli do not parse, "
+                                               f"so their imports are not read: {imp['unparsed'][:5]}")
+    if imp["unread"]:
+        _partial(ctx, "importers", "py_files", f"{len(imp['unread'])} tracked .py file(s) could not be read: "
+                                               f"{imp['unread'][:5]}")
+    if len(texts) < len(scanned):
+        gone = sorted(set(scanned) - set(texts))
+        _partial(ctx, "importers", "module_runs", f"{len(gone)} tracked file(s) could not be read for the "
+                                                  f"-m espalier.cli scan: {gone[:5]}")
+    if pyproject is None:
+        _partial(ctx, "importers", "console_entry", f"pyproject.toml is not in {at[:12]}")
     module_runs = sorted(p for p, t in texts.items() if "espalier.cli" in t
                          and ("-m espalier.cli" in t or '"-m", "espalier.cli"' in t or "'-m', 'espalier.cli'" in t))
     by_kind: dict[str, list[str]] = {"code": [], "docs": [], "tests": [], "records": []}
@@ -853,6 +1071,94 @@ def _run_kind(path: str) -> str:
 #: its ``object``/``dict`` forms, by the last attribute of the call.
 _PATCHERS = {"setattr": "setattr", "delattr": "delattr", "object": "patch.object", "dict": "patch.dict",
              "patch": "mock.patch", "setitem": "setitem"}
+#: The last names one of those attributes must sit on to be a patcher: a
+#: monkeypatch is bound to any name (``monkeypatch``, ``mp``, ``m``), so its
+#: ``setattr``/``delattr``/``setitem`` take any; ``object`` and ``dict`` are
+#: ``patch``'s (``patch.object``, ``mock.patch.dict``, ``mocker.patch.object``),
+#: and ``patch`` is ``mock``'s or ``mocker``'s. A bare name is a patcher only as
+#: ``setattr``, ``delattr``, ``setitem`` or ``patch``: a builtin ``dict(...)``,
+#: ``object()`` or ``something.object(cli, "Z")`` patches nothing.
+_PATCHER_BASES = {"object": ("patch",), "dict": ("patch",), "patch": ("mock", "mocker")}
+_PATCHER_NAMES = ("setattr", "delattr", "setitem", "patch")
+
+
+def _patcher_kind(func: ast.AST) -> str | None:
+    if isinstance(func, ast.Name):
+        return _PATCHERS[func.id] if func.id in _PATCHER_NAMES else None
+    if not isinstance(func, ast.Attribute) or func.attr not in _PATCHERS:
+        return None
+    need = _PATCHER_BASES.get(func.attr)
+    base = func.value
+    last = base.attr if isinstance(base, ast.Attribute) else base.id if isinstance(base, ast.Name) else None
+    return _PATCHERS[func.attr] if need is None or last in need else None
+
+
+def _import_call_module(node: ast.AST) -> str | None:
+    """The module a call with a constant name returns: ``__import__("a.b")``
+    the top package ``a`` (no ``fromlist``), ``importlib.import_module("a.b")``
+    (or a bare ``import_module``) ``a.b`` itself; else ``None``."""
+    if not (isinstance(node, ast.Call) and len(node.args) == 1 and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str) and not node.args[0].value.startswith(".")):
+        return None
+    f = node.func
+    called = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+    if called == "__import__" and not node.keywords:
+        return node.args[0].value.split(".")[0]
+    if called == "import_module" and not node.keywords:
+        return node.args[0].value
+    return None
+
+
+def _cli_chain(node: ast.AST, aliases: set[str]) -> tuple[bool, list[str] | None]:
+    """``(resolved, chain)`` for a patcher's first argument: ``chain`` is the
+    attributes after the cli module (``[]`` for cli itself) where the argument
+    reaches cli, through an alias of it, ``__import__("espalier.cli").cli`` or
+    ``importlib.import_module("espalier.cli")``, else ``None``. ``resolved`` is
+    False where the census cannot tell statically what the argument is (a
+    subscript, a call, ``getattr(import_module("espalier." + m), a)``)."""
+    dotted = _dotted(node)
+    if dotted is not None:
+        for a in sorted(aliases, key=len, reverse=True):
+            if dotted == a:
+                return True, []
+            if dotted.startswith(a + "."):
+                return True, dotted[len(a) + 1:].split(".")
+        return True, None
+    parts: list[str] = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.insert(0, cur.attr)
+        cur = cur.value
+    module = _import_call_module(cur)
+    if module is None:
+        return False, None
+    full = ".".join([module, *parts])
+    if full == CLI_MODULE:
+        return True, []
+    return True, full[len(CLI_MODULE) + 1:].split(".") if full.startswith(CLI_MODULE + ".") else None
+
+
+def _shadowed_heads(tree: ast.Module, heads: set[str]) -> dict[int, set[str]]:
+    """``{id(node): heads}`` for each node inside a function or lambda that
+    takes a parameter named like the first name of an alias of cli (a fixture
+    ``cli``): there that name is the parameter, which the census cannot
+    resolve, never the import (another alias stays the import)."""
+    out: dict[int, set[str]] = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        a = fn.args
+        hidden = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg) if x is not None} & heads
+        if hidden:
+            for n in ast.walk(fn):
+                out.setdefault(id(n), set()).update(hidden)
+    return out
+
+
+def _through_shadow(node: ast.AST, first: ast.AST, shadowed: dict[int, set[str]]) -> bool:
+    """Whether ``first`` reaches cli by a name a parameter around ``node`` shadows."""
+    dotted = _dotted(first)
+    return dotted is not None and dotted.split(".")[0] in shadowed.get(id(node), ())
 
 
 def cli_aliases(tree: ast.Module) -> set[str]:
@@ -883,47 +1189,71 @@ def _dotted(node: ast.AST) -> str | None:
     return None
 
 
-def patch_sites(tree: ast.Module) -> list[dict]:
-    """Each site in one test file that patches a name on cli: a patcher
-    called on an alias of cli and a constant name (``setattr(cli, "X", ...)``,
-    ``patch.object(cli, "X")``, ``delattr``), a string target
-    (``"espalier.cli.X"``), or an assignment ``cli.X = ...``. A patcher called
+def patch_sites(tree: ast.Module) -> tuple[list[dict], int]:
+    """``(sites, unresolved_owner)``: each site in one test file that patches a
+    name on cli, and the count of patcher calls whose first argument the census
+    cannot resolve statically, so a site it misses is still counted somewhere.
+    A site: a patcher (``_patcher_kind``) called on cli and a constant name
+    (``setattr(cli, "X", ...)``, ``patch.object(cli, "X")``, ``delattr``), cli
+    read through an alias, ``__import__("espalier.cli").cli`` or
+    ``importlib.import_module("espalier.cli")``; a string target
+    (``"espalier.cli.X"``); or an assignment ``cli.X = ...``. A patcher called
     on an attribute OF cli (``setattr(cli.shutil, "which", ...)``) patches
-    another module through cli: ``through`` names it."""
+    another module through cli: ``through`` names it. ``setitem`` and
+    ``patch.dict`` patch the object they are handed, so
+    ``setitem(cli.REG, "k", v)`` and ``patch.dict(cli.REG)`` patch cli's
+    ``REG``, as ``patch.dict("espalier.cli.REG")`` does. Inside a function
+    that takes a parameter named like the alias the name is that parameter:
+    unresolved, never cli."""
     aliases = cli_aliases(tree)
+    shadowed = _shadowed_heads(tree, {a.split(".")[0] for a in aliases})
     sites: list[dict] = []
+    unresolved = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            func = node.func
-            last = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
-            kind = _PATCHERS.get(last or "")
+            kind = _patcher_kind(node.func)
             if kind is None or not node.args:
                 continue
             raising = next((k.value for k in node.keywords if k.arg == "raising"), None)
             raising_false = isinstance(raising, ast.Constant) and raising.value is False
             first = node.args[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str) and first.value.startswith(CLI_MODULE + "."):
-                rest = first.value[len(CLI_MODULE) + 1:]
-                sites.append({"target": rest.split(".")[0], "through": rest if "." in rest else None,
-                              "kind": kind, "spelling": "string", "line": node.lineno, "raising_false": raising_false})
+            if isinstance(first, ast.Constant):
+                if isinstance(first.value, str) and first.value.startswith(CLI_MODULE + "."):
+                    rest = first.value[len(CLI_MODULE) + 1:]
+                    sites.append({"target": rest.split(".")[0], "through": rest if "." in rest else None,
+                                  "kind": kind, "spelling": "string", "line": node.lineno,
+                                  "raising_false": raising_false})
                 continue
-            owner = _dotted(first)
-            if owner is None:
+            resolved, chain = _cli_chain(first, aliases)
+            if not resolved or (chain is not None and _through_shadow(node, first, shadowed)):
+                unresolved += 1
+                continue
+            if chain is None:
                 continue
             name = node.args[1].value if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) else None
-            if owner in aliases and isinstance(name, str):
-                sites.append({"target": name, "through": None, "kind": kind, "spelling": "alias",
-                              "line": node.lineno, "raising_false": raising_false})
-            elif any(owner.startswith(a + ".") for a in aliases):
-                attr = owner.split(".", len(next(a for a in aliases if owner.startswith(a + ".")).split(".")))[-1]
-                sites.append({"target": attr.split(".")[0], "through": f"{attr}.{name}" if isinstance(name, str) else attr,
-                              "kind": kind, "spelling": "alias", "line": node.lineno, "raising_false": raising_false})
+            if not chain:
+                if isinstance(name, str):
+                    sites.append({"target": name, "through": None, "kind": kind, "spelling": "alias",
+                                  "line": node.lineno, "raising_false": raising_false})
+                continue
+            attr = ".".join(chain)
+            if kind in ("setitem", "patch.dict"):
+                through = attr if len(chain) > 1 else None
+            else:
+                through = f"{attr}.{name}" if isinstance(name, str) else attr
+            sites.append({"target": chain[0], "through": through, "kind": kind, "spelling": "alias",
+                          "line": node.lineno, "raising_false": raising_false})
         elif isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Attribute) and _dotted(t.value) in aliases:
+                if not isinstance(t, ast.Attribute):
+                    continue
+                _resolved, chain = _cli_chain(t.value, aliases)
+                if chain == [] and _through_shadow(node, t.value, shadowed):
+                    unresolved += 1
+                elif chain == []:
                     sites.append({"target": t.attr, "through": None, "kind": "assign", "spelling": "alias",
                                   "line": node.lineno, "raising_false": False})
-    return sites
+    return sites, unresolved
 
 
 def section_patches(ctx: dict) -> dict:
@@ -933,24 +1263,39 @@ def section_patches(ctx: dict) -> dict:
     definitions in cli load each target (a target with more than one loader
     stays green under a partial move); ``raising=False`` sites, which create a
     missing attribute in silence; and the patches of another module through
-    cli. Every figure is over the CLI modules' first entry, ``espalier/cli.py``."""
+    cli. Every figure is over the CLI modules' first entry, ``espalier/cli.py``.
+    ``unresolved_owner`` counts the patcher calls whose first argument the
+    census cannot resolve statically (``getattr(import_module(...), a)``,
+    ``sys.modules[...]``, a fixture parameter named like the alias), so a
+    patch of cli the AST read misses still shows. A test file that does not
+    parse or cannot be read is named under ``unread`` (``patches.unparsed``,
+    ``patches.tests``)."""
     root, at = ctx["root"], ctx["pin"]["at"]
     tests = [p for p in tracked_at(root, at) if p.startswith("tests/") and p.endswith(".py")]
     texts = blobs_at(root, at, tests)
     tree_cli, defs = parse_cli(root, at)
     defined = {d["name"] for d in defs}
     by_file: dict[str, list[dict]] = {}
+    unresolved: dict[str, int] = {}
     unparsed = []
     for path in sorted(texts):
         if "cli" not in texts[path]:
             continue
         try:
-            found = patch_sites(ast.parse(texts[path]))
+            found, missed = patch_sites(ast.parse(texts[path]))
         except (SyntaxError, ValueError):
             unparsed.append(path)
             continue
         if found:
             by_file[path] = found
+        if missed:
+            unresolved[path] = missed
+    if unparsed:
+        _partial(ctx, "patches", "unparsed", f"{len(unparsed)} test file(s) that name cli do not parse, so their "
+                                             f"patches are not read: {unparsed[:5]}")
+    if len(texts) < len(tests):
+        gone = sorted(set(tests) - set(texts))
+        _partial(ctx, "patches", "tests", f"{len(gone)} tracked test file(s) could not be read: {gone[:5]}")
     on_cli = [(p, s) for p, ss in by_file.items() for s in ss if s["through"] is None]
     through = [(p, s) for p, ss in by_file.items() for s in ss if s["through"] is not None]
     targets = sorted({s["target"] for _p, s in on_cli})
@@ -958,9 +1303,9 @@ def section_patches(ctx: dict) -> dict:
     for d in defs:
         if d["kind"] == NAME:
             continue
-        local, declared = _locally_bound(d["node"])
+        refs, _writes = _module_refs(d["node"])
         seen = {n.id for n in ast.walk(d["node"]) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
-                and (n.id not in local or n.id in declared)}
+                and id(n) in refs}
         for t in targets:
             if t in seen and t != d["name"]:
                 loader_names[t].append(d["name"])
@@ -973,9 +1318,13 @@ def section_patches(ctx: dict) -> dict:
     imported = [t for t in targets if t not in defined]
     raising = {t: {"sites": sites_of[t], "raising_false": sum(1 for _p, s in on_cli if s["target"] == t and s["raising_false"])}
                for t in targets if any(s["target"] == t and s["raising_false"] for _p, s in on_cli)}
-    return {"rule": "ast over tests/: a patcher on an alias of espalier.cli with a constant name, a string target "
-                    "'espalier.cli.X', or an assignment to an attribute of the alias",
+    return {"rule": "ast over tests/: a patcher (monkeypatch's setattr/delattr/setitem on any name; patch.object, "
+                    "patch.dict, mock.patch) on espalier.cli (an alias of it, __import__('espalier.cli').cli, "
+                    "importlib.import_module('espalier.cli')) with a constant name, a string target "
+                    "'espalier.cli.X', or an assignment to an attribute of the alias; setitem and patch.dict "
+                    "patch the object handed them",
             "files": len({p for p, _s in on_cli}), "sites": len(on_cli), "targets": len(targets),
+            "unresolved_owner": {"calls": sum(unresolved.values()), "by_file": dict(sorted(unresolved.items()))},
             "by_kind": {k: sum(1 for _p, s in on_cli if s["kind"] == k) for k in sorted({s["kind"] for _p, s in on_cli})},
             "string_targets": sum(1 for _p, s in on_cli if s["spelling"] == "string"),
             "more_than_one_loader": {"targets": len(multi), "sites": sum(sites_of[t] for t in multi)},
@@ -1005,6 +1354,17 @@ def _tracked_texts(ctx: dict) -> dict[str, str]:
     return ctx["_texts"]
 
 
+def _texts_for(ctx: dict, section: str) -> dict[str, str]:
+    """``_tracked_texts`` for one section, which names ``<section>.texts`` under
+    ``unread`` where a tracked file could not be read: what it counts is then
+    over the files read, a lower bound."""
+    texts = _tracked_texts(ctx)
+    unread = ctx["_texts_meta"]["unread"]
+    if unread:
+        _partial(ctx, section, "texts", f"{len(unread)} tracked file(s) could not be read at the pin: {unread[:5]}")
+    return texts
+
+
 def _clusters(ctx: dict) -> dict:
     if "_clusters" not in ctx:
         ctx["_clusters"] = section_clusters(ctx)
@@ -1015,7 +1375,9 @@ def _owners(ctx: dict) -> dict[str, dict]:
     """``{definition: owner}`` from the clusters section's ownership: ``owned_by``
     one command, ``shared_by`` several, or ``unreached`` (``entry``,
     ``external``, ``tests_only``, ``dead``), with the concern that owns it (or
-    the concerns that share it) beside."""
+    the concerns that share it) beside. Where the importers read failed, an
+    unreached definition the split cannot place is ``{"unreached": None}``,
+    never one cli does not define."""
     if "_owners" not in ctx:
         cl = _clusters(ctx)
         by, con = cl["by_command"], cl["concerns"]
@@ -1028,6 +1390,8 @@ def _owners(ctx: dict) -> dict[str, dict]:
         for kind in ("entry", "external", "tests_only", "dead"):
             for m in by[f"unreached_{kind}"] or ():
                 out[m] = {"unreached": kind}
+        for d in _functions_ctx(ctx)[1]:
+            out.setdefault(d["name"], {"unreached": None})
         for name, row in con["per_root"].items():
             for m in row["members"]:
                 out.setdefault(m, {})["concern"] = name
@@ -1099,7 +1463,9 @@ def reader_sites(tree: ast.Module, modules) -> tuple[list[dict], int]:
     (``("espalier/cli.py", "espalier/x.py")`` is two paths, no key); a string
     constant equal to the module's path (a key's first element is the key's,
     never counted twice); and a path join whose right operand is the module's
-    file name (``ROOT / "espalier" / "cli.py"``). A comment or a docstring that
+    file name (``ROOT / "espalier" / "cli.py"``), which counts a join by the
+    file name alone, so a fixture's write of ``tmp_path / "espalier" / "cli.py"``
+    is one as a read of the repository's module is. A comment or a docstring that
     names the path reads nothing. ``loose`` counts the file name as a constant
     outside a join (``Path(..., "cli.py")``), a spelling no class is given."""
     paths, names = set(modules), {Path(m).name for m in modules}
@@ -1133,8 +1499,11 @@ def section_readers(ctx: dict) -> dict:
     its file, classed ``loud``, ``silent`` or ``flat-module`` by the hand list
     (``READER_CLASSES``, ``classified_by: hand``), each entry checked to exist
     at the pin. A flat-module reader globs ``espalier/*.py`` and may hold no
-    site at all: it is listed with its count, zero included."""
-    texts = _tracked_texts(ctx)
+    site at all: it is listed with its count, zero included. A scanned file
+    that does not parse holds sites the read cannot see: it is named under
+    ``unread`` as ``readers.unparsed``, and a file that could not be read as
+    ``readers.texts``."""
+    texts = _texts_for(ctx, "readers")
     modules = ctx["modules"]
     hand = tuple(ctx.get("reader_classes", READER_CLASSES))
     scanned = sorted(p for p in texts if p.endswith(".py") and (p.startswith(READER_ROOTS) or p in READER_FILES))
@@ -1145,13 +1514,16 @@ def section_readers(ctx: dict) -> dict:
             trees[p] = ast.parse(texts[p])
         except (SyntaxError, ValueError):
             unparsed.append(p)
+    if unparsed:
+        _partial(ctx, "readers", "unparsed", f"{len(unparsed)} file(s) do not parse, so their sites are not read "
+                                             f"(a hand entry in one reads as missing): {unparsed[:5]}")
     entries = []
     for path, symbol, klass in hand:
         tree = trees.get(path)
         if tree is None:
             spans: list[tuple[int, int]] = []
         elif symbol is None:
-            spans = [(1, max(1, len(texts[path].splitlines())))]
+            spans = [(1, max(1, len(_ast_lines(texts[path]))))]
         else:
             spans = named_spans(tree).get(symbol, [])
         entries.append({"path": path, "symbol": symbol, "class": klass, "exists": bool(spans), "spans": spans})
@@ -1204,7 +1576,8 @@ def section_readers(ctx: dict) -> dict:
         f["classes"].add(r["class"])
     return {"rule": "ast over tracked .py under tests/ and scripts/ and READER_FILES: a (module path, str) tuple, "
                     "a str constant equal to the module path (outside such a tuple), a '/' join whose right "
-                    "operand is the module's file name",
+                    "operand is the module's file name; the path_join kind counts joins by the file name, a read "
+                    "of the repository's module and a fixture's write into a tmp tree alike",
             "files_scanned": len(scanned), "unparsed": unparsed,
             "by_kind": tally(rows),
             "by_class": {c: tally([r for r in rows if r["class"] == c]) for c in READER_CLASS_NAMES},
@@ -1260,7 +1633,7 @@ def rule_digest(text: str, name: str) -> str | None:
             and isinstance(first.value.value, str) and first.lineno > node.lineno):
         drop = set(range(first.lineno, first.end_lineno + 1))
     start = min([node.lineno] + [d.lineno for d in node.decorator_list])
-    lines = text.splitlines()
+    lines = _ast_lines(text)  # indexed by ast line numbers, so split as the tokenizer splits
     kept = [lines[i - 1].rstrip() for i in range(start, node.end_lineno + 1) if i not in drop]
     body = textwrap.dedent("\n".join(k for k in kept if k.strip() and not k.lstrip().startswith("#")))
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
@@ -1401,16 +1774,20 @@ def citation_patterns(modules) -> dict[str, re.Pattern]:
             "dotted": re.compile(rf"(?<![\w.])(?:{dotted})\.{ident}")}
 
 
-def _citation_surface(path: str, sweep: dict, frags: dict[str, dict]) -> tuple[str, str]:
+def _citation_surface(path: str, sweep: dict, frags: dict[str, dict], *, by_id_cell: bool = False) -> tuple[str, str]:
     """``(split, part)`` of one tracked file, first match wins: the declared
-    record set; a struck ledger fragment; a protected-zone file under
-    ``tools/cc/`` (its ``espalier/_vendor/cc/`` twin apart); a file the sweep
-    reads (a live ledger fragment, or another doc); else unchecked (a pack, a
-    ``bench/corpus`` JSON, a ``.claude`` body or its mirror, code, other).
-    Where the sweep's rule differs at the pin, the last two are ``unread``."""
+    record set; a protected-zone file under ``tools/cc/`` (its
+    ``espalier/_vendor/cc/`` twin apart); a file the sweep reads (a ledger
+    fragment, or another doc); else unchecked (a pack, a ``bench/corpus``
+    JSON, a ``.claude`` body or its mirror, code, other). A line of a swept
+    file is struck by the sweep's own line rule (``_is_struck_line``), applied
+    by the caller, never by a fragment's id cell. Where the sweep's rule
+    differs at the pin, the last two are ``unread``. ``by_id_cell`` is the
+    authoring's file-level read the ``beside`` figures keep: a fragment whose
+    line-2 id cell starts ``~~`` is struck whole."""
     if path in sweep["record"]:
         return "record", "record_set"
-    if frags.get(path, {}).get("struck"):
+    if by_id_cell and frags.get(path, {}).get("struck"):
         return "struck", "struck_fragments"
     if path.startswith("tools/cc/"):
         return "protected_zone", "sources"
@@ -1440,13 +1817,17 @@ _SPLIT_PARTS = {"record": ("record_set",), "struck": ("struck_fragments", "struc
 def section_citations(ctx: dict) -> dict:
     """Every citation of a CLI module in every tracked file at the pin, every
     file type, in the four spellings, split five ways: the declared record set
-    (read from the sweep at the pin); struck ledger rows (a fragment whose id
-    cell starts ``~~``, and a line the sweep skips as a closed row); the files
-    the sweep reads, the only ones that go red after a move (live ledger
-    fragments apart from other docs); the unchecked, which rot with no red;
-    and the protected zone under ``tools/cc/``, each file beside its vendored
-    twin. The parts sum to the totals, asserted."""
-    texts = _tracked_texts(ctx)
+    (read from the sweep at the pin); struck rows, each a line the sweep skips
+    as a closed row (``_is_struck_row``, ported: its first two cells' code
+    spans all struck ``~~`...`~~``), in a ledger fragment or in another swept
+    doc; the files the sweep reads (live ledger fragments apart from other
+    docs), a population: the sweep visits only the backticked
+    ``path::symbol`` spellings in them, so a citation here goes red on a move
+    only in that spelling, and the other spellings are counted beside it; the
+    unchecked, which rot with no red; and the protected zone under
+    ``tools/cc/``, each file beside its vendored twin. The parts sum to the
+    totals, asserted."""
+    texts = _texts_for(ctx, "citations")
     modules = ctx["modules"]
     pats = citation_patterns(modules)
     sweep = _sweep(ctx)
@@ -1462,7 +1843,7 @@ def section_citations(ctx: dict) -> dict:
         split, part = _citation_surface(path, sweep, frags)
         n = sum(text.count(f"{m}::") for m in modules)
         if n:
-            cell = substring.setdefault(f"{split}/{part}", [0, 0])
+            cell = substring.setdefault("/".join(_citation_surface(path, sweep, frags, by_id_cell=True)), [0, 0])
             cell[0] += n
             cell[1] += 1
         for line in text.splitlines():
@@ -1474,7 +1855,7 @@ def section_citations(ctx: dict) -> dict:
                 continue
             s_, p_ = split, part
             if split == "swept_live" and _is_struck_line(line, sweep):
-                s_, p_ = "struck", "struck_lines_in_swept_docs"
+                s_, p_ = "struck", "struck_fragments" if part == "live_fragments" else "struck_lines_in_swept_docs"
             rows.extend((path, s_, p_, s, n) for s, n in counts.items() if n)
             named.extend((path, s_, p_, s, sym) for s in CITATION_SYMBOL_SPELLINGS for sym in found[s])
 
@@ -1530,11 +1911,14 @@ def section_citations(ctx: dict) -> dict:
     by_ext = {k: tally([r for r in rows if ext_of(r[0]) == k]) for k in (*exts, "other")}
     meta = ctx.get("_texts_meta", {})
     return {"rule": {"spellings": {s: rx.pattern for s, rx in pats.items()},
-                     "split": "first match: record set (_RECORD_SURFACE_DOCS at the pin, by AST); struck fragment "
-                              "(task-packs/ledger.d/*.md, line 2's cells[1] starts '~~'); tools/cc/ (its "
+                     "split": "first match: record set (_RECORD_SURFACE_DOCS at the pin, by AST); tools/cc/ (its "
                               "espalier/_vendor/cc/ twin apart); the sweep's population (_swept_docs, ported and "
-                              "digest-pinned), a line it skips as struck (_is_struck_row, ported) counted struck; "
-                              "else unchecked"},
+                              "digest-pinned), a line it skips as struck (_is_struck_row, ported) counted struck, "
+                              "in a ledger fragment (task-packs/ledger.d/*.md) or another doc; else unchecked. "
+                              "swept_live is a population: the sweep reds only its backticked path::symbol "
+                              "spellings",
+                     "beside_substring": "the authoring's read: one part per file, a ledger fragment whose "
+                                         "line 2 cells[1] starts '~~' struck whole"},
             "files_tracked": meta.get("tracked"), "files_read": meta.get("read"),
             "binary": len(meta.get("binary", [])), "files_unread": meta.get("unread", []),
             "record_set": sorted(sweep["record"]),
@@ -1624,6 +2008,10 @@ def probe_reads(probe: dict, modules, defined: set[str]) -> dict:
     return {"by": by, "symbols": sorted(symbols), "parsed": None if not cmd else tree is not None}
 
 
+#: A probe's ledger row: live, struck, a fragment whose line 2 is no table row, or no fragment.
+PROBE_ROW_STATES = ("live", "struck", "not a row", "no row")
+
+
 def section_probes(ctx: dict) -> dict:
     """Each ledger probe at the pin (``task-packs/probes.d/*.json``) that reads
     a CLI module, by ``probe_reads``: its row's state (the fragment's id cell,
@@ -1631,8 +2019,11 @@ def section_probes(ctx: dict) -> dict:
     owner from the clusters section, with the commands that would move it.
     ``tools/cc/check_ledger_probes.py`` gates a probe on its subject at file
     level, and the file survives a move, so a probe that reads a moved symbol
-    out of cli.py prints a new value and offers its live row as a strike."""
-    texts = _tracked_texts(ctx)
+    out of cli.py prints a new value and offers its live row as a strike. A
+    fragment whose line 2 is no table row is ``not a row`` (``not_a_row``),
+    never read as live; a probe file that is no JSON object is named under
+    ``unread`` as ``probes.unparsed_json``."""
+    texts = _texts_for(ctx, "probes")
     modules = ctx["modules"]
     _tree, defs, _g = _functions_ctx(ctx)
     defined = {d["name"] for d in defs}
@@ -1655,20 +2046,26 @@ def section_probes(ctx: dict) -> dict:
             continue
         pid = str(probe.get("id") or Path(path).stem)
         frag = frags.get(f"{LEDGER_DIR}{pid}.md")
-        state = "no row" if frag is None else "struck" if frag["struck"] else "live"
+        state = ("no row" if frag is None else "not a row" if frag["cells"] is None
+                 else "struck" if frag["struck"] else "live")
         sym_owners = {s: _owner_of(owners, s) for s in read["symbols"]}
         rows.append({"id": pid, "file": path, "row": state, "by": read["by"], "has_cmd": bool(probe.get("cmd")),
                      "parsed": read["parsed"], "symbols": read["symbols"], "owners": sym_owners,
                      "commands": sorted({c for o in sym_owners.values() for c in _commands_of(o)}),
                      "concerns": sorted({o["concern"] for o in sym_owners.values() if "concern" in o})})
     reading = [r for r in rows if set(r["by"]) - {"subject"}]
+    if bad:
+        _partial(ctx, "probes", "unparsed_json", f"{len(bad)} probe file(s) are no JSON object, so what they read "
+                                                 f"is not read: {bad[:5]}")
     return {"rule": "probe_reads over task-packs/probes.d/*.json at the pin; row state from "
-                    "task-packs/ledger.d/<id>.md line 2 cells[1] ('~~' = struck)",
+                    "task-packs/ledger.d/<id>.md line 2 cells[1] ('~~' = struck; a line 2 that is no table row "
+                    "is not a row)",
             "probes": len(files), "unparsed_json": bad,
             "reading_cli": len(reading), "subject_only": len(rows) - len(reading),
             "by_reading": {k: sum(1 for r in rows if k in r["by"])
                            for k in ("subject", "path", "import", "patch", "run", "path (text)", "import (text)")},
-            "by_row": {s: sum(1 for r in rows if r["row"] == s) for s in ("live", "struck", "no row")},
+            "by_row": {s: sum(1 for r in rows if r["row"] == s) for s in PROBE_ROW_STATES},
+            "not_a_row": sorted(r["id"] for r in rows if r["row"] == "not a row"),
             "live_reading_cli": sum(1 for r in reading if r["row"] == "live"),
             "live_any": sum(1 for r in rows if r["row"] == "live"),
             "symbols_named": {"pairs": sum(len(r["symbols"]) for r in rows),
@@ -1706,8 +2103,9 @@ def section_ledger_rows(ctx: dict) -> dict:
     struck and a CLI module's path in ``cells[2]``. Tier 3: not struck, not tier
     2, and ``<module>::X`` in ``cells[3]``. For each tier-2 and tier-3 row, its
     cited symbols (``<module>::X`` in any cell after the id) and each one's
-    owner from the clusters section."""
-    texts = _tracked_texts(ctx)
+    owner from the clusters section. A tracked file that could not be read is
+    named under ``unread`` as ``ledger_rows.texts``."""
+    texts = _texts_for(ctx, "ledger_rows")
     modules = ctx["modules"]
     owners = _owners(ctx)
     pats = citation_patterns(modules)
@@ -1868,7 +2266,10 @@ def section_doctor_boundary(ctx: dict) -> dict:
 def _section(ctx: dict, name: str):
     """One section's result, read once a run and kept in ``ctx``: the move
     cost reads eight sections, and one the run also prints is not read twice.
-    An ``Unread`` is kept too, and raised again."""
+    An ``Unread`` is kept too, and raised again; so is any other failure of a
+    read (``_READ_FAILURES``: git past its timeout, no git or gh, a source that
+    does not parse, a short read, bad JSON, a loaded census's ``SystemExit``),
+    turned into one, so one section's failure never aborts the run."""
     done = ctx.setdefault("_done", {})
     if name not in done:
         reader = SECTION_READERS.get(name)
@@ -1876,8 +2277,8 @@ def _section(ctx: dict, name: str):
             if reader is None:
                 raise Unread("no reader for this section in this census")
             done[name] = reader(ctx)
-        except Unread as exc:
-            done[name] = exc
+        except _READ_FAILURES as exc:
+            done[name] = _unread(exc)
     if isinstance(done[name], Unread):
         raise done[name]
     return done[name]
@@ -1934,24 +2335,37 @@ def lazy_targets(node: ast.AST, path: str, known: set[str]) -> list[dict]:
 
 def _bound_loads(d: dict, bindings: dict[str, str]) -> set[str]:
     """The names bound by cli's top-level imports that one definition loads (a
-    local of the same name excluded): the imports a new module would need too."""
+    local of the same name excluded, scope by scope): the imports a new module
+    would need too."""
     if d["kind"] == NAME:
         root = d["node"].value if getattr(d["node"], "value", None) is not None else d["node"]
-        local: set[str] = set()
-        declared: set[str] = set()
     else:
         root = d["node"]
-        local, declared = _locally_bound(root)
+    refs, _writes = _module_refs(root)
     return {n.id for n in ast.walk(root) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
-            and n.id in bindings and (n.id not in local or n.id in declared)}
+            and n.id in bindings and id(n) in refs}
 
 
 def _initial_value(d: dict) -> str:
     """A module-level name's first bound value, by kind: ``bool``, ``None``,
-    another constant's type, or the AST node's kind (``dict``, ``call``)."""
-    value = getattr(d["node"], "value", None)
+    another constant's type, or the AST node's kind (``dict``, ``call``). A
+    name a tuple unpacks (``_A, _B = False, None``) reads its own element, and
+    a sign on a number (``-1``) is folded into the number."""
+    node = d["node"]
+    value = getattr(node, "value", None)
     if value is None:
         return "unassigned"
+    for target in node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]:
+        if (isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts) and not any(isinstance(e, ast.Starred) for e in target.elts)):
+            hit = next((v for e, v in zip(target.elts, value.elts) if isinstance(e, ast.Name) and e.id == d["name"]), None)
+            if hit is not None:
+                value = hit
+                break
+    if (isinstance(value, ast.UnaryOp) and isinstance(value.op, (ast.USub, ast.UAdd))
+            and isinstance(value.operand, ast.Constant) and isinstance(value.operand.value, (int, float, complex))
+            and not isinstance(value.operand.value, bool)):
+        return type(value.operand.value).__name__
     if isinstance(value, ast.Constant):
         return "None" if value.value is None else "bool" if isinstance(value.value, bool) else type(value.value).__name__
     return type(value).__name__.lower()
@@ -2052,11 +2466,20 @@ MOVE_RULES: dict[str, str] = {
 }
 
 
+#: The partial reads of each priced section that leave its ingredients a lower
+#: bound: a file the section could not parse or read holds sites it never saw.
+_PARTS_PRICED = {"importers": ("unparsed", "py_files"), "patches": ("unparsed", "tests"),
+                 "readers": ("unparsed", "texts"), "citations": ("texts",), "probes": ("unparsed_json", "texts")}
+
+
 def _move_inputs(ctx: dict) -> dict:
     """Every ingredient's tally per name over the whole of cli at the pin,
     each beside its section's total, with the detail a unit is priced from.
     An ingredient whose section is unread has a tally of ``None`` and is
-    named under ``unread``, never read as a zero."""
+    named under ``unread``, never read as a zero. One whose section was read
+    in part (a file that does not parse or could not be read: the parts
+    ``_PARTS_PRICED`` names) keeps its tally, a lower bound, and is named
+    under ``unread`` too."""
     tree, defs, g = _functions_ctx(ctx)
     known = {_module_of(p) for p in _tracked(ctx) if p.endswith(".py")}
     tally: dict[str, dict[str, int] | None] = {}
@@ -2072,6 +2495,12 @@ def _move_inputs(ctx: dict) -> dict:
             got = None
             for k in ingredients:
                 unread[k] = f"the {section} section is unread: {exc}"
+        parts = {p: why for p, why in ctx.get("_partial_unread", {}).get(section, {}).items()
+                 if p in _PARTS_PRICED.get(section, ())}
+        if got is not None and parts:
+            for k in ingredients:
+                unread[k] = f"the {section} section was read in part, so this is a lower bound: " + "; ".join(
+                    f"{section}.{p}: {why}" for p, why in sorted(parts.items()))
         for k in ingredients:
             tally[k] = None if got is None else {}
             total[k] = None
@@ -2376,15 +2805,15 @@ def section_move_cost(ctx: dict) -> dict:
                     split_out[split][p] = {"occurrences": sum(c[0] for c in cells),
                                            "files": len(set().union(*(c[1] for c in cells)))}
             out["citations"] = {"occurrences": sum(tally["citations"].get(m, 0) for m in ms),
-                                "in_split": sum(cell["occurrences"] for parts in split_out.values() if parts
-                                                for cell in parts.values()),
+                                "in_split": sum(cell["occurrences"] for split, parts in split_out.items()
+                                                if parts and split != "unread" for cell in parts.values()),
                                 "split": split_out}
         else:
             out["citations"] = None
         if read("probes"):
             hits = [pair for m in ms for pair in detail["probes"].get(m, [])]
             out["probes"] = {"ids": sorted({i for i, _row in hits}), "pairs": len(hits),
-                             "by_row": {r: len({i for i, row in hits if row == r}) for r in ("live", "struck", "no row")}}
+                             "by_row": {r: len({i for i, row in hits if row == r}) for r in PROBE_ROW_STATES}}
         else:
             out["probes"] = None
         lazy_by: dict[str, int] = {}
@@ -2534,12 +2963,14 @@ def _stamp(text: str) -> str:
 
 def merges_at(root: Path, at: str) -> list[dict]:
     """Every merge commit reachable from the pin, newest first: its oid, its
-    parents, its committer date and its subject. One ``git log``."""
+    parents, its committer date and its subject. One ``git log``, split on
+    ``\\n`` alone: ``splitlines`` also splits a subject holding U+2028, ``\\x85``
+    or ``\\x1c`` to ``\\x1e``, where git ends a record only at the newline."""
     rc, out, err = git(root, "log", "--merges", "--format=%H%x1f%P%x1f%cI%x1f%s", at)
     if rc != 0:
         raise Unread(f"git log --merges {at[:12]} failed: {err.strip()}")
     rows = []
-    for line in out.splitlines():
+    for line in (row for row in out.split("\n") if row):
         oid, parents, date, subject = (line.split("\x1f") + ["", "", ""])[:4]
         rows.append({"oid": oid, "parents": parents.split(), "date": _stamp(date), "subject": subject})
     return rows
@@ -2570,20 +3001,21 @@ def lane_commits(root: Path, pr: dict) -> list[dict]:
     rc, out, _err = git(root, "log", "--format=%H%x1f%s", f"{pr['base']}..{pr['head']}")
     if rc != 0:
         raise Unread(f"git log {pr['base'][:12]}..{pr['head'][:12]} failed")
-    return [{"oid": a, "messageHeadline": b} for a, _sep, b in (l.partition("\x1f") for l in out.splitlines())]
+    return [{"oid": a, "messageHeadline": b} for a, _sep, b in (row.partition("\x1f") for row in out.split("\n") if row)]
 
 
 def lane_files(root: Path, pr: dict) -> tuple[str, list[str]]:
     """``(merge-base, paths)``: what the lane changed against the base it
-    branched from, at its merge (``git diff --name-only <merge-base> <head>``)."""
+    branched from, at its merge (``git diff --name-only -z <merge-base> <head>``,
+    NUL-separated so a path git would quote reads as itself)."""
     rc, out, err = git(root, "merge-base", pr["base"], pr["head"])
     if rc != 0 or not out.strip():
         raise Unread(f"no merge-base for #{pr['number']}: {err.strip()}")
     mb = out.strip()
-    rc, out, err = git(root, "diff", "--name-only", mb, pr["head"])
+    rc, out, err = git(root, "diff", "--name-only", "-z", mb, pr["head"])
     if rc != 0:
         raise Unread(f"git diff {mb[:12]} {pr['head'][:12]} failed: {err.strip()}")
-    return mb, [p for p in out.splitlines() if p]
+    return mb, [p for p in out.split("\0") if p]
 
 
 def _in_window(when: str, window: dict) -> bool:
@@ -2608,21 +3040,36 @@ def _touches_cli(paths, modules) -> list[str]:
 def pr_meta(ctx: dict) -> dict[int, dict]:
     """``{number: {"created", "merged"}}``: when each pull request opened, the
     one fact git does not hold. Read from ``--prs-json`` (a saved ``gh pr list
-    --json number,createdAt,mergedAt``) or from ``gh``, every number to #1."""
+    --json number,createdAt,mergedAt``) or from ``gh``, every number to #1.
+    A ``--prs-json`` file that is not there or holds no list of pull requests,
+    a ``gh`` that cannot run, fails or answers no JSON: ``Unread``."""
     if "_pr_meta" in ctx:
         return ctx["_pr_meta"]
     path = ctx.get("prs_json")
+    source = f"--prs-json {path}" if path else "gh pr list"
     if path:
-        listed = json.loads(Path(path).read_text(encoding="utf-8"))
+        try:
+            listed = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise Unread(f"--prs-json {path} unreadable: {type(exc).__name__}: {exc}") from None
     else:
-        proc = run_bounded(["gh", "pr", "list", "--state", "merged", "--limit", "1000", "--json",
-                            "number,createdAt,mergedAt"], capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=GIT_TIMEOUT, cwd=str(ctx["root"]))
+        try:
+            proc = run_bounded(["gh", "pr", "list", "--state", "merged", "--limit", "1000", "--json",
+                                "number,createdAt,mergedAt"], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=GIT_TIMEOUT, cwd=str(ctx["root"]))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise Unread(f"gh pr list cannot run: {type(exc).__name__}: {exc}") from None
         if proc.returncode != 0:
             raise Unread(f"gh pr list failed: {proc.stderr.strip()[:200]}")
-        listed = json.loads(proc.stdout or "[]")
-    ctx["_pr_meta"] = {int(p["number"]): {"created": _stamp(p["createdAt"]), "merged": _stamp(p["mergedAt"])}
-                       for p in listed if p.get("createdAt") and p.get("mergedAt")}
+        try:
+            listed = json.loads(proc.stdout or "[]")
+        except ValueError as exc:
+            raise Unread(f"gh pr list answered no JSON: {exc}") from None
+    try:
+        ctx["_pr_meta"] = {int(p["number"]): {"created": _stamp(p["createdAt"]), "merged": _stamp(p["mergedAt"])}
+                           for p in listed if p.get("createdAt") and p.get("mergedAt")}
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise Unread(f"{source}: the pull requests' list is malformed: {type(exc).__name__}: {exc}") from None
     return ctx["_pr_meta"]
 
 
@@ -2863,11 +3310,17 @@ def holds(ctx: dict) -> dict:
     module and its text, ``Waits for: nothing`` struck, holds one
     (``HOLD_WORDS``): the authoring read's lower bound. ``named_in_text``: the
     module named in the text alone, with the same words, listed by id for the
-    hand read that confirms each (a word match is a candidate, never a hold)."""
+    hand read that confirms each (a word match is a candidate, never a hold).
+    A dispatcher whose mail the pin's refs do not hold is ``Unread``, never a
+    record of no holds. The record starts at the earliest message's stamp,
+    whatever order the file keeps."""
     disp = dispatcher_at(ctx)
     if disp is None:
         raise Unread("espalier.toml at the pin names no usable dispatcher")
-    messages = mail_at(ctx).get(disp, [])
+    by_machine = mail_at(ctx)
+    if disp not in by_machine:
+        raise Unread(f"no mail of the dispatcher {disp!r} at the pin (refs: {sorted(by_machine)})")
+    messages = by_machine[disp]
     modules = ctx["modules"]
     declared, in_text = [], []
     for m in messages:
@@ -2881,7 +3334,7 @@ def holds(ctx: dict) -> dict:
             declared.append(m["id"])
         elif any(names_module(text, mod) for mod in modules):
             in_text.append(m["id"])
-    first = messages[0]["at"] if messages else None
+    first = min((str(m["at"]) for m in messages if m.get("at")), default=None)
     days = None
     if first:
         days = round((datetime.fromisoformat(ctx["pin"]["window"]["until"].replace("Z", "+00:00"))
@@ -2893,7 +3346,8 @@ def holds(ctx: dict) -> dict:
 def catch_ups_carrying(ctx: dict) -> dict:
     """Context, never a cost (the up-to-date rule is off): the window's
     catch-up merges whose base side brought a CLI module change into a lane
-    (``git diff --name-only <catch-up>^1 <catch-up>``)."""
+    (``git diff --name-only -z <catch-up>^1 <catch-up>``). A diff git cannot
+    give is ``Unread``, never a catch-up that carried nothing."""
     root, at = ctx["root"], ctx["pin"]["at"]
     catch = _merge_cost().CATCH_UP
     count = carrying = 0
@@ -2901,16 +3355,20 @@ def catch_ups_carrying(ctx: dict) -> dict:
         if not catch.match(m["subject"]) or not _in_window(m["date"], ctx["pin"]["window"]):
             continue
         count += 1
-        rc, out, _err = git(root, "diff", "--name-only", m["parents"][0], m["oid"])
-        if rc == 0 and _touches_cli(out.splitlines(), ctx["modules"]):
+        rc, out, err = git(root, "diff", "--name-only", "-z", m["parents"][0], m["oid"])
+        if rc != 0:
+            raise Unread(f"git diff {m['parents'][0][:12]} {m['oid'][:12]} failed: {err.strip()[:200]}")
+        if _touches_cli(out.split("\0"), ctx["modules"]):
             carrying += 1
     return {"graded": False, "catch_ups_in_window": count, "carrying_a_cli_module": carrying}
 
 
 def section_collision(ctx: dict) -> dict:
     """Task 0 Item 2's oracle: the four components, each with its window and
-    its count of CLI-module pull requests. A component that cannot be read is
-    named under the section's own ``unread``, never a zero."""
+    its count of CLI-module pull requests. A component that cannot be read
+    (any of ``_READ_FAILURES``: the replay's ``SystemExit`` and a missing
+    ``--prs-json`` among them) is named under the section's own ``unread``,
+    never a zero, and the other components still read."""
     window = ctx["pin"]["window"]
     out: dict = {"window": window, "unread": {}}
     out["cli_module_prs_in_window"] = sum(1 for pr in _window_prs(ctx) if _touches_cli(pr["files"], ctx["modules"]))
@@ -2922,9 +3380,9 @@ def section_collision(ctx: dict) -> dict:
             continue
         try:
             out[key] = reader(ctx)
-        except Unread as exc:
+        except _READ_FAILURES as exc:
             out[key] = None
-            out["unread"][key] = str(exc)
+            out["unread"][key] = str(_unread(exc))
     return out
 
 
@@ -2958,10 +3416,12 @@ def definition_at(defs: list[dict], line: int) -> dict | None:
 
 def lane_read_of(root: Path, mb: str, head: str, module: str) -> dict:
     """One lane's read of one module: the top-level definitions its hunks fall
-    in at the merge-base, and their lengths summed there."""
+    in at the merge-base, and their lengths summed there. A module the
+    merge-base does not hold (the lane adds it) has no definition a hunk falls
+    in there: none, of no length. A read git fails is ``Unread`` (``source_at``)."""
     text = source_at(root, mb, module)
     if text is None:
-        return {"definitions": [], "lines": 0}
+        return {"definitions": [], "lines": 0, "by_definition": {}}
     defs = definitions(ast.parse(text))
     rc, diff, err = git(root, "diff", "-U0", mb, head, "--", module)
     if rc != 0:
@@ -3021,24 +3481,32 @@ READ_PROGRAMS = {"sed", "cat", "head", "tail", "nl", "awk"}
 SEARCH_PROGRAMS = {"grep", "rg", "ugrep", "egrep", "fgrep"}
 #: Record types that repeat a request's content (the blob records): skipped, never counted twice.
 SKIP_RECORDS = {"api-request-blob", "api-request", "api-request-shape"}
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+#: A here-document's operator and tag (``<<EOF``, ``<<-'EOF'``), never a
+#: here-string's ``<<<``, whose word is the whole of its input.
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 _SAVED = re.compile(r"(?:Full output|Output) saved to:?\s*(\S+/tool-results/\S+)")
 
 
 def project_folder(path: str) -> str:
     """Claude Code's project folder name for a checkout path."""
-    return re.sub(r"[^A-Za-z0-9]", "-", path)
+    return re.sub(r"[^A-Za-z0-9]", "-", path.replace("\\", "/"))
 
 
 def checkouts(root: Path) -> list[dict]:
-    """Each checkout of this clone (``git worktree list``), its seat name
-    (``espalier.machine``, the per-worktree one first) and its project folder."""
-    rc, out, _err = git(root, "worktree", "list", "--porcelain")
-    paths = [line[len("worktree "):] for line in out.splitlines() if line.startswith("worktree ")] if rc == 0 else []
+    """Each checkout of this clone (``git worktree list --porcelain -z``), its
+    seat name (``espalier.machine``, the per-worktree one first), its project
+    folder, and ``gone`` where its directory is not there (so no seat can be
+    read for it). A ``git worktree list`` that fails is ``Unread``, never a
+    clone of no checkouts."""
+    rc, out, err = git(root, "worktree", "list", "--porcelain", "-z")
+    if rc != 0:
+        raise Unread(f"git worktree list failed: {err.strip()[:200]}")
+    paths = [line[len("worktree "):].replace("\\", "/") for line in out.split("\0") if line.startswith("worktree ")]
     rows = []
     for p in paths:
-        rc, name, _err = git(Path(p), "config", "--get", "espalier.machine") if Path(p).is_dir() else (1, "", "")
-        rows.append({"path": p, "seat": name.strip() or None, "folder": project_folder(p)})
+        gone = not Path(p).is_dir()
+        rc, name, _err = (1, "", "") if gone else git(Path(p), "config", "--get", "espalier.machine")
+        rows.append({"path": p, "seat": name.strip() or None, "folder": project_folder(p), "gone": gone})
     return rows
 
 
@@ -3058,14 +3526,63 @@ def strip_heredocs(command: str) -> str:
     return "\n".join(out)
 
 
+#: The characters a word starts after: a ``#`` there opens a comment.
+_WORD_BREAKS = frozenset(" \t\n;&|()<>")
+
+
+def shell_text(command: str) -> str:
+    """The command as the shell reads it before it splits words: each
+    here-document's body out (``strip_heredocs``); each backslash-newline
+    continuation joined, as the shell joins it outside single quotes; and each
+    comment cut, a ``#`` that starts a word outside quotes, which ends at its
+    own line's end and never takes a later line (``${#x}`` and ``a#b`` are no
+    comment). Quotes open on one line carry to the next, as the shell's do."""
+    text = strip_heredocs(command)
+    out: list[str] = []
+    quote, i, n, at_break = "", 0, len(text), True
+    while i < n:
+        ch = text[i]
+        if quote == "'":
+            quote = "" if ch == "'" else quote
+            out.append(ch)
+            i += 1
+        elif ch == "\\":
+            if text[i + 1:i + 2] == "\n":
+                i += 2              # a continuation: the shell takes both out
+                continue
+            out.append(text[i:i + 2])
+            i += 2
+            at_break = False
+        elif quote == '"':
+            quote = "" if ch == '"' else quote
+            out.append(ch)
+            i += 1
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            at_break = False
+        elif ch == "#" and at_break:
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        else:
+            out.append(ch)
+            i += 1
+            at_break = ch in _WORD_BREAKS
+    return "".join(out)
+
+
 def simple_commands(command: str) -> list[tuple[list[str], bool]]:
-    """``(argv, piped)`` for each simple command of a shell line, heredocs
-    stripped: split on ``;``, ``&&``, ``||``, ``|``, ``&`` and newlines.
-    ``piped`` marks one whose output goes into, or comes from, a pipe."""
-    import shlex
-    text = strip_heredocs(command).replace("\n", " ; ")
+    """``(argv, piped)`` for each simple command of a shell line, read as the
+    shell reads it (``shell_text``: heredoc bodies out, continuations joined,
+    comments cut line by line): split on ``;``, ``&&``, ``||``, ``|``, ``&``
+    and newlines. ``piped`` marks one whose output goes into, or comes from, a
+    pipe. The lexer keeps no comment character of its own, so a ``#`` it is
+    handed is a word's."""
+    text = shell_text(command).replace("\n", " ; ")
     lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
     lex.whitespace_split = True
+    lex.commenters = ""
     try:
         tokens = list(lex)
     except ValueError:
@@ -3100,6 +3617,8 @@ def _range(program: str, args: list[str]) -> int | None:
                 total += (int(m.group(2)) - int(m.group(1)) + 1) if m.group(2) else 1
         return total if saw else None
     if program in ("head", "tail"):
+        if any(a == "-c" or a.startswith(("-c", "--bytes")) for a in args):
+            return None                 # a count of bytes selects no lines
         for i, a in enumerate(args):
             if a == "-n" and i + 1 < len(args) and args[i + 1].lstrip("-").isdigit():
                 return int(args[i + 1].lstrip("-"))
@@ -3112,19 +3631,30 @@ def _range(program: str, args: list[str]) -> int | None:
     return None
 
 
+#: git's global options that take their value as the next word (``-C dir``,
+#: ``-c k=v``, ``--git-dir dir``); every other leading option is one word
+#: (``--no-pager``, ``-P``, ``--git-dir=dir``, ``--bare``).
+_GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix",
+                                "--config-env"})
+
+
 def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
     """``(kind, files, range)`` for a read or a search, else ``None``.
     ``kind`` is ``read`` (the allowlist: ``sed`` without ``-i``, ``cat``,
-    ``head``, ``tail``, ``nl``, ``awk``, ``git show <rev>:<path>``) or
-    ``search``; the files are the whole operands the program reads."""
+    ``head``, ``tail``, ``nl``, ``awk``, ``git show <rev>:<path>`` after any
+    of git's global options) or ``search``; the files are the whole operands
+    the program reads, a file fed on its stdin (``prog < file``) among them.
+    A redirection's target is written, never read; a here-document's tag and
+    a here-string's word name no file; the count ``-n``/``-c`` takes on
+    ``head`` and ``tail`` is no file either."""
     while argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
         argv = argv[1:]
     if not argv:
         return None
     prog, args = Path(argv[0]).name, argv[1:]
     if prog == "git":
-        while args[:1] == ["-C"] and len(args) > 1 or (args and args[0].startswith("-c")):
-            args = args[2:] if args[0] in ("-C", "-c") else args[1:]
+        while args and args[0].startswith("-"):
+            args = args[2:] if args[0] in _GIT_VALUE_OPTIONS else args[1:]
         if args[:1] == ["show"]:
             files = [a.split(":", 1)[1] for a in args[1:] if ":" in a and not a.startswith("-") and a.split(":", 1)[1]]
             return ("read", files, None) if files else None
@@ -3139,20 +3669,35 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
     if prog == "sed" and any(a.startswith("-i") or a == "--in-place" for a in args):
         return None
     files: list[str] = []
-    skip_next, script_given = False, False
-    for i, a in enumerate(args):
-        if skip_next:
-            skip_next = False
+    fed: list[str] = []
+    skip_next, feed_next, script_given = False, False, False
+    for a in args:
+        if skip_next or feed_next:
+            if feed_next:
+                fed.append(a)
+            skip_next = feed_next = False
             continue
-        if re.fullmatch(r"\d*>>?|&>>?|<", a):
-            skip_next = True          # a redirection's target is written (or fed), never a read operand
+        if re.fullmatch(r"\d*<<-?|<<<", a):
+            skip_next = True          # a here-document's tag or a here-string's word: no file
             continue
-        if re.fullmatch(r"\d*>>?\S+|&>\S+|<\S+", a):
+        if a.startswith("<<"):
+            continue
+        if re.fullmatch(r"\d*<", a):
+            feed_next = True          # the file on stdin is read
+            continue
+        fed_in = re.fullmatch(r"\d*<([^<>&].*)", a)
+        if fed_in:
+            fed.append(fed_in.group(1))
+            continue
+        if re.fullmatch(r"\d*>>?|&>>?|\d*<>", a):
+            skip_next = True          # a redirection's target is written, never a read operand
+            continue
+        if re.fullmatch(r"\d*>>?\S+|&>\S+|\d*<&\S*", a):
             continue
         if a in ("-e", "-f") and prog in ("sed", "awk"):
             skip_next, script_given = True, True
             continue
-        if a == "-n" and prog in ("head", "tail"):
+        if a in ("-n", "-c", "--lines", "--bytes") and prog in ("head", "tail"):
             skip_next = True
             continue
         if a.startswith("-") or a.startswith("+"):
@@ -3161,11 +3706,18 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
     if prog in ("sed", "awk") and not script_given and files:
         files = files[1:]
     rng = _range(prog, args)
-    return "read", files, rng
+    return "read", files + fed, rng
 
 
 _WORKTREE_PREFIX = re.compile(r"^\.claude/worktrees/[^/]+/")
 _SCRATCH_COPY = re.compile(r"/scratchpad/[^/]+/")
+_DRIVE = re.compile(r"[A-Za-z]:/")
+
+
+def _joined(path: str, cwd: str) -> str:
+    """``path`` against ``cwd``, normalised, with ``\\`` read as ``/``."""
+    p, c = path.replace("\\", "/"), (cwd or "").replace("\\", "/")
+    return posixpath.normpath(p if p.startswith("/") or _DRIVE.match(p) else posixpath.join(c, p))
 
 
 def _relative(path: str, cwd: str, roots: list[str], known=None) -> str | None:
@@ -3174,9 +3726,10 @@ def _relative(path: str, cwd: str, roots: list[str], known=None) -> str | None:
     is no root any more, so its files map onto the checkout around it with the
     worktree's prefix: that prefix is taken off. A path in a tree copy under a
     session scratchpad (``.../scratchpad/<copy>/espalier/cli.py``) maps where
-    ``known(rest)`` says the rest is a file at the pin."""
-    full = os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd or "", path))
-    for r in sorted(roots, key=len, reverse=True):
+    ``known(rest)`` says the rest is a file at the pin. Paths, the cwd and the
+    roots are compared with ``\\`` read as ``/`` (a Windows seat's)."""
+    full = _joined(path, cwd)
+    for r in sorted((root.replace("\\", "/") for root in roots), key=len, reverse=True):
         if full == r or full.startswith(r.rstrip("/") + "/"):
             return _WORKTREE_PREFIX.sub("", full[len(r.rstrip("/")) + 1:])
     if known is not None:
@@ -3203,7 +3756,16 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
     ``tool_use`` once (deduped by id), the blob records skipped, cut at the
     pin's date by each record's own stamp. Each call carries its stamp, its
     branch, and ``reads``: ``[(repo path, lines)]``. ``length(path)`` is a
-    file's length at the pin (a piped or multi-file whole read's range)."""
+    file's length at the pin (a piped or multi-file whole read's range). A
+    ``Read`` counts its result's ``numLines``, 0 included (a read past the end
+    returns a warning, no line of the file); only a result with none counts its
+    text's lines.
+
+    Limits, named and not corrected: a saved output (``Output saved to``) that
+    holds several files' reads credits each file the saved file's whole
+    length when it is read back (probable); and a ``tool_use`` is de-duplicated
+    within one session file, so one repeated across a resumed session's files
+    would count once in each (unverified)."""
     uses: dict[str, dict] = {}
     results: dict[str, dict] = {}
     for r in records:
@@ -3230,7 +3792,8 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
         call = {"id": u["id"], "at": u["at"], "branch": u["branch"], "reads": [], "searches": []}
         if u["name"] == "Read":
             fp = str(u["input"].get("file_path") or "")
-            n = int((meta.get("file") or {}).get("numLines") or _line_count(res["text"]))
+            num = (meta.get("file") or {}).get("numLines")
+            n = int(num) if num is not None else _line_count(res["text"])
             if "/tool-results/" in fp:
                 call["reads"] = [(src, n) for src in saved.get(fp, [])]
             else:
@@ -3249,7 +3812,7 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
             reads, searches = [], []
             for argv, piped in parts:
                 if argv[:1] == ["cd"] and len(argv) > 1:
-                    cwd = os.path.normpath(os.path.join(cwd, argv[1]))
+                    cwd = _joined(argv[1], cwd)
                     continue
                 got = read_operands(argv)
                 if got is None:
@@ -3310,11 +3873,14 @@ def item3_verdict(r: list[int], e: list[int]) -> dict:
     one-sided Mann-Whitney p is under ``ALPHA``; not real only when one fails
     and the read could have seen the effect (realised minimum detectable
     ratio at most ``MDR_CEILING``, each arm at least ``MIN_ARM``); else
-    unmeasured."""
-    import math
+    unmeasured. Two arms that read zero lines every lane are a read that saw
+    nothing at all (no folder, no record placed), never an effect measured
+    absent: unmeasured."""
     nt, nc = len(r), len(e)
     if nt < 2 or nc < 2:
         return {"verdict": "unmeasured", "why": f"arms of {nt} and {nc} lanes", "n_t": nt, "n_c": nc}
+    if not any(r) and not any(e):
+        return {"verdict": "unmeasured", "why": "both arms read zero lines in every lane", "n_t": nt, "n_c": nc}
     lt, lc = [math.log1p(v) for v in r], [math.log1p(v) for v in e]
     s = (((nt - 1) * statistics.variance(lt) + (nc - 1) * statistics.variance(lc)) / (nt + nc - 2)) ** 0.5
     mdr = math.exp(MDD_Z * s * (1 / nt + 1 / nc) ** 0.5)
@@ -3390,7 +3956,11 @@ def section_transcripts(ctx: dict) -> dict:
     population figure is in the output: the folders (matched case-
     insensitively), each file's record count up to the pin, and the calls
     no lane took. Subagents are counted apart, through their parent's
-    ``Agent`` call. Two of the four seats, said on the section."""
+    ``Agent`` call. Two of the four seats, said on the section. A clone with
+    no checkout of a box seat, or a population that holds no record up to the
+    pin, is ``Unread``: every lane would read zero. A checkout whose seat
+    cannot be read (its directory gone, or no ``espalier.machine``) is named
+    under ``checkouts_without_a_seat``, never dropped in silence."""
     root, at = ctx["root"], ctx["pin"]["at"]
     until = ctx["pin"]["window"]["until"]
     base = Path(ctx.get("projects_dir") or Path.home() / ".claude" / "projects")
@@ -3399,6 +3969,11 @@ def section_transcripts(ctx: dict) -> dict:
     outs = ctx.get("checkouts") or checkouts(root)
     by_lower = {p.name.lower(): p for p in base.iterdir() if p.is_dir()}
     folders = [(c, by_lower.get(c["folder"].lower())) for c in outs if c["seat"] in BOX_SEATS]
+    unseated = [{"path": c["path"], "folder": c["folder"], "why": "directory gone" if c.get("gone") else
+                 "no espalier.machine"} for c in outs if c["seat"] is None]
+    if not folders:
+        raise Unread(f"no checkout of this clone is a box seat {list(BOX_SEATS)} "
+                     f"({len(outs)} checkout(s), {len(unseated)} with no seat read)")
     missing = [c["folder"] for c, f in folders if f is None]
     if missing:
         raise Unread(f"transcript folder(s) missing: {missing}")
@@ -3452,6 +4027,9 @@ def section_transcripts(ctx: dict) -> dict:
             for call in calls_of(recs, roots, until, length):
                 call.update(seat=c["seat"], session=log.stem, lane=place(c["seat"], branch, when))
                 subs.append(call)
+    if not sum(p["records"] for p in population):
+        raise Unread(f"the box seats' transcript folders hold no record up to {until}: "
+                     f"{[p['folder'] for p in population]}")
     modules = set(ctx["modules"])
 
     def per_lane(calls: list[dict]) -> dict[str, dict]:
@@ -3483,6 +4061,7 @@ def section_transcripts(ctx: dict) -> dict:
     step = max(1, len(treatment) // 3)
     sample = [t["pr"] for t in treatment[::step][:3]] + [c["pr"] for c in control[:: max(1, len(control) // 2)][:2]]
     return {"seats": list(BOX_SEATS), "of_seats": 4, "population": population,
+            "checkouts_without_a_seat": unseated,
             "cutoff": until, "lanes": len(lanes), "treatment": treatment, "control": control,
             "item3": verdict,
             "beside": {"r_share_of_total": [round(t["r"] / t["total"], 3) if t["total"] else None for t in treatment],
@@ -3532,10 +4111,13 @@ SECTION_READERS = {
 
 def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...] = (CLI,),
            extra: dict | None = None) -> dict:
-    """Every named section read at ``at``. A section that raises ``Unread``,
-    or has no reader yet, is ``None`` under its key and named under ``unread``;
-    a part of a section that could not be read (the move cost's ingredients)
-    is named there as ``<section>.<part>``."""
+    """Every named section read at ``at``. A section that cannot be read (any
+    of ``_READ_FAILURES``), or has no reader yet, is ``None`` under its key and
+    named under ``unread``; a part of a section that could not be read (the
+    move cost's ingredients, a file that did not parse, the importers under the
+    clusters' split) is named there as ``<section>.<part>``, a section the run
+    read only as another's input included, so no figure rests on a part read
+    in silence."""
     ctx = {"root": root, "pin": resolve_pin(root, at), "modules": modules, **(extra or {})}
     ctx["pin"].setdefault("mail_refs", (extra or {}).get("mail_refs") or mail_refs(root))
     result: dict = {"unread": {}}
@@ -3550,11 +4132,16 @@ def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...]
         except Unread as exc:
             result[name] = None
             result["unread"][name] = str(exc)
-        for part, why in sorted(ctx.get("_partial_unread", {}).get(name, {}).items()):
+    for name, parts in sorted(ctx.get("_partial_unread", {}).items()):
+        for part, why in sorted(parts.items()):
             result["unread"][f"{name}.{part}"] = why
     if "pin" not in result:
         result["pin"] = section_pin(ctx)
     return result
+
+
+#: Text mode prints each section's JSON up to this many characters, and says so where it cuts.
+TEXT_CUT = 400
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3591,8 +4178,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if result.get(name) is None:
             print(f"{name}: UNREAD ({result['unread'].get(name, '?')})")
-        else:
-            print(f"{name}: {json.dumps(result[name], sort_keys=True, default=sorted)[:400]}")
+            continue
+        text = json.dumps(result[name], sort_keys=True, default=sorted)
+        cut = f" ... [cut at {TEXT_CUT} of {len(text)} characters; --json prints it whole]" if len(text) > TEXT_CUT else ""
+        print(f"{name}: {text[:TEXT_CUT]}{cut}")
+    for key, why in sorted(result["unread"].items()):
+        if "." in key:
+            print(f"{key}: UNREAD ({why})")
     return 0
 
 
