@@ -7954,6 +7954,85 @@ class TestInterpreterStdinHeredocWrite:
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
 
+#: DEF-5125's openers, each up to its heredoc delimiter: an fd-0 operator
+#: (`0<<`, `00<<`, `0<<-`) and an output redirect glued to a flag, with its
+#: target glued, spaced, or the operator bare. Composed with one body below.
+_FD_ZERO_AND_GLUED_FLAG_HEADS = [
+    ("python3 - 0<<", "fd-zero-after-dash"),
+    ("python3 2>&1 - 0<<", "fd-zero-after-a-merge"),
+    ("python3 0<<", "fd-zero-no-dash"),
+    ("python3 -u 0<<", "fd-zero-after-a-flag"),
+    ("python3 - 00<<", "fd-zero-twice"),
+    ("python3 - 0<<-", "fd-zero-tab-strip"),
+    ("python3 -u>o<<", "glued-flag-target-and-operator"),
+    ("python3 -u>>o<<", "glued-flag-append"),
+    ("python3 -u>o <<", "glued-flag-spaced-operator"),
+    ("python3 -u> o <<", "glued-flag-bare-operator"),
+    ("python3 - -u>o<<", "dash-then-glued-flag"),
+    ("python3 -u>o -<<", "glued-flag-then-dash"),
+]
+
+
+class TestAStdinOpenerReadsItsOperatorAsBashSplitsIt:
+    """DEF-5125: the stdin opener reads the program behind an fd-0 heredoc
+    or here-string operator and behind an output redirect glued to a flag,
+    as bash splits them: bash consumes both before the interpreter runs
+    (air's 1aac17: python3 got ``['-']`` and ``['']`` under bash 3.2.57),
+    so the program is the one the plain spelling's opener reads, python's
+    head and pwsh's alike. `_heredoc_opener_view` puts an fd-0 operator back
+    bare and blanks a flag's glued redirect, its target with it, on its own
+    view; the shared redirect view (`_redirects_blanked`) is left as it was
+    (1aac17's second trap). Each row is the plain spelling's protected-zone
+    write with only its opener changed."""
+
+    _PY_WRITE = "open('tools/cc/hooks/x.py', 'w').write('x')"
+    _PS_WRITE = "Set-Content -Path tools/cc/hooks/x.py -Value 1"
+
+    @pytest.mark.parametrize("head", [h for h, _ in _FD_ZERO_AND_GLUED_FLAG_HEADS],
+                             ids=[i for _, i in _FD_ZERO_AND_GLUED_FLAG_HEADS])
+    def test_the_heredoc_program_is_read_behind_the_operator(self, tmp_path, head):
+        cmd = head + "'PY'\n" + self._PY_WRITE + "\nPY"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("head", ["python3 - 0<<<", "python3 -u>o<<<"],
+                             ids=["fd-zero", "glued-flag"])
+    def test_a_here_string_is_read_as_the_program_behind_the_operator(self, tmp_path, head):
+        cmd = head + ' "' + self._PY_WRITE + '"'
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("head", ["pwsh -Command - 0<<", "pwsh -NoProfile>o -Command - <<"],
+                             ids=["fd-zero", "glued-flag"])
+    def test_the_powershell_head_reads_the_same_operators(self, tmp_path, head):
+        cmd = head + "'EOF'\n" + self._PS_WRITE + "\nEOF"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "python3 - 3<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 - 10<<'PY'\n" + _PY_WRITE + "\nPY",
+        'python3 - 3<<< "' + _PY_WRITE + '"',
+        "python3 x.py 0<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 x.py -u>o<<'PY'\n" + _PY_WRITE + "\nPY",
+        "cat <<'MD' > notes.md\npython3 -u>o<<'X'\n" + _PY_WRITE + "\nX\nMD",
+        "cat <<'MD' > notes.md\npython3 - 0<<'X'\n" + _PY_WRITE + "\nX\nMD",
+    ], ids=["fd-three", "fd-ten", "fd-three-here-string", "script-then-fd-zero",
+            "script-then-glued-flag", "glued-flag-in-a-document", "fd-zero-in-a-document"])
+    def test_another_fd_or_a_script_operand_keeps_the_body_data(self, tmp_path, cmd):
+        """A heredoc on another fd is not stdin, a script operand is the
+        program with the heredoc its stdin, and either opener written inside
+        a documentation heredoc is its text: each allows as before the fix."""
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    def test_the_shared_redirect_view_keeps_the_glued_flag_whole(self):
+        """The split is the heredoc view's alone: the redirect view many
+        readers share comes back unchanged for a flag's glued redirect, and
+        the heredoc view blanks it."""
+        b = _bash_patterns_module()
+        scan = b.mask_inert_syntax("python3 -u>o<<'PY'\n" + self._PY_WRITE + "\nPY")
+        assert b._redirects_blanked(scan, powershell=False) is scan
+        view = b._heredoc_opener_view(scan)
+        assert view.startswith("python3 -u  <<'PY'") and len(view) == len(scan)
+
+
 class TestBashOperandSpansStopAtNewline:
     r"""DEF-701: a newline between two statements is a boundary, and `\s` is
     not the character class that respects it.

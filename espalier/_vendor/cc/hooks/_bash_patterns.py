@@ -8620,6 +8620,56 @@ def _inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]
             yield interp, _bash_word_text(command[m.start("word"):m.end("word")])
 
 
+#: What a flag's text before a glued `>` never holds for `_flag_glued_redirect`
+#: to read it: an expansion, an escape or an input redirect, after which the
+#: `>` is something this reading does not model, and the view's statement
+#: keepers (`_REDIRECT_VIEW_KEEP`), which end the flag's word.
+_FLAG_GLUE_UNREAD = frozenset("$`\\<") | _REDIRECT_VIEW_KEEP
+
+
+def _flag_glued_redirect(tok: str) -> "tuple[int, int, bool] | None":
+    """Where the output redirect glued to the flag token ``tok`` stands, as
+    ``(start, stop, bare)``: bash ends a bare word at `>`, so in `-u>o<<`
+    the flag is `-u`, the redirect `>o` (``tok[2:4]``) and the `<<` after
+    it an operator of its own; ``bare`` when the operator ends the token,
+    its target the next one (`-u> o`). The operator is an angle or two and
+    one glued `&` or `|`, the target runs to an angle or a keeper. None for
+    a token that is no flag with such a redirect: no `>` two characters in
+    or more (`->o` is the `-` operand, which the opener reads already), a
+    flag holding what `_FLAG_GLUE_UNREAD` names before it, a process
+    substitution (`>(`), or an operator with no target before another angle:
+    the token is then left as the view has it, the side that changes
+    nothing (DEF-5125)."""
+    gt = tok.find(">")
+    if gt < 2 or any(ch in _FLAG_GLUE_UNREAD for ch in tok[:gt]):
+        return None
+    at = gt + 1
+    if tok.startswith(">", at):
+        at += 1
+    if at < len(tok) and tok[at] in "&|":
+        at += 1
+    if tok.startswith("(", at):
+        return None
+    stop = at
+    while stop < len(tok) and tok[stop] not in "<>" and tok[stop] not in _REDIRECT_VIEW_KEEP:
+        stop += 1
+    if stop == at and stop < len(tok):
+        return None
+    return gt, stop, stop == at
+
+
+def _glued_target_end(tok: str) -> int:
+    """Where the target a flag's bare glued operator takes (`-u> o<<`,
+    `_flag_glued_redirect`) ends in its token ``tok``: a quoted span whole,
+    a bare word at its first angle or keeper, as bash ends it (DEF-5125)."""
+    if tok[0] in "'\"":
+        return len(tok)
+    stop = 0
+    while stop < len(tok) and tok[stop] not in "<>" and tok[stop] not in _REDIRECT_VIEW_KEEP:
+        stop += 1
+    return stop
+
+
 def _heredoc_opener_view(scan: str) -> str:
     """The redirect view (`_redirects_blanked`) with each heredoc and
     here-string operator as the scan has it, a bare operator's delimiter or
@@ -8627,15 +8677,22 @@ def _heredoc_opener_view(scan: str) -> str:
     stops at a redirect before the `-` operand or a flag, where bash hands
     the interpreter its stdin program all the same (DEF-5120's R4: `python3
     2>/dev/null - <<'EOF'` read no program, where `python3 - 2>/dev/null
-    <<'EOF'` was read since DEF-3077). The scan itself comes back when it
-    holds no `<<`, so a call with no heredoc pays one membership test; the
-    redirect view is the shared one, never rebuilt here, and this one is
-    built once a reading however many readers ask (the second failure-mode
-    review of DEF-5120's batch measured 5 to 8 builds a judgment)."""
+    <<'EOF'` was read since DEF-3077). An fd-0 operator (`0<<`, `00<<`,
+    `0<<<`) is put back bare, since fd 0 is stdin, and an output redirect
+    glued to a flag (`-u>o<<`, `-u> o`) is blanked with its target, since
+    bash ends the flag's word at the `>` (DEF-5125). The scan itself comes
+    back when it holds no `<<`, so a call with no heredoc pays one
+    membership test, and when the redirect view blanked nothing and the scan
+    holds no `>`, the one case where the builder could change nothing: a
+    flag's glued redirect is one word to the redirect view, which is shared
+    and never rebuilt or widened here (air's 1aac17), so with that view
+    unchanged only a `>` says the split may be due. This view is built once
+    a reading however many readers ask (the second failure-mode review of
+    DEF-5120's batch measured 5 to 8 builds a judgment)."""
     if "<<" not in scan:
         return scan
     view = _redirects_blanked(scan, powershell=False)
-    if view is scan:
+    if view is scan and ">" not in scan:
         return scan
     return _heredoc_opener_view_built(scan, view)
 
@@ -8651,14 +8708,45 @@ def _heredoc_opener_view_built(scan: str, view: str) -> str:
     chars: list[str] | None = None
     keep_next = False
     target_next = False
+    glued_target_next = False
     for m in _OPERAND_TOKEN_RE.finditer(scan):
         tok = m.group()
         start, end = m.span()
         is_target, target_next = target_next, False
+        glued_target, glued_target_next = glued_target_next, False
+        glued = (None if glued_target or is_target or tok[0] != "-" or ">" not in tok
+                 else _flag_glued_redirect(tok))
         if keep_next:
             keep_next = False
+        elif glued_target or glued is not None:
+            # an output redirect glued to a flag (`-u>o<<'PY'`, `-u>>o`,
+            # `-NoProfile>o`), or the target its bare operator takes (`-u>
+            # o`): bash ends the flag's word at the `>`, so the redirect and
+            # its target are blanked, as the redirect view blanks a spaced
+            # one, and a heredoc operator glued after them is put back alone
+            # (DEF-5125). The redirect view reads the flag as one word and is
+            # shared, so the split is this view's alone (air's 1aac17)
+            lo, stop, bare = glued if glued is not None else (0, _glued_target_end(tok), False)
+            if chars is None:
+                chars = list(view)
+            chars[start + lo:start + stop] = " " * (stop - lo)
+            glued_target_next = bare
+            if not tok.startswith("<<", stop):
+                continue
+            start += stop
+            tok = tok[stop:]
+            keep_next = _redirect_words(tok) == 2
         elif not is_target and tok.lstrip("0123456789").startswith("<<"):
             keep_next = _redirect_words(tok) == 2
+            fd = len(tok) - len(tok.lstrip("0123456789"))
+            if fd and not tok[:fd].strip("0"):
+                # fd 0 is stdin: `0<<'PY'`, `00<<`, `0<<-` and `0<<<` hand
+                # the interpreter its program as the bare operator does, so
+                # the operator is put back bare and its digits stay blank
+                # (DEF-5125); another fd's (`3<<`, `10<<`) is kept whole and
+                # reads no program
+                start += fd
+                tok = tok[fd:]
         elif tok[0] not in "'\"" and (at := tok.find("<<")) > 0:
             # a heredoc operator glued after a redirect's target, one bare
             # token (`>o<<'PY'`, `2>&1<<EOF`, `o<<` or the scan's neutralised
