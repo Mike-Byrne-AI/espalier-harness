@@ -578,7 +578,7 @@ class TestTheFinishWritesWhatTheSummaryWould:
         monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
         lines = _suite_finish(conftest, self._WARNED, summary_ran=False)
         assert lines == [_HEADER, f"  xdist worker gw0 FAILED: {_WENT_DOWN}",
-                         "hook spawn retries: 1 row(s) missed once and answered on the retry:", "  tests/test_a.py::one",
+                         "hook spawn retries: 1 row(s) missed and answered on a retry:", "  tests/test_a.py::one",
                          "nested controller crashes: 1 child run(s) in 1 row(s) were driven again (DEF-4032):",
                          "  tests/test_b.py::two"], lines
 
