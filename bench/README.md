@@ -260,15 +260,19 @@ more ways than a list holds, so it refuses every relative operand (its rows
 spell the victim absolute, and no row carries one). The PowerShell leg, whose
 rows are relative by design, holds every row to an allowlist derived from its
 own population and held as data in `powershell_allowlist.json`: every
-character ASCII and held, the backtick only as the newline escape, every word
-held, and one move, `Set-Location` to a declared victim spelling ending its
-statement, so a move it does not admit refuses and is never read. A new row
-that needs a new character or word refuses until
+character ASCII and held, the backtick only as the newline escape, no quote
+glued inside a word, every word held, and one move, `Set-Location` to a
+declared victim spelling ending its statement, so a move it does not admit
+refuses and is never read. The characters and words are data: a new row that
+needs a new one refuses until
 `python bench/powershell_reachability_differential.py --write-allowlist`
 holds it, and its test pins the file to the population both ways; some inert
 rows take characters from the guard's own regex, so a guard change can red
-that test too, and the fix is the same regeneration, with its diff read. A
-row that makes a link has no delete vouched for, on either leg. A delete that
+that test too, and the fix is that regeneration, with its diff read. The
+ASCII rule, the escape, the glued quote and the move are code: a row that
+needs one changed is a change to the condition set and its review, and the
+regeneration says so and writes nothing. A row that makes a link has no
+delete vouched for, on either leg. A delete that
 names no operand, reading its names from a pipe, is judged for relativity by
 where they come from: the start paths of the listing in its own pipeline
 stage, or the directory the row stands in. The function's docstring is the

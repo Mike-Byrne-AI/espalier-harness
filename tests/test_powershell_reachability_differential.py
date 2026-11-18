@@ -28,6 +28,7 @@ and all three refusal paths are driven here.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import re
@@ -56,14 +57,12 @@ def prd():
 #: What condition (10)'s allowlist says when it refuses a row (`_allowlisted`
 #: in `bench/real_shell_confinement.py`), one reason per rule.
 _ALLOWLIST_REFUSAL = ("a non-ASCII character|no row of the PowerShell population holds"
-                      "|an escape|a move this set does not admit")
+                      "|an escape|a quote glued inside a word|a move this set does not admit")
 
 
 def _holding(prd, *texts):
     """The leg's profile with its allowlist also holding `texts`' characters
     and words, so a test reaches the rule or the condition behind it."""
-    import dataclasses
-
     held = prd.POWERSHELL.allowlist
     extra = prd.derive_allowlist(set(texts))
     return dataclasses.replace(prd.POWERSHELL, allowlist=dataclasses.replace(
@@ -531,25 +530,32 @@ class TestRefusesToExecuteAnythingUnconfined:
         with pytest.raises(prd.UnsafeToExecute, match=held_says):
             prd._confinement.assert_confined(rendered, victim, tmp_path, _holding(prd, rendered))
 
-    @pytest.mark.parametrize("move", [
-        "Set-Location ./vic*;", "Set-Location 'vic'tim;", "Set-Location HKCU:{bs};",
-        "Set-Location $d;", "Set-Location X:;", "Set-Location X:sub;", "Set-Location C:/x;",
+    @pytest.mark.parametrize(("move", "held_says"), [
+        ("Set-Location ./vic*;", "a move this set does not admit"),
+        ("Set-Location 'vic'tim;", "a quote glued inside a word"),
+        ("Set-Location HKCU:{bs};", "a move this set does not admit"),
+        ("Set-Location $d;", "a move this set does not admit"),
+        ("Set-Location X:;", "a move this set does not admit"),
+        ("Set-Location X:sub;", "a move this set does not admit"),
+        ("Set-Location C:/x;", "a move this set does not admit"),
     ], ids=["wildcard", "quoted-in-part", "mapped-drive", "unbound-variable", "drive",
             "drive-relative", "absolute-drive"])
-    def test_each_destination_the_move_list_could_not_place_is_refused(self, prd, tmp_path, move):
+    def test_each_destination_the_move_list_could_not_place_is_no_admitted_move(
+            self, prd, tmp_path, move, held_says):
         """Each destination the hand list of moves read and could not place,
         on a destination that would lie inside the sandbox read as a plain
         name (code review of DEF-2099), and the drive it placed by the host's
         path rules (failure-mode review: `X:` and `C:/x` are plain names on
         POSIX and drives on Windows). The allowlist reads none of them and no
-        host's rules: each is a move it does not admit, on every host, held
-        to the profile's words or not."""
+        host's rules: held to the profile's words or not, each is a move it
+        does not admit, and the one quoted in part a glued quote, a code rule
+        that answers first."""
         victim = tmp_path / "victim"
         victim.mkdir()
         cmd = f"{move.format(bs=chr(92))} {prd._RI} ./victim"
         with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
             prd.assert_safe_to_execute(cmd, victim, tmp_path)
-        with pytest.raises(prd.UnsafeToExecute, match="a move this set does not admit"):
+        with pytest.raises(prd.UnsafeToExecute, match=held_says):
             prd._confinement.assert_confined(cmd, victim, tmp_path, _holding(prd, cmd))
 
     @pytest.mark.parametrize("link", [
@@ -580,10 +586,12 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_a_word_after_a_double_dash_is_an_operand(self, prd, tmp_path):
         """PowerShell's binder ends the parameters at `--` (driven on 5.1:
         `Write-Output -- -x` printed `-x`), so the word after it binds as a
-        path; both readers skipped it as a switch (both reviews)."""
+        path; both readers skipped it as a switch (both reviews). A lone `-`
+        names no parameter, so it is an operand too, as on the Bash leg."""
         victim = tmp_path / "victim"
         victim.mkdir()
         assert prd._delete_operands(f"{prd._RI} -- -x") == ["-x"]
+        assert prd._delete_operands(f"{prd._RI} ./victim -") == ["./victim", "-"]
         with pytest.raises(prd.UnsafeToExecute, match="resolves outside sandbox"):
             prd.assert_safe_to_execute(f"{prd._RI} ./victim -- -victim/../..", victim, tmp_path)
 
@@ -784,9 +792,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         run of this pin never built them)."""
         monkeypatch.setattr(prd, "_PLATFORM", platform)
         victim = tmp_path / "victim"
-        rows = (prd.inert_rows() + prd.opener_context_rows() + prd.reparsed_inert_rows()
-                + prd.call_operator_inert_rows() + prd.execution_rows(nested=nested)
-                + prd.call_operator_rows() + prd.sweep_rows(nested=nested))
+        rows = prd.population(nested)
         assert rows
         for row in rows:
             prd.assert_safe_to_execute(
@@ -795,9 +801,10 @@ class TestRefusesToExecuteAnythingUnconfined:
 
 #: PowerShell's location cmdlets and their aliases, lowercased (driven
 #: 2026-11-17, echo-only, on 5.1, for the hand list of moves the allowlist
-#: replaced).
+#: replaced), and the other ways a word moves where a row stands: a
+#: launcher's working-directory parameter and .NET's current directory.
 _LOCATION_WORDS = frozenset({"set-location", "sl", "cd", "chdir", "push-location", "pushd",
-                             "pop-location", "popd", "cd..", "cd\\"})
+                             "pop-location", "popd", "cd..", "cd\\", "-workingdirectory", "-wd"})
 
 
 class TestTheAllowlistHoldsEveryRow:
@@ -819,26 +826,120 @@ class TestTheAllowlistHoldsEveryRow:
             f"{len(set(derived['alphabet']) ^ set(held['alphabet']))} characters differ): "
             f"run `{prd.POWERSHELL.allowlist.regenerate}` and read its diff")
 
+    def test_the_held_allowlist_loads(self, prd):
+        """A held file that cannot be read or built leaves an allowlist that
+        refuses every row; this names why."""
+        assert prd.HELD_ERROR is None
+
+    def test_a_held_file_that_cannot_be_read_refuses_every_row(self, prd, tmp_path, monkeypatch):
+        """A merge's conflict markers in the held file: the module still
+        imports, so the regeneration can run, and every row refuses naming
+        it, where before every test errored at import and the repair could
+        not start (both third reviews of DEF-2099)."""
+        broken = tmp_path / "held.json"
+        broken.write_bytes(b"<<<<<<< ours\n{}\n")
+        monkeypatch.setattr(prd, "ALLOWLIST_PATH", broken)
+        fallback, error = prd._load_held()
+        assert error is not None and "held.json" in error
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=re.escape(prd.REGENERATE)):
+            prd._confinement.assert_confined(
+                prd.CALIBRATION_ROWS[0].replace(prd._TARGET, "./victim"), victim, tmp_path,
+                dataclasses.replace(prd.POWERSHELL, allowlist=fallback))
+
+    def test_the_regeneration_writes_the_held_bytes(self, prd, tmp_path, monkeypatch):
+        """The writer's own output is the held file, byte for byte once the
+        checkout's line ends are read as LF: ASCII, LF-ended, one layout."""
+        held = prd.ALLOWLIST_PATH.read_bytes().replace(b"\r\n", b"\n")
+        monkeypatch.setattr(prd, "ALLOWLIST_PATH", tmp_path / "written.json")
+        written = prd.write_allowlist().read_bytes()
+        assert b"\r" not in written and written == held
+
+    @pytest.mark.parametrize("extra", [
+        "Write-Output n" + chr(0xE9) + "te", "Write-Output no`te", "Write-Output no''te",
+        "Set-Location ./elsewhere; Write-Output note",
+    ], ids=["non-ascii", "another-escape", "glued-quote", "another-move"])
+    def test_the_regeneration_refuses_a_row_that_needs_a_code_rule(
+            self, prd, tmp_path, monkeypatch, extra):
+        """The alphabet and the words are data; the ASCII rule, the escape,
+        the glued quote and the move are code. A row that needs one of those
+        changed is a change to the set and its review, so the writer says so
+        and writes nothing, where the pin's advice to regenerate would have
+        written a file that cannot be built or does not clear the row."""
+        texts = prd.population_texts() | {extra}
+        monkeypatch.setattr(prd, "population_texts", lambda: texts)
+        target = tmp_path / "untouched.json"
+        monkeypatch.setattr(prd, "ALLOWLIST_PATH", target)
+        with pytest.raises(ValueError, match="code rules changed, not its data"):
+            prd.write_allowlist()
+        assert not target.exists()
+
     def test_the_held_words_move_the_directory_only_by_the_admitted_move(self, prd):
-        """A held location cmdlet or alias other than the admitted move would
-        be a move the allowlist reads as a plain word: the belt for a
-        regeneration whose diff nobody read."""
+        """A held location cmdlet, alias or working-directory parameter other
+        than the admitted move would be a move the allowlist reads as a plain
+        word. A hand list at the regeneration seam: the control is a reviewer
+        reading the regeneration's diff, and this is its belt."""
         allowlist = prd.POWERSHELL.allowlist
         movers = sorted(word for word in allowlist.words if word != allowlist.move and (
-            word.lower() in _LOCATION_WORDS or word.lower().endswith("-location")))
+            word.lower() in _LOCATION_WORDS or word.lower().endswith("-location")
+            or "currentdirectory" in word.lower()))
         assert movers == []
+
+    def test_the_held_words_name_no_place(self, prd):
+        """A held word an unread operand could be (a delete behind a
+        same-line comment, `DEF-2101`) is a name under where the row stands:
+        none is absolute, home-relative, a drive or a climb, which DEF-2101's
+        text states and this pins."""
+        places = sorted(
+            word for word in prd.POWERSHELL.allowlist.words
+            if word[:1] in ("/", chr(92), "~") or ".." in re.split(r"[/\\]", word)
+            or re.match(r"[A-Za-z][\w.-]*:", word))
+        assert places == []
 
     @pytest.mark.parametrize("row", [0, 1], ids=["bare-delete", "quoted-mention"])
     def test_the_calibration_rows_pass_the_condition_set(self, prd, tmp_path, row):
         """`assert_instrument_is_live` drives these through the set before
-        any row, so they are in the population the allowlist is derived
-        from (today their characters and words are the rows' own as well, so
-        only the membership pins that they are read)."""
+        any row."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        rendered = prd.CALIBRATION_ROWS[row].replace(prd._TARGET, "./victim")
-        assert rendered in prd.population_texts()
-        prd.assert_safe_to_execute(rendered, victim, tmp_path)
+        prd.assert_safe_to_execute(
+            prd.CALIBRATION_ROWS[row].replace(prd._TARGET, "./victim"), victim, tmp_path)
+
+    def test_the_derivation_reads_the_calibration_rows(self, prd):
+        """The quoted mention is no other row's text, so only the derivation's
+        own read of `CALIBRATION_ROWS` puts it in the population (the bare
+        delete is an execution row's too)."""
+        assert prd.CALIBRATION_ROWS[1].replace(prd._TARGET, "./victim") in prd.population_texts()
+
+    @pytest.mark.parametrize(("path", "name"), [
+        ("C:/Program Files/PowerShell/7/PWSH.EXE", "pwsh"), ("/usr/bin/pwsh", "pwsh"),
+        ("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "powershell"),
+    ], ids=["upper-case-exe", "posix", "windows-powershell"])
+    def test_the_nested_name_is_the_binarys_held_one(self, prd, path, name):
+        assert prd.nested_name(path) == name
+
+    def test_an_interpreter_the_held_names_lack_is_refused_before_any_row(self, prd):
+        """A preview build's name is no word the held allowlist holds, and
+        no regeneration holds it, so the run refuses at once and says how to
+        name the binary (both third reviews of DEF-2099)."""
+        with pytest.raises(prd.InstrumentBroken, match="ESPALIER_PWSH"):
+            prd.nested_name("/opt/microsoft/powershell/7-preview/pwsh-preview")
+
+    @pytest.mark.parametrize("pwsh", ["pwsh", "powershell"])
+    def test_run_hands_the_interpreter_nothing_the_derivation_does_not_read(
+            self, prd, monkeypatch, pwsh):
+        """Every text `run` hands `_run_pwsh`, rendered as it renders them,
+        is one the allowlist is derived from, so a row family added to the
+        run alone reds here, not in a run that refuses it."""
+        handed = []
+        monkeypatch.setattr(prd, "_run_pwsh", lambda template, *a, **k: (
+            handed.append(template), (True, 0, ""))[1])
+        monkeypatch.setattr(prd, "guard_tier", lambda command: "ALLOW")
+        monkeypatch.setattr(prd, "assert_instrument_is_live", lambda interpreter: None)
+        prd.run(pwsh)
+        texts = prd.population_texts()
+        assert handed and [t for t in handed if t.replace(prd._TARGET, "./victim") not in texts] == []
 
     @pytest.mark.parametrize(("operand", "code"), [
         (chr(0x2019) + "/" + chr(0x2019), "U+2019"), (chr(0x2013) + "LiteralPath:/", "U+2013"),
@@ -858,7 +959,9 @@ class TestTheAllowlistHoldsEveryRow:
         ("{ri} ./victim%", r"characters \['%'\] no row"),
         ("Write-Output a`t; {ri} ./victim", "an escape '`t'"),
         ("Write-Output nota; {ri} ./victim", r"words \['nota'\] no row"),
-    ], ids=["a-character-no-row-holds", "an-escape-other-than-the-newline", "a-word-no-row-holds"])
+        ("Write-Output no''te; {ri} ./victim", "a quote glued inside a word"),
+    ], ids=["a-character-no-row-holds", "an-escape-other-than-the-newline", "a-word-no-row-holds",
+            "a-quote-glued-inside-a-word"])
     def test_each_rule_refuses_by_its_own_reason(self, prd, tmp_path, cmd, says):
         """Each rule on a row that differs from a held one by the one thing
         it reads; the admitted-move rule is the move tests' above."""
@@ -884,8 +987,6 @@ class TestTheAllowlistHoldsEveryRow:
         that admits what the rule refuses, a move it cannot hold, or a
         destination that does not descend would each make a rule vouch for
         what it reads as unsafe."""
-        import dataclasses
-
         with pytest.raises(ValueError, match=says):
             dataclasses.replace(prd.POWERSHELL.allowlist, **change)
 

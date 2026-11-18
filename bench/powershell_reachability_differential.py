@@ -102,6 +102,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -727,7 +728,8 @@ def _delete_operands(cmd: str) -> list[str]:
 
     Every word after ``--`` is an operand, a dash or not: PowerShell's
     binder ends its parameters there (driven 2026-11-17 on 5.1:
-    ``Write-Output -- -x`` printed ``-x``).
+    ``Write-Output -- -x`` printed ``-x``); and so is a lone ``-``, which
+    names no parameter, as on the Bash leg.
     """
     return _operand_walk(cmd, moved=False)
 
@@ -801,48 +803,123 @@ CALIBRATION_ROWS: tuple[str, str] = (f"{_RI} {_TARGET}", f"$d = '{_RI} {_TARGET}
 
 #: How condition (10)'s allowlist cuts a row into words: at blanks, at the
 #: statement and pipeline separators, at the brackets and braces that open
-#: and close a block or an expression, at quotes, and at the newline escape
-#: (a reparsed string reads it as a line break).
-ALLOWLIST_SPLIT = re.compile(r"`n|[ \t\r\n;|&(){}'\"]+")
+#: and close a block or an expression, at the comma between an array's
+#: elements, at quotes, and at the newline escape (a reparsed string reads
+#: it as a line break).
+ALLOWLIST_SPLIT = re.compile(r"`n|[ \t\r\n;|&(){},'\"]+")
 
 #: The characters and words this leg's population holds, written by
 #: `--write-allowlist` and pinned to the population by its test.
 ALLOWLIST_PATH = Path(__file__).with_name("powershell_allowlist.json")
-_HELD = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+
+#: The one move condition (10)'s allowlist admits, and the command that
+#: regenerates its data, named in a refusal.
+ADMITTED_MOVE = "Set-Location"
+REGENERATE = "python bench/powershell_reachability_differential.py --write-allowlist"
+
+#: The names the nested-interpreter rows invoke the running PowerShell by, as
+#: `nested_name` reads them from its binary: the population, and so the held
+#: allowlist, holds these alone.
+NESTED_NAMES: tuple[str, ...] = ("pwsh", "powershell")
+
+
+def nested_name(pwsh: str) -> str:
+    """The name the nested rows invoke `pwsh` by, its file name's stem in
+    lower case (`PWSH.EXE` is `pwsh`); refused where it is not one of
+    :data:`NESTED_NAMES`, since those rows would then spell a word the held
+    allowlist does not hold and refuse after the inert rows ran, and no
+    regeneration holds a name no population row spells (both third reviews
+    of DEF-2099)."""
+    stem = Path(pwsh).stem
+    if stem.lower() not in NESTED_NAMES:
+        raise InstrumentBroken(
+            f"the interpreter {pwsh!r} is named {stem!r}, and the nested rows invoke it by a "
+            f"name the held allowlist holds only as {list(NESTED_NAMES)}: point ESPALIER_PWSH "
+            f"at a binary named one of those (a copy or a link), or add the name to "
+            f"NESTED_NAMES and run `{REGENERATE}`")
+    return stem.lower()
+
+
+def population(nested: str) -> list[dict]:
+    """Every row `run` hands the interpreter, in its order, with the nested
+    rows invoking `nested` (one of :data:`NESTED_NAMES`)."""
+    return (inert_rows() + opener_context_rows() + reparsed_inert_rows()
+            + call_operator_inert_rows() + execution_rows(nested=nested)
+            + call_operator_rows() + sweep_rows(nested=nested))
 
 
 def population_texts() -> set[str]:
     """Every text `run` can hand an interpreter, rendered as `_run_pwsh`
-    renders it: both platforms' rows, both nested interpreters and the
-    calibration rows. The held allowlist is derived from these."""
+    renders it: both platforms' rows, every nested name and the calibration
+    rows. The held allowlist is derived from these."""
     global _PLATFORM
     held = _PLATFORM
     texts = set(CALIBRATION_ROWS)
     try:
         for platform in ("nt", "posix"):
             _PLATFORM = platform
-            for nested in ("pwsh", "powershell"):
-                texts.update(
-                    row["template"] for row in
-                    inert_rows() + opener_context_rows() + reparsed_inert_rows()
-                    + call_operator_inert_rows() + execution_rows(nested=nested)
-                    + call_operator_rows() + sweep_rows(nested=nested))
+            for nested in NESTED_NAMES:
+                texts.update(row["template"] for row in population(nested))
     finally:
         _PLATFORM = held
     return {text.replace(_TARGET, "./victim") for text in texts}
 
 
-def derive_allowlist(texts: "set[str]") -> dict[str, object]:
+def derive_allowlist(texts: set[str]) -> dict[str, Any]:
     """The allowlist's characters and words, as `ALLOWLIST_PATH` holds them."""
     return {"alphabet": "".join(sorted({char for text in texts for char in text})),
             "words": sorted({word for text in texts
                              for word in ALLOWLIST_SPLIT.split(text) if word})}
 
 
+def allowlist_text(data: dict[str, Any]) -> bytes:
+    """`data` as `ALLOWLIST_PATH` holds it: ASCII JSON, LF-ended."""
+    return (json.dumps(data, indent=1, ensure_ascii=True) + "\n").encode("ascii")
+
+
+def _allowlist(alphabet: "str | list[str]", words: "list[str]") -> _confinement.Allowlist:
+    """Condition (10)'s allowlist over `alphabet` and `words`, the data; the
+    rest of it is this leg's code."""
+    return _confinement.Allowlist(
+        alphabet=frozenset(alphabet), words=frozenset(words), split=ALLOWLIST_SPLIT,
+        escape="`", escapes=frozenset("n"), quotes="'\"", move=ADMITTED_MOVE,
+        destinations=tuple(spelling for _, spelling in TARGETS), move_end=";",
+        regenerate=REGENERATE)
+
+
+def _load_held() -> "tuple[_confinement.Allowlist, str | None]":
+    """The held allowlist and None; or, where its file cannot be read or
+    built (a merge's conflict markers, a key dropped), one that holds the
+    admitted move alone, so every row refuses and names the regeneration,
+    and why, so the regeneration can still import this module."""
+    try:
+        held = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+        return _allowlist(held["alphabet"], held["words"]), None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return (_allowlist(ADMITTED_MOVE, [ADMITTED_MOVE]),
+                f"{ALLOWLIST_PATH.name}: {type(exc).__name__}: {exc}")
+
+
+HELD_ALLOWLIST, HELD_ERROR = _load_held()
+
+
 def write_allowlist() -> Path:
-    """Write the population's allowlist to `ALLOWLIST_PATH`, LF-ended."""
-    text = json.dumps(derive_allowlist(population_texts()), indent=1, ensure_ascii=True)
-    ALLOWLIST_PATH.write_bytes((text + "\n").encode("ascii"))
+    """Write the population's allowlist to `ALLOWLIST_PATH`, after checking
+    that the population meets the allowlist's code rules: a non-ASCII
+    character, another escape, a glued quote or another move is a change to
+    the condition set and its review, which no regeneration makes, so it
+    raises ValueError and writes nothing."""
+    texts = population_texts()
+    data = derive_allowlist(texts)
+    try:
+        candidate = _allowlist(data["alphabet"], data["words"])
+        for text in sorted(texts):
+            _confinement._allowlisted(text, candidate, POWERSHELL)
+    except (ValueError, UnsafeToExecute) as exc:
+        raise ValueError(
+            f"the population needs one of the allowlist's code rules changed, not its data, so "
+            f"nothing was written: {exc}") from None
+    ALLOWLIST_PATH.write_bytes(allowlist_text(data))
     return ALLOWLIST_PATH
 
 
@@ -899,28 +976,20 @@ POWERSHELL = _confinement.Shell(
     # condition (10): every row is held to this allowlist, moving or not (the
     # dispatcher's ruling on DEF-2099), in place of a hand list of moves that
     # drew new misses in each of two reviews. Its characters and words are
-    # the population's own (`ALLOWLIST_PATH`, pinned to `population_texts`
-    # by its test), so a row that needs a new one refuses until
-    # `--write-allowlist` holds it and a reviewer reads the diff. Every word
-    # is held, not only a command's head, so no reading of where PowerShell
-    # starts a command (a string an evaluator runs, a block, the call
-    # operator) has to be right. The backtick escapes `n` alone, the newline
-    # escape the reparsed rows use; a line continuation and an escaped
-    # command word refuse. The one move is Set-Location to a declared
-    # spelling, ending its statement, as each of the population's moving
-    # rows spells it (80 of the 1568, 32 distinct texts, in memory on
-    # Windows, 2026-11-18).
-    allowlist=_confinement.Allowlist(
-        alphabet=frozenset(_HELD["alphabet"]),
-        words=frozenset(_HELD["words"]),
-        split=ALLOWLIST_SPLIT,
-        escape="`",
-        escapes=frozenset("n"),
-        move="Set-Location",
-        destinations=tuple(spelling for _, spelling in TARGETS),
-        move_end=";",
-        regenerate="python bench/powershell_reachability_differential.py --write-allowlist",
-    ),
+    # data, the population's own (`ALLOWLIST_PATH`, pinned to
+    # `population_texts` by its test), so a row that needs a new one refuses
+    # until `--write-allowlist` holds it and a reviewer reads the diff. Every
+    # word is held, not only a command's head, so no reading of where
+    # PowerShell starts a command (a string an evaluator runs, a block, the
+    # call operator) has to be right. The rest is code (`_allowlist`): the
+    # backtick escapes `n` alone, the newline escape the reparsed rows use,
+    # so a line continuation and an escaped command word refuse; a quote
+    # glued inside a word refuses; and the one move is Set-Location to a
+    # declared spelling, ending its statement, as each of the population's
+    # moving rows spells it (80 of the 1568, 32 distinct texts, in memory on
+    # Windows, 2026-11-18). A held file that cannot be read or built leaves
+    # one that refuses every row (`HELD_ERROR` says why, and its test reds).
+    allowlist=HELD_ALLOWLIST,
     # a row that makes a link has no delete vouched for, absolute or not:
     # 0 of this leg's 1568 rows make one (in memory on Windows, both
     # platforms' rows, 2026-11-18)
@@ -1099,10 +1168,7 @@ def classify(reaches: bool, tier: str) -> str:
 
 
 def run(pwsh: str, quick: bool = False) -> list[dict]:
-    rows = (inert_rows() + opener_context_rows() + reparsed_inert_rows()
-            + call_operator_inert_rows()
-            + execution_rows(nested=Path(pwsh).stem) + call_operator_rows()
-            + sweep_rows(nested=Path(pwsh).stem))
+    rows = population(nested_name(pwsh))
     if quick:
         rows = rows[::3]
     out = []
@@ -1159,7 +1225,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.write_allowlist:
-        print(f"wrote {write_allowlist()}")
+        try:
+            print(f"wrote {write_allowlist()}")
+        except ValueError as exc:
+            print(f"NOT WRITTEN -- {exc}", file=sys.stderr)
+            return 2
         return 0
 
     found = find_powershell()
@@ -1178,6 +1248,7 @@ def main(argv: list[str] | None = None) -> int:
         _RUN_CACHE_DIR = cache_dir
         ROOT_SHAPE = args.root_shape
         try:
+            nested_name(pwsh)  # an unheld name refuses before any row runs
             assert_instrument_is_live(pwsh)
             results = run(pwsh, args.quick)
         except InstrumentBroken as exc:

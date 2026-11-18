@@ -92,6 +92,7 @@ EXPANSIONS: dict[str, re.Pattern[str]] = {
     "mapped-drive": re.compile(r"^[A-Za-z][\w./\\-]*::|^[A-Za-z][\w.-]+:"),
 }
 
+
 @dataclass(frozen=True)
 class Allowlist:
     """Condition (10)'s reading for a leg that holds its rows whole: every
@@ -113,10 +114,15 @@ class Allowlist:
     #: has to be right.
     words: frozenset[str]
     #: What ends one word and opens the next.
-    split: "re.Pattern[str]"
+    split: re.Pattern[str]
     #: The shell's escape character, and the characters it may escape.
     escape: str
     escapes: frozenset[str]
+    #: The shell's quote characters. A run of them glued to a character
+    #: `split` does not cut at, on both sides, joins pieces the word rule
+    #: reads apart into one word (a command name spelled in pieces), so it
+    #: refuses: a code rule, which no regeneration widens.
+    quotes: str
     #: The one admitted move: its command word in its exact case, blanks, one
     #: of `destinations`, and `move_end`. Every occurrence of the word, in
     #: any case and inside any word, must open that whole text.
@@ -186,7 +192,7 @@ class Shell:
     #: row is held to, whose one admitted move descends into the victim.
     #: None: this leg does not read its moves, so condition (10) refuses
     #: every relative delete operand, move or no move; the profile says why.
-    allowlist: "Allowlist | None"
+    allowlist: Allowlist | None
     #: The word of the row that makes a link, or None (condition 10): a link
     #: is made when the row runs, after condition (7) resolved each operand
     #: on a disk that does not hold it yet, so a delete through it, spelled
@@ -226,8 +232,11 @@ def _allowlisted(cmd: str, allowlist: Allowlist, shell: Shell) -> int:
     """How many admitted moves `cmd` makes, or a refusal: condition (10)'s
     allowlist (:class:`Allowlist`). In order: a non-ASCII character, a
     character the alphabet does not hold, an escape of a character it does
-    not admit, a word the population does not hold, and an occurrence of
-    the move word that does not open the whole admitted move."""
+    not admit, a quote glued inside a word, a word the population does not
+    hold, and an occurrence of the move word that does not open the whole
+    admitted move. The alphabet and the words are data, regenerated from the
+    population; the other four are code, and a row that needs one changed is
+    a change to this set and its review."""
     for at, char in enumerate(cmd):
         if not char.isascii():
             raise UnsafeToExecute(
@@ -245,6 +254,14 @@ def _allowlisted(cmd: str, allowlist: Allowlist, shell: Shell) -> int:
             raise UnsafeToExecute(
                 f"an escape {cmd[found.start():found.end() + 1]!r} at offset {found.start()}: "
                 f"the {shell.name} rows escape only {sorted(allowlist.escapes)}: {cmd!r}")
+    for found in re.finditer(f"[{re.escape(allowlist.quotes)}]+", cmd):
+        before, after = cmd[found.start() - 1:found.start()], cmd[found.end():found.end() + 1]
+        if (before and after and not allowlist.split.fullmatch(before)
+                and not allowlist.split.fullmatch(after)):
+            raise UnsafeToExecute(
+                f"a quote glued inside a word at offset {found.start()}: the {shell.name} "
+                f"interpreter joins the quoted pieces and what they touch into one word, which "
+                f"the word rule reads apart, and no row of its population glues one: {cmd!r}")
     unknown = sorted({word for word in allowlist.split.split(cmd) if word} - allowlist.words)
     if unknown:
         raise UnsafeToExecute(
@@ -319,9 +336,10 @@ def assert_confined(
        vouched for only where the leg reads its moves: a leg with no
        `allowlist` reads none and refuses every one; a leg with one holds
        every row to it, moving or not (every character ASCII and in its
-       alphabet, every escape one it admits, every word one its population
-       holds, every move the one admitted move, which descends into the
-       victim), and a relative operand in a row that moves climbs no `..`
+       alphabet, every escape one it admits, no quote glued inside a word,
+       every word one its population holds, every move the one admitted
+       move, which descends into the victim), and a relative operand in a
+       row that moves climbs no `..`
        -- (7) resolves against the sandbox, where a row starts, and a real
        shell resolves against wherever the row moved to (DEF-2099); and a
        row that makes a link (the profile's `makes_links`) has no delete
