@@ -768,6 +768,89 @@ must read as no payoff.
 **Fixed by this commit:** none of the figures above may change after it. A census defect that
 moves a figure changes the census, never the threshold.
 
+### Task 0 Item 1 at P: the authoring figures re-derived
+
+Every row is read by `python3 scripts/cli_cost_census.py --at <pin> --json <sections>` at both
+pins, P (`3330a5a`) and the authoring pin (`17d83e0`). A structural row must reproduce exactly.
+A windowed row may differ only by the pull requests between the two pins (#714 to #718).
+
+| Authoring row | At `17d83e0` | At P | Verdict |
+|---|---|---|---|
+| Lines | 17,790 | 17,817 | exact; +27 by #715 |
+| Functions / public / classes / `cmd_*`; the largest eight | as the table | as the table | exact |
+| Replay conflicts on cli.py | 1 of 511 (`42cd25d4c`, #57), drivers on | 1 of 514 | exact under both instruments; +3 catch-ups at P (#714, #718) |
+| Replay conflicts, any file | 150 of 511, drivers on (156 drivers off) | 150 of 514 drivers on, 156 off | exact (lane-side). Beside it, `merge_cost_census.replay_all` over every pull request's catch-ups, drivers off: 136 of 469 at `17d83e0`, 136 of 472 at P, cli.py 1 (#57) under both |
+| Concurrent cli.py PR pairs, 30 days | 3 (429/430 unplaced, 588/589, 668/669 different functions) | 3 | exact |
+| Lines a lane reads (`lane_read`) | 37 lanes, median 345, max 2,784 over the pin's 30 days; 36, 337, 2,784 without #319 | 36 lanes, median 337, max 2,784, summed 26,298 | exact: #319 falls inside the pin's window and outside the authoring's clock window. An insertion is placed by its line alone (an L+1 fallback read 2,816 and was a defect, removed) |
+| Declared holds | 1 (`479698`) | 1 | exact, once the dispatcher's own claims are excluded (`66aaa6` was one) |
+| Importers outside tests | 62 | 65 | **reproduced under the authoring's rule**, which sums each file's from-imported names over the 7 files. The census counts the union across files plus the names loaded through an alias (`doctor`'s `_cli.X`, `generate_doc_regions`' `cli.X`): 56 from-imports + 9. The pack's label "distinct names in all" was wrong. The census's 65 stands for Task 3 (air, ack `491050`) |
+| Patches of another module through cli | four | 8 sites, 3 targets, 3 files | **reproduced under the authoring's rule**, a same-line text match of `setattr(cli.<module>`, which misses four wrapped calls in `tests/test_cli_commands.py`. The census reads by AST, and its 8 stand (ack `491050`) |
+| Catch-ups carrying cli.py, 30 days | 54 | 48 at `17d83e0`, 49 at P | **reproduced under the authoring's rule**: 48 catch-ups plus 6 other lane-side merges (stacks and merges of a commit) = 54. The census counts `merge_cost_census.CATCH_UP` alone. Context, never graded |
+| Cross-seat claim-overlap lane pairs | 18 (stated over 30 days and over about 42) | 10 over the 30 days to P; 9 over 30 days to `17d83e0`; 20 over 2026-10-06 to `17d83e0` (a claim-side rule: 20 over 71 lanes) | **NOT reproduced** under either stated window. Item 1's refuting result, re-raised (request `651334`) and put to the operator by the dispatcher as call `20261118T032647Z-air-7a763a` (continue, recommended, or stop). The 18 grades nothing: C2 is graded from the census over the 30 days to P |
+
+Items 2 and 3 are graded only after that call's ruling. The 42-day C2 share (31 of 71, 43.7%) is
+context and stays out of the graded section.
+
+### The transcripts read, diagnosed (Item 3's oracle, before any grade)
+
+**The first read at P** (census at `aa3fa7d01`, the counting rules as committed): 194 merged lanes
+of air and air-work in the window; 15 treatment lanes, 126 control; median R 33 lines against
+median E 275; 6 of the 15 cli.py lanes read R = 0; 8,729 of the seats' own calls landed on no
+lane.
+
+**What the unplaced calls are** [verified, a dump of every call the census reads, attributed by
+its own rule]: 8,504 are the dispatcher's own calls on `main` in the main checkout outside any
+claim window of its lanes (board, review and pack-authoring reads), and 225 are air-work's. They
+are not lane reads lost by a defect, with one exception: the dispatcher's own lanes, below.
+
+**Why six cli.py lanes read R = 0**, each by a hand read of its sessions:
+- **#357, #429, #540:** the seat delegated the cli.py work to a fork in its own git worktree.
+  The seat's own R = 0 is genuine under the committed rule (own reads only, since threshold (a)
+  is the seat's context budget). But the forks' reads were lost to the subagent figure beside
+  it: a fork's worktree was gone by the read, so its files mapped to
+  `.claude/worktrees/agent-*/espalier/cli.py`, never to the CLI module. **A census defect**, fixed.
+- **#530:** built in a scratchpad clone (`.../scratchpad/d5087/`) while the seat's checkout stayed
+  on #527's branch after #527 merged (17:10Z). The worktree's reflog holds it on that branch from
+  16:04Z to 18:47Z. The committed rule takes a record's `gitBranch` on its word, so #530's calls
+  went to #527, a control lane: Task 9's "attribute a session to the seat's other lane", found
+  in the record. **A census defect**, fixed: a merged lane's branch yields to the one other claim
+  the seat holds after that merge. The scratchpad copy's reads map onto the repo path where the
+  rest of the path is a file at the pin.
+- **#512:** read through `git diff ... -- espalier/cli.py | sed` and grep (a search, counted apart),
+  plus a fork.
+- **#349:** the dispatcher's lane (below).
+
+Two more defects, found and fixed in the same pass: a redirection's target (`cat > file <<EOF`)
+was read as a read operand, which counted 1,857 writes as calls; and the population block
+counted every line of each transcript, so a live session appending after P would change a
+re-run's section (Pass criteria). It now counts the records stamped at or before P.
+
+**The hand sample** (the five lanes named at step 1, 349, 504, 661, 324 and 463, each against its
+own commits, claim windows, merge and the seat's calls in its build span, with the times in UTC):
+- **air-work, 3 of 3 confirmed** (#504, #661, #463). Each lane's calls are on its own branch from
+  just before its claim until its release. Reads of its files that went uncredited are on the
+  seat's neighbouring lanes, as those lanes' own work.
+- **air, 0 of 2 confirmed** (#349, #324). The dispatcher builds a lane on `main` in its own
+  checkout and claims it at the commit. #349's 36 calls, which read 1,607 lines of its own files
+  in the six hours before its claim, are unattributed (the census credits it 1 call and 0 lines),
+  and so are #324's 16 calls and 2,305 lines (credited 9 calls, 2 lines). No signal in the record
+  places them: the branch is `main` and no claim is live.
+
+So by the refutation committed at step 1, the section is **unread for the two-seat population**:
+the attribution cannot be confirmed for air's lanes. The reads below are reported for the record
+and graded on nothing until the call's ruling:
+
+| Read at P | n_t / n_c | median R | median E | realised MDR | by the committed rule |
+|---|---|---|---|---|---|
+| Census at `aa3fa7d01` (as committed) | 15 / 126 | 33 | 275 | 6.35 | unmeasured |
+| Census at `e592d0b5f` (the defects fixed) | 15 / 126 | 42 | 277 | 6.31 | unmeasured |
+| air-work alone, the confirmed seat (**post hoc**, not pre-registered) | 14 / 82 | 88 | 558.5 | 4.21 | unmeasured |
+
+Beside them, never graded: the forks' reads of the CLI modules on the 15 lanes sum to 6,786 lines
+(1,635 before the worktree fix), and air-work's median R plus its forks' is 416. Search calls on
+the CLI modules: 77. The air seat has one cli.py lane in the window (#349), so the reading cost on
+this box is in effect air-work's, as step 1 said.
+
 
 ## Landing
 - State: DRAFT
