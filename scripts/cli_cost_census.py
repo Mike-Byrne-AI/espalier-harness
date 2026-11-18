@@ -33,15 +33,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import functools
+import hashlib
 import importlib.util
 import itertools
 import json
 import os
 import re
+import shlex
 import shutil
 import statistics
 import sys
+import textwrap
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -931,6 +935,861 @@ def section_patches(ctx: dict) -> dict:
             "through_cli": {"sites": len(through), "targets": sorted({s["through"] for _p, s in through})},
             "per_target": {t: {"sites": sites_of[t], "loaders": loaders[t]} for t in targets},
             "unparsed": unparsed}
+
+
+# ---------------------------------------------------------------- readers, citations, probes, ledger rows, doctor
+
+def _tracked_texts(ctx: dict) -> dict[str, str]:
+    """Every tracked file's text at the pin, read once a run in one batch. A
+    blob holding a NUL is binary and left out; the tracked, read, binary and
+    unread counts go in ``ctx["_texts_meta"]`` so a section can say what it read."""
+    if "_texts" not in ctx:
+        root, at = ctx["root"], ctx["pin"]["at"]
+        tracked = tracked_at(root, at)
+        texts = blobs_at(root, at, tracked)
+        ctx["_texts"] = {p: t for p, t in texts.items() if "\x00" not in t}
+        ctx["_texts_meta"] = {"tracked": len(tracked), "read": len(texts),
+                              "binary": sorted(p for p, t in texts.items() if "\x00" in t),
+                              "unread": sorted(set(tracked) - set(texts))}
+    return ctx["_texts"]
+
+
+def _clusters(ctx: dict) -> dict:
+    if "_clusters" not in ctx:
+        ctx["_clusters"] = section_clusters(ctx)
+    return ctx["_clusters"]
+
+
+def _owners(ctx: dict) -> dict[str, dict]:
+    """``{definition: owner}`` from the clusters section's ownership: ``owned_by``
+    one command, ``shared_by`` several, or ``unreached`` (``entry``,
+    ``external``, ``tests_only``, ``dead``), with the concern that owns it (or
+    the concerns that share it) beside."""
+    if "_owners" not in ctx:
+        cl = _clusters(ctx)
+        by, con = cl["by_command"], cl["concerns"]
+        out: dict[str, dict] = {}
+        for cmd, row in by["per_root"].items():
+            for m in row["members"]:
+                out[m] = {"owned_by": cmd}
+        for m, cmds in by["shared_by"].items():
+            out[m] = {"shared_by": cmds}
+        for kind in ("entry", "external", "tests_only", "dead"):
+            for m in by[f"unreached_{kind}"] or ():
+                out[m] = {"unreached": kind}
+        for name, row in con["per_root"].items():
+            for m in row["members"]:
+                out.setdefault(m, {})["concern"] = name
+        for m, roots in con["shared_by"].items():
+            out.setdefault(m, {})["concern_shared_by"] = roots
+        ctx["_owners"] = out
+    return ctx["_owners"]
+
+
+def _owner_of(owners: dict[str, dict], name: str) -> dict:
+    return owners.get(name.split(".", 1)[0], {"not_in_cli": True})
+
+
+def _commands_of(owner: dict) -> list[str]:
+    return [owner["owned_by"]] if "owned_by" in owner else list(owner.get("shared_by", []))
+
+
+#: The readers of cli.py by path that are not loud, ``classified_by: hand`` (the
+#: architecture review's read at 17d83e0, pack Task 3). ``silent``: it asserts
+#: something of cli.py's text that code moved out of the file escapes with no
+#: red. ``flat-module``: it scans only the top-level ``espalier/*.py``, so a
+#: subpackage escapes it. A symbol of ``None`` is the whole file; ``A::b`` is a
+#: method of a class. Each is checked to exist at the pin and a gone one is
+#: named. A site inside a listed span takes its class; every other site the
+#: AST read finds is ``loud`` (red on a move: a cost, not a risk).
+READER_CLASSES: tuple[tuple[str, str | None, str], ...] = (
+    ("tests/test_init_interactive_arming.py", "test_no_raw_sys_isatty_calls_in_cli", "silent"),
+    ("tests/test_python_floor.py",
+     "TestFloorAtTheThreeDecisionSites::test_the_two_python_2_admitting_predicates_are_narrowed_together",
+     "silent"),
+    ("tests/test_hook_contracts.py", "test_no_stray_literal_ten_for_stop", "silent"),
+    ("tests/test_cli_deploy.py", "test_no_naked_write_text_anywhere_in_cli", "silent"),
+    ("tests/test_no_bare_espalier_hints.py", "SCANNED_FILES", "silent"),
+    ("tools/cc/sister_site_probe.py", None, "flat-module"),
+    ("tests/test_python_floor.py", "test_every_engine_verdict_memo_is_cleared_between_tests", "flat-module"),
+)
+#: Where the path readers are looked for: every tracked ``.py`` under these, and the files named.
+READER_ROOTS = ("tests/", "scripts/")
+READER_FILES = ("tools/cc/sister_site_probe.py",)
+READER_KINDS = ("symbol_key", "path_literal", "path_join")
+READER_CLASS_NAMES = ("loud", "silent", "flat-module")
+
+
+def named_spans(tree: ast.Module) -> dict[str, list[tuple[int, int]]]:
+    """Every function, class and module-level assigned name in one file with
+    its line span, keyed by its qualified name (``Class::method``) and, for a
+    nested one, by its bare name too."""
+    out: dict[str, list[tuple[int, int]]] = {}
+
+    def visit(body: list[ast.stmt], prefix: str) -> None:
+        for node in _top_statements(body):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                span = (min([node.lineno] + [d.lineno for d in node.decorator_list]), node.end_lineno)
+                for key in {prefix + node.name, node.name}:
+                    out.setdefault(key, []).append(span)
+                visit(node.body, f"{prefix}{node.name}::")
+            elif not prefix and isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                    for name in _store_names(target):
+                        out.setdefault(name, []).append((node.lineno, node.end_lineno))
+
+    visit(tree.body, "")
+    return out
+
+
+def reader_sites(tree: ast.Module, modules) -> tuple[list[dict], int]:
+    """``(sites, loose)``: each place one file reads a CLI module by its path,
+    by AST. A ``(module path, symbol)`` tuple key, its second element a name
+    (``("espalier/cli.py", "espalier/x.py")`` is two paths, no key); a string
+    constant equal to the module's path (a key's first element is the key's,
+    never counted twice); and a path join whose right operand is the module's
+    file name (``ROOT / "espalier" / "cli.py"``). A comment or a docstring that
+    names the path reads nothing. ``loose`` counts the file name as a constant
+    outside a join (``Path(..., "cli.py")``), a spelling no class is given."""
+    paths, names = set(modules), {Path(m).name for m in modules}
+    in_key: set[int] = set()
+    joins: set[int] = set()
+    sites: list[dict] = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Tuple) and len(node.elts) == 2
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts)
+                and node.elts[0].value in paths and re.fullmatch(r"[A-Za-z_][\w.]*", node.elts[1].value)):
+            in_key.add(id(node.elts[0]))
+            sites.append({"kind": "symbol_key", "line": node.lineno, "symbol": node.elts[1].value})
+        elif (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+              and isinstance(node.right, ast.Constant) and node.right.value in names):
+            joins.add(id(node.right))
+            sites.append({"kind": "path_join", "line": node.right.lineno})
+    loose = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in paths and id(node) not in in_key:
+                sites.append({"kind": "path_literal", "line": node.lineno})
+            elif node.value in names and id(node) not in joins:
+                loose += 1
+    return sorted(sites, key=lambda s: (s["line"], s["kind"])), loose
+
+
+def section_readers(ctx: dict) -> dict:
+    """The tests and scripts that read cli.py by its path (its text, never an
+    import), by AST over every tracked ``.py`` under ``tests/`` and
+    ``scripts/`` and the files ``READER_FILES`` names: each site by kind, with
+    its file, classed ``loud``, ``silent`` or ``flat-module`` by the hand list
+    (``READER_CLASSES``, ``classified_by: hand``), each entry checked to exist
+    at the pin. A flat-module reader globs ``espalier/*.py`` and may hold no
+    site at all: it is listed with its count, zero included."""
+    texts = _tracked_texts(ctx)
+    modules = ctx["modules"]
+    hand = tuple(ctx.get("reader_classes", READER_CLASSES))
+    scanned = sorted(p for p in texts if p.endswith(".py") and (p.startswith(READER_ROOTS) or p in READER_FILES))
+    trees: dict[str, ast.Module] = {}
+    unparsed = []
+    for p in sorted(set(scanned) | {h[0] for h in hand if h[0] in texts}):
+        try:
+            trees[p] = ast.parse(texts[p])
+        except (SyntaxError, ValueError):
+            unparsed.append(p)
+    entries = []
+    for path, symbol, klass in hand:
+        tree = trees.get(path)
+        if tree is None:
+            spans: list[tuple[int, int]] = []
+        elif symbol is None:
+            spans = [(1, max(1, len(texts[path].splitlines())))]
+        else:
+            spans = named_spans(tree).get(symbol, [])
+        entries.append({"path": path, "symbol": symbol, "class": klass, "exists": bool(spans), "spans": spans})
+
+    def inside(entry: dict, path: str, line: int) -> bool:
+        return entry["path"] == path and any(a <= line <= b for a, b in entry["spans"])
+
+    rows, loose_files = [], {}
+    # Two looser reads, kept beside: every constant equal to the path (a key's
+    # first element included), and every 2-tuple whose first element is it.
+    loose_reads: dict[str, dict[str, int]] = {"literals_with_key_elements": {}, "keys_any_second_element": {}}
+    for p in scanned:
+        if p not in trees:
+            continue
+        found, loose = reader_sites(trees[p], modules)
+        if loose:
+            loose_files[p] = loose
+        for node in ast.walk(trees[p]):
+            if isinstance(node, ast.Constant) and node.value in modules:
+                loose_reads["literals_with_key_elements"][p] = loose_reads["literals_with_key_elements"].get(p, 0) + 1
+            elif (isinstance(node, ast.Tuple) and len(node.elts) == 2 and isinstance(node.elts[0], ast.Constant)
+                  and node.elts[0].value in modules):
+                loose_reads["keys_any_second_element"][p] = loose_reads["keys_any_second_element"].get(p, 0) + 1
+        for s in found:
+            klass = next((e["class"] for e in entries if inside(e, p, s["line"])), "loud")
+            rows.append({**s, "path": p, "class": klass})
+    for e in entries:
+        e["sites"] = sum(1 for r in rows if inside(e, r["path"], r["line"]))
+        # A test that reads the file through a module-level name (``CLI_PATH =
+        # REPO_ROOT / "espalier" / "cli.py"``) holds no site of its own: the
+        # names it loads whose binding holds one are named, the site left loud.
+        tree = trees.get(e["path"])
+        e["via"] = []
+        if tree is not None and e["symbol"] is not None and e["spans"]:
+            bound = {n: s for n, s in named_spans(tree).items() if "::" not in n}
+            loaded = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                      and any(a <= n.lineno <= b for a, b in e["spans"])}
+            e["via"] = sorted(n for n in loaded if n in bound and n != e["symbol"] and any(
+                r["path"] == e["path"] and any(a <= r["line"] <= b for a, b in bound[n]) for r in rows))
+
+    def tally(rs: list[dict]) -> dict:
+        return {k: {"sites": sum(1 for r in rs if r["kind"] == k),
+                    "files": len({r["path"] for r in rs if r["kind"] == k})} for k in READER_KINDS}
+
+    files: dict[str, dict] = {}
+    for r in rows:
+        f = files.setdefault(r["path"], {**{k: 0 for k in READER_KINDS}, "classes": set()})
+        f[r["kind"]] += 1
+        f["classes"].add(r["class"])
+    return {"rule": "ast over tracked .py under tests/ and scripts/ and READER_FILES: a (module path, str) tuple, "
+                    "a str constant equal to the module path (outside such a tuple), a '/' join whose right "
+                    "operand is the module's file name",
+            "files_scanned": len(scanned), "unparsed": unparsed,
+            "by_kind": tally(rows),
+            "by_class": {c: tally([r for r in rows if r["class"] == c]) for c in READER_CLASS_NAMES},
+            "keyed_symbols": sorted({r["symbol"] for r in rows if r["kind"] == "symbol_key"}),
+            "hand": {"classified_by": "hand", "entries": entries,
+                     "missing": [f"{e['path']}::{e['symbol']}" for e in entries if not e["exists"]]},
+            "files": {p: {**f, "classes": sorted(f["classes"])} for p, f in sorted(files.items())},
+            "beside": {"file_name_constants_outside_a_join": {"sites": sum(loose_files.values()),
+                                                              "files": sorted(loose_files)},
+                       **{k: {"sites": sum(v.values()), "files": len(v)} for k, v in loose_reads.items()}}}
+
+
+#: The sweep that reds a moved citation (``tests/test_doc_source_citations.py``)
+#: chooses its population by these functions, which this census ports
+#: (``_is_swept``, ``_is_pack``, ``_is_struck_line``). Each is pinned by a digest
+#: of its text (``rule_digest``) as it reads at 3330a5a and 17d83e0 alike. A pin
+#: where one reads otherwise has its swept and unchecked splits named unread,
+#: never guessed. The rules' data (the record set, the regexes, the pack
+#: folders and pattern) are read from the pin by AST, never copied here.
+SWEEP_TEST = "tests/test_doc_source_citations.py"
+SURFACE_CONTRACT = "espalier/surface_contract.py"
+SWEEP_RULES: dict[tuple[str, str], str] = {
+    (SWEEP_TEST, "_swept_docs"): "3fc6159a4d20c519",
+    (SWEEP_TEST, "_is_struck_row"): "0aa74225d63b1020",
+    (SURFACE_CONTRACT, "is_shipped_pack"): "fd3c3dc843690190",
+    (SURFACE_CONTRACT, "_normalize"): "2c52ef6660683844",
+}
+SWEEP_DATA = ((SWEEP_TEST, "_CODESPAN_RE"), (SWEEP_TEST, "_CELL_SPLIT_RE"), (SWEEP_TEST, "_STRUCK_SPAN_RE"),
+              (SWEEP_TEST, "_ROW_NUMBER_CELL_MAX"), (SURFACE_CONTRACT, "SHIPPED_PACK_DIRS"),
+              (SURFACE_CONTRACT, "_PACK_FILENAME_PATTERN"))
+SWEPT_PREFIXES = ("docs/", "memory/", "changelog.d/")
+LEDGER_DIR = "task-packs/ledger.d/"
+PROBES_DIR = "task-packs/probes.d/"
+VENDOR_CC = "espalier/_vendor/cc/"
+
+
+def rule_digest(text: str, name: str) -> str | None:
+    """A digest of one module-level function's text: its lines, the docstring
+    and every blank or comment-only line dropped, each line's trailing space
+    cut, the block dedented. Text, never ``ast.dump``, whose spelling moves
+    between interpreters. ``None`` where the file has no such function."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    node = next((n for n in _top_statements(tree.body)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name), None)
+    if node is None:
+        return None
+    drop: set[int] = set()
+    first = node.body[0] if node.body else None
+    if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str) and first.lineno > node.lineno):
+        drop = set(range(first.lineno, first.end_lineno + 1))
+    start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+    lines = text.splitlines()
+    kept = [lines[i - 1].rstrip() for i in range(start, node.end_lineno + 1) if i not in drop]
+    body = textwrap.dedent("\n".join(k for k in kept if k.strip() and not k.lstrip().startswith("#")))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def module_constant(text: str, name: str):
+    """A module-level constant's value, by AST: a literal, a literal wrapped in
+    ``frozenset``/``set``/``tuple``, or ``re.compile``'s pattern literal.
+    ``Unread`` where the name is not bound to one of those."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError) as exc:
+        raise Unread(f"cannot parse the file holding {name}: {exc}") from None
+    for node in _top_statements(tree.body):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == name for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and len(value.args) == 1 and not value.keywords:
+            func = value.func.id if isinstance(value.func, ast.Name) else getattr(value.func, "attr", None)
+            if func in ("frozenset", "set", "tuple", "compile"):
+                value = value.args[0]
+        try:
+            return ast.literal_eval(value)
+        except ValueError:
+            raise Unread(f"{name} is not a literal at the pin") from None
+    raise Unread(f"{name} is not bound at module level at the pin")
+
+
+def _sweep(ctx: dict) -> dict:
+    """The sweep at the pin: the declared record set (``_RECORD_SURFACE_DOCS``,
+    by AST; unreadable, the citations section is unread), and the rule, read
+    as ported only where every pinned function's digest and every datum reads
+    (``differs`` names each that does not)."""
+    if "_sweep" in ctx:
+        return ctx["_sweep"]
+    texts = _tracked_texts(ctx)
+    rules = dict(ctx.get("sweep_rules", SWEEP_RULES))
+    test = texts.get(SWEEP_TEST)
+    if test is None:
+        raise Unread(f"{SWEEP_TEST} is not in {ctx['pin']['at'][:12]}: no declared record set")
+    out: dict = {"record": frozenset(module_constant(test, "_RECORD_SURFACE_DOCS")), "differs": []}
+    for (path, fn), want in sorted(rules.items()):
+        if texts.get(path) is None or rule_digest(texts[path], fn) != want:
+            out["differs"].append(f"{path}::{fn}")
+    data = {}
+    for path, name in SWEEP_DATA:
+        try:
+            data[name] = module_constant(texts.get(path) or "", name)
+        except Unread:
+            out["differs"].append(f"{path}::{name}")
+    if not out["differs"]:
+        out.update(codespan=re.compile(data["_CODESPAN_RE"]), cell_split=re.compile(data["_CELL_SPLIT_RE"]),
+                   struck_span=re.compile(data["_STRUCK_SPAN_RE"]), row_max=int(data["_ROW_NUMBER_CELL_MAX"]),
+                   pack_dirs=tuple(data["SHIPPED_PACK_DIRS"]), pack_pattern=str(data["_PACK_FILENAME_PATTERN"]))
+    ctx["_sweep"] = out
+    return out
+
+
+def _is_pack(path: str, sweep: dict) -> bool:
+    """``espalier/surface_contract.py::is_shipped_pack``, ported (with its ``_normalize``)."""
+    p = path.replace("\\", "/")
+    p = p[2:] if p.startswith("./") else p
+    parent, _sep, name = p.rpartition("/")
+    return parent in sweep["pack_dirs"] and fnmatch.fnmatchcase(name, sweep["pack_pattern"])
+
+
+def _is_swept(path: str, sweep: dict) -> bool:
+    """``tests/test_doc_source_citations.py::_swept_docs``'s membership test, ported."""
+    return (path.endswith(".md")
+            and (path.startswith(SWEPT_PREFIXES) or "/" not in path
+                 or (path.startswith("task-packs/") and not _is_pack(path, sweep)))
+            and path not in sweep["record"])
+
+
+def _is_struck_line(line: str, sweep: dict) -> bool:
+    """``tests/test_doc_source_citations.py::_is_struck_row``, ported: a line the sweep skips as a closed record row."""
+    stripped = line.lstrip(" ")
+    if len(line) - len(stripped) > 3 or not stripped.startswith("|"):
+        return False
+    for cell in sweep["cell_split"].split(stripped)[1:3]:
+        spans = sweep["codespan"].findall(cell)
+        if spans:
+            return len(sweep["struck_span"].findall(cell)) == len(spans)
+        if len(cell.strip()) > sweep["row_max"]:
+            return False
+    return False
+
+
+_UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
+
+
+def ledger_fragments(texts: dict[str, str]) -> dict[str, dict]:
+    """Each ledger row file at the pin (``task-packs/ledger.d/*.md``), by Task
+    6's rule: line 2 split on ``|``, the cells stripped, struck when
+    ``cells[1]`` starts with ``~~``. ``unescaped`` is the same line split on
+    unescaped pipes only (the ledger writes a literal pipe as ``\\|``), the
+    reading the pseudo-code does not state, kept beside it. A file whose line
+    2 is no table row has ``cells`` of ``None`` and is never struck."""
+    out = {}
+    for p in sorted(texts):
+        if not (p.startswith(LEDGER_DIR) and p.endswith(".md") and "/" not in p[len(LEDGER_DIR):]):
+            continue
+        lines = texts[p].splitlines()
+        row = lines[1] if len(lines) > 1 else ""
+        is_row = row.lstrip().startswith("|")
+        cells = [c.strip() for c in row.split("|")] if is_row else None
+        unescaped = [c.strip() for c in _UNESCAPED_PIPE.split(row)] if is_row else None
+        out[p] = {"cells": cells, "unescaped": unescaped,
+                  "struck": bool(cells) and len(cells) > 1 and cells[1].startswith("~~")}
+    return out
+
+
+CITATION_SPELLINGS = ("path_symbol", "bare_symbol", "line", "dotted")
+
+
+def citation_patterns(modules) -> dict[str, re.Pattern]:
+    """The four spellings of a citation of a CLI module: ``espalier/cli.py::X``;
+    the bare ``cli.py::X`` (its file name not preceded by a word character,
+    ``/``, ``.`` or ``-``, so neither ``espalier/cli.py::`` nor
+    ``test_cli.py::`` is one); the line form ``espalier/cli.py:NNN``; and the
+    dotted ``espalier.cli.X``."""
+    paths = "|".join(re.escape(m) for m in modules)
+    names = "|".join(re.escape(Path(m).name) for m in modules)
+    dotted = "|".join(re.escape(m[:-3].replace("/", ".")) for m in modules if m.endswith(".py"))
+    ident = r"([A-Za-z_][A-Za-z0-9_]*)"
+    return {"path_symbol": re.compile(rf"(?:{paths})::{ident}"),
+            "bare_symbol": re.compile(rf"(?<![\w/.-])(?:{names})::{ident}"),
+            "line": re.compile(rf"(?:{paths}):(\d+)"),
+            "dotted": re.compile(rf"(?<![\w.])(?:{dotted})\.{ident}")}
+
+
+def _citation_surface(path: str, sweep: dict, frags: dict[str, dict]) -> tuple[str, str]:
+    """``(split, part)`` of one tracked file, first match wins: the declared
+    record set; a struck ledger fragment; a protected-zone file under
+    ``tools/cc/`` (its ``espalier/_vendor/cc/`` twin apart); a file the sweep
+    reads (a live ledger fragment, or another doc); else unchecked (a pack, a
+    ``bench/corpus`` JSON, a ``.claude`` body or its mirror, code, other).
+    Where the sweep's rule differs at the pin, the last two are ``unread``."""
+    if path in sweep["record"]:
+        return "record", "record_set"
+    if frags.get(path, {}).get("struck"):
+        return "struck", "struck_fragments"
+    if path.startswith("tools/cc/"):
+        return "protected_zone", "sources"
+    if path.startswith(VENDOR_CC):
+        return "protected_zone", "vendor_twins"
+    if sweep["differs"]:
+        return "unread", "unread"
+    if _is_swept(path, sweep):
+        return "swept_live", "live_fragments" if path in frags else "docs"
+    if _is_pack(path, sweep):
+        return "unchecked_live", "packs"
+    if path.startswith("bench/corpus/") and path.endswith(".json"):
+        return "unchecked_live", "bench_corpus"
+    if "/.claude/" in f"/{path}" or path.startswith("espalier/assets/claude/"):
+        return "unchecked_live", "claude_bodies"
+    if path.endswith((".py", ".cmd")):
+        return "unchecked_live", "code"
+    return "unchecked_live", "other"
+
+
+_SPLIT_PARTS = {"record": ("record_set",), "struck": ("struck_fragments", "struck_lines_in_swept_docs"),
+                "swept_live": ("live_fragments", "docs"),
+                "unchecked_live": ("packs", "bench_corpus", "claude_bodies", "code", "other"),
+                "protected_zone": ("sources", "vendor_twins"), "unread": ("unread",)}
+
+
+def section_citations(ctx: dict) -> dict:
+    """Every citation of a CLI module in every tracked file at the pin, every
+    file type, in the four spellings, split five ways: the declared record set
+    (read from the sweep at the pin); struck ledger rows (a fragment whose id
+    cell starts ``~~``, and a line the sweep skips as a closed row); the files
+    the sweep reads, the only ones that go red after a move (live ledger
+    fragments apart from other docs); the unchecked, which rot with no red;
+    and the protected zone under ``tools/cc/``, each file beside its vendored
+    twin. The parts sum to the totals, asserted."""
+    texts = _tracked_texts(ctx)
+    modules = ctx["modules"]
+    pats = citation_patterns(modules)
+    sweep = _sweep(ctx)
+    frags = ledger_fragments(texts)
+    tokens = {Path(m).name for m in modules} | {m[:-3].replace("/", ".") for m in modules if m.endswith(".py")}
+    rows: list[tuple[str, str, str, str, int]] = []
+    substring: dict[str, list] = {}
+    for path in sorted(texts):
+        text = texts[path]
+        if not any(t in text for t in tokens):
+            continue
+        split, part = _citation_surface(path, sweep, frags)
+        n = sum(text.count(f"{m}::") for m in modules)
+        if n:
+            cell = substring.setdefault(f"{split}/{part}", [0, 0])
+            cell[0] += n
+            cell[1] += 1
+        for line in text.splitlines():
+            if not any(t in line for t in tokens):
+                continue
+            counts = {s: len(rx.findall(line)) for s, rx in pats.items()}
+            if not any(counts.values()):
+                continue
+            s_, p_ = split, part
+            if split == "swept_live" and _is_struck_line(line, sweep):
+                s_, p_ = "struck", "struck_lines_in_swept_docs"
+            rows.extend((path, s_, p_, s, n) for s, n in counts.items() if n)
+
+    def tally(sel: list[tuple]) -> dict:
+        return {s: {"occurrences": sum(r[4] for r in sel if r[3] == s), "files": len({r[0] for r in sel if r[3] == s})}
+                for s in CITATION_SPELLINGS}
+
+    def part_of(split: str, part: str, paths: bool = False) -> dict:
+        sel = [r for r in rows if r[1] == split and r[2] == part]
+        out = tally(sel)
+        if paths:
+            out["paths"] = sorted({r[0] for r in sel})
+        return out
+
+    totals = tally(rows)
+    split_out: dict = {}
+    for split, parts in _SPLIT_PARTS.items():
+        if split in ("swept_live", "unchecked_live") and sweep["differs"]:
+            split_out[split] = None
+            continue
+        if split == "unread" and not sweep["differs"]:
+            continue
+        split_out[split] = {p: part_of(split, p, paths=split in ("record", "swept_live") or p != "code")
+                            for p in parts}
+    summed = {s: sum(part[s]["occurrences"] for parts in split_out.values() if parts for part in parts.values())
+              for s in CITATION_SPELLINGS}
+    assert summed == {s: totals[s]["occurrences"] for s in CITATION_SPELLINGS}, \
+        f"the citation split does not sum to the totals: {summed} against {totals}"
+    per_file: dict[str, dict[str, int]] = {}
+    for path, split, _part, s, n in rows:
+        if split == "protected_zone":
+            per_file.setdefault(path, {})[s] = per_file.get(path, {}).get(s, 0) + n
+    sources = []
+    for path in sorted(p for p in per_file if p.startswith("tools/cc/")):
+        twin = VENDOR_CC + path[len("tools/cc/"):]
+        sources.append({"path": path, "occurrences": per_file[path], "twin": twin, "twin_in_tree": twin in texts,
+                        "twin_occurrences": per_file.get(twin, {})})
+    split_out["protected_zone"]["by_file"] = sources
+    split_out["protected_zone"]["vendor_only"] = sorted(
+        p for p in per_file if p.startswith(VENDOR_CC) and "tools/cc/" + p[len(VENDOR_CC):] not in per_file)
+    exts = {"md_json": (".md", ".json"), "py_cmd": (".py", ".cmd")}
+
+    def ext_of(path: str) -> str:
+        return next((k for k, v in exts.items() if path.endswith(v)), "other")
+
+    by_ext = {k: tally([r for r in rows if ext_of(r[0]) == k]) for k in (*exts, "other")}
+    meta = ctx.get("_texts_meta", {})
+    return {"rule": {"spellings": {s: rx.pattern for s, rx in pats.items()},
+                     "split": "first match: record set (_RECORD_SURFACE_DOCS at the pin, by AST); struck fragment "
+                              "(task-packs/ledger.d/*.md, line 2's cells[1] starts '~~'); tools/cc/ (its "
+                              "espalier/_vendor/cc/ twin apart); the sweep's population (_swept_docs, ported and "
+                              "digest-pinned), a line it skips as struck (_is_struck_row, ported) counted struck; "
+                              "else unchecked"},
+            "files_tracked": meta.get("tracked"), "files_read": meta.get("read"),
+            "binary": len(meta.get("binary", [])), "files_unread": meta.get("unread", []),
+            "record_set": sorted(sweep["record"]),
+            "fragments": {"all": len(frags), "struck": sum(1 for f in frags.values() if f["struck"])},
+            "totals": totals, "by_extension": by_ext, "split": split_out,
+            "unread": {"swept_live": f"the sweep's rule differs at the pin: {sweep['differs']}",
+                       "unchecked_live": "the swept population is unread, so its complement is too"}
+            if sweep["differs"] else {},
+            # The authoring's read: the substring '<module>::' (no symbol required),
+            # each file in one part, a line the sweep skips as struck left where its file is.
+            "beside": {"substring": {f"{m}::": sum(t.count(f"{m}::") for t in texts.values()) for m in modules},
+                       "substring_by_part": {k: {"occurrences": v[0], "files": v[1]}
+                                             for k, v in sorted(substring.items())}}}
+
+
+def probe_code(cmd: str) -> str | None:
+    """The Python a probe's command runs (``python -c '<code>'``), or ``None``."""
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return None
+    for i, a in enumerate(argv):
+        if re.fullmatch(r"python[0-9.]*(?:\.exe)?|py", Path(a).name):
+            rest = argv[i + 1:]
+            return rest[rest.index("-c") + 1] if "-c" in rest[:-1] else None
+    return None
+
+
+def probe_reads(probe: dict, modules, defined: set[str]) -> dict:
+    """How one probe reads a CLI module, and the cli symbols it names. ``subject``:
+    its subject is the module (a move keeps the file, so the subject gate stays
+    green). ``path``: its code holds the module's path as a string (a text or
+    AST read of the file); its symbols are the string constants in a
+    comparison that name a cli definition (``n.name == "cmd_init"``). ``import``:
+    an import of cli or an attribute through an alias of it; ``patch``: an
+    attribute stored through that alias. ``run``: ``-m espalier.cli`` or ``-m
+    espalier`` in an argv list or a string, which runs the CLI (behaviour a
+    move keeps) and names no symbol; a scan for the text ``espalier.cli`` in
+    other files is no run. A command
+    that is no ``python -c`` or does not parse is read as text (``by`` tagged
+    ``(text)``, its symbols every identifier that names a cli definition)."""
+    cmd = str(probe.get("cmd") or "")
+    by: list[str] = []
+    symbols: set[str] = set()
+    if str(probe.get("subject") or "") in modules:
+        by.append("subject")
+    code = probe_code(cmd) if cmd else None
+    tree = None
+    if code is not None:
+        try:
+            tree = ast.parse(code)
+        except (SyntaxError, ValueError):
+            tree = None
+    dotted = {m[:-3].replace("/", ".") for m in modules if m.endswith(".py")}
+    if tree is not None:
+        consts = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        if any(m in c for c in consts for m in modules):
+            by.append("path")
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Compare):
+                    symbols |= {c.value for c in [node.left, *node.comparators]
+                                if isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value in defined}
+        found = imports_of_cli("probe.py", tree)
+        if found:
+            by.append("import")
+            symbols |= {n for f in found for n in f["names"]}
+            aliases = {f["via"].split(" ", 1)[1] for f in found if f["via"].startswith("alias ")}
+            if any(isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Store) and _dotted(n.value) in aliases
+                   for n in ast.walk(tree)):
+                by.append("patch")
+        runs = dotted | {d.split(".", 1)[0] for d in dotted}
+        argvs = [[e.value if isinstance(e, ast.Constant) else None for e in n.elts]
+                 for n in ast.walk(tree) if isinstance(n, (ast.List, ast.Tuple))]
+        if (any(a == "-m" and b in runs for v in argvs for a, b in zip(v, v[1:]))
+                or any(f"-m {r} " in f"{c} " for c in consts for r in runs)):
+            by.append("run")
+    elif cmd:
+        if any(m in cmd for m in modules):
+            by.append("path (text)")
+        if re.search(r"\bespalier\.cli\b|\bfrom espalier import [^;\n]*\bcli\b", cmd):
+            by.append("import (text)")
+        if len(by) > ("subject" in by):
+            symbols |= {w for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", cmd) if w in defined}
+    return {"by": by, "symbols": sorted(symbols), "parsed": None if not cmd else tree is not None}
+
+
+def section_probes(ctx: dict) -> dict:
+    """Each ledger probe at the pin (``task-packs/probes.d/*.json``) that reads
+    a CLI module, by ``probe_reads``: its row's state (the fragment's id cell,
+    struck or live, or no row), the cli symbols it names, and each symbol's
+    owner from the clusters section, with the commands that would move it.
+    ``tools/cc/check_ledger_probes.py`` gates a probe on its subject at file
+    level, and the file survives a move, so a probe that reads a moved symbol
+    out of cli.py prints a new value and offers its live row as a strike."""
+    texts = _tracked_texts(ctx)
+    modules = ctx["modules"]
+    _tree, defs, _g = _functions_ctx(ctx)
+    defined = {d["name"] for d in defs}
+    owners = _owners(ctx)
+    frags = ledger_fragments(texts)
+    rows, bad = [], []
+    files = sorted(p for p in texts if p.startswith(PROBES_DIR) and p.endswith(".json")
+                   and "/" not in p[len(PROBES_DIR):])
+    for path in files:
+        try:
+            probe = json.loads(texts[path])
+        except ValueError:
+            bad.append(path)
+            continue
+        if not isinstance(probe, dict):
+            bad.append(path)
+            continue
+        read = probe_reads(probe, modules, defined)
+        if not read["by"]:
+            continue
+        pid = str(probe.get("id") or Path(path).stem)
+        frag = frags.get(f"{LEDGER_DIR}{pid}.md")
+        state = "no row" if frag is None else "struck" if frag["struck"] else "live"
+        sym_owners = {s: _owner_of(owners, s) for s in read["symbols"]}
+        rows.append({"id": pid, "file": path, "row": state, "by": read["by"], "has_cmd": bool(probe.get("cmd")),
+                     "parsed": read["parsed"], "symbols": read["symbols"], "owners": sym_owners,
+                     "commands": sorted({c for o in sym_owners.values() for c in _commands_of(o)}),
+                     "concerns": sorted({o["concern"] for o in sym_owners.values() if "concern" in o})})
+    reading = [r for r in rows if set(r["by"]) - {"subject"}]
+    return {"rule": "probe_reads over task-packs/probes.d/*.json at the pin; row state from "
+                    "task-packs/ledger.d/<id>.md line 2 cells[1] ('~~' = struck)",
+            "probes": len(files), "unparsed_json": bad,
+            "reading_cli": len(reading), "subject_only": len(rows) - len(reading),
+            "by_reading": {k: sum(1 for r in rows if k in r["by"])
+                           for k in ("subject", "path", "import", "patch", "run", "path (text)", "import (text)")},
+            "by_row": {s: sum(1 for r in rows if r["row"] == s) for s in ("live", "struck", "no row")},
+            "live_reading_cli": sum(1 for r in reading if r["row"] == "live"),
+            "live_any": sum(1 for r in rows if r["row"] == "live"),
+            "rows": rows}
+
+
+_PATH_STRIP = "`'\"()[]{}<>,;*"
+
+
+def first_path_token(cell: str, *, dotfile_counts: bool) -> str | None:
+    """Task 6's tokenizer: the first whitespace token of ``cell`` that is a
+    path, its backticks, quotes, brackets and trailing punctuation cut and any
+    ``::symbol`` or ``:line`` taken off. A path, read as the pseudo-code's
+    precedence states it: it contains ``/``, or it has a leading ``.`` and an
+    extension (``os.path.splitext``; ``.gitignore`` has none). With
+    ``dotfile_counts`` a leading-dot name with no extension is one too."""
+    for raw in cell.split():
+        core = re.split(r"::|:(?=\d)", raw.strip(_PATH_STRIP), maxsplit=1)[0].rstrip(".,;:")
+        if not core:
+            continue
+        if "/" in core:
+            return core
+        if core.startswith(".") and (os.path.splitext(core)[1] or (dotfile_counts and re.match(r"\.\w", core))):
+            return core
+    return None
+
+
+def section_ledger_rows(ctx: dict) -> dict:
+    """Task 6's three tiers over ``task-packs/ledger.d/*.md`` at the pin, by
+    its pseudo-code: line 2, cells split on ``|`` and stripped, struck when
+    ``cells[1]`` starts ``~~``. Tier 1: not struck and the first path token of
+    ``cells[2]`` is a CLI module, both readings of a dotfile given. Tier 2: not
+    struck and a CLI module's path in ``cells[2]``. Tier 3: not struck, not tier
+    2, and ``<module>::X`` in ``cells[3]``. For each tier-2 and tier-3 row, its
+    cited symbols (``<module>::X`` in any cell after the id) and each one's
+    owner from the clusters section."""
+    texts = _tracked_texts(ctx)
+    modules = ctx["modules"]
+    owners = _owners(ctx)
+    pats = citation_patterns(modules)
+    frags = ledger_fragments(texts)
+    not_a_row = sorted(p for p, f in frags.items() if f["cells"] is None or len(f["cells"]) < 4)
+    rows = {p: f for p, f in frags.items() if p not in not_a_row}
+    live = {p: f for p, f in rows.items() if not f["struck"]}
+
+    def rid(f: dict) -> str:
+        return f["cells"][1].replace("~~", "").strip("` ")
+
+    def tiers(key: str) -> tuple[dict[bool, list[str]], set[str], set[str]]:
+        cells = {p: f[key] for p, f in live.items() if f[key] is not None and len(f[key]) >= 4}
+        t1 = {dot: sorted(rid(live[p]) for p, c in cells.items()
+                          if first_path_token(c[2], dotfile_counts=dot) in modules) for dot in (False, True)}
+        t2 = {p for p, c in cells.items() if any(m in c[2] for m in modules)}
+        t3 = {p for p, c in cells.items() if p not in t2 and pats["path_symbol"].search(c[3])}
+        return t1, t2, t3
+
+    t1, t2, t3 = tiers("cells")
+    u1, u2, u3 = tiers("unescaped")
+
+    def entry(p: str, tier: int) -> dict:
+        f = frags[p]
+        syms = sorted({s for c in f["cells"][2:] for s in pats["path_symbol"].findall(c)})
+        own = {s: _owner_of(owners, s) for s in syms}
+        return {"id": rid(f), "file": p, "tier": tier, "symbols": syms, "owners": own,
+                "commands": sorted({c for o in own.values() for c in _commands_of(o)})}
+
+    def ids(paths: set[str]) -> list[str]:
+        return sorted(rid(frags[p]) for p in paths)
+
+    beside_bare = sorted(rid(f) for p, f in live.items() if p not in t2 | t3 and len(f["cells"]) >= 4
+                         and pats["bare_symbol"].search(f["cells"][3]))
+    beside_dotted = sorted(rid(f) for p, f in live.items() if p not in t2 | t3 and len(f["cells"]) >= 4
+                           and pats["dotted"].search(f["cells"][3]))
+    beside_path = sorted(rid(f) for p, f in live.items() if p not in t2 | t3 and len(f["cells"]) >= 4
+                         and any(m in f["cells"][3] for m in modules))
+    return {"rule": "line 2 of each task-packs/ledger.d/*.md; cells = split on every '|', stripped; struck = "
+                    "cells[1] starts '~~'; tier 1 = first_path_token(cells[2]) is the module; tier 2 = the "
+                    "module's path in cells[2]; tier 3 = not tier 2 and '<module>::X' in cells[3]",
+            "fragments": len(frags), "not_a_row": not_a_row, "struck": sum(1 for f in rows.values() if f["struck"]),
+            "live": len(live),
+            "tier1": {"dotfile_not_counted": {"count": len(t1[False]), "ids": t1[False]},
+                      "dotfile_counted": {"count": len(t1[True]), "ids": t1[True]},
+                      "differ": sorted(set(t1[False]) ^ set(t1[True]))},
+            "tier2": {"count": len(t2), "rows": [entry(p, 2) for p in sorted(t2)]},
+            "tier3": {"count": len(t3), "rows": [entry(p, 3) for p in sorted(t3)]},
+            "beside": {"tier3_if_bare_spelling_counted": beside_bare,
+                       "tier3_if_dotted_spelling_counted": beside_dotted,
+                       "tier3_if_a_path_mention_counted": beside_path,
+                       "split_on_unescaped_pipes": {
+                           "tier1_dotfile_not_counted": len(u1[False]), "tier1_dotfile_counted": len(u1[True]),
+                           "tier2": len(u2), "tier3": len(u3),
+                           "tier2_differ": ids(t2 ^ u2), "tier3_differ": ids(t3 ^ u3)}}}
+
+
+DOCTOR = "espalier/doctor.py"
+DOCTOR_MODULE = "espalier.doctor"
+
+
+def doctor_callbacks(tree: ast.Module, defs: list[dict], members: set[str]) -> dict[str, list[str]]:
+    """``{member: doctor names}``: each of ``members`` that loads a doctor name
+    back, through cli's module-level alias of ``espalier.doctor``
+    (``_doctor.X``), a lazy ``from espalier.doctor import X``, or a lazy alias
+    of the module inside it: the edges that keep the import cycle."""
+    module_aliases = {a for a, target in _module_aliases(tree).items() if target == DOCTOR_MODULE}
+    out: dict[str, list[str]] = {}
+    for d in defs:
+        if d["name"] not in members:
+            continue
+        root = d["node"].value if d["kind"] == NAME and getattr(d["node"], "value", None) is not None else d["node"]
+        aliases, names = set(module_aliases), set()
+        for sub in ast.walk(root):
+            if isinstance(sub, ast.ImportFrom):
+                module = _absolute(CLI, sub)
+                if module == DOCTOR_MODULE:
+                    names.update(a.name for a in sub.names)
+                elif module == "espalier":
+                    aliases.update(a.asname or a.name for a in sub.names if a.name == "doctor")
+            elif isinstance(sub, ast.Import):
+                aliases.update(a.asname for a in sub.names if a.name == DOCTOR_MODULE and a.asname)
+        for sub in ast.walk(root):
+            if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id in aliases:
+                names.add(sub.attr)
+        if names:
+            out[d["name"]] = sorted(names)
+    return out
+
+
+def section_doctor_boundary(ctx: dict) -> dict:
+    """Task 5: every name ``espalier/doctor.py`` takes from cli at the pin
+    (``imports_of_cli``: its from-imports and the attributes it loads through
+    an alias of cli), each with its kind in cli and the commands that reach it
+    (the clusters section's ownership); the names no command reaches (doctor's
+    alone); the closure of all of them over cli's graph, sized; and the
+    closure members that load doctor back, the edges that keep the cycle."""
+    root, at = ctx["root"], ctx["pin"]["at"]
+    text = source_at(root, at, DOCTOR)
+    if text is None:
+        raise Unread(f"{DOCTOR} is not in {at[:12]}")
+    dtree = ast.parse(text)
+    tree, defs, g = _functions_ctx(ctx)
+    kinds = {d["name"]: d["kind"] for d in defs}
+    lines = {d["name"]: d["lines"] for d in defs}
+    owners = _owners(ctx)
+    found = imports_of_cli(DOCTOR, dtree)
+    names = sorted({n for f in found for n in f["names"]})
+    statements = []
+    for node in ast.walk(dtree):
+        if isinstance(node, ast.ImportFrom) and (_absolute(DOCTOR, node) == CLI_MODULE or (
+                _absolute(DOCTOR, node) == "espalier" and any(a.name == "cli" for a in node.names))):
+            statements.append(node.lineno)
+        elif isinstance(node, ast.Import) and any(a.name == CLI_MODULE for a in node.names):
+            statements.append(node.lineno)
+    alias_names = {f["via"].split(" ", 1)[1] for f in found if f["via"].startswith("alias ")}
+    load_lines = [n.lineno for n in ast.walk(dtree) if isinstance(n, ast.Attribute) and _dotted(n.value) in alias_names]
+    ddefs = [d for d in definitions(dtree) if d["kind"] != NAME]
+    holders = {d["name"] for ln in [*statements, *load_lines] for d in ddefs if d["start"] <= ln <= d["end"]}
+    # The same read by the innermost function holding each line, at any depth
+    # (a nested helper is its own holder), keyed by its line so two of one name stay two.
+    fns = [(n.lineno, n.end_lineno, n.name) for n in ast.walk(dtree)
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    innermost = set()
+    for ln in [*statements, *load_lines]:
+        holding = [f for f in fns if f[0] <= ln <= f[1]]
+        if holding:
+            innermost.add(min(holding, key=lambda f: (f[1] - f[0], f[0])))
+    per = {}
+    for n in names:
+        o = _owner_of(owners, n)
+        per[n] = {"kind": kinds.get(n), "reached_by": _commands_of(o), "owner": o}
+    in_cli = [n for n in names if n in kinds]
+    alone = sorted(n for n in in_cli if not per[n]["reached_by"])
+    members = closure(g["edges"], in_cli)
+    by_loads = closure(g["loads"], in_cli)
+    calls_back = doctor_callbacks(tree, defs, members)
+    return {"rule": "imports_of_cli over espalier/doctor.py at the pin; closure over cli's graph (loads and "
+                    "writes), no stop; owners from the clusters section",
+            "import_statements": len(statements), "doctor_functions": sorted(holders),
+            "doctor_functions_innermost": len(innermost),
+            "names": {"count": len(names), "functions": sum(1 for n in in_cli if kinds[n] == FUNCTION),
+                      "classes": sum(1 for n in in_cli if kinds[n] == CLASS),
+                      "constants": sum(1 for n in in_cli if kinds[n] == NAME),
+                      "not_in_cli": sorted(n for n in names if n not in kinds), "per_name": per},
+            "doctor_alone": alone,
+            "back_edges_left_if_doctor_alone_moved": len(in_cli) - len(alone),
+            "closure": {**_size(members, kinds, lines), "definitions": len(members),
+                        "reached_by_no_command": sorted(m for m in members if not _commands_of(_owner_of(owners, m))),
+                        "loads_only": {**_size(by_loads, kinds, lines), "definitions": len(by_loads),
+                                       "write_reached": sorted(members - by_loads)}},
+            "calls_back_into_doctor": calls_back,
+            "call_back_edges": sum(len(v) for v in calls_back.values())}
 
 
 # ---------------------------------------------------------------- the record at the pin: merges, PRs, mail
@@ -1951,7 +2810,12 @@ SECTION_READERS = {
     "layers": section_layers,
     "clusters": section_clusters,
     "importers": section_importers,
+    "readers": section_readers,
     "patches": section_patches,
+    "citations": section_citations,
+    "probes": section_probes,
+    "doctor_boundary": section_doctor_boundary,
+    "ledger_rows": section_ledger_rows,
     "collision": section_collision,
     "lane_read": section_lane_read,
     "transcripts": section_transcripts,

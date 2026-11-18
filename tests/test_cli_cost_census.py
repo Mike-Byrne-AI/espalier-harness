@@ -397,10 +397,441 @@ def test_it(monkeypatch):
         assert section["raising_false"] == {"_LATCH": {"sites": 1, "raising_false": 1}}
 
 
+def _add(repo: pathlib.Path, files: dict[str, str], message: str = "files") -> None:
+    for rel, text in files.items():
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message)
+    _CENSUS.source_at.cache_clear()
+
+
+class TestTheReadersByPath:
+    """A test file that reads cli.py by path in each spelling, inside and outside the spans a
+    hand list classes; a script that names it; a file outside tests/ and scripts/ that does too."""
+
+    _READS = '''\
+"""Reads espalier/cli.py: a docstring names the path and reads nothing."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI_PATH = ROOT / "espalier" / "cli.py"
+KEYS = {("espalier/cli.py", "_helper"): 1, ("espalier/cli.py", "TABLE"): 2}
+PAIR = ("espalier/cli.py", "espalier/doctor.py")
+SCANNED = ("espalier/cli.py", "espalier/other.py")
+
+
+def test_silent():
+    src = (ROOT / "espalier" / "cli.py").read_text()  # espalier/cli.py in a comment reads nothing
+    assert "x" not in src
+
+
+def test_through_a_name():
+    assert "y" not in CLI_PATH.read_text()
+
+
+class TestLoud:
+    def test_loud(self):
+        assert (ROOT / "espalier/cli.py").exists()
+'''
+    _HAND = (("tests/test_reads.py", "test_silent", "silent"),
+             ("tests/test_reads.py", "SCANNED", "silent"),
+             ("tests/test_reads.py", "test_through_a_name", "silent"),
+             ("tests/test_flat.py", None, "flat-module"),
+             ("tests/test_gone.py", "test_x", "silent"))
+
+    @pytest.fixture
+    def section(self, repo):
+        _add(repo, {"tests/test_reads.py": self._READS,
+                    "tests/test_flat.py": 'import glob\nFILES = glob.glob("espalier/*.py")\n',
+                    "scripts/s.py": 'CLI = "espalier/cli.py"\n',
+                    "bench/b.py": 'CLI = "espalier/cli.py"\n'})
+        return _CENSUS.census(repo, _head(repo), ["readers"], extra={"reader_classes": self._HAND})["readers"]
+
+    def test_each_spelling_is_one_site_and_a_comment_or_a_docstring_none(self, section):
+        """Dies to: a `/ "cli.py"` join missed (path_join 0), a key's first element counted again
+        as a path literal (4 read as 6), a 2-tuple of two paths read as a symbol key (2 read as
+        4), or a file outside tests/ and scripts/ scanned (bench/b.py's literal counted)."""
+        assert section["by_kind"] == {"symbol_key": {"sites": 2, "files": 1},
+                                      "path_literal": {"sites": 4, "files": 2},
+                                      "path_join": {"sites": 2, "files": 1}}
+        assert section["keyed_symbols"] == ["TABLE", "_helper"]
+        assert section["beside"]["literals_with_key_elements"] == {"sites": 6, "files": 2}
+        assert section["beside"]["keys_any_second_element"] == {"sites": 4, "files": 1}
+
+    def test_a_site_in_a_hand_listed_span_takes_its_class_and_the_rest_are_loud(self, section):
+        """Dies to: the hand list's spans not read (every site loud, silent reads 0), or every
+        site in a listed file classed by the file (the loud sites of test_reads.py read silent)."""
+        assert section["by_class"]["silent"] == {"symbol_key": {"sites": 0, "files": 0},
+                                                 "path_literal": {"sites": 1, "files": 1},
+                                                 "path_join": {"sites": 1, "files": 1}}
+        assert section["by_class"]["loud"] == {"symbol_key": {"sites": 2, "files": 1},
+                                               "path_literal": {"sites": 3, "files": 2},
+                                               "path_join": {"sites": 1, "files": 1}}
+
+    def test_a_hand_entry_is_checked_at_the_pin_and_a_gone_one_is_named(self, section):
+        """Dies to: a listed reader gone at the pin dropped in silence, a flat reader with no
+        site of its own dropped as absent, or a test that reads through a module-level name
+        reported with nothing said of the name."""
+        entries = {(e["path"], e["symbol"]): e for e in section["hand"]["entries"]}
+        assert section["hand"]["classified_by"] == "hand"
+        assert section["hand"]["missing"] == ["tests/test_gone.py::test_x"]
+        assert entries[("tests/test_flat.py", None)]["exists"] is True
+        assert entries[("tests/test_flat.py", None)]["sites"] == 0
+        assert entries[("tests/test_reads.py", "test_through_a_name")]["sites"] == 0
+        assert entries[("tests/test_reads.py", "test_through_a_name")]["via"] == ["CLI_PATH"]
+        assert entries[("tests/test_reads.py", "test_silent")]["sites"] == 1
+
+
+#: The sweep's rule as it reads at 3330a5a, frozen: the census ports it and pins its text by
+#: digest, so a fixture that holds anything else reads unread.
+_SWEEP_COPY = r'''import re
+
+from espalier.surface_contract import is_shipped_pack
+
+_CODESPAN_RE = re.compile(r"`[^`]*`")
+_RECORD_SURFACE_DOCS = frozenset({
+    "docs/session-archive.md",
+})
+_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
+_STRUCK_SPAN_RE = re.compile(r"~~`[^`]+`~~")
+_ROW_NUMBER_CELL_MAX = 8
+
+
+def _is_struck_row(line: str) -> bool:
+    stripped = line.lstrip(" ")
+    if len(line) - len(stripped) > 3 or not stripped.startswith("|"):
+        return False
+    for cell in _CELL_SPLIT_RE.split(stripped)[1:3]:
+        spans = _CODESPAN_RE.findall(cell)
+        if spans:
+            return len(_STRUCK_SPAN_RE.findall(cell)) == len(spans)
+        if len(cell.strip()) > _ROW_NUMBER_CELL_MAX:
+            return False
+    return False
+
+
+def _swept_docs(tracked: set[str]) -> list[str]:
+    """The sweep's population, as at 3330a5a (its docstring cut)."""
+    return sorted(
+        p for p in tracked
+        if p.endswith(".md")
+        and (
+            p.startswith(("docs/", "memory/", "changelog.d/"))
+            or "/" not in p
+            or (p.startswith("task-packs/") and not is_shipped_pack(p))
+        )
+        and p not in _RECORD_SURFACE_DOCS
+    )
+'''
+
+_CONTRACT_COPY = r'''import fnmatch
+
+SHIPPED_PACK_DIRS: tuple[str, ...] = ("task-packs", "task-packs/Deferred")
+_PACK_FILENAME_PATTERN = "TP-*.md"
+
+
+def _normalize(rel_path: str) -> str:
+    p = rel_path.replace("\\", "/")
+    if p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def is_shipped_pack(rel_path: str) -> bool:
+    p = _normalize(rel_path)
+    parent, _, name = p.rpartition("/")
+    return parent in SHIPPED_PACK_DIRS and fnmatch.fnmatchcase(name, _PACK_FILENAME_PATTERN)
+'''
+
+_CITING = {
+    "tests/test_doc_source_citations.py": _SWEEP_COPY,
+    "espalier/surface_contract.py": _CONTRACT_COPY,
+    "task-packs/ledger.d/DEF-1.md": ("<!-- class: §C0 -->\n"
+                                     "| ~~`DEF-1`~~ | `espalier/cli.py::_helper` | closed; it cited `cli.py::_reader` |\n"
+                                     "| ~~`DEF-1`~~ | §C0 | `espalier/cli.py::_helper` |\n"),
+    "task-packs/ledger.d/DEF-2.md": ("<!-- class: §C0 -->\n"
+                                     "| `DEF-2` | `espalier/cli.py::cmd_alpha` near espalier/cli.py:12 | the body cites "
+                                     "`cli.py::_setter` and espalier.cli._LATCH |\n"
+                                     "| `DEF-2` | §C0 | `espalier/cli.py::cmd_alpha` |\n"),
+    "docs/GUIDE.md": ("See `espalier/cli.py::TABLE`, `tests/test_cli.py::test_x` and `espalier.cli.main`.\n\n"
+                      "| ~~`DEF-9`~~ | `espalier/cli.py::gone` | a closed row kept in a doc |\n"),
+    "docs/session-archive.md": "Found `espalier/cli.py::old` then.\n",
+    "task-packs/TP-9-plan.md": "Move `espalier/cli.py::cmd_beta`.\n",
+    "tools/cc/hook.py": "# reads espalier/cli.py::TABLE\nX = 1\n",
+    "espalier/_vendor/cc/hook.py": "# reads espalier/cli.py::TABLE\nX = 1\n",
+    "scripts/x.py": "# see cli.py::_helper\n",
+    "bench/corpus/a.json": '{"cmd": "espalier/cli.py::build_parser"}\n',
+    ".claude/commands/c.md": "Edit `espalier/cli.py::cmd_alpha`.\n",
+    "README.md": "Run `python -m espalier.cli init` or call `espalier.cli.main`.\n",
+}
+
+
+def _occ(part: dict) -> dict[str, int]:
+    return {s: part[s]["occurrences"] for s in _CENSUS.CITATION_SPELLINGS}
+
+
+class TestTheCitations:
+    """Every surface a citation of cli.py lives on, one file each, the four spellings spread
+    over them so a count read off the wrong surface or the wrong spelling lands elsewhere."""
+
+    @pytest.fixture
+    def section(self, repo):
+        _add(repo, _CITING)
+        return _CENSUS.census(repo, _head(repo), ["citations"])["citations"]
+
+    def test_a_struck_row_s_citation_is_struck_and_a_live_one_live(self, section):
+        """Dies to: a struck ledger fragment's citation counted as live (the live fragments read
+        4, not 2), or a line the sweep skips as a closed row counted live in its doc."""
+        split = section["split"]
+        assert _occ(split["struck"]["struck_fragments"]) == {"path_symbol": 2, "bare_symbol": 1, "line": 0, "dotted": 0}
+        assert _occ(split["swept_live"]["live_fragments"]) == {"path_symbol": 2, "bare_symbol": 1, "line": 1,
+                                                               "dotted": 1}
+        assert _occ(split["struck"]["struck_lines_in_swept_docs"])["path_symbol"] == 1
+        assert _occ(split["swept_live"]["docs"]) == {"path_symbol": 1, "bare_symbol": 0, "line": 0, "dotted": 2}
+        assert split["swept_live"]["docs"]["paths"] == ["README.md", "docs/GUIDE.md"]
+        assert section["fragments"] == {"all": 2, "struck": 1}
+
+    def test_the_bare_spelling_is_counted_and_a_longer_name_is_not_it(self, section):
+        """Dies to: the bare `cli.py::` spelling missed (0), or read without its left boundary,
+        so `espalier/cli.py::` and `tests/test_cli.py::` count as bare too (16, not 3)."""
+        assert section["totals"]["bare_symbol"] == {"occurrences": 3, "files": 3}
+        assert section["totals"]["path_symbol"] == {"occurrences": 12, "files": 9}
+        assert section["totals"]["dotted"]["occurrences"] == 3
+        assert section["totals"]["line"]["occurrences"] == 1
+
+    def test_the_record_the_unchecked_and_the_protected_zone_are_apart(self, section):
+        """Dies to: the record set typed here instead of read from the pin, a pack read as a
+        swept doc, or a protected-zone file read without its vendored twin beside it."""
+        split = section["split"]
+        assert section["record_set"] == ["docs/session-archive.md"]
+        assert split["record"]["record_set"]["path_symbol"]["occurrences"] == 1
+        unchecked = {p: v["path_symbol"]["occurrences"] for p, v in split["unchecked_live"].items()}
+        assert unchecked == {"packs": 1, "bench_corpus": 1, "claude_bodies": 1, "code": 0, "other": 0}
+        assert split["unchecked_live"]["code"]["bare_symbol"]["occurrences"] == 1
+        assert split["protected_zone"]["by_file"] == [
+            {"path": "tools/cc/hook.py", "occurrences": {"path_symbol": 1}, "twin": "espalier/_vendor/cc/hook.py",
+             "twin_in_tree": True, "twin_occurrences": {"path_symbol": 1}}]
+        assert section["unread"] == {}
+
+    def test_a_sweep_whose_rule_changed_at_the_pin_reads_its_split_unread(self, repo):
+        """Dies to: the sweep's rule taken on trust where its text differs from the one ported
+        (a changed `_swept_docs` read as the old one), so a population it no longer reads is
+        reported as swept."""
+        changed = _SWEEP_COPY.replace('("docs/", "memory/", "changelog.d/")', '("docs/", "memory/", "bench/")')
+        _add(repo, {**_CITING, "tests/test_doc_source_citations.py": changed})
+        out = _CENSUS.census(repo, _head(repo), ["citations"])["citations"]
+        assert out["split"]["swept_live"] is None and out["split"]["unchecked_live"] is None
+        assert "tests/test_doc_source_citations.py::_swept_docs" in out["unread"]["swept_live"]
+        assert out["split"]["struck"]["struck_fragments"]["path_symbol"]["occurrences"] == 2
+
+
+_PROBES = {
+    "task-packs/probes.d/DEF-1.json": json.dumps({
+        "id": "DEF-1", "subject": "espalier/cli.py", "open_value": "True",
+        "cmd": "python3 -c \"import ast; t=ast.parse(open('espalier/cli.py').read()); "
+               "print(any(getattr(n,'name','')=='_setter' for n in ast.walk(t)))\""}),
+    "task-packs/probes.d/DEF-2.json": json.dumps({
+        "id": "DEF-2", "subject": "docs/x.md", "open_value": "1",
+        "cmd": "python -c 'from espalier import cli; print(cli._reader())'"}),
+    "task-packs/probes.d/DEF-3.json": json.dumps({
+        "id": "DEF-3", "subject": "espalier/cli.py", "cmd": None, "why_not": "no local oracle"}),
+    "task-packs/probes.d/DEF-4.json": json.dumps({
+        "id": "DEF-4", "subject": "espalier/other.py", "cmd": "python3 -c \"print('cli is fine')\""}),
+    "task-packs/probes.d/DEF-5.json": json.dumps({
+        "id": "DEF-5", "subject": "docs/y.md",
+        "cmd": "python3 -c \"import subprocess, sys; from espalier import cli; cli._helper = None; "
+               "subprocess.run([sys.executable, '-m', 'espalier', 'init'])\""}),
+    "task-packs/probes.d/README.md": "probes, one file per row; espalier/cli.py\n",
+    "task-packs/ledger.d/DEF-1.md": "<!-- -->\n| `DEF-1` | espalier/cli.py | live |\n",
+    "task-packs/ledger.d/DEF-2.md": "<!-- -->\n| ~~`DEF-2`~~ | docs/x.md | struck |\n",
+    "task-packs/ledger.d/DEF-3.md": "<!-- -->\n| `DEF-3` | espalier/cli.py | live |\n",
+}
+
+
+class TestTheProbes:
+    @pytest.fixture
+    def section(self, repo):
+        _add(repo, _PROBES)
+        out = _CENSUS.census(repo, _head(repo), ["probes"], extra={"concerns": {}})["probes"]
+        return out, {r["id"]: r for r in out["rows"]}
+
+    def test_a_probe_reads_cli_by_its_path_its_import_or_its_subject_and_not_by_the_word(self, section):
+        """Dies to: a probe counted by the word `cli` in its text (DEF-4 prints a string), or the
+        README in the probes folder read as a probe."""
+        out, rows = section
+        assert sorted(rows) == ["DEF-1", "DEF-2", "DEF-3", "DEF-5"]
+        assert out["probes"] == 5
+        assert (out["reading_cli"], out["subject_only"]) == (3, 1)
+        assert rows["DEF-1"]["by"] == ["subject", "path"]
+        assert rows["DEF-5"]["by"] == ["import", "patch", "run"]
+        assert rows["DEF-3"]["by"] == ["subject"] and rows["DEF-3"]["has_cmd"] is False
+
+    def test_a_struck_row_s_probe_is_struck_and_a_missing_row_is_named(self, section):
+        """Dies to: the row's state read from the fragment's presence alone (DEF-2's struck row
+        read live), or a probe with no row given a state it does not have."""
+        out, rows = section
+        assert (rows["DEF-1"]["row"], rows["DEF-2"]["row"], rows["DEF-5"]["row"]) == ("live", "struck", "no row")
+        assert out["by_row"] == {"live": 2, "struck": 1, "no row": 1}
+        assert out["live_reading_cli"] == 1
+
+    def test_each_probe_names_its_symbols_and_their_owners(self, section):
+        """Dies to: an AST read's symbol (`getattr(n, 'name', '') == '_setter'`) dropped, so the
+        probe reads as naming nothing a move could take; or the owner read off the wrong command."""
+        _out, rows = section
+        assert rows["DEF-1"]["symbols"] == ["_setter"]
+        assert rows["DEF-1"]["owners"]["_setter"]["owned_by"] == "cmd_alpha"
+        assert rows["DEF-2"]["symbols"] == ["_reader"] and rows["DEF-2"]["commands"] == ["cmd_beta"]
+        assert rows["DEF-5"]["symbols"] == ["_helper"]
+
+
+_ROWS = {
+    "task-packs/ledger.d/DEF-10.md": "<!-- -->\n| `DEF-10` | `.gitignore` vs `espalier/cli.py::_helper` | body |\n",
+    "task-packs/ledger.d/DEF-11.md": ("<!-- -->\n| `DEF-11` | espalier/cli.py::cmd_alpha; docs/x.md | the body cites "
+                                      "`espalier/cli.py::_setter` |\n"),
+    "task-packs/ledger.d/DEF-12.md": "<!-- -->\n| `DEF-12` | docs/x.md then espalier/cli.py | body |\n",
+    "task-packs/ledger.d/DEF-13.md": "<!-- -->\n| ~~`DEF-13`~~ | espalier/cli.py::_reader | closed |\n",
+    "task-packs/ledger.d/DEF-14.md": "<!-- -->\n| `DEF-14` | docs/y.md | the fix edits `espalier/cli.py::_reader` |\n",
+    "task-packs/ledger.d/DEF-15.md": ("<!-- -->\n| `DEF-15` | docs/y.md | mentions `cli.py::TABLE` and espalier/cli.py "
+                                      "by path |\n"),
+    "task-packs/ledger.d/DEF-16.md": "<!-- -->\n| ~~`DEF-16`~~ | docs/z.md | `espalier/cli.py::_helper` |\n",
+    "task-packs/ledger.d/DEF-17.md": ("<!-- -->\n| `DEF-17` | docs/w.md | a body with a \\| pipe, then "
+                                      "`espalier/cli.py::TABLE` |\n"),
+}
+
+
+class TestTheLedgerTiers:
+    @pytest.fixture
+    def section(self, repo):
+        _add(repo, _ROWS)
+        return _CENSUS.census(repo, _head(repo), ["ledger_rows"], extra={"concerns": {}})["ledger_rows"]
+
+    def test_a_struck_id_cell_is_in_no_tier(self, section):
+        """Dies to: a struck id cell (`~~`) read as live: DEF-13 joins tiers 1 and 2 and DEF-16
+        tier 3."""
+        assert (section["fragments"], section["struck"], section["live"]) == (8, 2, 6)
+        assert [r["id"] for r in section["tier2"]["rows"]] == ["DEF-10", "DEF-11", "DEF-12"]
+        assert [r["id"] for r in section["tier3"]["rows"]] == ["DEF-14"]
+
+    def test_the_first_path_token_reads_a_dotfile_both_ways(self, section):
+        """Dies to: the tokenizer's dotfile rule not stated (`.gitignore` taken as DEF-10's first
+        path in both readings, or in neither), or the first token taken whatever it is (DEF-12's
+        `docs/x.md` comes first)."""
+        tier1 = section["tier1"]
+        assert tier1["dotfile_not_counted"] == {"count": 2, "ids": ["DEF-10", "DEF-11"]}
+        assert tier1["dotfile_counted"] == {"count": 1, "ids": ["DEF-11"]}
+        assert tier1["differ"] == ["DEF-10"]
+
+    def test_each_row_names_its_symbols_and_their_owners(self, section):
+        """Dies to: the symbols read from the site cell alone (DEF-11's body cites `_setter`), or
+        the owner taken from the wrong command."""
+        rows = {r["id"]: r for r in section["tier2"]["rows"] + section["tier3"]["rows"]}
+        assert rows["DEF-11"]["symbols"] == ["_setter", "cmd_alpha"]
+        assert rows["DEF-11"]["commands"] == ["cmd_alpha"]
+        assert rows["DEF-12"]["symbols"] == []
+        assert rows["DEF-14"]["owners"]["_reader"]["owned_by"] == "cmd_beta"
+
+    def test_the_readings_the_pseudo_code_does_not_state_are_beside_it(self, section):
+        """Dies to: the escaped pipe read only one way (DEF-17's body cut at `\\|` reads no
+        citation; split on unescaped pipes it is tier 3), or a bare or path-only mention in the
+        body silently left out of every reading."""
+        beside = section["beside"]
+        assert beside["split_on_unescaped_pipes"]["tier3"] == 2
+        assert beside["split_on_unescaped_pipes"]["tier3_differ"] == ["DEF-17"]
+        assert beside["tier3_if_bare_spelling_counted"] == ["DEF-15"]
+        assert beside["tier3_if_a_path_mention_counted"] == ["DEF-15"]
+
+
+class TestTheDoctorBoundary:
+    """cli.py calls doctor back twice (through its module alias and a lazy import); doctor takes
+    three of cli's names, one through an alias of cli, and one cli does not define."""
+
+    _CLI = '''\
+from espalier import doctor as _doctor
+
+LIMIT = 3
+
+
+def _probe():
+    return _doctor.is_ok()
+
+
+def _shared():
+    return _probe()
+
+
+def _only_doctor():
+    return LIMIT
+
+
+def _lazy_back():
+    from espalier.doctor import verdict
+    return verdict()
+
+
+def cmd_one(args):
+    return _shared()
+
+
+def cmd_two(args):
+    return _shared() + _lazy_back()
+'''
+    _DOCTOR = '''\
+def check_a():
+    from espalier.cli import _shared, _lazy_back, GONE
+    return _shared(), _lazy_back(), GONE
+
+
+def check_b():
+    from espalier import cli as _cli
+    return _cli._only_doctor()
+
+
+def check_c():
+    return 0
+'''
+
+    @pytest.fixture
+    def section(self, repo):
+        _add(repo, {"espalier/cli.py": self._CLI, "espalier/doctor.py": self._DOCTOR})
+        return _CENSUS.census(repo, _head(repo), ["doctor_boundary"], extra={"concerns": {}})["doctor_boundary"]
+
+    def test_every_name_doctor_takes_is_read_the_alias_loads_included(self, section):
+        """Dies to: the names doctor loads through `from espalier import cli as _cli` left out
+        (then `_only_doctor` is no import and doctor reaches nothing alone), or a name cli does
+        not define counted as one of its functions."""
+        names = section["names"]
+        assert sorted(names["per_name"]) == ["GONE", "_lazy_back", "_only_doctor", "_shared"]
+        assert (names["functions"], names["constants"], names["not_in_cli"]) == (3, 0, ["GONE"])
+        assert names["per_name"]["_shared"]["reached_by"] == ["cmd_one", "cmd_two"]
+        assert section["doctor_alone"] == ["_only_doctor"]
+        assert section["back_edges_left_if_doctor_alone_moved"] == 2
+        assert (section["import_statements"], section["doctor_functions"]) == (2, ["check_a", "check_b"])
+
+    def test_the_closure_is_sized_and_its_calls_back_into_doctor_named(self, section):
+        """Dies to: the call-back edges read through the module alias alone (the lazy
+        `from espalier.doctor import verdict` in `_lazy_back` missed) or through lazy imports
+        alone (`_doctor.is_ok` in `_probe` missed), or the closure read over the names themselves
+        with nothing they call (`_probe` and `LIMIT` left out)."""
+        assert section["calls_back_into_doctor"] == {"_lazy_back": ["verdict"], "_probe": ["is_ok"]}
+        assert section["call_back_edges"] == 2
+        closure = section["closure"]
+        assert (closure["definitions"], closure["functions"], closure["names"], closure["function_lines"]) == (5, 4, 1, 9)
+        assert closure["reached_by_no_command"] == ["LIMIT", "_only_doctor"]
+
+    def test_a_pin_without_doctor_names_the_section_unread(self, repo):
+        """Dies to: a pin with no doctor.py read as a doctor that imports nothing (a zero)."""
+        out = _CENSUS.census(repo, _head(repo), ["doctor_boundary"])
+        assert out["doctor_boundary"] is None
+        assert "espalier/doctor.py is not in" in out["unread"]["doctor_boundary"]
+
+
 class TestAnUnreadSectionIsNamedNeverZero:
-    def test_a_section_with_no_reader_is_none_and_named(self, repo):
+    def test_a_section_with_no_reader_is_none_and_named(self, repo, monkeypatch):
         """Dies to: a section the census cannot read returned as an empty dict or a zero, which
         reads as clean."""
+        monkeypatch.delitem(_CENSUS.SECTION_READERS, "readers")
         out = _CENSUS.census(repo, _head(repo), ["readers"])
         assert out["readers"] is None
         assert "readers" in out["unread"]
