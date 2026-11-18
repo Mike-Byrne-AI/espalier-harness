@@ -966,10 +966,21 @@ lane's own sample found it, and it was filed through the same verb. Landing name
 deviation from the Files-touched pass criterion. The test itself stays unmodified, as Files
 touched requires.
 
-**An inconsistency in the authoring text, for Task 4's sizing.** Task 4 splits the 43 targets as
-31 with more than one loader (131 sites) and 12 that cli imports from elsewhere (30 sites). The
-31 and 12 sum to 43 targets, but the 131 and 30 sum to 161 sites, against the pack's own 149. The
-census recomputes the split at P below.
+**Task 4's two counts overlap; they are not a split** [verified, the census's `patches` section at
+P]. Task 4 names 31 targets with more than one loader (131 sites) and 12 that cli imports from
+elsewhere (30 sites). The census reads the same four figures. They sum to 161 sites against the
+149 in all because the two sets overlap: 10 of the 12 imported names also have more than one
+loader. The 43 add up by coincidence. The partition at P:
+
+| Targets of the 43 | Targets | Sites |
+|---|---|---|
+| More than one loader, defined in cli | 21 | 104 |
+| More than one loader, imported into cli | 10 | 27 |
+| One loader, imported into cli | 2 | 3 |
+| One loader, defined in cli | 10 | 15 |
+| All | 43 | 149 |
+
+This read was first sent to the dispatcher as an inconsistency (request `71f10f`). It is not one.
 
 The sample ran in a scratch clone. Its harness is not in this lane (Files touched), so a re-run
 rebuilds it from the rule and the method above.
