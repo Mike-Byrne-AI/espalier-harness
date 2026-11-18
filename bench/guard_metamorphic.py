@@ -64,7 +64,12 @@ everything around it.
 ``tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation`` stays
 denied, and each wall row of ``TestCatastrophicFindDelete`` stays walled, with
 a stderr redirect (the file spelling and the merge, ``2>&1``) written at any
-blank between its tokens after the command word, or on Bash before it. Each
+blank between its tokens after the command word, or on Bash before it. On
+Bash each row is also laid inside each carrier the redirect view reads one
+level down (a shell's ``-c`` word, ``eval``'s word, a double-quoted command
+substitution's body: ``R4_CARRIERS``), and the places inside the carried
+program are offered too, within the view's stated reach (``R4_REACH``; a row
+outside it is counted apart, DEF-5126). Each
 tool's own parser is the oracle that a place is null for what the verb is
 handed (no row is executed), and the classes' own judges give the verdict, so
 a reader that takes an operand by its place and loses it to the redirect reds
@@ -102,6 +107,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -1050,6 +1056,213 @@ def _token_blanks(command: str, tool: str) -> list[int]:
     return sorted(set(points))
 
 
+#: The carriers R4 lays each denied Bash row inside (DEF-5126): the three
+#: ways a Bash command hands a program down one level that the redirect view
+#: reads (DEF-5121, `_programs_handed_down` in tools/cc/hooks/_bash_patterns.py),
+#: each as the text before and after the program, named by the kind of span
+#: it carries (`R4_REACH`).
+R4_CARRIERS: dict[str, tuple[str, str]] = {
+    "shell -c": ("bash -c '", "'"),
+    "eval": ("eval '", "'"),
+    "substitution": ('echo "$(', ')"'),
+}
+#: Each carrier's kind of span: an exec-quoted word, or a substitution body.
+_R4_CARRIER_KIND = {"shell -c": "word", "eval": "word", "substitution": "body"}
+
+#: The view's stated reach one level down, held here as R4's own rule and
+#: never read from the view's code (air's ruling fd58a2): the characters a
+#: carried program may not hold for the view to read it in place. A word a
+#: shell's `-c` or `eval` takes is read where it holds no quote, backslash,
+#: `$` or backtick, so its quote removal is its inside (`_exec_quoted_program`);
+#: a substitution body is read where it holds no double quote, backslash or
+#: backtick (`_substitution_close`). A carried row outside the reach is
+#: counted apart and never judged; a view that narrows its reach reds here,
+#: and one that widens it is untested until this rule follows.
+R4_REACH: dict[str, str] = {"word": "'\"\\$`", "body": '"\\`'}
+
+#: The other half of a word's reach: the view reads in place no word that
+#: opens on a prefix (`_PROGRAM_OPENS_ON_PREFIX_RE`: a wrapper run, an
+#: assignment, a keyword, `!` or a redirect), so R4 carries no row whose
+#: program opens on one and offers no place before a carried word's command
+#: word. R4's own list, each a prefix the view's family reads (pinned by
+#: `tests/test_guard_metamorphic.py`), and narrower than that family by
+#: design: a row opening on a prefix the list lacks is carried, and where it
+#: reds, the remedy is the word added here; a word here the view stopped
+#: reading would hide a row, which the pin refuses.
+R4_WORD_PREFIXES = ("sudo", "doas", "env", "nohup", "nice", "time", "timeout", "exec", "command",
+                    "xargs", "if", "while")
+_R4_WORD_PREFIX_RE = re.compile(
+    r"[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=|!|[0-9]*[<>]|(?:" + "|".join(R4_WORD_PREFIXES) + r")(?=[ \t]|$))")
+
+#: The shells whose `-c` word `_carried_spans` reads as a program: the POSIX
+#: family the view's exec quote names.
+_R4_SHELLS = frozenset({"bash", "sh", "dash", "zsh", "ksh"})
+
+
+def _in_reach(program: str, kind: str) -> bool:
+    """Whether the view's stated reach takes ``program``, carried in a span
+    of ``kind``: none of `R4_REACH`'s characters, and for a word no opening
+    prefix (`_R4_WORD_PREFIX_RE`)."""
+    if any(ch in program for ch in R4_REACH[kind]):
+        return False
+    return kind != "word" or _R4_WORD_PREFIX_RE.match(program) is None
+
+
+def carried_rows(rows: list[dict]) -> tuple[list[dict], dict[str, int]]:
+    """Each Bash row of ``rows`` laid inside each carrier whose span the view
+    reads it in (`_in_reach`): the row's own entry with ``carrier`` set and
+    the carried text as its ``command``, so a row the class gains is carried
+    with no edit here (DEF-5126); and, per carrier, the count of rows left
+    outside the reach. A row already carried is not carried again: R4 reads
+    one level down (`_carried_spans`)."""
+    out: list[dict] = []
+    outside = dict.fromkeys(R4_CARRIERS, 0)
+    for row in rows:
+        if row["tool"] != "Bash" or row.get("carrier"):
+            continue
+        for name, (before, after) in R4_CARRIERS.items():
+            if _in_reach(row["command"], _R4_CARRIER_KIND[name]):
+                out.append({**row, "carrier": name, "command": before + row["command"] + after})
+            else:
+                outside[name] += 1
+    return out, outside
+
+
+def _substitution_body_end(command: str, at: int) -> int:
+    """The offset of the `)` closing the command substitution whose body
+    starts at ``at``, or -1: parentheses counted, a single-quoted span passed
+    over whole, and -1 at a character the body's reach leaves out
+    (`R4_REACH`), since the view reads no such body. bash's acceptance of the
+    carried text and of the body alone stay the proof (`check_r4`); this
+    scan only says where to look. Where it ends a body before bash would (a
+    case pattern's `)`), the body alone fails to parse and its places read
+    not null; ending one after bash would take a stray `)` past the real
+    close, which no row holds (the code review's M2)."""
+    depth, i, n = 1, at, len(command)
+    while i < n:
+        ch = command[i]
+        if ch in R4_REACH["body"]:
+            return -1
+        if ch == "'":
+            close = command.find("'", i + 1)
+            if close < 0:
+                return -1
+            i = close + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _carried_spans(command: str) -> list[tuple[int, int, str]]:
+    """The spans of each program a Bash command hands down one level within
+    the view's stated reach (`R4_REACH`), its quotes and a substitution's
+    `$(` and `)` left out, each with its kind (DEF-5126): a quoted word after
+    a shell's `-c` or after `eval` (``word``), and the body of each command
+    substitution inside a double-quoted span outside every bracket, in order
+    up to the first the reach leaves out (``body``; an arithmetic `$((` is not
+    a program). A word counts only where its shell or its `eval` opens a
+    statement. The scan says where a carried program is, and bash's parse of
+    that program alone, and of the carried row, then proves each place inside
+    it (`check_r4`); a word span rests on this scan's reading of the head.
+    One level only, R4's own limit: the view reads one exec-quoted word inside
+    a body as well (`_nested_programs_blanked`), pinned there by the hand rows
+    of `tests/test_write_guard.py::TestARedirectInsideAHandedDownProgramKeepsTheVerdict`,
+    and R4 offers no place in it."""
+    spans: list[tuple[int, int, str]] = []
+    # each word with whether it opens a statement: a `-c` shell or an `eval`
+    # hands its word down only at a command position (the code review's M1)
+    words: list[tuple[int, int, bool]] = []
+    i, n, depth = 0, len(command), 0
+    start: int | None = None
+    opens = True
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            start = i if start is None else start
+            i += 2
+            continue
+        if ch == "'":
+            start = i if start is None else start
+            close = command.find("'", i + 1)
+            i = n if close < 0 else close + 1
+            continue
+        if ch == '"':
+            start = i if start is None else start
+            j, reading = i + 1, depth == 0
+            while j < n and command[j] != '"':
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if reading and command.startswith("$(", j):
+                    close = -1 if command.startswith("$((", j) else _substitution_body_end(command, j + 2)
+                    if close < 0:
+                        # the bodies are read in order up to the first the
+                        # reach leaves out, as the view reads them
+                        reading = False
+                        j += 1
+                        continue
+                    spans.append((j + 2, close, "body"))
+                    j = close + 1
+                    continue
+                j += 1
+            i = j + 1
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if depth == 0 and ch in " \t\n;&|":
+            if start is not None:
+                words.append((start, i, opens))
+                start = None
+                opens = False
+            # a redirect's `&` (`2>&1`) separates nothing
+            if ch in "\n;|" or (ch == "&" and command[i - 1:i] not in ("<", ">")):
+                opens = True
+            i += 1
+            continue
+        start = i if start is None else start
+        i += 1
+    if start is not None:
+        words.append((start, n, opens))
+    for k, (lo, hi, _opens) in enumerate(words):
+        word = command[lo:hi]
+        if (k == 0 or len(word) < 2 or word[0] not in "'\"" or word[-1] != word[0]
+                or not _in_reach(word[1:-1], "word")):
+            continue
+        head = command[words[k - 1][0]:words[k - 1][1]]
+        shell = (k >= 2 and head == "-c" and words[k - 2][2]
+                 and command[words[k - 2][0]:words[k - 2][1]].rsplit("/", 1)[-1] in _R4_SHELLS)
+        if shell or (head == "eval" and words[k - 1][2]):
+            spans.append((lo + 1, hi - 1, "word"))
+    return sorted(spans)
+
+
+def r4_places(command: str, tool: str) -> list[tuple[int, tuple[int, int] | None]]:
+    """Each place R4 writes the redirect, with the carried program's span
+    for a place inside one (None for a place among the command's own words):
+    `_token_blanks` over the command, and on Bash each carried program's own
+    places (`_token_blanks` over its text, shifted to its offset), one level
+    down (DEF-5126), the place before a carried word's command word left out
+    (a redirect there opens the word on a prefix, outside the view's stated
+    reach: `R4_REACH`). A place inside a carried program is proved null by
+    the program's own parse (`check_r4`)."""
+    places: list[tuple[int, tuple[int, int] | None]] = [(at, None) for at in _token_blanks(command, tool)]
+    if tool == "Bash":
+        for lo, hi, kind in _carried_spans(command):
+            program = command[lo:hi]
+            lead = len(program) - len(program.lstrip(" \t"))
+            places += [(lo + at, (lo, hi)) for at in _token_blanks(program, tool)
+                       if not (kind == "word" and at == lead)]
+    return places
+
+
 def insert_redirect(command: str, tool: str, at: int, redirect: str | None = None) -> str:
     """``command`` with a stderr redirect (``redirect``, else the tool's first
     spelling) written at offset ``at``: after a blank before a blank or the
@@ -1059,6 +1272,19 @@ def insert_redirect(command: str, tool: str, at: int, redirect: str | None = Non
     if at < len(command) and command[at] not in " \t\n":
         return command[:at] + redirect + " " + command[at:]
     return command[:at] + " " + redirect + command[at:]
+
+
+def insert_redirect_at(command: str, tool: str, at: int, span: tuple[int, int] | None,
+                       redirect: str | None = None) -> str:
+    """``command`` with the redirect written at ``at``: among the command's
+    words where ``span`` is None, else inside the carried program
+    ``command[span[0]:span[1]]``, written into that program's text as
+    :func:`insert_redirect` writes it, so it glues to none of its words and
+    never to the carrier's closing quote (DEF-5126)."""
+    if span is None:
+        return insert_redirect(command, tool, at, redirect)
+    lo, hi = span
+    return command[:lo] + insert_redirect(command[lo:hi], tool, at - lo, redirect) + command[hi:]
 
 
 def _scratch_env(scratch: Path) -> dict[str, str]:
@@ -1321,44 +1547,74 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
     cls = _operand_class()
     wall = _wall_class()
     derived = rows is None
-    rows = operand_rows(quick) if rows is None else rows
+    outside_reach = dict.fromkeys(R4_CARRIERS, 0)
+    if rows is None:
+        plain = operand_rows(quick)
+        carried, outside_reach = carried_rows(plain)
+        rows = plain + carried
     drops: list[int] = []
     tools_run = {"Bash": bash is not None, "PowerShell": pwsh is not None}
-    candidates = []        # (row, at, text, redirect)
+    # (row, at, text, redirect, span): ``span`` is the carried program's for a
+    # place inside one (DEF-5126), None for a place among the command's words
+    candidates = []
     for row in rows:
         if tools_run[row["tool"]]:
-            for at in _token_blanks(row["command"], row["tool"]):
+            for at, span in r4_places(row["command"], row["tool"]):
                 for redirect in R4_REDIRECTS[row["tool"]]:
-                    candidates.append((row, at, insert_redirect(row["command"], row["tool"], at, redirect),
-                                       redirect))
+                    candidates.append((row, at, insert_redirect_at(row["command"], row["tool"], at, span, redirect),
+                                       redirect, span))
 
     null_by_text: dict[str, bool] = {}
+    rejected: set[str] = set()
     for tool in ("Bash", "PowerShell"):
         if not tools_run[tool]:
             continue
         mine = [c for c in candidates if c[0]["tool"] == tool]
-        originals = sorted({c[0]["command"] for c in mine})
-        texts = originals + [c[2] for c in mine]
         if tool == "Bash":
-            # a twinned spelling's place is proved on its twin's text, and its
-            # own text must parse to the twin's form (R4_BASH_TWINS)
-            proofs = {c[2]: insert_redirect(c[0]["command"], tool, c[1], _bash_proof(c[3]))
-                      for c in mine if c[3] in R4_BASH_TWINS}
-            texts += sorted(set(proofs.values()) - set(texts))
+            # Each place is proved on the program the verb's shell parses: the
+            # command for a place among its words, the carried program's own
+            # text for a place inside one, since the carrier hands that text
+            # down whole and bash's printed form of the carrier holds a quoted
+            # word as written (DEF-5126). A twinned spelling's place is proved
+            # on its twin's text, and its own text must parse to the twin's
+            # form (R4_BASH_TWINS). A place inside a carried program also
+            # needs bash to accept the carried row itself; the redirect adds
+            # no quote, escape, bracket or comment to the carrier.
+            proving = []    # (text, original, inserted, proof, redirect, carried)
+            for row, at, text, redirect, span in mine:
+                lo, hi = span if span is not None else (0, len(row["command"]))
+                original = row["command"][lo:hi]
+                inserted = insert_redirect(original, tool, at - lo, redirect)
+                proof = insert_redirect(original, tool, at - lo, _bash_proof(redirect))
+                proving.append((text, original, inserted, proof, redirect,
+                                row["command"] if span is not None else None))
+            texts = sorted({t for p in proving for t in (p[1], p[2], p[3]) + ((p[5],) if p[5] else ())})
             forms = bash_parsed_forms(texts, bash, drops)
             parsed = dict(zip(texts, forms))
-            for row, _at, text, redirect in mine:
-                proof = proofs.get(text, text)
+            # a carried row bash rejects proves none of its inner places: counted
+            # per carrier, never lost inside a live carrier (the failure-mode
+            # review's MINOR 9: a heredoc row in the substitution)
+            rejected.update(p[5] for p in proving if p[5] and parsed[p[5]] is None)
+            for text, original, inserted, proof, redirect, carried in proving:
                 null_by_text[text] = (
-                    bash_insertion_is_null(parsed[row["command"]], parsed[proof], printed[redirect])
-                    and parsed[text] is not None and parsed[text] == parsed[proof])
+                    bash_insertion_is_null(parsed[original], parsed[proof], printed[redirect])
+                    and parsed[inserted] is not None and parsed[inserted] == parsed[proof]
+                    and (carried is None or parsed[carried] is not None))
         else:
+            originals = sorted({c[0]["command"] for c in mine})
+            texts = originals + [c[2] for c in mine]
             forms = powershell_parsed_forms(texts, pwsh)
             parsed = dict(zip(texts, forms))
-            for row, _at, text, redirect in mine:
+            for row, _at, text, redirect, _span in mine:
                 null_by_text[text] = powershell_insertion_is_null(parsed[row["command"]], parsed[text], redirect)
 
     census = {tool: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0} for tool in tools_run}
+    # the carried rows apart, per carrier, so the plain line counts the
+    # class's own rows and a carrier the guard never denies is seen (DEF-5126)
+    carried_census = {name: {"rows": 0, "places": 0, "null": 0, "originals_denied": 0,
+                             "inner": 0, "inner_null": 0, "rejected": 0}
+                      for name in R4_CARRIERS}
+    carried_undenied: list[str] = []
     null_by_kind: dict[str, int] = {}
     # per (tool, spelling) and (tool, table) over the denied rows' places: a
     # spelling or a table proved null nowhere beside a live one reds, never
@@ -1383,33 +1639,50 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
             for row in rows:
                 if not tools_run[row["tool"]]:
                     continue
-                stats = census[row["tool"]]
+                carrier = row.get("carrier")
+                stats = census[row["tool"]] if carrier is None else carried_census[carrier]
                 stats["rows"] += 1
                 mine = by_row.get(id(row), [])
                 stats["places"] += len(mine)
+                if carrier is not None and row["command"] in rejected:
+                    stats["rejected"] += 1
                 if not denied(row, row["command"]):
-                    undenied.append(f"{row['key']} on {row['kind']}")
+                    if carrier is None:
+                        undenied.append(f"{row['key']} on {row['kind']}")
+                    else:
+                        # outside R4's relation (a denied row stays denied):
+                        # counted, never judged (DEF-5126)
+                        carried_undenied.append(f"{row['key']} on {row['kind']} in {carrier}")
                     continue
                 stats["originals_denied"] += 1
-                for _row, _at, text, redirect in mine:
-                    parts = ((row["tool"], f"spelling {redirect}"), (row["tool"], f"table {row['table']}"))
+                for _row, _at, text, redirect, span in mine:
+                    parts = [(row["tool"], f"spelling {redirect}"), (row["tool"], f"table {row['table']}")]
+                    if carrier is not None:
+                        parts.append((row["tool"], f"carrier {carrier}"))
                     for part in parts:
                         null_by_part.setdefault(part, 0)
+                    inner = carrier is not None and span is not None
+                    stats["inner"] = stats.get("inner", 0) + inner
                     if not null_by_text[text]:
                         continue
                     for part in parts:
                         null_by_part[part] += 1
                     stats["null"] += 1
+                    stats["inner_null"] = stats.get("inner_null", 0) + inner
                     null_by_kind[row["kind"]] = null_by_kind.get(row["kind"], 0) + 1
                     if not denied(row, text):
+                        where = "" if carrier is None else f", in {carrier}"
+                        inside = "" if span is None else ", inside the carried program"
                         violations.append({
                             "relation": "R4",
                             "key": row["key"],
                             "tool": row["tool"],
                             "kind": row["kind"],
-                            "detail": (f"{row['key']} ({row['tool']}, {row['kind']}, arm "
+                            "carrier": carrier,
+                            "inside": span is not None,
+                            "detail": (f"{row['key']} ({row['tool']}, {row['kind']}{where}, arm "
                                        f"{row.get('arm', '?')}): a stderr redirect the parser reads as "
-                                       f"null lowers the verdict: {text!r}"),
+                                       f"null{inside} lowers the verdict: {text!r}"),
                         })
     finally:
         if saved is not None:
@@ -1423,19 +1696,38 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
              "R4 vouches for nothing there"
              for (tool, part), count in sorted(null_by_part.items())
              if count == 0 and census[tool]["null"] > 0]
+    # a carrier whose rows the judge never denies, or whose places the parser
+    # never proves null, vouches for nothing: it gates as a dead part does
+    dead += [f"Bash: no row carried in {name} is denied on the class's own projects -- "
+             "R4 vouches for nothing there"
+             for name, stats in carried_census.items()
+             if tools_run["Bash"] and stats["rows"] and stats["originals_denied"] == 0]
+    # the carrier's own outer places stay null if the inner proof breaks, so
+    # the inner places gate apart (the failure-mode review's MINOR 3, the
+    # code review's M3); and a derived run's carrier holding no row at all is
+    # dead too (MINOR 4: a population change can push every row out of it)
+    dead += [f"Bash: no place inside a program carried in {name} is proved null -- "
+             "R4 vouches for nothing there"
+             for name, stats in carried_census.items()
+             if tools_run["Bash"] and stats["originals_denied"] and stats["inner_null"] == 0]
+    if derived and census["Bash"]["rows"]:
+        dead += [f"Bash: no row is carried in {name} -- R4 vouches for nothing there"
+                 for name, stats in carried_census.items() if tools_run["Bash"] and not stats["rows"]]
     if drops:
         dead.append(f"Bash: {len(drops)} parsed form(s) dropped as empty or foreign -- a batch went "
                     "wrong past bash's notice, and those places were never judged")
     rejudged = 0
     if quick and derived and violations:
         red = {(v["key"], v["tool"]) for v in violations}
-        judged = {(r["key"], r["tool"], r["kind"]) for r in rows}
+        judged = {(r["key"], r["tool"], r["kind"]) for r in rows if r.get("carrier") is None}
         others = [r for r in operand_rows(quick=False)
                   if (r["key"], r["tool"]) in red and (r["key"], r["tool"], r["kind"]) not in judged]
         if others:
-            more = check_r4(quick=False, pwsh=pwsh, rows=others)
+            # each red row's other kinds, plain and carried alike (DEF-5126)
+            more = check_r4(quick=False, pwsh=pwsh, rows=others + carried_rows(others)[0])
             violations += more["violations"]
             undenied += more["undenied_originals"]
+            carried_undenied += more["carried_undenied"]
             # the inner run's census covers the red rows alone, so a tool
             # with none reads dead there: only its dropped forms carry over
             # (the third code review, S1)
@@ -1450,8 +1742,16 @@ def check_r4(quick: bool = False, pwsh: str | None = None, rows: list[dict] | No
         "reach_census": {},
         "null_census": {tool: f"{s['null']}/{s['places']} places null over {s['originals_denied']} denied rows"
                         for tool, s in census.items() if tools_run[tool]},
+        "carried_rows": sum(s["rows"] for s in carried_census.values()),
+        "carried_census": {name: f"{s['null']}/{s['places']} places null ({s['inner_null']}/{s['inner']} "
+                                 f"inside the carried program) over {s['originals_denied']} of "
+                                 f"{s['rows']} carried rows denied; {s['rejected']} carried rows bash "
+                                 f"rejects; {outside_reach[name]} rows outside the view's stated reach, "
+                                 "not carried"
+                           for name, s in carried_census.items() if tools_run["Bash"]},
         "skipped_tools": [tool for tool, ran in tools_run.items() if not ran],
         "undenied_originals": undenied,
+        "carried_undenied": carried_undenied,
         "null_by_kind": null_by_kind,
         "null_by_part": {f"{tool} {part}": count for (tool, part), count in sorted(null_by_part.items())},
         "rejudged_kinds": rejudged,
@@ -1523,6 +1823,8 @@ def main(argv: list[str] | None = None) -> int:
         for rep in reports:
             print(f"\n{rep['relation']} — {rep['description']}")
             print(f"  population: {rep['rows']} rows", end="")
+            if rep.get("carried_rows"):
+                print(f" (+{rep['carried_rows']} carried)", end="")
             if "reaching" in rep:
                 print(f"  ({rep['reaching']} reach the delete)", end="")
             print()
@@ -1538,6 +1840,11 @@ def main(argv: list[str] | None = None) -> int:
                       f"{', '.join(rep['absent_heads'])}")
             for tool, line in rep.get("null_census", {}).items():
                 print(f"  {tool}: {line}")
+            for carrier, line in rep.get("carried_census", {}).items():
+                print(f"  Bash in {carrier}: {line}")
+            if rep.get("carried_undenied"):
+                print(f"  {len(rep['carried_undenied'])} carried row(s) not denied here (outside R4's "
+                      f"relation, counted and never judged): {', '.join(rep['carried_undenied'][:5])}")
             for tool in rep.get("skipped_tools", ()):
                 print(f"  {tool} SKIPPED -- its parser is not on this host; its rows are not judged here")
             if rep.get("undenied_originals"):
