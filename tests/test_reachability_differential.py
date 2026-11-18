@@ -340,9 +340,11 @@ class TestRefusesToExecuteAnythingUnconfined:
         "find {v} -maxdepth 0; echo /etc/passwd | xargs {rm}",
         "find {v}; cd /tmp; ls | xargs {rm}", "find {v} | ls | xargs {rm}",
         "cd /tmp; echo 'a\nb'; ls | xargs {rm}; echo {v}",
+        "cd /tmp; find {v} -maxdepth 0; xargs {rm}",
     ], ids=["listing-behind-a-move", "find-from-here", "find-names-no-start",
             "xargs-replace", "execdir", "decoy-find-chained", "decoy-find-before-an-echo",
-            "decoy-find-before-a-move", "decoy-stage-between", "after-a-quote-across-lines"])
+            "decoy-find-before-a-move", "decoy-stage-between", "after-a-quote-across-lines",
+            "decoy-find-before-a-separator"])
     def test_refuses_a_delete_fed_from_a_listing_of_a_relative_place(self, rd, sandbox, cmd):
         """A delete that names no operand reads its names from a pipe, and
         they lie under the listing's start paths, `.` for a listing that names
@@ -842,15 +844,14 @@ class TestOneConditionSetServesBothLegs:
         assert _one_set_violations(f"{source}\n\n{planted}") != [], planted
 
     def test_only_the_powershell_leg_reads_its_moves(self, rd):
-        """`_move_destination` is written for PowerShell's grammar: bash's
-        `CDPATH` search and its escape were dropped from it as dead code, so a
-        Bash profile that starts reading moves reds here and brings them back
-        (DEF-2099's code review). Each group a profile names is one of the
-        set's unread moves, and each unread move is one a profile names."""
+        """The PowerShell leg reads its moves through an allowlist its own
+        population derives; bash spells a move more ways than a list holds
+        (DEF-2099's two reviews), so the Bash leg reads none and refuses every
+        relative operand. A Bash profile that starts reading moves reds here,
+        so it brings an allowlist of its own and the review it needs."""
         prd = _load_powershell_leg()
-        assert rd.BASH.directory_changes is None
-        assert prd.POWERSHELL.directory_changes is not None
-        assert set(prd.POWERSHELL.directory_changes.groupindex) == rd._confinement.UNREAD_MOVES.keys()
+        assert rd.BASH.allowlist is None
+        assert isinstance(prd.POWERSHELL.allowlist, rd._confinement.Allowlist)
 
     def test_every_expansion_form_is_one_a_leg_performs(self, rd):
         """A form added to the set's table that no profile names is a
@@ -882,25 +883,8 @@ class TestOneConditionSetServesBothLegs:
                 spelling_opens_a_word=shell.spelling_opens_a_word,
                 catastrophic=shell.catastrophic, escaping=shell.escaping,
                 lone_delete=shell.lone_delete, substitution_marks=shell.substitution_marks,
-                directory_changes=shell.directory_changes, move_switches=shell.move_switches,
+                allowlist=shell.allowlist,
                 makes_links=shell.makes_links, expansions=frozenset({"brace-expansion"}))
-
-    def test_a_profile_naming_an_unread_move_the_set_lacks_is_refused(self, rd):
-        """The same for condition (10)'s unplaceable steps: a group the set
-        has no reason for would match and refuse under no message, or, read
-        as a move to place, be placed (DEF-2099)."""
-        shell = rd.BASH
-        with pytest.raises(ValueError, match="no unread move"):
-            rd._confinement.Shell(
-                name="misspelt", delete_operands=shell.delete_operands,
-                moved_operands=shell.moved_operands,
-                victim_spellings=shell.victim_spellings,
-                spelling_opens_a_word=shell.spelling_opens_a_word,
-                catastrophic=shell.catastrophic, escaping=shell.escaping,
-                lone_delete=shell.lone_delete, substitution_marks=shell.substitution_marks,
-                directory_changes=re.compile(r"(?P<pop>popd)|cd"), move_switches=frozenset(),
-                makes_links=shell.makes_links, separators=shell.separators,
-                expansions=shell.expansions)
 
 
 # The guard below mirrors the product stand-down in

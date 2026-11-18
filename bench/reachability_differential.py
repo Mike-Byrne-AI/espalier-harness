@@ -1056,8 +1056,7 @@ BASH = _confinement.Shell(
     # The rows spell the victim absolute, and refusing every relative
     # operand costs no row: 0 of the pin's 2755 carry one under
     # `_moved_operands` (in memory on Windows and on WSL, 2026-11-17).
-    directory_changes=None,
-    move_switches=frozenset(),
+    allowlist=None,
     # a row that makes a link has no delete vouched for, absolute or not:
     # 0 of the pin's 2755 rows make one (in memory on Windows, 2026-11-18),
     # so the dispatcher's note on DEF-2099 put it in this lane

@@ -257,18 +257,27 @@ before 5.2 matches against `..`; on PowerShell a drive its provider maps, such
 as `HKCU:`). A relative delete operand is vouched for only where the row's
 moves are read (`DEF-2099`): the Bash leg reads none, since bash spells a move
 more ways than a list holds, so it refuses every relative operand (its rows
-spell the victim absolute, and no row carries one); on PowerShell, whose rows
-are relative by design, every move it reads (a `Set-Location`, its aliases and
-kin) must land under the throwaway, with no relative destination or operand
-climbing `..`, and a move it cannot place (a pop, a dot-sourced script, a link
-the row makes) refuses. A delete that names no operand, reading its names from
-a pipe, is judged by where they come from: the listing's start paths, or the
-directory the row stands in. The function's docstring is the whole list; what
-the operand readers cannot see yet is `DEF-2100` (a delete head not read as a
-literal word: Bash reads `rm` alone, and a head spelled by path or computed is
-read on neither shell) and `DEF-2101` (a reader that stops where the shell
-reads on: a redirect, a quoted separator, a `#` that shlex takes for a
-comment).
+spell the victim absolute, and no row carries one). The PowerShell leg, whose
+rows are relative by design, holds every row to an allowlist derived from its
+own population and held as data in `powershell_allowlist.json`: every
+character ASCII and held, the backtick only as the newline escape, every word
+held, and one move, `Set-Location` to a declared victim spelling ending its
+statement, so a move it does not admit refuses and is never read. A new row
+that needs a new character or word refuses until
+`python bench/powershell_reachability_differential.py --write-allowlist`
+holds it, and its test pins the file to the population both ways; some inert
+rows take characters from the guard's own regex, so a guard change can red
+that test too, and the fix is the same regeneration, with its diff read. A
+row that makes a link has no delete vouched for, on either leg. A delete that
+names no operand, reading its names from a pipe, is judged for relativity by
+where they come from: the start paths of the listing in its own pipeline
+stage, or the directory the row stands in. The function's docstring is the
+whole list; what the operand readers cannot see yet is `DEF-2100` (a delete
+head not read as a literal word: Bash reads `rm` alone, and a head spelled by
+path or computed is read on neither shell) and `DEF-2101` (a reader that stops
+where the shell reads on: a redirect, a quoted separator, a `#` that shlex
+takes for a comment; and a listing judged only for relativity, so one that
+starts at an absolute place outside the throwaway is read by no condition).
 Every refusal path is driven by
 `tests/test_reachability_differential.py` and
 `tests/test_powershell_reachability_differential.py`, in memory.

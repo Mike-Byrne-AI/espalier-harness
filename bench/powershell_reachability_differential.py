@@ -793,6 +793,59 @@ def _operand_walk(cmd: str, *, moved: bool) -> list[str]:
     return operands
 
 
+#: The rows `assert_instrument_is_live` drives before any row is believed:
+#: a bare delete of the target, and a quoted mention of one that must not
+#: reach. They go through the condition set like every row, so the held
+#: allowlist is derived from them too.
+CALIBRATION_ROWS: tuple[str, str] = (f"{_RI} {_TARGET}", f"$d = '{_RI} {_TARGET}'")
+
+#: How condition (10)'s allowlist cuts a row into words: at blanks, at the
+#: statement and pipeline separators, at the brackets and braces that open
+#: and close a block or an expression, at quotes, and at the newline escape
+#: (a reparsed string reads it as a line break).
+ALLOWLIST_SPLIT = re.compile(r"`n|[ \t\r\n;|&(){}'\"]+")
+
+#: The characters and words this leg's population holds, written by
+#: `--write-allowlist` and pinned to the population by its test.
+ALLOWLIST_PATH = Path(__file__).with_name("powershell_allowlist.json")
+_HELD = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+
+
+def population_texts() -> set[str]:
+    """Every text `run` can hand an interpreter, rendered as `_run_pwsh`
+    renders it: both platforms' rows, both nested interpreters and the
+    calibration rows. The held allowlist is derived from these."""
+    global _PLATFORM
+    held = _PLATFORM
+    texts = set(CALIBRATION_ROWS)
+    try:
+        for platform in ("nt", "posix"):
+            _PLATFORM = platform
+            for nested in ("pwsh", "powershell"):
+                texts.update(
+                    row["template"] for row in
+                    inert_rows() + opener_context_rows() + reparsed_inert_rows()
+                    + call_operator_inert_rows() + execution_rows(nested=nested)
+                    + call_operator_rows() + sweep_rows(nested=nested))
+    finally:
+        _PLATFORM = held
+    return {text.replace(_TARGET, "./victim") for text in texts}
+
+
+def derive_allowlist(texts: "set[str]") -> dict[str, object]:
+    """The allowlist's characters and words, as `ALLOWLIST_PATH` holds them."""
+    return {"alphabet": "".join(sorted({char for text in texts for char in text})),
+            "words": sorted({word for text in texts
+                             for word in ALLOWLIST_SPLIT.split(text) if word})}
+
+
+def write_allowlist() -> Path:
+    """Write the population's allowlist to `ALLOWLIST_PATH`, LF-ended."""
+    text = json.dumps(derive_allowlist(population_texts()), indent=1, ensure_ascii=True)
+    ALLOWLIST_PATH.write_bytes((text + "\n").encode("ascii"))
+    return ALLOWLIST_PATH
+
+
 #: The words that make a link (condition 10's `makes_links`): New-Item's
 #: link item types, .NET's Create*Link, mklink and ln, in any case.
 _LINK_MAKERS = re.compile(r"symboliclink|junction|hardlink"
@@ -843,28 +896,31 @@ POWERSHELL = _confinement.Shell(
     # wildcards enumerate a directory's children, never `..` (driven: `.?`
     # and `.*` resolved nothing in an empty directory, PowerShell 5.1)
     expansions=frozenset({"mapped-drive"}),
-    # condition (10): Set-Location and its aliases cd, sl and chdir,
-    # Push-Location and pushd, module-qualified too, in any case, a redirect
-    # glued to the head too; Pop-Location and popd return to a place the
-    # stack holds (`stack`), and the `cd..` and `cd\` functions to the parent
-    # and the drive root (`fixed`). Driven 2026-11-17, echo-only, on
-    # PowerShell 5.1: each moved where a bare name resolved (a bare `cd` did
-    # not). Read as unplaceable: a dot-sourced script, whose text is not in
-    # the row (`script`); a link the row makes is `makes_links`' below. Not
-    # read: a command word with an escape in it
-    # (`S`et-Location`), a computed invocation (`& ('Set-'+'Location')`,
-    # `.(...)`, Invoke-Expression of a string the row builds), an alias or a
-    # function the row defines, a script it calls by path or with `&`, and a
-    # launcher's own working directory (pwsh's -WorkingDirectory,
-    # Start-Process's), whose program is one quoted word to the operand
-    # reader.
-    directory_changes=re.compile(
-        r"(?P<stack>(?<![\w.$-])(?:pop-location|popd)(?=[\s;&|(){}'\"<>]|$))"
-        r"|(?P<fixed>(?<![\w.$-])(?:cd\.\.|cd\\)(?=[\s;&|(){}'\"<>]|$))"
-        r"|(?P<script>(?:^|(?<=[;&|({\n]))[ \t]*\.(?=[ \t]+[^\s{;&|)}]))"
-        r"|(?<![\w.$-])(?:set-location|sl|cd|chdir|push-location|pushd)(?=[\s;&|(){}'\"<>]|$)",
-        re.IGNORECASE),
-    move_switches=frozenset({"-path", "-literalpath", "-passthru"}),
+    # condition (10): every row is held to this allowlist, moving or not (the
+    # dispatcher's ruling on DEF-2099), in place of a hand list of moves that
+    # drew new misses in each of two reviews. Its characters and words are
+    # the population's own (`ALLOWLIST_PATH`, pinned to `population_texts`
+    # by its test), so a row that needs a new one refuses until
+    # `--write-allowlist` holds it and a reviewer reads the diff. Every word
+    # is held, not only a command's head, so no reading of where PowerShell
+    # starts a command (a string an evaluator runs, a block, the call
+    # operator) has to be right. The backtick escapes `n` alone, the newline
+    # escape the reparsed rows use; a line continuation and an escaped
+    # command word refuse. The one move is Set-Location to a declared
+    # spelling, ending its statement, as each of the population's moving
+    # rows spells it (80 of the 1568, 32 distinct texts, in memory on
+    # Windows, 2026-11-18).
+    allowlist=_confinement.Allowlist(
+        alphabet=frozenset(_HELD["alphabet"]),
+        words=frozenset(_HELD["words"]),
+        split=ALLOWLIST_SPLIT,
+        escape="`",
+        escapes=frozenset("n"),
+        move="Set-Location",
+        destinations=tuple(spelling for _, spelling in TARGETS),
+        move_end=";",
+        regenerate="python bench/powershell_reachability_differential.py --write-allowlist",
+    ),
     # a row that makes a link has no delete vouched for, absolute or not:
     # 0 of this leg's 1568 rows make one (in memory on Windows, both
     # platforms' rows, 2026-11-18)
@@ -1008,11 +1064,11 @@ def assert_instrument_is_live(pwsh: str) -> None:
         raise InstrumentBroken("guard allows a drive-root delete -- instrument broken")
     if guard_tier("Get-Date") != "ALLOW":
         raise InstrumentBroken("guard denies `Get-Date` -- instrument broken")
-    if not powershell_reaches(f"{_RI} {_TARGET}", pwsh):
+    if not powershell_reaches(CALIBRATION_ROWS[0], pwsh):
         raise InstrumentBroken(
             "a bare delete did not remove the victim -- the interpreter oracle is "
             "broken, and every row would report inert")
-    if powershell_reaches(f"$d = '{_RI} {_TARGET}'", pwsh):
+    if powershell_reaches(CALIBRATION_ROWS[1], pwsh):
         raise InstrumentBroken(
             "a quoted mention deleted the victim -- the interpreter oracle is broken")
     # DEF-831: the listing rows set a repository up inside the sandbox, a
@@ -1070,7 +1126,7 @@ def run(pwsh: str, quick: bool = False) -> list[dict]:
             # and a parse error on Windows PowerShell 5.1 -- review) and it is
             # classified like any other row, as the friction it reads as.
             reaches, rc, tail = _run_pwsh(row["template"], pwsh, row.get("oracle", "victim"))
-            if not reaches and not powershell_reaches(f"{_RI} {_TARGET}", pwsh):
+            if not reaches and not powershell_reaches(CALIBRATION_ROWS[0], pwsh):
                 raise InstrumentBroken(
                     "the bare delete stopped reaching after execution row "
                     f"{row['wrapper']!r} ({row['target']}) read as not reaching "
@@ -1097,7 +1153,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quick", action="store_true", help="sampled population")
     parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
                         help="the project root's shape (the rehearsal's ROOT_SHAPES); default plain")
+    parser.add_argument("--write-allowlist", action="store_true",
+                        help="write the population's characters and words to "
+                             f"{ALLOWLIST_PATH.name} and exit; runs no row")
     args = parser.parse_args(argv)
+
+    if args.write_allowlist:
+        print(f"wrote {write_allowlist()}")
+        return 0
 
     found = find_powershell()
     if found is None:

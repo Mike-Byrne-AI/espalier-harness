@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -50,6 +51,24 @@ def _load():
 @pytest.fixture(scope="module")
 def prd():
     return _load()
+
+
+#: What condition (10)'s allowlist says when it refuses a row (`_allowlisted`
+#: in `bench/real_shell_confinement.py`), one reason per rule.
+_ALLOWLIST_REFUSAL = ("a non-ASCII character|no row of the PowerShell population holds"
+                      "|an escape|a move this set does not admit")
+
+
+def _holding(prd, *texts):
+    """The leg's profile with its allowlist also holding `texts`' characters
+    and words, so a test reaches the rule or the condition behind it."""
+    import dataclasses
+
+    held = prd.POWERSHELL.allowlist
+    extra = prd.derive_allowlist(set(texts))
+    return dataclasses.replace(prd.POWERSHELL, allowlist=dataclasses.replace(
+        held, alphabet=held.alphabet | frozenset(extra["alphabet"]),
+        words=held.words | frozenset(extra["words"])))
 
 
 class TestItStandsDownRatherThanFakingAGreen:
@@ -232,8 +251,9 @@ class TestRefusesToExecuteAnythingUnconfined:
         rides behind the flag."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        prd.assert_safe_to_execute("gci ./victim -Recurse -Include * | ri -r -fo", victim, tmp_path)
-        prd.assert_safe_to_execute("gci ./victim -Recurse -Include:* | ri -r -fo", victim, tmp_path)
+        for kept in ("gci ./victim -Recurse -Include * | ri -r -fo",
+                     "gci ./victim -Recurse -Include:* | ri -r -fo"):
+            prd._confinement.assert_confined(kept, victim, tmp_path, _holding(prd, kept))
         with pytest.raises(prd.UnsafeToExecute, match="operand"):
             prd.assert_safe_to_execute("gci -Include * / -Recurse | ri -r -fo ; echo ./victim",
                                        victim, tmp_path)
@@ -415,26 +435,49 @@ class TestRefusesToExecuteAnythingUnconfined:
         The second block was accepted by (10)'s first reading of a move (both
         reviews): a redirect or a comment where the destination would be, a
         word glued to an opener, a script whose landing the text does not
-        hold."""
+        hold. Each is refused by the allowlist that replaced that reading,
+        which admits one move and reads no other (the dispatcher's ruling on
+        DEF-2099)."""
         victim = tmp_path / "victim"
         victim.mkdir()
         rendered = move.format(out=tmp_path.parent.as_posix(), bs=chr(92))
-        with pytest.raises(prd.UnsafeToExecute, match="in a row that moves its directory"):
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
             prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim", victim, tmp_path)
 
     @pytest.mark.parametrize("move", [
-        "Set-Location ./victim;", "Set-Location {sb}/sub;", "cd sub;", "Push-Location .{bs}sub;",
-        "Set-Location -LiteralPath sub;", "Set-Location -PassThru sub;",
-    ], ids=["into-the-target", "absolute", "relative", "backslash", "literal-path", "switch"])
-    def test_keeps_a_relative_operand_where_every_move_stays_inside(self, prd, tmp_path, move):
-        """The sweep rows move into the target before their delete: condition
-        (10) reads where a move goes, so a move that stays inside costs no
-        row (the census of 2026-11-17: 0 of this leg's rows on either
-        platform)."""
+        "Set-Location ./victim;", "Set-Location .{bs}victim;", "Set-Location victim;",
+    ], ids=["dot-spelling", "backslash-spelling", "bare-spelling"])
+    def test_keeps_a_relative_operand_after_the_admitted_move(self, prd, tmp_path, move):
+        """The sweep rows move into the target before their delete: the one
+        move the allowlist admits is Set-Location to a declared spelling,
+        ending its statement, which descends, so it costs no row (0 of this
+        leg's 1568 on either platform, in memory, 2026-11-18)."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        rendered = move.format(sb=tmp_path.as_posix(), bs=chr(92))
+        rendered = move.format(bs=chr(92))
         prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim", victim, tmp_path)
+
+    @pytest.mark.parametrize("move", [
+        "Set-Location {sb}/sub;", "cd sub;", "Push-Location .{bs}sub;",
+        "Set-Location -LiteralPath sub;", "Set-Location -PassThru sub;", "Set-Location ./victim",
+        "set-location ./victim;", "Set-Location ./victim |", "Set-Location sub;",
+    ], ids=["absolute", "relative", "backslash", "literal-path", "switch", "no-statement-end",
+            "lower-case", "piped", "an-undeclared-name"])
+    def test_refuses_a_move_inside_the_sandbox_the_allowlist_does_not_admit(
+            self, prd, tmp_path, move):
+        """Each stays inside the sandbox, and the hand list of moves this
+        replaced read each so and kept it; the allowlist admits one move and
+        reads no other, so each refuses, at the cost of no population row.
+        Held to the profile's words as well, so the admitted-move rule, not
+        the word rule, is what refuses."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        cmd = f"{move.format(sb=tmp_path.as_posix(), bs=chr(92))} {prd._RI} ./victim"
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
+            prd.assert_safe_to_execute(cmd, victim, tmp_path)
+        if "et-location" in move.lower():
+            with pytest.raises(prd.UnsafeToExecute, match="a move this set does not admit"):
+                prd._confinement.assert_confined(cmd, victim, tmp_path, _holding(prd, cmd))
 
     @pytest.mark.parametrize("cmd", [
         "Set-Location ./victim; Set-Location ../..; Get-ChildItem | {ri} -Recurse",
@@ -443,10 +486,11 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_refuses_a_delete_fed_from_a_listing_where_the_row_moved_out(self, prd, tmp_path, cmd):
         """A delete or enumerator head that names no operand reads where the
         row stands, so it is judged as `.`: before, a carrier that climbed out
-        first was judged by nothing (DEF-2099's failure-mode review)."""
+        first was judged by nothing (DEF-2099's failure-mode review). The
+        climb is a move the allowlist does not admit."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        with pytest.raises(prd.UnsafeToExecute, match="in a row that moves its directory"):
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
             prd.assert_safe_to_execute(cmd.format(ri=prd._RI), victim, tmp_path)
 
     @pytest.mark.parametrize("cmd", [
@@ -460,59 +504,53 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         prd.assert_safe_to_execute(cmd.format(ri=prd._RI), victim, tmp_path)
 
-    @pytest.mark.parametrize("cmd", [
-        "Set-Location ./victim; {ri} ./../../{parent}/{name}/x",
-        "Set-Location ./victim/..; {ri} ./victim", "Set-Location {sb}/victim/../..; {ri} ./victim",
+    @pytest.mark.parametrize(("cmd", "held_says"), [
+        ("Set-Location ./victim; {ri} ./../../{parent}/{name}/x", "climbs with `..`"),
+        ("Set-Location ./victim/..; {ri} ./victim", "a move this set does not admit"),
+        ("Set-Location {sb}/victim/../..; {ri} ./victim", "a move this set does not admit"),
     ], ids=["operand-climbs-back-in", "destination-climbs", "absolute-destination-climbs-out"])
-    def test_refuses_a_climb_where_the_row_moves(self, prd, tmp_path, cmd):
+    def test_refuses_a_climb_where_the_row_moves(self, prd, tmp_path, cmd, held_says):
         """With a move, which directory the row stands in depends on the
         order the moves run in and on what a subshell undoes; a step that only
         descends lands inside from any of them, and a `..` step need not. The
         first operand climbs out and back in by the sandbox's own names (led
         by `./`, since (6) refuses a leading `..`): from the sandbox it lands
         inside it, which is all (7) reads, and from the target it lands inside
-        the sandbox's parent, under a folder named after that parent."""
+        the sandbox's parent, under a folder named after that parent. The
+        allowlist refuses each (a word no row holds, or a move it does not
+        admit); held to the profile's words, the climbing destinations are
+        still moves it does not admit, and the climbing operand behind the
+        admitted move is (10)'s own `..` reading, the belt for a held word
+        that climbs."""
         victim = tmp_path / "victim"
         victim.mkdir()
         rendered = cmd.format(ri=prd._RI, sb=tmp_path.as_posix(),
                               parent=tmp_path.resolve().parent.name, name=tmp_path.resolve().name)
-        with pytest.raises(prd.UnsafeToExecute, match="moves its directory"):
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
             prd.assert_safe_to_execute(rendered, victim, tmp_path)
+        with pytest.raises(prd.UnsafeToExecute, match=held_says):
+            prd._confinement.assert_confined(rendered, victim, tmp_path, _holding(prd, rendered))
 
-    @pytest.mark.parametrize(("move", "says"), [
-        ("Set-Location ./vic*;", "a substitution or a wildcard"),
-        ("Set-Location 'vic'tim;", "quoted in part"), ("Set-Location HKCU:{bs};", "an expansion"),
-        ("Set-Location $d;", "an unbound variable"), ("Set-Location X:;", "names a drive"),
-        ("Set-Location X:sub;", "names a drive"),
+    @pytest.mark.parametrize("move", [
+        "Set-Location ./vic*;", "Set-Location 'vic'tim;", "Set-Location HKCU:{bs};",
+        "Set-Location $d;", "Set-Location X:;", "Set-Location X:sub;", "Set-Location C:/x;",
     ], ids=["wildcard", "quoted-in-part", "mapped-drive", "unbound-variable", "drive",
-            "drive-relative"])
-    def test_each_unread_destination_refuses_by_its_own_reason(self, prd, tmp_path, move, says):
-        """Each branch of `_move_destination` that cannot place a word, on a
-        destination that would lie inside the sandbox read as a plain name,
-        so the reason, not the landing, is what refuses (code review of
-        DEF-2099: five branches were unpinned, and the wildcard one was
-        driven only with a destination outside anyway). A drive is read with
-        neither host's rules: on POSIX `X:` and `X:sub` are plain names
-        inside the sandbox, and on Windows they move to drive X (failure-mode
-        review)."""
+            "drive-relative", "absolute-drive"])
+    def test_each_destination_the_move_list_could_not_place_is_refused(self, prd, tmp_path, move):
+        """Each destination the hand list of moves read and could not place,
+        on a destination that would lie inside the sandbox read as a plain
+        name (code review of DEF-2099), and the drive it placed by the host's
+        path rules (failure-mode review: `X:` and `C:/x` are plain names on
+        POSIX and drives on Windows). The allowlist reads none of them and no
+        host's rules: each is a move it does not admit, on every host, held
+        to the profile's words or not."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        with pytest.raises(prd.UnsafeToExecute, match=says):
-            prd.assert_safe_to_execute(
-                f"{move.format(bs=chr(92))} {prd._RI} ./victim", victim, tmp_path)
-
-    def test_an_absolute_drive_is_placed_only_by_a_windows_host(self, prd, tmp_path, monkeypatch):
-        """`C:/x` is absolute to Windows and a relative name to POSIX, where
-        it read as inside the sandbox; on a POSIX host it is refused, on a
-        Windows one resolved (the keep test's `absolute` case is one there).
-        The host is set by the module's `os`, the one name it reads."""
-        import types
-
-        victim = tmp_path / "victim"
-        victim.mkdir()
-        monkeypatch.setattr(prd._confinement, "os", types.SimpleNamespace(name="posix"))
-        with pytest.raises(prd.UnsafeToExecute, match="names a drive"):
-            prd.assert_safe_to_execute(f"Set-Location C:/x; {prd._RI} ./victim", victim, tmp_path)
+        cmd = f"{move.format(bs=chr(92))} {prd._RI} ./victim"
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
+            prd.assert_safe_to_execute(cmd, victim, tmp_path)
+        with pytest.raises(prd.UnsafeToExecute, match="a move this set does not admit"):
+            prd._confinement.assert_confined(cmd, victim, tmp_path, _holding(prd, cmd))
 
     @pytest.mark.parametrize("link", [
         "New-Item -ItemType SymbolicLink -Path ./victim/l -Target {out};",
@@ -527,12 +565,17 @@ class TestRefusesToExecuteAnythingUnconfined:
         this leg an operand spelled absolute is the escaping form's already
         (5), so the relative one is driven: ACCEPTED at main before the lane,
         and read by the lane's first reading as an unplaceable move, which
-        the one link reading of both legs replaces."""
+        the one link reading of both legs replaces. On this leg the allowlist
+        answers first (no row holds a link maker's words); held to the
+        profile's words, the link reading is the belt that refuses."""
         victim = tmp_path / "victim"
         victim.mkdir()
         rendered = link.format(out=tmp_path.parent.as_posix(), bs=chr(92))
+        cmd = f"{rendered} {prd._RI} ./victim/l/x"
+        with pytest.raises(prd.UnsafeToExecute, match=_ALLOWLIST_REFUSAL):
+            prd.assert_safe_to_execute(cmd, victim, tmp_path)
         with pytest.raises(prd.UnsafeToExecute, match="in a row that makes a link"):
-            prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim/l/x", victim, tmp_path)
+            prd._confinement.assert_confined(cmd, victim, tmp_path, _holding(prd, cmd))
 
     def test_a_word_after_a_double_dash_is_an_operand(self, prd, tmp_path):
         """PowerShell's binder ends the parameters at `--` (driven on 5.1:
@@ -676,8 +719,8 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         bs = chr(92)
         prd.assert_safe_to_execute(f"Remove-Item -Recurse -Force .{bs}victim", victim, tmp_path)
-        prd.assert_safe_to_execute(
-            f"Remove-Item -Recurse -Force ./victim victim{bs}x", victim, tmp_path)
+        deeper = f"Remove-Item -Recurse -Force ./victim victim{bs}x"
+        prd._confinement.assert_confined(deeper, victim, tmp_path, _holding(prd, deeper))
 
     def test_the_interpreters_own_null_is_no_unbound_variable(self, prd, tmp_path):
         """The calibration twin of the binding condition: the operand reader
@@ -748,6 +791,103 @@ class TestRefusesToExecuteAnythingUnconfined:
         for row in rows:
             prd.assert_safe_to_execute(
                 row["template"].replace(prd._TARGET, "./victim"), victim, tmp_path)
+
+
+#: PowerShell's location cmdlets and their aliases, lowercased (driven
+#: 2026-11-17, echo-only, on 5.1, for the hand list of moves the allowlist
+#: replaced).
+_LOCATION_WORDS = frozenset({"set-location", "sl", "cd", "chdir", "push-location", "pushd",
+                             "pop-location", "popd", "cd..", "cd\\"})
+
+
+class TestTheAllowlistHoldsEveryRow:
+    """Condition (10) on this leg is an allowlist held as data (the
+    dispatcher's ruling on DEF-2099): every row's characters, escapes, words
+    and moves are ones the population holds."""
+
+    def test_the_held_allowlist_is_the_populations_own(self, prd):
+        """Held as data, pinned to the population both ways: a row that
+        needs a new character or word reds here before a run refuses it, and
+        a held one no row needs any longer reds too, so the list never widens
+        in silence. Some inert rows take characters from the guard's own
+        regex (`PRECEDING_CHARS`), so a guard change can red this."""
+        derived = prd.derive_allowlist(prd.population_texts())
+        held = json.loads(prd.ALLOWLIST_PATH.read_text(encoding="utf-8"))
+        extra = sorted(set(derived["words"]) ^ set(held["words"]))
+        assert derived == held, (
+            f"the held allowlist is not the population's ({len(extra)} words and "
+            f"{len(set(derived['alphabet']) ^ set(held['alphabet']))} characters differ): "
+            f"run `{prd.POWERSHELL.allowlist.regenerate}` and read its diff")
+
+    def test_the_held_words_move_the_directory_only_by_the_admitted_move(self, prd):
+        """A held location cmdlet or alias other than the admitted move would
+        be a move the allowlist reads as a plain word: the belt for a
+        regeneration whose diff nobody read."""
+        allowlist = prd.POWERSHELL.allowlist
+        movers = sorted(word for word in allowlist.words if word != allowlist.move and (
+            word.lower() in _LOCATION_WORDS or word.lower().endswith("-location")))
+        assert movers == []
+
+    @pytest.mark.parametrize("row", [0, 1], ids=["bare-delete", "quoted-mention"])
+    def test_the_calibration_rows_pass_the_condition_set(self, prd, tmp_path, row):
+        """`assert_instrument_is_live` drives these through the set before
+        any row, so they are in the population the allowlist is derived
+        from (today their characters and words are the rows' own as well, so
+        only the membership pins that they are read)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        rendered = prd.CALIBRATION_ROWS[row].replace(prd._TARGET, "./victim")
+        assert rendered in prd.population_texts()
+        prd.assert_safe_to_execute(rendered, victim, tmp_path)
+
+    @pytest.mark.parametrize(("operand", "code"), [
+        (chr(0x2019) + "/" + chr(0x2019), "U+2019"), (chr(0x2013) + "LiteralPath:/", "U+2013"),
+    ], ids=["typographic-quotes-around-a-root", "en-dash-parameter-before-a-root"])
+    def test_refuses_a_root_behind_a_character_outside_ascii(self, prd, tmp_path, operand, code):
+        """PowerShell reads a typographic quote as a quote and an en-dash as a
+        parameter prefix, and every other condition reads either as a name
+        character, so a root behind one passed all nine at main (the
+        dispatcher's verifier, in memory); no row holds a non-ASCII
+        character, so the allowlist refuses any, in every row."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=re.escape(f"a non-ASCII character ({code})")):
+            prd.assert_safe_to_execute(f"{prd._RI} ./victim {operand}", victim, tmp_path)
+
+    @pytest.mark.parametrize(("cmd", "says"), [
+        ("{ri} ./victim%", r"characters \['%'\] no row"),
+        ("Write-Output a`t; {ri} ./victim", "an escape '`t'"),
+        ("Write-Output nota; {ri} ./victim", r"words \['nota'\] no row"),
+    ], ids=["a-character-no-row-holds", "an-escape-other-than-the-newline", "a-word-no-row-holds"])
+    def test_each_rule_refuses_by_its_own_reason(self, prd, tmp_path, cmd, says):
+        """Each rule on a row that differs from a held one by the one thing
+        it reads; the admitted-move rule is the move tests' above."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=says):
+            prd.assert_safe_to_execute(cmd.format(ri=prd._RI), victim, tmp_path)
+
+    @pytest.mark.parametrize(("change", "says"), [
+        ({"alphabet": frozenset("abc" + chr(0xE9))}, "non-ASCII"),
+        ({"words": frozenset({"Set-Location", "%x"})}, "outside its alphabet"),
+        ({"move": "Push-Location"}, "not among the allowlist's words"),
+        ({"destinations": ("/victim",)}, "does not descend"),
+        ({"destinations": ("C:/victim",)}, "does not descend"),
+        ({"destinations": ("~/victim",)}, "does not descend"),
+        ({"destinations": ("../victim",)}, "does not descend"),
+        ({"destinations": ("./victim/../..",)}, "does not descend"),
+        ({"destinations": (".",)}, "does not descend"),
+    ], ids=["non-ascii-alphabet", "word-outside-the-alphabet", "move-not-held", "absolute",
+            "drive", "home", "climbing", "climbing-after-a-descent", "where-it-stands"])
+    def test_an_allowlist_that_cannot_hold_refuses_to_be_built(self, prd, change, says):
+        """The profile's allowlist is checked as it is built: an alphabet
+        that admits what the rule refuses, a move it cannot hold, or a
+        destination that does not descend would each make a rule vouch for
+        what it reads as unsafe."""
+        import dataclasses
+
+        with pytest.raises(ValueError, match=says):
+            dataclasses.replace(prd.POWERSHELL.allowlist, **change)
 
 
 class TestThePopulationIsDerived:
