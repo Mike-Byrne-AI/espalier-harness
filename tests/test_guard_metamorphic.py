@@ -375,6 +375,30 @@ class TestEveryPresentHeadHasALiveSpelling:
         )
         assert len(absent) < len(gm.HEADS) // 2, f"most heads absent? {absent}"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32" or not (shutil.which("bash") and Path("/bin/bash").exists()),
+        reason="the sh stub host, resolved by a real bash",
+    )
+    def test_a_store_alias_python3_is_the_hosts_absent_head(self, gm, tmp_path, monkeypatch):
+        """The perturbed CI cell's host: ``python3`` on PATH is a Microsoft
+        Store alias stub, which resolves and, run, exits 49 without running
+        anything. Who: every lane whose tier puts this file on that cell's
+        parallel leg, which red on `python3`'s `-c pass` as a dead spelling
+        (#717, air's ack f06ec9). That head is this host's absent one, the
+        other hosts' row, by the rule the reachability bench reads for the
+        same names (`reachability_differential._MUST_ANSWER`); a `python3`
+        that answers is present, and a head with no such probe still reads
+        by resolving alone. RED before the fix: the stub read resolvable."""
+        from tests._interpreter_hosts import PYTHON3_ONLY, SH, STORE_PYTHON3, build_host, path_with
+
+        monkeypatch.setenv("PATH", path_with(build_host(tmp_path / "store", STORE_PYTHON3, SH)))
+        assert gm._head_is_resolvable("python3") is False
+        assert gm._head_is_resolvable("python") is True
+        assert gm._head_is_resolvable("sed") is True
+        monkeypatch.setenv("PATH", path_with(build_host(tmp_path / "only", PYTHON3_ONLY, SH)))
+        assert gm._head_is_resolvable("python3") is True
+        assert gm._head_is_resolvable("python") is False
+
 
 @pytest.mark.skipif(os.name == "nt", reason="the group runner is POSIX by construction (setsid/killpg); on Windows it cannot kill a group and read `exit 3` as rc 1, 2026-09-23")
 class TestATimedOutProbeLeavesNoOrphan:
