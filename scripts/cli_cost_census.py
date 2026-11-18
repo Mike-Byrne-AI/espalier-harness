@@ -4375,7 +4375,7 @@ def section_transcripts(ctx: dict) -> dict:
     if not base.is_dir():
         raise Unread(f"no transcript folder at {base}")
     outs = ctx.get("checkouts") or checkouts(root)
-    by_lower = {p.name.lower(): p for p in base.iterdir() if p.is_dir()}
+    by_lower = {p.name.lower(): p for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")}
     seated = [(c, by_lower.get(c["folder"].lower())) for c in outs if c["seat"] in BOX_SEATS]
     skipped = [{"path": c["path"], "folder": c["folder"], "seat": c["seat"]} for c, f in seated
                if f is None and c.get("own_name") is False]

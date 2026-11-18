@@ -551,6 +551,11 @@ Members derived by: Task 6's read over `task-packs/ledger.d/*.md` at P.
   `tests/conftest.py`'s `_MARKER_RULES`, only if the test spawns `git` (otherwise the test file
   carries a `# pytest-marker: default-unit` line saying why); this file (its pre-registration at
   step 1, `## Audit result` and `## Landing`); the seat's Session Log fragment, at the handoff.
+- Modified, added at the full tier, where two tree-wide contracts each asked for an entry for the
+  new files: `scripts/derived_population_census.py`'s `ADJUDICATED`, one entry adjudicating the
+  test file's one derived-population row; and `tests/test_record_fragments.py`'s
+  `_ONE_DIRECTORY_SITES`, registering the census's names for the ledger, probe and changelog
+  directories, with the reason.
 - New, only if Task 4 confirms a vacuous patch: `task-packs/ledger.d/DEF-<n>.md`, its probe under
   `task-packs/probes.d/`, and any `task-packs/lineage.d/` file the file verb writes, all through
   `tools/cc/ledger_row.py file`.
@@ -2044,6 +2049,20 @@ unmeasured at P (Task 0's verdicts above).
   `task-packs/probes.d/DEF-5127.json`. These are a test that reds for the wrong reason, found by
   Task 4's sample, and not a vacuous patch. They are kept on the lane by the dispatcher's ack
   `20261118T040752Z-air-ff0cf7`.
+- The full tier's first run (on `c0c0b74bb`, 2026-11-18, `proof_tier.py --run --base
+  origin/main`): mypy 0, ruff 0, and the serial line 3,643 passed. The xdist line had 6 failed
+  and 36,713 passed. Each failure was a tree-wide contract the lane's two new files had not yet
+  met, and each was red on the unfixed head:
+  - the derived-population census's health (an unadjudicated row);
+  - the hidden-name filter on a `.claude` listing (the transcript folders, which never start with
+    a dot, so no figure moves);
+  - a TOML-module fallback spelled in a fixture string;
+  - a determinism test whose two operands were one expression;
+  - the test file's rationale docstring;
+  - a fragment directory named outside the registry.
+
+  All 6 were fixed in one batch, and the six modules ran 807 passed. Those fixes add the two
+  Modified entries under Files touched.
 - Reach: see Reach; `DEF-4123` stays live
 - Task 0: Item 1 refuted on one figure (the 18 claim-overlap pairs), ruled continue (ack
   `20261118T080812Z-air-2bef6b`); Item 2 not real; Item 3 unmeasured. The cell, collision not

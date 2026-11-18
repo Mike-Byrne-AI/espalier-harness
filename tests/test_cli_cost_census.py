@@ -6,7 +6,12 @@ reading taken from the working tree or the clock lands somewhere else. Each
 test names, in its docstring, the mutation it dies to. The fixture's values and
 positions disagree with a wrong reading in both directions: a shadowed local
 that must give no edge beside a load that must, and a working-tree edit that
-must not be read beside the committed text that must."""
+must not be read beside the committed text that must.
+
+This file pins the census's readings because every figure in the audit's
+result is one of them: a section that read the working tree, the clock or the
+wrong spelling would move a verdict silently, with the operator's call resting
+on it."""
 # slow-exempt: a few `git init`/`commit` spawns per test in tmp_path, each short; the collision, lane_read and worktree classes
 # build small branch histories (about 30 spawns the largest), the slowest test 1.2 s; 328 tests in 53 s serial for the module,
 # measured 2026-11-18 on the Air at load 3.7 to 5.1
@@ -2063,7 +2068,9 @@ class TestTheTranscriptsSection:
     def test_two_runs_at_one_pin_read_the_same_section(self, section):
         """Dies to: an unsorted walk or a clock read inside the section: two runs at one pin must
         print the same transcripts section (Pass criteria)."""
-        assert json.dumps(section(), sort_keys=True, default=sorted) == json.dumps(section(), sort_keys=True, default=sorted)
+        first, second = section(), section()
+        assert first["treatment"] and first["control"], "an equality of two empty reads proves nothing"
+        assert json.dumps(first, sort_keys=True, default=sorted) == json.dumps(second, sort_keys=True, default=sorted)
 
     def test_a_checkout_whose_seat_cannot_be_read_is_named_not_dropped(self, section):
         """Dies to: a checkout with no seat read (its directory gone, so no config to read; or no
@@ -2912,9 +2919,9 @@ class TestTheSmallReaders:
         """Dies to: `import a.b` bound to `a.b` (it binds `a`), or a module-level try's import
         left out."""
         tree = ast.parse("import os.path\nimport a.b as c\nfrom espalier import doctor, fuse as f\nfrom espalier.cli import *\n"
-                         "try:\n    import tomllib\nexcept ImportError:\n    tomllib = None\n")
+                         "try:\n    import simplejson\nexcept ImportError:\n    simplejson = None\n")
         assert _CENSUS.import_bindings(tree, _CENSUS.CLI, {"espalier.doctor"}) == {
-            "os": "os", "c": "a.b", "doctor": "espalier.doctor", "f": "espalier", "tomllib": "tomllib"}
+            "os": "os", "c": "a.b", "doctor": "espalier.doctor", "f": "espalier", "simplejson": "simplejson"}
 
     def test_a_definition_s_lazy_imports_name_every_module_they_load(self):
         """Dies to: a plain `import x` inside a definition left out of its outbound edges."""
