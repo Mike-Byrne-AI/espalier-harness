@@ -985,6 +985,104 @@ This read was first sent to the dispatcher as an inconsistency (request `71f10f`
 The sample ran in a scratch clone. Its harness is not in this lane (Files touched), so a re-run
 rebuilds it from the rule and the method above.
 
+### Task 3: what a move touches, read at P (the per-unit join follows)
+
+Each figure is from `python3 scripts/cli_cost_census.py --at 3330a5a --json <section>`, and each
+section names its rule in its output. Two runs at P (the builder's and mine) printed the five new
+sections equal as data. Their 20 mutants were all killed on the lane's copy, against a green
+control of 75 tests.
+
+- **Importers** (`importers`): 65 names from 7 files outside tests (the census's union rule;
+  Item 1's table has the authoring's 62 beside it). Tests import 242 distinct cli names from 101
+  files, which is the figure Task 4 quotes. The unreproduced 101 of the regex reads is dropped, as
+  Task 3 says.
+- **Test patches** (`patches`): 149 sites on 43 targets in 19 files (146 `setattr`, 3 direct
+  assignments), no string targets, and 8 more that patch another module through cli. The
+  partition is under Task 4 above.
+- **Readers by path** (`readers`), by class:
+  - loud: 20 symbol keys in 7 files, 67 path literals in 33 files and 16 `/ "cli.py"` joins in 11;
+  - silent: 3 joins in 3 files and 1 literal;
+  - flat-module: 1 literal.
+  By kind: 20 keys in 7 files, 69 literals in 34 and 19 joins in 14. The census counts each site
+  once, so a key's path element is not counted again as a literal; beside that rule, counting it
+  gives 89 in 36. Every hand-listed silent and flat-module reader exists at P.
+  `tests/test_cli_deploy.py::test_no_naked_write_text_anywhere_in_cli` has no site of its own: it
+  reads through the module's `CLI_PATH`.
+- **Citations** (`citations`), 737 `espalier/cli.py::X` occurrences in 185 files, a name required
+  after the `::`. A plain-text count of `espalier/cli.py::` reads 740. Beside those 737 are 37
+  bare `cli.py::X`, 33 dotted `espalier.cli.X` and 17 line-form occurrences. The `path::X` split,
+  first match wins:
+  - record set: 7 in 1 file;
+  - struck: 455 in 96 struck fragments, plus 3 on lines the sweep skips as closed rows;
+  - swept-live, which reds after a move: 128 in 34 live fragments and 28 in 7 docs;
+  - unchecked-live, which rots with no red: 53 in 12 packs, 6 in `bench/corpus` and 37 in code
+    comments;
+  - protected zone: 10 in 5 `tools/cc/` files, plus 10 in their `espalier/_vendor/cc/` twins,
+    each twin matching its source.
+  The parts sum to the 737. The sweep's population rule is ported from P and pinned by a digest, so a change to it makes
+  those parts unread rather than wrong.
+- **Ledger probes** (`probes`): 24 of the 169 probes read cli, all on live rows: 19 by their
+  command (11 by import, 8 by path, 3 by running it, 1 by a patch) and 5 by subject alone. The
+  rows are `DEF-1001`, `1005`, `1006`, `1021`, `1057`, `1077`, `1079`, `1085`, `1086`, `1088`,
+  `2095`, `3096`, `400b`, `4123`, `5089`, `5099`, `5113`, `736`, `930`, `932`, `943`, `945`,
+  `947` and `996`. A probe that reads a moved symbol out of cli.py prints a new value, and its
+  row is offered as a strike candidate.
+
+### Task 5: the doctor boundary at P
+
+Read by `python3 scripts/cli_cost_census.py --at 3330a5a --json doctor_boundary` [verified, the
+census at P]:
+- **The edges:** `espalier/doctor.py` holds 20 lazy import statements of cli. They take 43
+  names: 34 functions, 1 class and 8 constants. They sit in 11 doctor functions (innermost):
+  `::run_doctor_check`, `::_check_python_resolver`, `::_check_reporter_hook_wiring`,
+  `::_deployed_surface_remains`, `::_generated_claude_headings`, `::_merge_refusal_step`,
+  `::_merge_would_be_refused`, `::_remedy_hint`, `::_resolver_hint`, `::_unheard_on_path` and
+  `::foreign_statusline_note`.
+- **Doctor alone** reaches 1 of the 43 names, `::settings_foreign_read_denies`. Moving it leaves
+  42 back edges.
+- **The closure of the 43** is 141 definitions and 3,301 function lines. Of those, 139 are
+  reached by loads; `_BELOW_FLOOR_ANSWER` and `_VENV_FALLBACK_OUTSIDE` are reached only by a
+  write. Two closure members are reached by no command: `::settings_foreign_read_denies` and
+  `::_foreign_read_denies`.
+- **The cycle relocates rather than ends.** The closure holds `::_not_python3_from_entries`, which
+  calls 4 doctor functions through `_doctor`: `_interpreter_is_python3`,
+  `_interpreter_banner_unanswered`, `_interpreter_start_failure` and
+  `_interpreter_start_unconfirmed`. Any module the closure moves to calls doctor, and doctor
+  imports it.
+- **What would end it, for the operator at Gate A, never for this lane** [hand, from the census's
+  fields]: doctor.py's 20 import lines would read the 43 names from a module that does not import
+  doctor. That needs the 4 interpreter probes moved out of doctor.py, or the closure's one caller
+  of them changed. Either is a doctor.py change, which ruling 2 excludes.
+
+The census prints, for each of the 43 names, the commands that reach it and its concern
+(`names.per_name`).
+
+### The authoring figures that do not reproduce, in one place
+
+For the Gate A call to link one list (the dispatcher's ack `20261118T042249Z-air-0b1f6b`). Each
+entry gives the authoring figure, the census at P (or at `17d83e0`, where the authoring pin
+decides), and the rule difference where one is named. **Only the first is Item 1's refuting
+result.** The rest are recorded where they fall and raise nothing.
+
+| Where | Authoring | Census | The difference |
+|---|---|---|---|
+| Item 1, claim-overlap lane pairs | 18 (over 30 days and over about 42) | 10 over the 30 days to P; 20 over 42 days to `17d83e0` | **not explained**: operator call `7a763a` |
+| Item 1, importers outside tests | 62 | 65 | reproduced under the authoring's rule (each file's from-imports summed) |
+| Item 1, patches through cli | four | 8 sites, 3 targets, 3 files | reproduced under the authoring's rule (a same-line text match) |
+| Item 1, catch-ups carrying cli.py | 54 | 49 at P | reproduced under the authoring's rule (48 catch-ups + 6 other lane merges, at `17d83e0`) |
+| Task 3, readers: symbol keys | 34 in 12 | 20 in 7 | the census counts a 2-tuple whose second element is a name; any second element gives 32 in 12. Not reproduced under either |
+| Task 3, readers: path literals | 88 in 35 | 69 in 34 | the census counts a key's path element once; counting it again gives 89 in 36. Not reproduced under either |
+| Task 3, citations: in `.py`/`.cmd` | 57 in 29 files | 56 in 30 (57 in 31 by plain text), at `17d83e0` | the occurrence differs by one non-citation (a string prefix in `tests/test_python_floor.py`); the file count is **not explained** |
+| Task 3, citations: live fragments and swept docs | 132 in 36; 31 in 7 | 131 in 35; 28 in 7 plus 3 struck, at `17d83e0` | one prose mention in `DEF-4123`; 3 on lines the sweep skips as closed rows. Each reproduces by plain text |
+| Task 3, ledger probes on cli | about 27 [probable] | 24 | the authoring counted the word "cli" in a probe file; `DEF-5043`, `DEF-645` and `DEF-900` do not read cli |
+| Task 4, the 31 and 12 targets | 131 + 30 sites | the same | reproduced. They overlap rather than split (Task 4 above) |
+| Task 5, the 43 names by kind | 32 functions, 1 class, 10 constants | 34, 1, 8 | **rule not named** |
+| Task 5, doctor functions holding the imports | 19 | 11 (innermost) | **rule not named** |
+| Task 5, doctor alone | 2 names | 1 name, plus 2 closure members no command reaches | the second of the authoring's two is a closure member, not one of the 43 |
+| Task 5, the closure | 139 definitions, 3,283 lines | 141 and 3,283 at `17d83e0`; 141 and 3,301 at P | 139 on loads alone; the two latches reached only by a write make 141 |
+| Task 6, tier 3 | 8 at `17d83e0` | 6 | `DEF-346c` and `DEF-883` cite cli.py by path only. Counting a path mention gives 8 |
+| Task 6, tier 2 | 31 at `17d83e0` | 31 at `17d83e0`, 30 at P | reproduced. #715 struck `DEF-985` |
+
 
 ## Landing
 - State: DRAFT
