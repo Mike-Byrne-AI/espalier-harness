@@ -930,12 +930,27 @@ sites on 43 targets in 19 files, plus 8 sites that patch another module through 
 - 5 `raising=False` patches of `_INTERPRETER_WARNING_EMITTED`, at evenly spaced indices of the
   sorted list, the sites already drawn removed.
 
+**Each site's tests.** The test the site sits in. For a site in a shared helper, up to 3 tests
+whose text holds `helper(` as a substring. This rule was stated only after the review asked for
+it. Three lists were set by hand:
+- sites 0 and 28 had no candidate, and both were set before any result;
+- site 51 first ran 3 tests (5 nodes) and read green, then was re-run with 6 tests (8 nodes),
+  which is the conservative direction.
+
+The substring rule matched `_host(` inside `build_host(`, so one of site 51's six tests never
+runs the patch, and the stderr it reads is a subprocess's. Site 51's verdict, inert, stands on
+its other 7 nodes [the test-infrastructure review, verified].
+
 **The method.** It ran in a fresh clone at P, never in a live checkout. For each site, the patched
 value is replaced by a sentinel that raises on any use and logs where it is used. The site's tests
-run green first, and each run imports espalier from the clone.
+run green first, and each run imports espalier from the clone. That import goes through the
+`work` worktree's interpreter with `PYTHONPATH` set to the clone. The review re-ran 10 of the
+verdicts in a venv of its own, and none moved.
 
 **The result** [measured, at P]:
-- **49 sites go red**, so their patches reach the code. All 8 through-cli sites are among them.
+- **49 sites go red, so their patches are read.** 48 are read by the code under test. The other,
+  site 0, is conftest's teardown restore, read by the next test's assertion. All 8 through-cli
+  sites are among the 49.
 - **7 stay green, and each is read by hand, never counted as vacuous.**
   - 3 are live. One of them is called by cli, which swallows the sentinel's error; the original
     patch value raises too, so the sentinel is the same input. The other two assert that a
@@ -945,16 +960,72 @@ run green first, and each run imports espalier from the clone.
     not depend on it. One function resets `_BELOW_FLOOR_ANSWER` itself before reading it; two set
     the warn-once flag on paths that never warn; one asserts a refusal message the flag does not
     control, and a seeded refusal turns it red with the flag never read.
-- **Vacuous: 0 of 56.** The pack expected 0 [probable], and it holds on this sample.
+  - Inert does not mean the patch can be left un-repointed. Site 38's patch isolates
+    `_BELOW_FLOOR_ANSWER`, and under re-exports it would restore a stale copy. Wave 1's "reads or
+    writes" rule covers it.
+- **Vacuous: 0 of 56.** The pack expected 0 [probable], and it holds on what was drawn. Two of
+  the three strata are censuses, not samples: each target's first site (43 of 43) and the
+  through-cli sites (8 of 8). So "0 vacuous" is a fact about those 51 at P.
+  - The warn-flag stratum draws 5 of 39. Read as a random draw, 0 of 5 does not exclude a vacuous
+    share near 45%.
+  - Its green rate, 3 of 5, is unlike the censuses' (4 of 43, 0 of 8), so the strata do not pool.
+  - 101 direct sites were never drawn: 62 later sites of the other targets and 39 more warn-flag
+    sites. They are unread, beyond the name-level rule.
+  - The draw is thin in late-alphabet files: `tests/test_python_floor.py` holds 51 of the 157
+    sites and 10 were drawn.
+
+  [the test-infrastructure review]
 
 Across all 88 test nodes the sample ran, 20 stay green under the sentinel. Five of those sit
-inside shared helpers that reach the code in some tests and not in others.
+inside shared helpers that reach the code in some tests and not in others:
+- four are inert by reading: one re-patches the helper's target itself, one reads no stderr, and
+  two run before the teardown restore's reader;
+- the fifth was not hand-read at first. It is
+  `tests/test_cli.py::TestARemedysProgramWordRunsInEveryShell::test_a_spaced_interpreter_on_windows_is_its_short_path`,
+  green under site 9's patch of `_POWERSHELL_CALL_NOTE_SAID`. It asserts the PowerShell note is
+  absent, and that latch arms exactly that note.
 
-**What it cannot see.** A read such as `x is None` passes the sentinel without triggering it,
-which is why every green with no logged read was checked by hand. Every cli name exists at P, so
-the hazard of `raising=False` does not show yet: it appears after a move without re-exports. Two
-of the 5 sampled `raising=False` patches are read today and would then miss silently. That is
-Task 4's re-export branch, priced below.
+The review seeded the defect the fifth node guards (`::_remedy_program_word` without its
+`word.startswith('"')` clause) and read it three ways:
+- the original patch reds with the test's own message;
+- the sentinel reds, and is read;
+- with the latch patched to `True`, the test is green with the defect present.
+
+conftest does not restore this latch, so the test goes vacuous in suite order if the patch is
+dropped or mis-pointed. That is the shape of sites 36 and 41.
+
+**What a red licenses: read, not guarded** [verified, the review's deletion arm, its raw results
+recounted here]. Each sampled patch statement was replaced by `pass` and its tests run. 25 of the
+56 stay green:
+- by verdict, 19 of the 49 that go red under the sentinel and 6 of the 7 greens;
+- by stratum, 14 first-of-target, 6 of the 8 through-cli and all 5 warn-flag sites.
+
+No red came from the edit itself. The greens stay green because the patch equals the shipped
+default, a stub already on `PATH` answers the real lookup, a sibling patch sets the same value, or
+the real value matches on this host.
+
+So a red says a patch is read, not that its test would notice the patch missing. At those 25 sites
+a test run cannot tell a re-pointed patch from one left on cli's stale copy. That is the
+refutation Task 4 names for wave 1's contract:
+- its oracle is the static re-pointing check on the lane's diff, never a green suite after a
+  move;
+- its earn-the-red is seeded at a site whose deletion reds (30 of the 56 do) [probable].
+
+Two limits on the arm: each test ran alone, so a reset patch that guards suite-order state reads
+green here; and it ran on this host, so a host-pinning patch may go red on a Windows cell.
+
+**What it cannot see** [the review's op table, measured]:
+- **Unseen:** `is None` and `is True`, `type(x)`, `callable(x)`, `id(x)`, `isinstance(x, object)`,
+  membership in an empty container, and forwarding the value into a list or dict.
+- **Seen:** `==`, truthiness, `isinstance(x, str)`, `hasattr` and a call.
+- **Swallowed:** `except Exception` swallows the raise, but the log keeps the read.
+
+That is why every green with no logged read was checked by hand. A patch through cli onto a
+process-wide module (`cli.sys`, `cli.shutil`) reds without saying who read it. Site 50's first
+reader is the hook, not cli, and its patch duplicates a sibling's (`mm.sys` is the same `sys`).
+Every cli name exists at P, so the hazard of `raising=False` does not show yet: it appears after a
+move without re-exports. Two of the 5 sampled `raising=False` patches are read today and would
+then miss silently. That is Task 4's re-export branch, priced below.
 
 **One test defect, found and filed** (`DEF-5127`, §C0, minor): in
 `tests/test_python_floor.py::TestFloorAtTheThreeDecisionSites::test_detect_python_command_does_not_promise_working_guards_on_python_2`
@@ -965,6 +1036,18 @@ dispatcher kept it on the lane (ack `20261118T040752Z-air-ff0cf7` on request `71
 lane's own sample found it, and it was filed through the same verb. Landing names its two files as a
 deviation from the Files-touched pass criterion. The test itself stays unmodified, as Files
 touched requires.
+
+The test-infrastructure review re-ran the row's arms: the defect, the fix shape, and the fix with
+the defect seeded all hold. It also found that the filed probe read the spelling, not the fix: it
+printed 0 on `lambda *a, **k: None`, the empty stub the row warns against, which passes with
+`DEF-727` seeded.
+
+The probe was re-pinned through `tools/cc/ledger_row.py repin`. It now reads closed only on a
+recorder that takes the caller's two arguments and still appends to `below_floor_calls`. Dry-run
+on six variants of the test file, it reads open on the file at P, on the empty stub and on the
+test renamed away, and closed on three correct fix shapes [verified]. The fix shape now takes
+keywords. The row's "not a class" is widened to stub arity against call sites over the 157 sites:
+of 103 callable stubs, it is the only one that mismatches every call site.
 
 **Task 4's two counts overlap; they are not a split** [verified, the census's `patches` section at
 P]. Task 4 names 31 targets with more than one loader (131 sites) and 12 that cli imports from
@@ -982,8 +1065,9 @@ loader. The 43 add up by coincidence. The partition at P:
 
 This read was first sent to the dispatcher as an inconsistency (request `71f10f`). It is not one.
 
-The sample ran in a scratch clone. Its harness is not in this lane (Files touched), so a re-run
-rebuilds it from the rule and the method above.
+The sample ran in a scratch clone. Its harness is not in this lane (Files touched). A re-run
+rebuilds the draw from the rule above and the test lists from the selection rule, plus the three
+lists named as set by hand.
 
 ### Task 3: what a move touches, read at P (the per-unit join follows)
 
@@ -1224,7 +1308,20 @@ result.** The rest are recorded where they fall and raise nothing.
   process slip: the two reviewers shared one scratch directory, and one overwrote the other's
   script mid-run (Core Rule 14). The reruns went to a subdirectory, and in-lane reviews each get
   their own (Task 9).
-- Red-team in lane: the reasoning review on the Audit result and the census; the test-infrastructure read; the code review the tier names
+- Red-team in lane, each reviewer in its own scratch directory:
+  - **the test-infrastructure read of Task 4's sentinel sample and `DEF-5127`** (code reviewer,
+    briefed on `tests/CLAUDE.md`'s "patch the object the code under test reads"): REQUEST
+    CHANGES, BLOCK 0, WARN 4, NOTE 8, NIT 1. "0 of 56 vacuous" and `DEF-5127` hold on its re-runs
+    in its own venv. All are folded in Task 4's section:
+    - W1, a red means read and not guarded: the deletion arm's 25 of 56, recounted from its raw
+      results, with wave 1's oracle and earn-the-red named;
+    - W2: site 9's unread green node, hand-read as live under its defect;
+    - W3: `DEF-5127`'s probe read the spelling and passed the empty stub, so it was re-pinned to
+      match the fix;
+    - W4: the test-selection rule and the three hand-set lists;
+    - N1, N2, N4, N5, N6 and N7 in the text, N8 in the row, and N9 in the row's fix shape;
+  - the reasoning review on the Audit result and the census: pending;
+  - the code review the tier names: pending.
 - Pre-registration commit:
 - Deviation, not a pass: the criterion that `git diff --name-only origin/main...HEAD` lists only
   Files touched fails by its letter on `task-packs/ledger.d/DEF-5127.md` and
