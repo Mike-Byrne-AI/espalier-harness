@@ -3547,6 +3547,63 @@ class TestABoxSeatWhoseTranscriptsWereNotReadIsNamed:
         assert why in out["seats_not_read"]["air"]
         assert why in ctx["_partial_unread"]["transcripts"]["seats"]
 
+    def test_a_seat_the_mail_names_with_no_ref_here_is_named_by_the_transcripts(self, two_seats, monkeypatch):
+        """Dies to: the transcripts read placing lanes by the claims of the seats whose mail refs
+        this clone holds, while the mail names another seat whose claims it cannot read (Task 9's
+        reasoning review, F7)."""
+        real = _CENSUS.mail_at
+
+        def mail_at(ctx):
+            got = real(ctx)
+            ctx["_mail_seats_missing"] = ["win"]
+            return got
+
+        monkeypatch.setattr(_CENSUS, "mail_at", mail_at)
+        _out, ctx = two_seats([])
+        assert "['win']" in ctx["_partial_unread"]["transcripts"]["mail_seats"]
+
+
+class TestAMailSeatWhoseRefTheCloneLacksIsNamed:
+    """Task 9's reasoning review, F7: a clone holding 2 of the 4 seats' mail refs read C2 and C3
+    over those two, with nothing unread."""
+    _NAMING = [{"id": "20200101T000000Z-air-aaaaaa", "type": "assign", "from": "air", "at": "2020-01-01T00:00:00Z",
+                "re": {"seat": "win"}, "text": "a job"},
+               {"id": "20200101T010000Z-air-bbbbbb", "type": "ack", "from": "air", "at": "2020-01-01T01:00:00Z",
+                "re": {}, "text": "done", "ack": "20200101T003000Z-win-2-cccccc"}]
+    _ALONE = [{"id": "20200101T000000Z-air-dddddd", "type": "note", "from": "air", "at": "2020-01-01T00:00:00Z",
+               "re": {}, "text": "nobody else"}]
+
+    @staticmethod
+    def _mailed(repo, messages):
+        _trunk(repo)
+        _git(repo, "checkout", "-q", "-b", "mail-air")
+        (repo / "mail.jsonl").write_text("".join(json.dumps(m) + "\n" for m in messages), encoding="utf-8")
+        _commit_all(repo, "mail")
+        _git(repo, "update-ref", "refs/remotes/origin/mail/air", "HEAD")
+        _git(repo, "checkout", "-q", "main")
+        return repo
+
+    def test_each_seat_is_named_by_its_sends_an_assign_and_an_acked_id(self):
+        """Dies to: an ack's id read for its machine by a split on `-`, which cuts `win-2` to
+        `win`, or an assign's seat left out."""
+        assert _CENSUS.mail_seats_named({"air": self._NAMING}) == {"air", "win", "win-2"}
+
+    def test_a_named_seat_with_no_ref_is_unread_and_the_read_still_runs(self, repo):
+        """Dies to: C2 and C3 computed over the seats whose refs are here, with nothing unread."""
+        self._mailed(repo, self._NAMING)
+        out = _CENSUS.census(repo, _head(repo), ["collision"],
+                             extra={"skip_components": ("conflicts", "pairs", "holds", "catch_ups")})
+        assert "['win', 'win-2']" in out["unread"]["collision.mail_seats"]
+        assert out["collision"]["claims"] is not None
+
+    def test_a_clone_holding_every_named_seat_names_nothing(self, repo):
+        """Dies to: the check naming a seat whose ref is here."""
+        self._mailed(repo, self._ALONE)
+        out = _CENSUS.census(repo, _head(repo), ["collision"],
+                             extra={"skip_components": ("conflicts", "pairs", "holds", "catch_ups")})
+        assert "collision.mail_seats" not in out["unread"]
+        assert out["collision"]["claims"] is not None
+
 
 class TestTheSplitterReadsWhatTheShellRuns:
     @pytest.mark.parametrize("command, reads", [

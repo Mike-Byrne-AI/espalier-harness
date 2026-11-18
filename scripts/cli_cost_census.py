@@ -13,9 +13,11 @@ refuses, so two runs at one pin read one population.
     python3 scripts/cli_cost_census.py --at <P> collision transcripts   # Task 0's two oracles
 
 "The CLI modules" are ``espalier/cli.py`` plus every module that receives a
-definition moved out of it (``--module``, repeatable). Every component counts
-over the whole set, so a move cannot zero a component by changing which file
-the events land on.
+definition moved out of it (``--module``, repeatable). C1, C3 and C4 count
+over the whole set, so a move cannot zero them by changing which file the
+events land on. C2 (``claim_overlaps``) does not: it counts an overlap only
+where another seat's claim names the same CLI module the lane changed, so any
+split of cli.py lowers it by construction, and it cannot grade a module move.
 
 A section that cannot be read is named under ``unread`` with its reason, and
 its key holds ``None``. It never reads as a zero.
@@ -3137,7 +3139,40 @@ def mail_at(ctx: dict) -> dict[str, list[dict]]:
         messages, _bad = _mail().decode_lines(text)
         out[machine] = [m for m in messages if str(m.get("at") or "") <= ctx["pin"]["window"]["until"]]
     ctx["_mail_at"] = out
+    ctx["_mail_seats_missing"] = sorted(mail_seats_named(out) - set(out))
     return out
+
+
+#: A message id, ``<stamp>-<machine>-<six hex>``: the sender is its middle.
+_MESSAGE_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?P<machine>[a-z0-9][a-z0-9-]*)-[0-9a-f]{6}$")
+
+
+def mail_seats_named(by_machine: dict[str, list[dict]]) -> set[str]:
+    """Every seat the read mail names: each message's sender, each assign's
+    seat, and the sender of each message an ack answers. A seat named here
+    whose mail ref the clone does not hold has claims, releases and holds
+    this run cannot read, so the sections that fold the mail name it under
+    ``unread`` rather than counting over the seats that are here."""
+    names: set[str] = set()
+    for messages in by_machine.values():
+        for m in messages:
+            for value in (m.get("from"), (m.get("re") or {}).get("seat")):
+                if value:
+                    names.add(str(value))
+            hit = _MESSAGE_ID.match(str(m.get("ack") or ""))
+            if hit:
+                names.add(hit.group("machine"))
+    return names
+
+
+def _name_missing_mail_seats(ctx: dict, section: str) -> None:
+    """Name ``<section>.mail_seats`` where the mail names a seat whose ref
+    this clone lacks (``mail_at``)."""
+    missing = ctx.get("_mail_seats_missing") or []
+    if missing:
+        _partial(ctx, section, "mail_seats", f"the mail names seat(s) {missing} whose mail ref this clone does not "
+                                             "hold, so their claims, releases and holds are not read: fetch "
+                                             "refs/heads/mail/* from origin and read again")
 
 
 def claim_intervals(by_machine: dict[str, list[dict]], until: str) -> list[dict]:
@@ -3417,6 +3452,7 @@ def section_collision(ctx: dict) -> dict:
         except _READ_FAILURES as exc:
             out[key] = None
             out["unread"][key] = str(_unread(exc))
+    _name_missing_mail_seats(ctx, "collision")
     return out
 
 
@@ -4368,6 +4404,7 @@ def section_transcripts(ctx: dict) -> dict:
                                               "out of both arms: " + "; ".join(f"{s}: {w}" for s, w in not_read.items()))
     roots = [c["path"] for c in outs]
     by_machine = mail_at(ctx)
+    _name_missing_mail_seats(ctx, "transcripts")
     seats = _mail().lane_seats(by_machine)
     claims = claim_intervals(by_machine, until)
     lanes = {pr["branch"]: pr for pr in _window_prs(ctx) if seats.get(pr["branch"]) in read_seats}
