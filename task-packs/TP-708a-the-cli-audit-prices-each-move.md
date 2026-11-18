@@ -875,6 +875,56 @@ Beside them, never graded: the forks' reads of the CLI modules on the 15 lanes s
 the CLI modules: 77. The air seat has one cli.py lane in the window (#349), so the reading cost on
 this box is in effect air-work's, as step 1 said.
 
+### Task 0 Item 2 at P: the collision read
+
+Every figure is from `python3 scripts/cli_cost_census.py --at 3330a5a collision --json`, with the
+census as at `ae313a4a8` [verified: run 2026-11-18 08:37-08:41Z, rc 0, empty stderr, no part
+unread]. The window is the 30 days to P, with 36 cli.py pull requests in it. Every pull request
+from all four seats is counted (the mail and the pull requests are not per box). The mail refs
+are read as of the run, and each message is cut off by its own stamp at P. Thresholds are the
+ones committed at step 1.
+
+| Component | Read at P | Threshold: real at or above | Known before step 1 | Grade |
+|---|---|---|---|---|
+| C1. Concurrent cli.py pairs whose verdict is not certified | **1** (#429 / #430, `unplaced`). Beside it, two `different functions` pairs (#588 / #589, #668 / #669) are certified; no pair was `shared symbol` | 4 | 3 pairs, all verdicts [probable]: **reproduces**, 3 concurrent pairs | not real |
+| C2. Share of cli.py lanes whose claim window overlaps another seat's live claim on cli.py | **15 of 33 = 45.5%**. 3 lanes had no claim (#336, #491, #531). Over all 36, 41.7%. All 15 are also strict overlaps (the lane's own claim names cli.py). 10 cross-seat lane pairs | 50% | 18 pairs over about 42 days [probable]; not reproduced at P (10 in 30 days), recorded under 7a763a | not real, **near the threshold** |
+| C3. Dispatcher holds over a cli.py overlap, whole record | **2** by hand read (below), over the mail's 43.6 days (from 2026-10-05T10:27Z) | 8 (1 per 7 days over about 54 days) | 1, a lower bound [verified] | not real |
+| C4. Replay conflicts on cli.py, whole record | **1** (`42cd25d4c`, #57, 2026-10-01): in 472 catch-up merges over 706 pull requests, and in 514 lane-side merges with drivers off and on alike | not graded (floor 1 in 511) | 1: **reproduces exactly** | not graded |
+
+**C2 sits 4.5 points under its threshold, and the margin is two lanes.** 17 of 33 is 51.5%. The
+three lanes with no claim have no window, and the committed rule leaves them out of the graded
+share. If all three had overlapped and been counted, the share would be 18 of 36, exactly 50%.
+The grade is *not real* by the committed rule. A later window can cross it without any change in
+how the seats work.
+
+**C3's hand read.** The census lists 19 candidates: 1 declared (the message's paths name cli.py
+and its text holds a lane), and 18 where the module is named only in the text. Each was read in
+full against the rule (a dispatcher message whose text holds one lane for another's, over cli.py).
+The prior window's hand read also found 2, and these are the same two:
+- `20261117T191812Z-air-479698` (declared): win's DEF-985 lane and air-work's DEF-5118 lane meet
+  at cli.py; "the first to open goes; the other waits for it to merge".
+- `20261010T225709Z-air-95186b`: win-2's upgrade lane is gated ("your first edit waits until
+  #177 ... is MERGED"); #177 is air's lane, and it edits cli.py.
+
+The other 17 hold nothing over cli.py (ids by their suffix):
+- 2 say only that the second to merge runs catch-up, which is not a hold (`703425`, `37b3b6`).
+- 8 order the seat's own lanes: one open pull request per seat, or a lane built on the seat's
+  earlier one (`516427`, `38360b`, `a58fb5`, `36ebc6`, `73bb69`, `9587c6`, `a59c5c`, `f6ff33`).
+  Three of them also say the second to merge catches up.
+- 3 hold something other than cli.py: the ledger's format (`16625d`), three guard files
+  (`79e19c`) and a tier slot on the box (`647932`).
+- 4 hold nothing at all: a ruling (`d26d85`), an operator call (`cc862b`), its forwarding
+  (`c7fb7e`) and a held row candidate (`130130`).
+
+Two holds in 43.6 days is one in about 22 days. The committed figure of 8 assumed about 54 days of
+record, from the first merge. The mail starts 11 days later, where the same rule gives 7. The
+grade is the same under either figure, and the committed 8 stands.
+
+**Item 2: not real.** No graded component is at or above its threshold: C1 1 against 4, C2 45.5%
+against 50%, C3 2 against 8. C2's margin is the one to watch.
+
+Beside them, never graded: 49 of the window's 246 catch-up merges carry cli.py.
+
 ### Task 2: the accretion read, the eight longest definitions at P
 
 The same eight as at authoring, at the same lengths, at P and at `17d83e0` [verified, by AST at
