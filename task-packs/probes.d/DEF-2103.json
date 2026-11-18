@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2103",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c \"import ast,pathlib as p;print(sum(1 for f in sorted(p.Path('tools/cc/hooks').glob('*.py')) if 'build' not in f.parts for c in ast.walk(ast.parse(f.read_text(encoding='utf-8'))) if isinstance(c,ast.Call) and getattr(c.func,'attr',getattr(c.func,'id',None))=='run_bounded' and c.args and isinstance(c.args[0],ast.List) and c.args[0].elts and isinstance(c.args[0].elts[0],ast.Constant) and isinstance(c.args[0].elts[0].value,str) and not set('/'+chr(92))&set(c.args[0].elts[0].value)))\"",
+ "open_value": "19",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks"
+ ],
+ "row_sha": "607881079b95",
+ "text_sha": "0ac6ab5361db",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD 38363b8f7140)"
+}

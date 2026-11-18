@@ -1,9 +1,10 @@
 """Every spawn in ``tools/cc/hooks/`` is the chokepoint, routed through it, or
 declared; every timed spawn under ``tools/cc/`` is bounded.
 
-The chokepoint, ``_hook_utils.spawn_checked``, resolves argv[0] first
-(``shutil.which``, which honours PATHEXT on Windows so ``npm`` finds
-``npm.cmd`` -- DEF-948's remaining half) and returns a ``SpawnFailure``
+The chokepoint, ``_hook_utils.spawn_checked``, resolves argv[0] first (on
+PATH alone with PATHEXT on Windows, so ``npm`` finds ``npm.cmd`` --
+DEF-948's remaining half -- and never in the current folder, DEF-2102) and
+returns a ``SpawnFailure``
 instead of raising when the program cannot start, so every gate that routes
 through it must decide what to SAY. Its tree-ending form,
 ``_hook_utils.spawn_tree_checked``, is the same check onto
@@ -46,6 +47,7 @@ from pathlib import Path
 import pytest
 from tests._platform_standin import as_os
 from tests._live_tree import checkout_glob
+from tests._wait_budget import scaled
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 TOOLS_CC = HOOKS_DIR.parent
@@ -312,7 +314,7 @@ class TestSpawnChecked:
 
         import subprocess
         monkeypatch.setattr(subprocess, "run", _capture)
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)
+        monkeypatch.setattr(hu, "_on_path", lambda tok: "/resolved/" + tok)
         got = hu.spawn_checked(["npm", "test"], root=tmp_path, capture_output=True)
         assert not isinstance(got, hu.SpawnFailure)
         assert seen["argv"] == ["/resolved/npm", "test"], "the RESOLVED path is what starts"
@@ -325,7 +327,7 @@ class TestSpawnChecked:
             raise PermissionError(13, "denied")
 
         monkeypatch.setattr(subprocess, "run", _boom)
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)
+        monkeypatch.setattr(hu, "_on_path", lambda tok: "/resolved/" + tok)
         got = hu.spawn_checked(["npm", "test"], root=tmp_path)
         assert isinstance(got, hu.SpawnFailure)
         assert got.error == "PermissionError" and got.resolved == "/resolved/npm"
@@ -359,15 +361,16 @@ class TestSpawnChecked:
             raise PermissionError(13, "Permission denied", "/resolved/npm")
 
         monkeypatch.setattr(subprocess, "run", _boom)
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)
+        monkeypatch.setattr(hu, "_on_path", lambda tok: "/resolved/" + tok)
         got = hu.spawn_checked(["npm", "test"], root=tmp_path)
         assert isinstance(got, hu.SpawnFailure)
+        assert got.resolved == "/resolved/npm", "the stand-in resolution is the one the chokepoint read"
         assert got.detail and "Permission denied" in got.detail and "13" in got.detail
 
     def test_a_windows_shim_with_a_metacharacter_argument_is_refused(self, tmp_path, monkeypatch):
         hu = _load_hook_utils()
         monkeypatch.setattr(hu.os, "name", "nt")
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: r"C:\node\npm.cmd")
+        monkeypatch.setattr(hu, "_on_path", lambda tok: r"C:\node\npm.cmd")
         got = hu.spawn_checked(["npm", "test", "&", "calc"], root=tmp_path)
         assert isinstance(got, hu.SpawnFailure) and got.error == "CmdShimMetachar"
         assert "re-parses its arguments" in got.resolution
@@ -380,9 +383,115 @@ class TestSpawnChecked:
             raise subprocess.TimeoutExpired(cmd=argv, timeout=1)
 
         monkeypatch.setattr(subprocess, "run", _slow)
-        monkeypatch.setattr(shutil, "which", lambda tok, *a, **k: "/resolved/" + tok)
+        monkeypatch.setattr(hu, "_on_path", lambda tok: "/resolved/" + tok)
         with pytest.raises(subprocess.TimeoutExpired):
             hu.spawn_checked(["slow"], root=tmp_path, timeout=1)
+
+    def test_a_program_the_current_folder_holds_is_never_resolved(self, tmp_path, monkeypatch):
+        """DEF-2102: ``shutil.which`` searches the current folder first on
+        Windows (and an empty or ``.`` PATH entry elsewhere), so a ``git.cmd``
+        a cloned tree holds at its root ran in git's place at every gate read.
+        The chokepoint looks on PATH alone: the planted name resolves to
+        nothing through any entry that is the current folder or moves with it
+        (``.``, an empty entry, a relative one such as ``node_modules/.bin``'s
+        shape, an absolute one naming the folder), both chokepoints refuse it
+        unstarted, and the same file on an absolute PATH entry resolves once
+        the current folder is elsewhere, so the None is the current folder's."""
+        hu = _load_hook_utils()
+        from tests._stubs import write_stub
+        name = "planted2102"
+        here = tmp_path / "project"
+        (here / "sub").mkdir(parents=True)
+        body = "@echo planted" if os.name == "nt" else "#!/bin/sh\necho planted"
+        filename = name + ".cmd" if os.name == "nt" else name
+        planted = write_stub(here / filename, body, crlf=os.name == "nt")
+        write_stub(here / "sub" / filename, body, crlf=os.name == "nt")
+        monkeypatch.chdir(here)
+        monkeypatch.setenv("PATH", os.pathsep.join([".", "", "sub", str(here), os.environ.get("PATH", "")]))
+        assert hu.resolve_program(name, root=here) is None
+        for chokepoint in (hu.spawn_checked, hu.spawn_tree_checked):
+            got = chokepoint([name], root=here, capture_output=True, timeout=30)
+            assert isinstance(got, hu.SpawnFailure) and got.error == "Unresolved", (chokepoint.__name__, got)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(here), os.environ.get("PATH", "")]))
+        assert os.path.normcase(hu.resolve_program(name, root=here) or "") == os.path.normcase(str(planted))
+
+    def test_the_advised_spelling_of_a_project_folder_script_resolves(self, tmp_path, monkeypatch):
+        """The remedies and the SessionStart advisory tell an operator whose
+        bare project-folder script no longer resolves to name it by its path
+        from the root, with its extension on Windows (Python 3.11 adds no
+        PATHEXT extension to a path, so ``./run_tests`` stays unresolved
+        there): the spelling they are given resolves from any current folder,
+        and the bare name does not, even from the folder itself."""
+        hu = _load_hook_utils()
+        from tests._stubs import write_stub
+        name = "run_tests.cmd" if os.name == "nt" else "run_tests.sh"
+        script = write_stub(tmp_path / name, "@echo ran" if os.name == "nt" else "#!/bin/sh\necho ran",
+                            crlf=os.name == "nt")
+        monkeypatch.chdir(tmp_path.parent)
+        got = hu.resolve_program("./" + name, root=tmp_path)
+        assert got and os.path.normcase(os.path.abspath(got)) == os.path.normcase(str(script)), got
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("PATH", os.pathsep.join([".", os.environ.get("PATH", "")]))
+        assert hu.resolve_program(name.rsplit(".", 1)[0], root=tmp_path) is None
+
+    def test_a_removed_current_folder_still_resolves_on_path(self, tmp_path, monkeypatch):
+        """The lookup reads the current folder to skip a PATH entry naming it;
+        a folder removed under the hook process (POSIX lets one go) is no
+        entry's place, so the lookup goes on rather than raise ahead of a
+        gate's spawn, where ``shutil.which`` never asked for it."""
+        hu = _load_hook_utils()
+        from tests._stubs import write_stub
+        name = "onpath2102"
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        stub = write_stub(bindir / (name + ".cmd" if os.name == "nt" else name),
+                          "@echo on path" if os.name == "nt" else "#!/bin/sh\necho on path",
+                          crlf=os.name == "nt")
+        monkeypatch.setenv("PATH", os.pathsep.join([str(bindir), os.environ.get("PATH", "")]))
+        asked: list = []
+
+        def gone():
+            asked.append(1)
+            raise FileNotFoundError(2, "No such file or directory")
+
+        monkeypatch.setattr(hu.os, "getcwd", gone)
+        got = hu.resolve_program(name, root=tmp_path)
+        assert asked, "the stand-in for a removed current folder was never asked"
+        assert os.path.normcase(got or "") == os.path.normcase(str(stub))
+
+    @pytest.mark.parametrize("chokepoint, bounded", [
+        ("spawn_checked", "run_bounded"), ("spawn_tree_checked", "run_tree_bounded"),
+    ], ids=["spawn_checked", "spawn_tree_checked"])
+    def test_output_that_does_not_decode_is_the_callers_never_a_start_that_failed(
+        self, tmp_path, monkeypatch, chokepoint, bounded,
+    ):
+        """``UnicodeDecodeError`` is a ``ValueError``, and the child that
+        printed the bytes ran: it propagates, as the engine's copy reads it
+        (DEF-2102). Faked at the bounded spawn, because on Windows with a
+        timeout CPython decodes in a reader thread and the error never reaches
+        the caller at all."""
+        hu = _load_hook_utils()
+        ran: list = []
+
+        def undecodable(args, **kw):
+            ran.append(args)
+            raise UnicodeDecodeError("utf-8", bytes([255]), 0, 1, "invalid start byte")
+
+        monkeypatch.setattr(hu, bounded, undecodable)
+        with pytest.raises(UnicodeDecodeError):
+            getattr(hu, chokepoint)([sys.executable, "-c", "pass"], root=tmp_path, capture_output=True,
+                                    text=True, encoding="utf-8", timeout=scaled(30))
+        assert ran, "the stand-in bounded spawn was never reached"
+
+    @pytest.mark.parametrize("chokepoint", ["spawn_checked", "spawn_tree_checked"])
+    def test_an_argument_popen_refuses_is_still_a_start_that_failed(self, tmp_path, chokepoint):
+        """The other ``ValueError`` the arm reads, a NUL in an argument, never
+        starts a child: it stays a ``SpawnFailure``, as every gate reads it."""
+        hu = _load_hook_utils()
+        got = getattr(hu, chokepoint)([sys.executable, "-c", "pass", "a" + chr(0) + "b"], root=tmp_path,
+                                      capture_output=True, timeout=scaled(30))
+        assert isinstance(got, hu.SpawnFailure) and got.error == "ValueError", got
 
     def test_split_command_keeps_a_quoted_path_whole(self):
         hu = _load_hook_utils()
@@ -571,11 +680,16 @@ class TestTheEngineIsSpawnedByModuleBeforeItsPathName:
     ENGINE_SITES_FLOOR = 2
     ROOTS = ("tools/cc/*.py", "tools/cc/hooks/*.py", "scripts/*.py", "espalier/*.py")
 
-    @staticmethod
-    def _asks_path_for_espalier(call: ast.Call) -> bool:
+    #: The lookups that ask PATH for a bare name: ``shutil.which``, and the hooks'
+    #: chokepoint resolver the autoprune's PATH rung asks since DEF-2102.
+    LOOKUPS = ("which", "resolve_program", "_on_path")
+
+    @classmethod
+    def _asks_path_for_espalier(cls, call: ast.Call) -> bool:
         fn = call.func
-        named = (isinstance(fn, ast.Attribute) and fn.attr == "which") or (isinstance(fn, ast.Name) and fn.id == "which")
-        return bool(named and call.args and isinstance(call.args[0], ast.Constant) and call.args[0].value == "espalier")
+        name = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else ""
+        return bool(name in cls.LOOKUPS and call.args and isinstance(call.args[0], ast.Constant)
+                    and call.args[0].value == "espalier")
 
     @classmethod
     def _sites(cls) -> list[dict]:

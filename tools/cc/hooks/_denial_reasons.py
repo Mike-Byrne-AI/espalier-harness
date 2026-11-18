@@ -975,7 +975,11 @@ GATE_COMMAND_SPAWN_REMEDY_WINDOWS = (
     "the shell that launches Claude Code (spelling it `npm.cmd test` is no longer "
     "needed). If it resolved and still could not start, the shim's own error is "
     "the cause; an argument carrying a cmd metacharacter is refused before the "
-    "shim can re-parse it."
+    "shim can re-parse it. A script in the project folder is never found by its "
+    "bare name, nor through a relative PATH entry (the gate looks on absolute "
+    "PATH entries alone, so a script there cannot run in the place of the "
+    "program it is named like): name it by its path from the root with its "
+    "extension, `./run_tests.cmd`."
 )
 
 GATE_COMMAND_SPAWN_REMEDY_QUOTING = (
@@ -986,11 +990,14 @@ GATE_COMMAND_SPAWN_REMEDY_QUOTING = (
 GATE_COMMAND_SPAWN_REMEDY_SHELL_SYNTAX = (
     "Give the gate one program per entry: `test = [\"npm run build\", \"npm test\"]` "
     "runs each in order at the repository root (no `cd` is needed), or put the "
-    "line in a script and name the script."
+    "line in a script and name the script by its path from the root "
+    "(`./run_tests.sh`; on Windows with its extension, `./run_tests.cmd`)."
 )
 GATE_COMMAND_SPAWN_REMEDY_POSIX = (
     "Name a program that is on PATH for the shell that launches Claude Code, "
-    "or give its full path."
+    "or give its full path; a script in the project folder goes by its path "
+    "from the root, `./run_tests.sh` (an empty, `.` or relative PATH entry, "
+    "`./bin` among them, is never searched)."
 )
 
 # The three hygiene-gate messages below spell a subagent dispatch ONE way --

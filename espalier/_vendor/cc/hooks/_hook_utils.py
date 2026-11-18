@@ -1215,9 +1215,10 @@ def protected_prefixes(root: Path) -> list[str]:
 #
 # A gate that spawns a program the operator named (the stop-time test
 # override, the plain pytest branch, the blueprint finalize) routes through
-# ``spawn_checked``: argv[0] is resolved first -- through ``shutil.which``, so a
-# Windows script shim (``npm`` is ``npm.cmd``) is found (DEF-948) -- and a
-# program that cannot start comes back as a ``SpawnFailure`` instead of a
+# ``spawn_checked``: argv[0] is resolved first -- on PATH alone with PATHEXT,
+# so a Windows script shim (``npm`` is ``npm.cmd``) is found (DEF-948) and a
+# script the current folder holds never starts in its place (DEF-2102) -- and
+# a program that cannot start comes back as a ``SpawnFailure`` instead of a
 # raise, so every caller must decide what to SAY. Reporters keep their own
 # ``subprocess.run`` under a ``# spawn: ok <reason>`` declaration; the
 # population test walks both.
@@ -1315,9 +1316,13 @@ def split_command(text: str) -> list[str]:
 def resolve_program(token: str, *, root: Path) -> str | None:
     """argv[0] to the path that would start, or None. A token holding a path
     separator resolves against ``root`` (never the hook process's cwd -- the
-    relative-override fix of 2026-09-29 must survive); a bare token through
-    ``shutil.which``, which honours PATHEXT on Windows so ``npm`` finds
-    ``npm.cmd``."""
+    relative-override fix of 2026-09-29 must survive); a bare token on PATH
+    alone (:func:`_on_path`), honouring PATHEXT on Windows so ``npm`` finds
+    ``npm.cmd``, and never in the current directory, which ``shutil.which``
+    searches first on Windows: a ``git.cmd`` a cloned tree holds at its root
+    ran in git's place at every gate read until DEF-2102 (``CreateProcess``
+    looks there too, for an ``.exe``, so the resolved path is what starts). A
+    script in the project folder is named by its path, ``./run_tests.cmd``."""
     import shutil
 
     if not token:
@@ -1334,7 +1339,39 @@ def resolve_program(token: str, *, root: Path) -> str | None:
             return str(candidate) if candidate.is_file() else None
         except OSError:  # fail-open: ok deliberate -- a candidate that cannot be stat-ed is unresolved, and the gate that asked says so
             return None
-    return shutil.which(token)
+    return _on_path(token)
+
+
+def _on_path(token: str) -> "str | None":
+    """The first file ``token`` names in an absolute PATH entry that is not the
+    current directory: on Windows the token as given when it carries a PATHEXT
+    extension, else with each PATHEXT extension in turn (``shutil.which``'s
+    order); elsewhere the token, when it is a runnable file. An empty, relative
+    or ``.`` entry is skipped: each one is the current directory, or a place
+    that moves with it. A current directory removed under this process skips
+    no absolute entry, since none can name it, and the lookup goes on: the
+    hooks read this before a gate's spawn, where a raise would end the gate.
+    One function twice, here and in the other tree's spawn module, held equal
+    by ``tests/test_bounded_spawn.py`` (DEF-2102)."""
+    try:
+        here = os.path.normcase(os.path.abspath(os.getcwd()))
+    except OSError:  # fail-open: ok deliberate -- a current directory removed under this process is no absolute entry's place, so only the empty, relative and dot entries below are skipped
+        here = ""
+    if os.name == "nt":
+        pathext = [ext for ext in (os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if ext]
+        names = [token] if any(token.lower().endswith(ext.lower()) for ext in pathext) else [
+            token + ext for ext in pathext]
+    else:
+        names = [token]
+    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        entry = entry.strip('"')
+        if not entry or not os.path.isabs(entry) or os.path.normcase(os.path.abspath(entry)) == here:
+            continue
+        for name in names:
+            candidate = os.path.join(entry, name)
+            if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate
+    return None
 
 
 def spawn_checked(
@@ -1345,7 +1382,9 @@ def spawn_checked(
     the resolved argv through ``run_bounded``, so a ``timeout`` is a bound on
     Windows too; a program that cannot start returns a ``SpawnFailure``
     instead of raising, so the caller decides what to say. ``TimeoutExpired``
-    propagates as today. ``kwargs`` are ``subprocess.run``'s. On POSIX the
+    propagates as today, and so does ``UnicodeDecodeError`` (the child ran;
+    a caller reading text passes ``errors="replace"``, DEF-2102).
+    ``kwargs`` are ``subprocess.run``'s. On POSIX the
     timeout kills the child alone: for a child that is itself a tree of work,
     call :func:`spawn_tree_checked`."""
     import subprocess
@@ -1362,7 +1401,10 @@ def spawn_checked(
         # bounded spawn, so it needs the first and not the second.
         # subprocess-contract: ok the chokepoint -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
         return run_bounded([resolved, *args[1:]], **kwargs)
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, UnicodeDecodeError):
+        # The child started: a timeout, and output that does not decode (a
+        # ValueError, so the arm below would read it as a start that failed,
+        # DEF-2102), are the caller's, as the engine's copy reads them.
         raise
     except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
         return SpawnFailure(tuple(args), type(exc).__name__, resolved, os_error_text(exc))
@@ -1395,8 +1437,8 @@ def spawn_tree_checked(
     try:
         # subprocess-contract: ok the chokepoint's tree-ending form -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
         return run_tree_bounded([resolved, *args[1:]], **kwargs)
-    except subprocess.TimeoutExpired:
-        raise
+    except (subprocess.TimeoutExpired, UnicodeDecodeError):
+        raise  # the child started: spawn_checked's reading, DEF-2102
     except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument, or a group keyword refused on POSIX
         return SpawnFailure(tuple(args), type(exc).__name__, resolved, os_error_text(exc))
 

@@ -4773,9 +4773,9 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
     once and then stand aside (stop_gate), and until 2026-09-30 nothing said so
     at boot. Splits with the stop gate's own splitter and resolves token 0 by
     the chokepoint's rules (``_hook_utils.resolve_program``: a path against
-    the root, a bare name through ``shutil.which`` with PATHEXT), so the two
-    never disagree -- and never the first-word extractor of DEF-968. A
-    reporter; exit 0 always."""
+    the root, a bare name on PATH alone with PATHEXT, never in the current
+    folder, DEF-2102), so the two never disagree -- and never the first-word
+    extractor of DEF-968. A reporter; exit 0 always."""
     cmd = _hook_utils.stop_gate_test_cmd()
     if not cmd.strip():
         return
@@ -4791,13 +4791,17 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
         return
     if _hook_utils.resolve_program(parts[0], root=root) is not None:
         return
-    # Reached only after shutil.which (PATHEXT included) failed, so a `.cmd`
-    # respelling cannot help; the fix is the PATH of the launching shell.
+    # Reached only after the PATH lookup (PATHEXT included) failed, so a `.cmd`
+    # respelling cannot help; the fix is the PATH of the launching shell, or a
+    # path for a script the project folder holds, which no bare name reaches.
     _hook_utils.advise_warn(
         f"ESPALIER_STOP_GATE_TEST_CMD names `{parts[0]}`, which does not resolve to a "
         "program on this host; the test gate armed for Stop will not start. Name a "
-        "program on the PATH of the shell that launches Claude Code, or its full path, "
-        "where the variable is set; it takes effect at the next launch."
+        "program on the PATH of the shell that launches Claude Code, or its full path "
+        "(a script in the project folder by its path from the root, with its "
+        "extension on Windows, `./run_tests.cmd`: a bare name is never looked up in "
+        "the current folder or through an empty, `.` or relative PATH entry), where "
+        "the variable is set; it takes effect at the next launch."
     )
 
 

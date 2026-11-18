@@ -602,8 +602,9 @@ with `telemetry`, `cleanup`, `text-fallback` or `deliberate` and a reason of
 three words or more; the kind alone is wallpaper. A payload the hook could
 not read is a `BadStdin` (an empty dict that remembers the fault); a blocking
 hook calls `say_bad_stdin`. Spawns: a gate routes through
-`_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a typed
-`SpawnFailure` instead of a raise); a reporter's own spawn carries
+`_hook_utils.spawn_checked` (argv[0] resolved on PATH alone with PATHEXT,
+never in the current folder, which `shutil.which` searches first on Windows; a
+typed `SpawnFailure` instead of a raise); a reporter's own spawn carries
 `# spawn: ok <reason>`. A spawn with a timeout calls `_hook_utils.run_bounded`
 (`spawn_checked` is built on it), never a raw `subprocess.*` call: on Windows
 `subprocess.run` kills only the child at the timeout and then waits for any
