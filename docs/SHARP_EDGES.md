@@ -6408,7 +6408,10 @@ answers that seat's name, and one added from a main checkout given a `--worktree
 answers that; one added from a main checkout with none answers the clone's. The seat's
 next send from either writes one mail ref. `seat.py launch` unsets a name git copied into
 a worktree it creates, so the seat it launches is named as it derives; a `git worktree
-add` by hand gets no such step. Since DEF-3098, `tools/cc/mail.py::checkout_names`
+add` by hand, and Claude Code's own `claude --worktree` (git makes that one too), get no
+such step, and SessionStart does not unset a copied name: it reads as the worktree's own,
+so the copy stays a twin of the main checkout, which the board flags while a session holds
+it. Since DEF-3098, `tools/cc/mail.py::checkout_names`
 reads every checkout git lists by the name it writes under, wherever its folder is, and the
 board, `tools/cc/seat.py::resolve` and `name_this_worktree` all read through it: the
 board flags such a twin while a session holds it, and `seat.py` refuses the name with the

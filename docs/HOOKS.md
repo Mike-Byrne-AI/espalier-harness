@@ -326,9 +326,11 @@ when git cannot list the clone's checkouts or read the name another one
 answers (a twin could then go unseen; it stops at the first such checkout and
 asks no further), or when the clone's shared config sets `core.worktree` or
 `core.bare`. The line then says why, and what naming the worktree by hand
-takes. The derived name is one rule for every linked worktree, inside
-`.claude/worktrees/` or not: `seat.py` resolves a worktree with no name of its
-own by the same name, so a launch targets the name the hook gives it.
+takes. It names any linked worktree, inside `.claude/worktrees/` or not, but
+`seat.py launch` targets a derived name only under that folder: where a copy
+made by hand elsewhere shares a seat's folder name, the seat holds the name,
+and the copy's session is refused it and answers its clone's name while it
+runs, which the board flags.
 
 On such a clone that is one change: the key moved out of the shared config into
 the main worktree's `config.worktree` (`$GIT_COMMON_DIR/config.worktree`; the

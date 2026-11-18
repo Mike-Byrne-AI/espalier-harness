@@ -1618,12 +1618,13 @@ def worktree_seat_name(clone: str, worktree_dir: str) -> str | None:
     """``<clone>-<worktree directory>`` in the machine-name grammar (lowercase
     letters, digits and hyphens, 32 at most), or None when nothing of the
     directory survives. Deterministic, so one worktree always derives one name.
-    The one rule for every linked worktree, inside ``.claude/worktrees/`` or
-    not: :func:`name_this_worktree` sets it at a session's start (a copy made
-    by hand outside that folder carries the hooks' settings file too, 7 of 10
-    here, measured 2026-11-18), and ``seat.py``'s resolver reads a worktree
-    with no name of its own by it, so the name a launch targets is the name
-    the hook gives (DEF-3098)."""
+    :func:`name_this_worktree` sets it in any linked worktree at a session's
+    start (a copy made by hand outside ``.claude/worktrees/`` usually carries
+    the hooks' settings file too), unless another checkout already answers
+    it; ``seat.py``'s resolver targets it for a launch only under that folder.
+    So where a copy made elsewhere shares a seat's folder name, the seat holds
+    the name and the copy's naming is refused: it answers its clone's name
+    while a session holds it, which the board flags (DEF-3098's reviews)."""
     slug = re.sub(r"[^a-z0-9]+", "-", worktree_dir.lower()).strip("-")
     if not slug:
         return None

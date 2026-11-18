@@ -557,27 +557,26 @@ def _weak_evidence(occ: sync.Occupancy) -> str:
     return ""
 
 
-#: How each checkout answering a seat name answers it (``resolve`` records
-#: one per checkout): the main checkout (its clone's name, or a ``--worktree``
-#: name set there), a linked worktree named back to its clone's name, one with
-#: no name of its own a session holds (it writes under the clone's), one that
-#: derives the name (none of its own yet), and one whose own name it is.
-TWIN_KINDS = ("main", "named back", "nameless", "derived", "own")
-
-
 def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, str], str]], *,
                    clone: str = "", occupancy_of: Callable[[Path], sync.Occupancy] | None = None) -> str:
     """Why ``seat`` resolves to none of the checkouts that answer it, with the
     one remedy the driver can stand behind (DEF-3097), and each checkout's
     branch, head and sessions always said. ``answering`` holds each
-    checkout's kind (:data:`TWIN_KINDS`); ``occupancy_of`` is ``resolve``'s
+    checkout's kind, as ``resolve`` read it: ``main`` (the main checkout, by
+    its clone's name or a ``--worktree`` name set there), ``stand-in`` (the
+    checkout standing for a bare clone), ``named back`` (a linked worktree
+    whose own name is its clone's), ``nameless`` (one with no name of its own
+    a session holds), ``derived`` (one with none yet, under
+    ``.claude/worktrees/``, by its folder) and ``own``; ``occupancy_of`` is ``resolve``'s
     own reader, so a checkout's sessions are read once and the refusal never
     calls a twin it counted for a session one with none (DEF-3098's review).
 
     The clone's own name is answered by the main checkout by construction:
     renaming the clone moves every seat name derived from it. So there the
     main checkout is the seat, whoever holds a session, and each linked twin
-    gets its own command, worded by its kind (DEF-3098): one named back to the
+    gets its own command, worded by its kind (DEF-3098), after the words that
+    a session in it must release its claims from it, or end, first (renamed
+    under it, its next send goes out under the new name): one named back to the
     clone's name the one ``--worktree`` rename, one with no name of its own
     ``mail.naming_steps``' commands for a reader in another checkout (the
     board's own text for it, a bare clone's one change included), one a line.
@@ -629,13 +628,22 @@ def _twins_refusal(root: Path, seat: str, answering: list[tuple[Path, dict[str, 
             if kind == "main":
                 continue
             spelled = path.as_posix()
+            occ = read(path)
+            # A session there writes under the clone's name now: renamed under
+            # it, its next send goes out under the new name, and its claims and
+            # jobs under the clone's are left where it can no longer release
+            # them, so that comes first (DEF-3098's second review).
+            first = ("" if occ.sessions == [] else
+                     f"{'a' if occ.sessions else 'any'} session in it writes under the clone's name now: release its "
+                     "claims from it first (`mail.py claims` lists them; a job given the clone's name stays the "
+                     "clone's), or end that session; then ")
             if kind == "named back":
-                steps.append(f"{spelled} was named back to the clone's name; rename it:\ngit -C \"{spelled}\" {command}")
+                steps.append(f"{spelled} was named back to the clone's name; {first}rename it:\n"
+                             f'git -C "{spelled}" {command}')
                 continue
             naming = mail.naming_steps(path, at=spelled)
             lead = "name it, one command a line:\n" if "\n" in naming else "name it: "
-            steps.append(f"{spelled} has no name of its own, so a session in it writes under the clone's; "
-                         f"{lead}{naming}")
+            steps.append(f"{spelled} has no name of its own; {first}{lead}{naming}")
         # The commands end the text, one a line, so each is pasted alone.
         return (f"{head}: the main checkout ({main.as_posix()}) answers its clone's name by construction (renaming "
                 "the clone moves every seat name derived from it), so it is the seat; name each other one, then "
@@ -679,9 +687,10 @@ def resolve(root: Path, seat: str) -> Target:
     and the main checkout answers its own ``--worktree`` name where one is set
     there (asked for its clone's name then, it is refused by name); a bare
     clone's entry is the repository itself, so the checkout this runs from
-    stands for the clone. A worktree with no name of its own answers the name
-    it derives wherever it is (``mail.worktree_seat_name``, the one rule
-    SessionStart names it by, DEF-3098). The
+    stands for the clone (no seat by construction there). A launch targets a
+    derived name only under ``.claude/worktrees/``: a copy made by hand
+    elsewhere is never one, and where it shares the folder name the seat holds
+    the name (its next session is refused it, DEF-3098's reviews). The
     clone's own name is read the same way, the clone counted among the
     checkouts answering it, so a worktree named back to it is a twin too, and
     so is a worktree with no name of its own while a session holds it (that
@@ -739,20 +748,24 @@ def resolve(root: Path, seat: str) -> Target:
                 unread.append(f"{path} ({row['unread']})")
                 continue
             # The main checkout answers the name it writes under: its clone's,
-            # or a --worktree name set there (DEF-3098).
+            # or a --worktree name set there (DEF-3098). A bare clone has no
+            # main checkout, so its stand-in is no seat by construction.
             main_name = clone if bare else row["name"]
             if main_name == seat:
-                answering.append((main_path, block, "main"))
+                answering.append((main_path, block, "stand-in" if bare else "main"))
             continue
         if bare and sync._norm(path) == sync._norm(root):
-            continue        # the worktree standing for a bare clone, read above as the clone
+            # The worktree standing for a bare clone, read above as the clone:
+            # its own branch and head go on that row.
+            answering[:] = [(p, _block(row) if kind == "stand-in" else b, kind) for p, b, kind in answering]
+            continue
         name = row["name"]
         key = sync._norm(path)
         home = sync.within(path, _home(root))
         # A copy made by hand outside .claude/worktrees/ is no seat the driver
         # made, so its remedy is its maker's, never a retry alone.
         kept = "" if home else ("; it is outside .claude/worktrees/, so no seat driver made it: fix its config, or "
-                                "whoever made it removes it (`git worktree remove`)")
+                                f'whoever made it removes it (`git worktree remove "{path.as_posix()}"`)')
         if row["gone"] or row["unread"]:
             if row["unread"]:
                 unread.append(f"{path} ({row['unread']}{kept})")
@@ -767,10 +780,16 @@ def resolve(root: Path, seat: str) -> Target:
             registered[key] = (path, name)
             continue
         # It writes under the clone's name: named back to it, or no name of its
-        # own, which gives it <clone>-<folder> at its next session wherever it
-        # is (mail.worktree_seat_name, the one rule name_this_worktree sets).
-        # Which one is read only where it decides the answer.
-        derived = mail.worktree_seat_name(clone, path.name) or ""
+        # own. A launch targets a derived name only under .claude/worktrees/,
+        # the folder this driver makes seats in: a copy made by hand elsewhere
+        # (a reviewer's scratch, a base at an old head) is never a launch
+        # target, so the launch makes a fresh seat instead. Where such a copy
+        # shares the folder name, the seat holds the name, and the copy's next
+        # session is refused it (name_this_worktree: the name is taken), so it
+        # answers the clone's name while live, which the board flags and the
+        # clone's name refuses below (DEF-3098's reviews). Which one is read
+        # only where it decides the answer.
+        derived = (mail.worktree_seat_name(clone, path.name) or "") if home else ""
         if seat not in (clone, derived):
             registered[key] = (path, name)
             continue
@@ -819,14 +838,19 @@ def resolve(root: Path, seat: str) -> Target:
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
         raise Refused(f"no seat {seat!r} here: this clone is {clone!r}, and a worktree seat is named "
-                      f"{clone}-<folder> after its folder, a new one made under .claude/worktrees/ (`seat.py list` "
-                      "shows them)")
+                      f"{clone}-<folder> for a folder under .claude/worktrees/ (`seat.py list` shows them)")
     path = _home(root) / folder
     hit = registered.get(sync._norm(path))
     if hit is not None:
         answers = f"answers {hit[1]!r}" if hit[1] else "has no folder or no seat name"
-        raise Refused(f"{path} is a registered worktree that {answers}, not {seat!r}: "
-                      f"`seat.py list` shows what each answers ({hit[1] and f'launch {hit[1]}' or 'look at it first'})")
+        if hit[1] and hit[1] == main_name:
+            # The main checkout's own name, copied in by `git worktree add`
+            # (a create whose unset failed): launching that name is a twin.
+            way = (f'git copied the main checkout\'s name into it: `git -C "{path.as_posix()}" config --worktree '
+                   f"--unset-all {mail.MACHINE_KEY}` unsets it, then launch {seat} again")
+        else:
+            way = f"`seat.py list` shows what each answers ({hit[1] and f'launch {hit[1]}' or 'look at it first'})"
+        raise Refused(f"{path} is a registered worktree that {answers}, not {seat!r}: {way}")
     if path.exists():
         raise Refused(f"{path} exists but git does not register it as a worktree: look at what is in it before "
                       "anything else (`git worktree list`; `git worktree repair` if it should be one)")
