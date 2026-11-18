@@ -2071,6 +2071,31 @@ class TestTheTranscriptsSection:
             {"path": "/plain", "folder": "-plain", "why": "no espalier.machine"}]
         assert section()["checkouts_without_a_seat"] == []
 
+    def test_a_worktree_never_named_with_no_folder_is_skipped_and_named(self, section):
+        """Dies to: a linked worktree that answers a box seat only through the clone's shared
+        config (a fork's `.claude/worktrees/agent-*`, which no session ever ran in) and holds no
+        transcript folder refusing the whole section, so the census reads transcripts unread on
+        any box with a fan-out's worktree live; or one skipped in silence, or skipped while its
+        figures moved."""
+        agent = {"path": "/wt/agent-x", "seat": "air", "folder": "-wt-agent-x", "own_name": False}
+        out = section([agent])
+        assert out["skipped_never_named"] == [{"path": "/wt/agent-x", "folder": "-wt-agent-x", "seat": "air"}]
+        plain = section()
+        assert plain["skipped_never_named"] == []
+        assert (out["treatment"], out["control"], out["population"]) == (
+            plain["treatment"], plain["control"], plain["population"])
+
+    @pytest.mark.parametrize("own", [True, None], ids=["own-name", "scope-unread"])
+    def test_a_seat_s_own_checkout_with_no_folder_stays_unread(self, section, own):
+        """Dies to: the skip widened past a worktree read as never named: a checkout that carries
+        the seat's name itself (or whose name's scope could not be read) and has no transcript
+        folder is a seat's transcripts gone, and the section refuses rather than read a zero."""
+        row = {"path": "/wt/named", "seat": "air", "folder": "-wt-named"}
+        if own is not None:
+            row["own_name"] = own
+        with pytest.raises(_CENSUS.Unread, match="transcript folder"):
+            section([row])
+
     def test_a_clone_with_no_box_seat_checkout_is_unread(self, repo, tmp_path):
         """Dies to: no checkout naming a box seat (an unnamed machine, a failed worktree list)
         read as a population of nothing: every lane 0 lines and the verdict `not real`."""
@@ -2462,6 +2487,37 @@ class TestTheShellIsReadAsTheShellReadsIt:
         """Dies to: a `#` inside a word, a quote or `${#x}` read as a comment, a comment taking the
         lines after its own, or a backslash-newline joined inside single quotes."""
         assert _CENSUS.shell_text(command) == text
+
+    _READ = "\nsed -n 1,40p espalier/cli.py"
+
+    @pytest.mark.parametrize("command, text", [
+        ("echo $((1 << n))" + _READ, "echo $((1 << n))" + _READ),
+        ("(( x = 1 << n ))" + _READ, "(( x = 1 << n ))" + _READ),
+        ('python3 -c "print(1 << n)"' + _READ, 'python3 -c "print(1 << n)"' + _READ),
+        ("awk 'BEGIN { s = \"<< n\" }' f" + _READ, "awk 'BEGIN { s = \"<< n\" }' f" + _READ),
+        ("# feed it with << EOF later" + _READ, "# feed it with << EOF later" + _READ),
+        ('echo "one\n<< n"' + _READ, 'echo "one\n<< n"' + _READ),
+        ("cat <<'EOF' > f\nespalier/cli.py\nEOF" + _READ, "cat <<'EOF' > f" + _READ),
+        ("git commit -m \"$(cat <<'EOF'\nfix espalier/cli.py\nEOF\n)\"" + _READ,
+         "git commit -m \"$(cat <<'EOF'\n)\"" + _READ),
+        ("echo $((1<<2)); python3 - <<EOF\nprint(1)\nEOF" + _READ, "echo $((1<<2)); python3 - <<EOF" + _READ),
+        ("cat <<-END\n\tespalier/cli.py\n\tEND" + _READ, "cat <<-END" + _READ),
+        ("echo $'it\\'s' && cat <<EOF\nespalier/cli.py\nEOF" + _READ, "echo $'it\\'s' && cat <<EOF" + _READ),
+        ("x=\"$(cd d && (ls) && cat <<'EOF'\nespalier/cli.py\nEOF\n)\"" + _READ,
+         "x=\"$(cd d && (ls) && cat <<'EOF'\n)\"" + _READ),
+        ("echo \\\"; cat <<EOF\nespalier/cli.py\nEOF" + _READ, "echo \\\"; cat <<EOF" + _READ),
+        ('echo "a\\"b"; cat <<EOF\nespalier/cli.py\nEOF' + _READ, 'echo "a\\"b"; cat <<EOF' + _READ),
+    ], ids=["arith-expansion", "arith-command", "double-quoted", "single-quoted", "comment",
+            "quote-carried", "heredoc", "heredoc-in-command-substitution-in-quotes",
+            "heredoc-after-arith", "tab-stripped", "ansi-c-quote-escapes-its-quote",
+            "subshell-inside-substitution", "escaped-quote", "escaped-quote-in-double-quotes"])
+    def test_a_heredoc_is_an_operator_the_shell_reads_and_nothing_else(self, command, text):
+        """Dies to: a `<<` the shell never reads as a redirection (inside `$((...))` or `((...))`,
+        inside quotes, or in a comment) taken for a heredoc, which strips every later line of the
+        command and with them its reads; or a real heredoc left in, including the one inside a
+        double-quoted `$(...)` (the commit-message shape), whose body would then be read as
+        commands."""
+        assert _CENSUS.strip_heredocs(command) == text
 
     def test_the_lexer_splits_on_the_operators_and_marks_the_pipe(self):
         """Dies to: the pipe's two sides not marked (then a piped read is charged whole), or `&&`
@@ -3025,6 +3081,22 @@ class TestTheCheckoutsOfAClone:
         assert (rows["repo"]["seat"], rows["side.wt"]["seat"], rows["gone.wt"]["seat"]) == ("air", "air", None)
         assert (rows["side.wt"]["gone"], rows["gone.wt"]["gone"]) == (False, True)
         assert rows["side.wt"]["folder"] == re.sub(r"[^A-Za-z0-9]", "-", rows["side.wt"]["path"])
+
+    def test_a_worktree_s_own_name_is_told_from_the_clone_s(self, repo, tmp_path):
+        """Dies to: a linked worktree that inherits the clone's `espalier.machine` read as named
+        in its own right (then a fork's worktree counts as the seat's checkout), a worktree named
+        through `config --worktree` read as inherited, or the main checkout read as inheriting
+        the name it holds."""
+        _git(repo, "config", "espalier.machine", "air")
+        _git(repo, "config", "extensions.worktreeConfig", "true")
+        side, own = tmp_path / "side.wt", tmp_path / "own.wt"
+        _git(repo, "worktree", "add", "-q", "-b", "side", str(side))
+        _git(repo, "worktree", "add", "-q", "-b", "own", str(own))
+        _git(own, "config", "--worktree", "espalier.machine", "air-work")
+        rows = {pathlib.Path(r["path"]).name: r for r in _CENSUS.checkouts(repo)}
+        assert (rows["repo"]["seat"], rows["repo"]["own_name"]) == ("air", True)
+        assert (rows["side.wt"]["seat"], rows["side.wt"]["own_name"]) == ("air", False)
+        assert (rows["own.wt"]["seat"], rows["own.wt"]["own_name"]) == ("air-work", True)
 
     def test_a_worktree_list_git_refuses_is_unread(self, tmp_path, monkeypatch):
         """Dies to: a `git worktree list` that fails read as a clone with no checkouts, which the

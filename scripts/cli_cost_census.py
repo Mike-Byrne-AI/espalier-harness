@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """What ``espalier/cli.py`` costs a maintainer, read at one pinned commit.
 
-The instrument of the cli.py audit (wave 0 of the roadmap
-``task-packs/TP-708-the-cli-is-mapped-before-it-moves.md``). Every section is
+The instrument of the cli.py audit (wave 0 of the roadmap that maps
+the CLI before any of it moves). Every section is
 read at ``--at``, a commit with no default. Every source text comes from git's
 objects at that commit, never from the working tree, and every window is
 anchored to the commit's date, never to the clock. A run without ``--at``
@@ -3492,42 +3492,138 @@ def project_folder(path: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", path.replace("\\", "/"))
 
 
+def _own_name(path: Path, main: bool) -> bool | None:
+    """Whether a checkout's ``espalier.machine`` is its own: the main
+    checkout's always is (the clone's name is its name), and a linked
+    worktree's is only where git reads it from the worktree's own config
+    (``--show-scope`` says ``worktree``). A linked worktree that answers the
+    clone's name through the shared config (a fork's worktree no session was
+    ever started in) is ``False``; a scope git would not tell is ``None``."""
+    if main:
+        return True
+    rc, out, _err = git(path, "config", "--show-scope", "--get", "espalier.machine")
+    if rc != 0 or "\t" not in out:
+        return None
+    return out.split("\t", 1)[0].strip() == "worktree"
+
+
 def checkouts(root: Path) -> list[dict]:
     """Each checkout of this clone (``git worktree list --porcelain -z``), its
-    seat name (``espalier.machine``, the per-worktree one first), its project
-    folder, and ``gone`` where its directory is not there (so no seat can be
-    read for it). A ``git worktree list`` that fails is ``Unread``, never a
-    clone of no checkouts."""
+    seat name (``espalier.machine``, the per-worktree one first), whether that
+    name is its own (``own_name``, from ``_own_name``; the main checkout is
+    the porcelain's first entry), its project folder, and ``gone`` where its
+    directory is not there (so no seat can be read for it). A ``git worktree
+    list`` that fails is ``Unread``, never a clone of no checkouts."""
     rc, out, err = git(root, "worktree", "list", "--porcelain", "-z")
     if rc != 0:
         raise Unread(f"git worktree list failed: {err.strip()[:200]}")
     paths = [line[len("worktree "):].replace("\\", "/") for line in out.split("\0") if line.startswith("worktree ")]
     rows = []
-    for p in paths:
+    for idx, p in enumerate(paths):
         gone = not Path(p).is_dir()
         rc, name, _err = (1, "", "") if gone else git(Path(p), "config", "--get", "espalier.machine")
-        rows.append({"path": p, "seat": name.strip() or None, "folder": project_folder(p), "gone": gone})
+        seat = name.strip() or None
+        own = None if gone or seat is None else _own_name(Path(p), main=idx == 0)
+        rows.append({"path": p, "seat": seat, "own_name": own, "folder": project_folder(p), "gone": gone})
     return rows
+
+
+#: The characters a word starts after: a ``#`` there opens a comment.
+_WORD_BREAKS = frozenset(" \t\n;&|()<>")
+
+
+def _heredoc_tags(line: str, stack: list[list]) -> list[str]:
+    """The tags of the here-documents one line of a command opens, read where
+    the shell reads ``<<`` as a redirection: in a command's own context (the
+    command line, a subshell, or a ``$(`` there or inside double quotes), and
+    never inside quotes, inside ``$((...))`` or ``((...))`` (a shift there),
+    or in a comment (a ``#`` that starts a word in that context). ``stack``
+    holds the contexts open at the line's start and is left holding those
+    open at its end, so a quote or a substitution carries to the next line as
+    the shell's does. Each entry is ``[kind, depth]``: ``cmd`` (the base,
+    never popped), ``sub`` (a ``$(``), ``'``, ``"``, ``$'``, or ``arith``; the
+    depth counts the parentheses open inside it. A ``case`` pattern's ``)``
+    inside a ``$(`` is read as closing it, and a backquote is not a context."""
+    tags: list[str] = []
+    i, n, brk = 0, len(line), True
+    while i < n:
+        top = stack[-1]
+        kind, ch = top[0], line[i]
+        if kind in ('"', "$'") and ch == "\\":
+            i, brk = i + 2, False
+        elif kind in ("'", "$'"):
+            if ch == "'":
+                stack.pop()
+            i, brk = i + 1, False
+        elif kind == "arith":
+            if ch == "(":
+                top[1] += 1
+            elif ch == ")" and top[1]:
+                top[1] -= 1
+            elif ch == ")":
+                stack.pop()
+                i += 1 if line[i + 1:i + 2] == ")" else 0
+            i, brk = i + 1, False
+        elif kind == '"':
+            if ch == '"':
+                stack.pop()
+                i += 1
+            elif line.startswith("$((", i):
+                stack.append(["arith", 0])
+                i += 3
+            elif line.startswith("$(", i):
+                stack.append(["sub", 0])
+                i += 2
+            else:
+                i += 1
+            brk = False
+        elif ch == "\\":                              # cmd or sub from here on
+            i, brk = i + 2, False
+        elif ch == "#" and brk:
+            break
+        elif line.startswith("<<<", i):
+            i, brk = i + 3, False
+        elif line.startswith("<<", i):
+            m = _HEREDOC.match(line, i)
+            if m:
+                tags.append(m.group(2))
+            i, brk = (m.end(), False) if m else (i + 2, True)
+        elif line.startswith("$((", i) or (brk and line.startswith("((", i)):
+            stack.append(["arith", 0])
+            i, brk = i + (3 if ch == "$" else 2), False
+        elif line.startswith("$(", i) or line.startswith("$'", i):
+            stack.append(["sub" if line[i + 1] == "(" else "$'", 0])
+            i, brk = i + 2, line[i + 1] == "("
+        elif ch in "'\"":
+            stack.append([ch, 0])
+            i, brk = i + 1, False
+        elif ch == ")" and not top[1] and kind == "sub":
+            stack.pop()
+            i, brk = i + 1, False
+        else:
+            top[1] += 1 if ch == "(" else -1 if ch == ")" and top[1] else 0
+            i, brk = i + 1, ch in _WORD_BREAKS
+    return tags
 
 
 def strip_heredocs(command: str) -> str:
     """The command with every here-document's body taken out: a path inside
-    one is the text of a message or a script, never a read."""
+    one is the text of a message or a script, never a read. Only a ``<<`` the
+    shell reads as a redirection opens one (``_heredoc_tags``, its contexts
+    carried across the command's lines); a body's own lines are never read
+    for one."""
     out, lines, i = [], command.split("\n"), 0
+    stack: list[list] = [["cmd", 0]]
     while i < len(lines):
         line = lines[i]
         out.append(line)
-        tags = [m.group(2) for m in _HEREDOC.finditer(line)]
+        tags = _heredoc_tags(line, stack)
         i += 1
         for tag in tags:
             while i < len(lines) and lines[i].strip() != tag:
                 i += 1
             i += 1
     return "\n".join(out)
-
-
-#: The characters a word starts after: a ``#`` there opens a comment.
-_WORD_BREAKS = frozenset(" \t\n;&|()<>")
 
 
 def shell_text(command: str) -> str:
@@ -3960,7 +4056,12 @@ def section_transcripts(ctx: dict) -> dict:
     no checkout of a box seat, or a population that holds no record up to the
     pin, is ``Unread``: every lane would read zero. A checkout whose seat
     cannot be read (its directory gone, or no ``espalier.machine``) is named
-    under ``checkouts_without_a_seat``, never dropped in silence."""
+    under ``checkouts_without_a_seat``, never dropped in silence. A linked
+    worktree that answers a box seat only through the clone's shared config
+    (``own_name`` False: a fork's worktree, which no session ran in) and has
+    no transcript folder is named under ``skipped_never_named`` and read as
+    holding none; any other box-seat checkout with no folder is a seat's
+    transcripts gone, and ``Unread``."""
     root, at = ctx["root"], ctx["pin"]["at"]
     until = ctx["pin"]["window"]["until"]
     base = Path(ctx.get("projects_dir") or Path.home() / ".claude" / "projects")
@@ -3968,12 +4069,16 @@ def section_transcripts(ctx: dict) -> dict:
         raise Unread(f"no transcript folder at {base}")
     outs = ctx.get("checkouts") or checkouts(root)
     by_lower = {p.name.lower(): p for p in base.iterdir() if p.is_dir()}
-    folders = [(c, by_lower.get(c["folder"].lower())) for c in outs if c["seat"] in BOX_SEATS]
+    seated = [(c, by_lower.get(c["folder"].lower())) for c in outs if c["seat"] in BOX_SEATS]
+    skipped = [{"path": c["path"], "folder": c["folder"], "seat": c["seat"]} for c, f in seated
+               if f is None and c.get("own_name") is False]
+    folders = [(c, f) for c, f in seated if not (f is None and c.get("own_name") is False)]
     unseated = [{"path": c["path"], "folder": c["folder"], "why": "directory gone" if c.get("gone") else
                  "no espalier.machine"} for c in outs if c["seat"] is None]
     if not folders:
         raise Unread(f"no checkout of this clone is a box seat {list(BOX_SEATS)} "
-                     f"({len(outs)} checkout(s), {len(unseated)} with no seat read)")
+                     f"({len(outs)} checkout(s), {len(unseated)} with no seat read, "
+                     f"{len(skipped)} never named with no transcript folder)")
     missing = [c["folder"] for c, f in folders if f is None]
     if missing:
         raise Unread(f"transcript folder(s) missing: {missing}")
@@ -4061,7 +4166,7 @@ def section_transcripts(ctx: dict) -> dict:
     step = max(1, len(treatment) // 3)
     sample = [t["pr"] for t in treatment[::step][:3]] + [c["pr"] for c in control[:: max(1, len(control) // 2)][:2]]
     return {"seats": list(BOX_SEATS), "of_seats": 4, "population": population,
-            "checkouts_without_a_seat": unseated,
+            "checkouts_without_a_seat": unseated, "skipped_never_named": skipped,
             "cutoff": until, "lanes": len(lanes), "treatment": treatment, "control": control,
             "item3": verdict,
             "beside": {"r_share_of_total": [round(t["r"] / t["total"], 3) if t["total"] else None for t in treatment],
