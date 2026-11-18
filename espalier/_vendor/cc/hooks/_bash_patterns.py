@@ -7640,6 +7640,140 @@ _REDIRECT_VIEW_KEEP = frozenset(";|&\n(){}")
 #: token opening with anything else is passed over without the pair's two
 #: pattern reads.
 _REDIRECT_OPENERS = frozenset("0123456789*&<>")
+#: How far back from the blanks before a quoted word the view looks for the
+#: exec quote that hands it to a shell (`_CMD_POS_EXEC_QUOTE`: `eval`, or a
+#: POSIX shell's `sh -c` with the blanks between the head and its `-c`). The
+#: blanks before the word are walked first, whatever their length, so this
+#: bounds the head alone; a head longer than this leaves the word unread, as
+#: every word was before DEF-5121: the side that changes nothing.
+_EXEC_QUOTE_LOOKBACK = 64
+
+
+def _exec_quoted_program(scan: str, start: int, end: int) -> bool:
+    """Whether the quoted word ``scan[start:end]`` is a program the outer
+    scan reads in place: the word's conditions `_posix_shell_c_programs`
+    names (one quoted span holding no quote, backslash, `$` or backtick, so
+    its quote removal is its inside; the exec quote, `eval` or a shell's
+    bare `-c`, ending right where the word starts; the word not opening on a
+    prefix), read for `eval`'s word as for `sh -c`'s, since
+    `_CMD_POS_EXEC_QUOTE` opens a command position at both. Not that
+    function's whole test: the exec quote's own command position and the
+    quote parity before it are not read here, so a word it passes over can
+    be read as a program on the view, which only adds a match (the view
+    supplements the scan and never lowers a verdict). The cheapest witness
+    first: the word's blanks back to a `-c` or an `eval`, before either
+    pattern runs."""
+    word = scan[start:end]
+    if (len(word) < 2 or word[0] not in "'\"" or word[-1] != word[0]
+            or any(ch in word[1:-1] for ch in "'\"\\$`")):
+        return False
+    j = start
+    while j > 0 and scan[j - 1] in " \t":
+        j -= 1
+    if not (scan.endswith("-c", 0, j) or scan.endswith("eval", 0, j)):
+        return False
+    lo = max(0, j - _EXEC_QUOTE_LOOKBACK)
+    return (_EXEC_QUOTE_AT_WORD_RE.search(scan, lo, start) is not None
+            and _PROGRAM_OPENS_ON_PREFIX_RE.match(word) is None)
+
+
+def _substitution_close(scan: str, at: int, stop: int) -> int:
+    """The offset of the `)` closing the command substitution whose body
+    starts at ``at``, before ``stop``, or -1: parentheses counted, a
+    single-quoted span inside the body passed over whole. -1 as well where
+    the body holds a double quote, a backslash or a backtick, whose reading
+    inside double quotes this walk does not model (the body is then left as
+    the view had it before DEF-5121)."""
+    depth = 1
+    i = at
+    while i < stop:
+        ch = scan[i]
+        if ch in "\"\\`":
+            return -1
+        if ch == "'":
+            close = scan.find("'", i + 1, stop)
+            if close < 0:
+                return -1
+            i = close + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _programs_handed_down(scan: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The offsets of each program the quoted word ``scan[start:end]`` hands
+    down one level (DEF-5121), its quotes and a substitution's `$(` and `)`
+    left out: the word itself, where it is a program the outer scan reads in
+    place (`_exec_quoted_program`: `bash -c '...'`, `eval '...'`); else, for
+    a double-quoted word, the body of each command substitution it holds
+    (`"$(...)"`), which bash parses as a program of its own wherever the
+    word stands. The bodies are read in order up to the first one the close
+    walk cannot read (an arithmetic `$((`, an unclosed body, or one holding
+    a double quote, a backslash or a backtick: `_substitution_close`), which
+    ends the reading of its word, the rest of the word left as the view had
+    it before DEF-5121. The stop is also what keeps the walk linear on one
+    word: a walk that went on to the next opener would re-walk the word from
+    each (the view's own scaling row, `tests/test_redos.py`). A quoted word
+    of any other kind hands nothing down."""
+    if _exec_quoted_program(scan, start, end):
+        return [(start + 1, end - 1)]
+    spans: list[tuple[int, int]] = []
+    if scan[start] == '"':
+        i = scan.find("$(", start, end)
+        while i >= 0:
+            body = i + 2
+            close = -1 if scan.startswith("(", body) else _substitution_close(scan, body, end - 1)
+            if close < 0:
+                break
+            spans.append((body, close))
+            i = scan.find("$(", close + 1, end)
+    return spans
+
+
+def _nested_programs_blanked(scan: str, start: int, end: int, chars: "list[str] | None") -> "list[str] | None":
+    """``chars`` (the view under construction, or None while it is the scan)
+    with the redirects of each program the quoted word ``scan[start:end]``
+    hands down one level (`_programs_handed_down`) blanked, each by the view
+    of that program's own text (`_redirects_blanked`, called by name, so a
+    test that blinds the view blinds this reading too) spliced at its
+    offset, the same length (DEF-5121). A body's own view reads the one
+    further program an exec-quoted word inside it hands down
+    (`"$(bash -c '...')"`); the depth is bounded by the quotes, never by a
+    count, since an exec-quoted program holds no quote and a body read here
+    holds no double quote. A quoted word that hands nothing down is a
+    mention and stays as the scan has it, so a redirect written inside an
+    echoed string is data on the view as on the scan."""
+    for lo, hi in _programs_handed_down(scan, start, end):
+        program = scan[lo:hi]
+        if ">" not in program and "<" not in program:
+            continue
+        view = _redirects_blanked(program, powershell=False)
+        if view is program or view == program:
+            continue
+        if chars is None:
+            chars = list(scan)
+        chars[lo:hi] = view
+    return chars
+
+
+def _here_string_of_a_substitution(scan: str, operator: tuple[int, int], start: int) -> bool:
+    """Whether the bare here-string operator at ``operator`` and the word at
+    ``start`` are a here-string of a command substitution, quoted or bare
+    (`<<< "$(git ls-files)"`): a read loop's feed in the tail-fed loop's
+    other spelling (`done <<< "$(...)"`, `_TAIL_LOOP_REMOVE_RE`), and kept
+    for any command, since its substitution is a program either way. The
+    view keeps it as the scan has it, as it keeps `< <(...)`, so the loop
+    reads on the view: with
+    the here-string blanked whole, a redirect inside its substitution hid the
+    listing on the scan and the feed on the view (DEF-5121)."""
+    return (scan[operator[0]:operator[1]] == "<<<"
+            and (scan.startswith("$(", start) or scan.startswith('"$(', start)))
 
 
 def _redirects_blanked(scan: str, *, powershell: bool) -> str:
@@ -7667,14 +7801,21 @@ def _redirects_blanked(scan: str, *, powershell: bool) -> str:
     The operator is blanked whole, a glued `&` or `|` after its angle run
     included (`2>&1`, `>|o` on the scan that keeps a merge's ampersand);
     its target stops at a statement separator or a group's bracket
-    (`_REDIRECT_VIEW_KEEP`), a quoted target is blanked whole, and on
+    (`_REDIRECT_VIEW_KEEP`), a quoted target is blanked whole (a
+    here-string's substitution apart, below), and on
     PowerShell a word after a backtick-escaped blank is the escaped word's
     own (``a` >x``, DEF-5108's second review). A process substitution
     (`<(git ls-files ...)`, `>(git rm ...)`) is a command, never a
     redirect, and is left whole: `_redirect_words` reads `<(git` as one.
     One that is a bare operator's target is left whole with its operator
     (`done < <(git ls-files)`, the tail-fed loop's feed), so the loop it
-    feeds reads on the view as on the scan. The scan itself comes back, no
+    feeds reads on the view as on the scan, and so is a here-string of a
+    command substitution (`<<< "$(git ls-files)"`,
+    `_here_string_of_a_substitution`). On Bash a quoted word that hands a
+    program down one level (`bash -c '...'`, `eval '...'`, each `$(...)`
+    body of a double-quoted word) has that program's redirects blanked by
+    its own view, spliced at its offset (`_nested_programs_blanked`,
+    DEF-5121); any other quoted word stays whole. The scan itself comes back, no
     copy, when it holds no ``<`` or ``>``: a call with no redirect pays one
     membership test, and one with a
     redirect builds its view once a reading (`_redirects_blanked_built`),
@@ -7699,18 +7840,31 @@ def _redirects_blanked_built(scan: str, powershell: bool) -> str:
         if skip:
             skip -= 1
             at = start
-            if bare is not None and chars is not None and scan[start:start + 2] in ("<(", ">("):
-                # the target is a process substitution: a command the loop
-                # reads from or writes to, so it and its operator stay as
-                # the scan has them (`done < <(git 2>/dev/null ls-files)`
-                # keeps its tail-fed loop on the view)
+            if bare is not None and chars is not None and (
+                    scan[start:start + 2] in ("<(", ">(")
+                    or (not powershell and _here_string_of_a_substitution(scan, bare, start))):
+                # the target is a process substitution, or a here-string of
+                # a command substitution: a command the loop reads from or
+                # writes to, so it and its operator stay as the scan has
+                # them (`done < <(git 2>/dev/null ls-files)` and `done <<<
+                # "$(git ls-files)"` keep their tail-fed loop on the view),
+                # a quoted one with its substitution's redirects blanked
                 for i in range(*bare):
                     chars[i] = scan[i]
                 bare = None
+                if scan[start] == '"' and (">" in m.group() or "<" in m.group()):
+                    chars = _nested_programs_blanked(scan, start, end, chars)
                 continue
             bare = None
         else:
             tok = m.group()
+            if tok[0] in "'\"":
+                # a quoted word: a program one level down, or a mention
+                # (`_nested_programs_blanked`, DEF-5121); either way no
+                # redirect of the outer command
+                if not powershell and (">" in tok or "<" in tok):
+                    chars = _nested_programs_blanked(scan, start, end, chars)
+                continue
             if tok[0] not in _REDIRECT_OPENERS:
                 continue
             if tok[1:2] == "(" and tok[0] in "<>":
@@ -7720,6 +7874,8 @@ def _redirects_blanked_built(scan: str, powershell: bool) -> str:
             words = _redirect_words(tok, powershell=powershell)
             if not words:
                 continue
+            if not powershell and words == 1 and tok.startswith("<<<$("):
+                continue      # a glued here-string of a substitution: the loop's feed (`_here_string_of_a_substitution`)
             skip = words - 1
             if chars is None:
                 chars = list(scan)
@@ -8516,6 +8672,11 @@ def _heredoc_opener_view_built(scan: str, view: str) -> str:
             tok = tok[at:]
             keep_next = _redirect_words(tok) == 2
         else:
+            if tok[0] in "'\"" and "<<" in tok:
+                # a program the word hands down one level, its redirects
+                # blanked on the view by its own view: its heredoc operators
+                # are put back by its own heredoc view (DEF-5121)
+                chars = _nested_heredoc_operators_kept(scan, view, start, end, chars)
             # a bare operator ends on its angle, `&` or `|`: the screen keeps
             # the regex off a body's every word
             target_next = tok[-1] in "<>&|" and _redirect_words(tok) == 2
@@ -8525,6 +8686,28 @@ def _heredoc_opener_view_built(scan: str, view: str) -> str:
                 chars = list(view)
             chars[start:end] = tok
     return view if chars is None else "".join(chars)
+
+
+def _nested_heredoc_operators_kept(scan: str, view: str, start: int, end: int,
+                                   chars: "list[str] | None") -> "list[str] | None":
+    """`_heredoc_opener_view_built`'s reading of the quoted word
+    ``scan[start:end]``: each program it hands down one level
+    (`_programs_handed_down`), whose redirects the view blanked by that
+    program's own view, read by that program's own heredoc view
+    (`_heredoc_opener_view`, called by name) and spliced at its offset, so a
+    heredoc or here-string operator inside it is as the scan has it, as at
+    the top level (DEF-5121's failure-mode review, F1). ``chars`` is the
+    heredoc view under construction, or None while it is ``view``."""
+    for lo, hi in _programs_handed_down(scan, start, end):
+        program = scan[lo:hi]
+        if "<<" not in program:
+            continue
+        kept = _heredoc_opener_view(program)
+        if view[lo:hi] != kept:
+            if chars is None:
+                chars = list(view)
+            chars[lo:hi] = kept
+    return chars
 
 
 def _stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:
@@ -14994,6 +15177,9 @@ def _ps_stdin_program_spans(
 _PS_NEW_ITEM_RE = _first_use(
     _PS_CMD_POS + r"\b(?:New-Item|ni)\b" + _QUOTED_VERB_TAIL, re.IGNORECASE
 )
+# ⚠ The zone leg's link test, the spaced `-ItemType SymbolicLink` alone; the
+# secret leg's reads every link item type by `_PS_LINK_ITEM_TYPES` and
+# `_ps_link_reading` below (DEF-5123), so a fix to one test is not the other's.
 _PS_SYMLINK_ITEMTYPE_RE = _first_use(r"-ItemType\s+SymbolicLink\b", re.IGNORECASE)
 _PS_LINK_LOCATION_RE = _first_use(r"-(?:Path|Name)\s+([^\s;|&]+)", re.IGNORECASE)
 # Positional -Path: the first non-flag token right after New-Item/ni
@@ -15024,6 +15210,69 @@ def powershell_symlink_linknames(command: str) -> list[str]:
     if positional:
         names.append(raw_operand(raw, positional, powershell=True))
     return names
+
+
+#: New-Item's item types that make a link (DEF-5123), as the FileSystem
+#: provider names them. What such an item's value names is where the link
+#: points; any other item type's value is the file's content (driven on
+#: Windows PowerShell 5.1: a `File` whose `-Value` was a dotenv file's name
+#: held that name as its text, and a `HardLink` to a file held the file's).
+_PS_LINK_ITEM_TYPES = frozenset({"symboliclink", "hardlink", "junction"})
+#: New-Item's item-type and value parameters by their full names and the
+#: aliases 5.1 declares for them (`Type`, `Target`; `Get-Command New-Item`).
+_PS_ITEM_TYPE_PARAMETERS = frozenset({"-itemtype", "-type"})
+_PS_LINK_TARGET_PARAMETERS = frozenset({"-value", "-target"})
+
+
+def _ps_link_reading(raw: str, scan: str, m: "re.Match[str]") -> tuple[list[str], int]:
+    """What the `New-Item` (or `ni`) the scan matched at ``m`` links to, and
+    where its argument span ends: the value of its `-Target` or `-Value`,
+    spaced or bound by a colon, where its `-ItemType` or `-Type` names a
+    link item type (`_PS_LINK_ITEM_TYPES`), else no target. The PowerShell
+    twin of the Bash reader's `ln` and `ln -s` target (DEF-5123).
+
+    The arguments run from the head to the statement's end (a `\\n`, `;`,
+    `|` or `&` on the scan, at most 512 characters on, carried through a
+    quote the span opened) or to the close of the block or group the
+    New-Item sits in (`_ps_unmatched_closer`, as the remove arm's span is
+    cut, DEF-3069: read past it, a later statement's File value was taken
+    for this link's target), read from the raw text, each redirect and its
+    target dropped first, so a stream's file is never the value (DEF-5120's
+    R4). The caller skips a head inside a span already read, as `finditer`
+    never overlaps the sibling arms' spans, so a flood of heads is read
+    once, not 512 characters a head.
+
+    The plain spellings only, by the dispatcher's assign (87e5f5, under
+    40ec7f's rule): a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`,
+    `-Va`), an item type cut to one (`-ItemType hard`) and a target bound
+    from the pipeline are declared limits, each of which 5.1 binds
+    (docs/HOOKS.md, the coverage contract)."""
+    start = m.end()
+    limit = min(len(scan), start + 512)
+    stops = [i for i in (scan.find(c, start, limit) for c in "\n;|&") if i >= 0]
+    end = _span_end_through_quotes(raw, start, min(stops, default=limit), powershell=True)
+    close = _ps_unmatched_closer(scan[start:end], certain=False)
+    if close >= 0:
+        end = start + close
+    tokens = _ps_redirect_free(_ps_operand_tokens(raw[start:end]))
+    linked = False
+    targets: list[str] = []
+    for k, tok in enumerate(tokens):
+        if not tok or tok[0] not in _PS_PARAMETER_LEAD_CHARS:
+            continue
+        name = _ps_parameter_name(tok).lower()
+        if name not in _PS_ITEM_TYPE_PARAMETERS and name not in _PS_LINK_TARGET_PARAMETERS:
+            continue
+        # a quoted value bound by a colon is the tokenizer's next token, as
+        # 5.1 binds `-Target: x` (the colon, a blank, the value) too
+        _name, _colon, value = tok.partition(":")
+        if not value:
+            value = tokens[k + 1] if k + 1 < len(tokens) else ""
+        if name in _PS_ITEM_TYPE_PARAMETERS:
+            linked = linked or _ps_operand_text(value).lower() in _PS_LINK_ITEM_TYPES
+        elif value:
+            targets.extend(_ps_list_targets(value))
+    return (targets if linked else []), end
 
 
 def powershell_removal_is_recognized_safe(command: str, raw: str | None = None) -> bool:
@@ -20593,7 +20842,7 @@ def _ps_stage_is_variable(stage: str, name: str) -> bool:
 _PS_CLOSER_ENDS_RE = _first_use(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
 
 
-def _ps_unmatched_closer(span: str) -> int:
+def _ps_unmatched_closer(span: str, *, certain: bool = True) -> int:
     """The offset in ``span`` of the first `)` or `}` that closes a group the
     span did not open, where that closer certainly ends the statement a
     remove's argument span reads, else -1 (DEF-3069): the close of the block
@@ -20613,7 +20862,12 @@ def _ps_unmatched_closer(span: str) -> int:
     quoted run counts nothing, and an unterminated quote or a stop-parsing
     `--%` (after which a closer is literal text) is no cut. One pass over
     the span; the walk that asks it resumes at the cut, so a line of many
-    one-remove blocks reads each block's span once more."""
+    one-remove blocks reads each block's span once more.
+
+    ``certain=False`` cuts at the first such closer whatever follows it:
+    the New-Item link reader's span (`_ps_link_reading`, DEF-5123), whose
+    parameters a word after the group's close never is, so an array's next
+    element (`@(ni ...), (ni ... -Value .env)`) is not read as its own."""
     if "--%" in span:
         return -1
     depth = 0
@@ -20633,6 +20887,8 @@ def _ps_unmatched_closer(span: str) -> int:
             depth += 1
         elif ch in ")}":
             if depth == 0:
+                if not certain:
+                    return i
                 rest = span[i + 1:]
                 ends = _PS_CLOSER_ENDS_RE.match(rest) or (ch == ")" and rest.lstrip(" \t").startswith("+"))
                 return i if ends else -1
@@ -21625,7 +21881,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     `[IO.Directory]::Delete`, the interpreter delete literals), `move`
     (a move verb's source by positional or `-Path`, `Rename-Item`, `git mv`,
     `[IO.File]::Move`'s source, the interpreter rename literals), `archive`
-    (`Compress-Archive`'s input) and `read` (an interpreter literal read).
+    (`Compress-Archive`'s input), `alias` (the target of a `New-Item` link
+    item type, DEF-5123) and `read` (an interpreter literal read).
     Same-line literal bindings inlined first, then scan pair and cap, as the
     write extractor's; a `bash -c` program and a piped PowerShell program
     are read one level down."""
@@ -21723,6 +21980,19 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
             out.append(("move", args[0]))
     for m in _PS_COMPRESS_ARCHIVE_RE.finditer(scan):
         out.extend(("archive", p) for p in named_targets(m))
+    # DEF-5123: a New-Item link item type's target, the twin of the Bash
+    # reader's `ln` and `ln -s` arms, so the secret leg refuses a link to a
+    # dotenv file on this tool as on Bash (the zone leg reads no alias).
+    # Gated on the head's letters, so a call naming no New-Item pays one
+    # lowercase pass; a head inside a span already read is that span's
+    lowered = scan.lower()
+    if "new-item" in lowered or "ni" in lowered:
+        read_to = -1
+        for m in _PS_NEW_ITEM_RE.finditer(scan):
+            if m.start() < read_to:
+                continue
+            targets, read_to = _ps_link_reading(raw, scan, m)
+            out.extend(("alias", p) for p in targets)
     for interp, body in _ps_inline_program_bodies(raw, scan):
         out.extend(_program_effects(interp, body))
     for head, segment in _ps_stdin_program_bodies(raw, scan):
@@ -21763,5 +22033,5 @@ _MUTATION_ARMS: tuple[str, ...] = (
 )
 _SECRET_EFFECT_ARMS: tuple[str, ...] = (
     "_TAR_CREATE_RE", "_ZIP_RE", "_DD_IF_RE", "_LN_S_RE", "_LN_CP_INVOCATION_RE",
-    "_PS_COMPRESS_ARCHIVE_RE",
+    "_PS_COMPRESS_ARCHIVE_RE", "_PS_NEW_ITEM_RE",
 )

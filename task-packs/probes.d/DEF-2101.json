@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2101",
+ "subject": "bench/reachability_differential.py",
+ "cmd": "python3 -c \"import importlib.util as u;s=u.spec_from_file_location('rd','bench/reachability_differential.py');m=u.module_from_spec(s);s.loader.exec_module(m);R=m._RM;q=chr(39);print([m._delete_operands(R+' a < f b'),m._delete_operands(R+' a '+q+';'+q+' b')])\"",
+ "open_value": "[['a'], ['a']]",
+ "why_not": null,
+ "row_sha": "3945d81e457a",
+ "text_sha": "29e04bea8c9d",
+ "verified_2026_11_17": "STILL_OPEN (re-pinned value unchanged on 2026-11-17: text extended: the listing a pipe-fed delete reads from is judged only for relativity (two absolute-start instances accepted in memory at DEF-2099's head), and the PowerShell same-line comment sentence narrowed by DEF-2099's allowlist; the value is unchanged) [changed: text]"
+}

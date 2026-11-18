@@ -25369,6 +25369,42 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             'Compress-Archive -Path "{S}" -DestinationPath out.zip'),
         "secret-ps-dotnet-move": ("PowerShell", "deny", "_PS_DOTNET_FILE_RE", '[IO.File]::Move("{S}", "x")'),
         "secret-ps-git-mv": ("PowerShell", "deny", "_PS_GIT_RM_MV_RE", 'git mv "{S}" x'),
+        # DEF-5123: New-Item's link item types, the twin of the two `ln` rows:
+        # the link's target is an alias, whichever value parameter names it,
+        # and a value a file is made with is its content
+        "secret-ps-symlink-target": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType SymbolicLink -Path link -Target "{S}"'),
+        "secret-ps-symlink-value-bound-by-a-colon": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType SymbolicLink -Path link -Value:"{S}"'),
+        "secret-ps-hardlink-by-the-type-alias": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'ni -Type HardLink link -Target "{S}"'),
+        "secret-ps-junction-target-before-the-type": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -Target "{S}" -Path link -ItemType Junction'),
+        # the colon split read on one token (the failure-mode review: only the
+        # quoted value, two tokens, was pinned), and a link inside a group
+        "secret-ps-hardlink-target-bound-by-a-colon-unquoted": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", "New-Item -ItemType HardLink -Path link -Target:{S}"),
+        "secret-ps-symlink-type-bound-by-a-colon": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType:SymbolicLink -Path link -Target "{S}"'),
+        "secret-ps-hardlink-inside-a-group": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", '(New-Item -ItemType HardLink -Path link -Target "{S}")'),
+        # a link's span ends at the close of its block or group: the next
+        # statement's or element's value is a file's content (both reviews)
+        "secret-ps-control-a-link-s-block-then-a-file-s-value": (
+            "PowerShell", "allow", "a file's value is its content",
+            'if ($a) { New-Item -ItemType Junction -Path x -Target y } else { Add-Content .gitignore -Value "{S}" }'),
+        "secret-ps-control-an-array-s-next-element-is-a-file-s-value": (
+            "PowerShell", "allow", "a file's value is its content",
+            '@(New-Item -ItemType HardLink -Path a -Target notes.txt), (New-Item -Path .gitignore -Value "{S}")'),
+        "secret-bash-nested-pwsh-hardlink": (
+            "Bash", "deny", "nested-program",
+            'powershell -Command "New-Item -ItemType HardLink -Path link -Target {S}"'),
+        "secret-ps-control-link-to-a-plain-file": (
+            "PowerShell", "allow", "not a secret", "New-Item -ItemType HardLink -Path link -Target notes.txt"),
+        "secret-ps-control-a-file-s-value-is-its-content": (
+            "PowerShell", "allow", "a file's value is its content", 'New-Item -ItemType File -Path n.txt -Value "{S}"'),
+        "secret-ps-control-no-item-type-value-is-content": (
+            "PowerShell", "allow", "a file's value is its content", 'New-Item -Path n.txt -Value "{S}"'),
         "secret-ps-python-open-read": (
             "PowerShell", "deny", "_PY_READ_RES", "python -c \"print(open('{S}').read())\""),
         "secret-ps-control-copy": ("PowerShell", "deny", "existing-read-roster", 'Copy-Item "{S}" x'),
@@ -25684,6 +25720,49 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         assert len(still_denied) < len(rows), (
             f"{arm}: every row still denies with the arm blinded -- {rows}"
         )
+
+
+class TestTheNewItemLinkLimits:
+    """DEF-5123's residue: New-Item's link item types are read in their plain
+    spellings (the operand class's `_PS_NEW_ITEM_RE` rows), and the
+    spellings below that Windows PowerShell 5.1 binds are declared limits by
+    the dispatcher's assign (87e5f5, under 40ec7f's rule: no session
+    records them): a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`,
+    `-Va`), an item type cut to a prefix (`hard`), and a target bound from
+    the pipeline. Each made a hard link to a file on 5.1 (driven
+    2026-11-17; `-It` and `-Ty` by the failure-mode review's `-WhatIf`).
+    Through the real hook, each beside its control one step inside, so the
+    day a reader follows one its row reds and docs/HOOKS.md's sentence is
+    rewritten on purpose."""
+
+    _LIMITS = {
+        "the-item-type-parameter-cut-to-a-prefix": (
+            "New-Item -It HardLink -Path link -Target .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "the-type-alias-cut-to-a-prefix": (
+            "New-Item -Ty HardLink -Path link -Target .env",
+            "New-Item -Type HardLink -Path link -Target .env"),
+        "a-target-cut-to-a-prefix": (
+            "New-Item -ItemType HardLink -Path link -Ta .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "a-value-cut-to-a-prefix": (
+            "New-Item -ItemType HardLink -Path link -Va .env",
+            "New-Item -ItemType HardLink -Path link -Value .env"),
+        "an-item-type-cut-to-a-prefix": (
+            "New-Item -ItemType hard -Path link -Target .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "a-target-from-the-pipeline": (
+            "'.env' | New-Item -ItemType HardLink -Path link",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+    }
+
+    @pytest.mark.parametrize("key", list(_LIMITS))
+    def test_the_declared_link_limits_are_pinned_as_allows(self, key, tmp_path):
+        assert_hook_allowed(_run_ps_guard(self._LIMITS[key][0], tmp_path))
+
+    @pytest.mark.parametrize("key", list(_LIMITS))
+    def test_each_link_limit_s_control_one_step_inside_is_denied(self, key, tmp_path):
+        assert_hook_denied(_run_ps_guard(self._LIMITS[key][1], tmp_path), contains_reason=".env")
 
 
 
@@ -27401,3 +27480,164 @@ class TestARedirectAmongTheOperandsKeepsTheHardVerdict:
                 f"{name}: the reading reads argument {at} ({params[at]}), not the command: {fix}")
             expected = None if params[0] == "tool_name" else "PowerShell" if "powershell" in name else "Bash"
             assert tool == expected, f"{name}: the reading names {tool!r} where the leg is {expected!r}: {fix}"
+
+
+class TestARedirectInsideAHandedDownProgramKeepsTheVerdict:
+    """DEF-5121: the redirect view (`_bash_patterns._redirects_blanked`) read
+    a quoted word as one token, so an error stream's redirect inside a
+    program the command hands down one level -- a `bash -c '...'` or `eval
+    '...'` word the outer scan reads in place, the body of a double-quoted
+    command substitution -- was never blanked, on the view or on the hard
+    checks' entry reading built on it (DEF-5122). The listing behind it lost
+    its place: the tracked-tree wall met the `bash -c` and `eval` spellings
+    with an allow or the speed bump where the redirect-free spelling walled,
+    and the here-string feed of a read loop was blanked whole, so the loop
+    readers never saw its listing. The view now reads each such program by
+    its own view, spliced at its offset, and keeps a here-string of a
+    substitution as the loop's feed, as it keeps `< <(...)`. A quoted word of
+    any other kind is a mention and stays data. One level only: a chain past
+    it is a declared limit under the coverage contract (air's 40ec7f, f74485)."""
+
+    #: key -> (spelling, its redirect-free control): each spelling gets its
+    #: control's refusal, the reason included, so the wall is never met with
+    #: the speed bump instead
+    _ROWS = {
+        "bash-c-single-quoted": (
+            "bash -c 'git 2>/dev/null ls-files | xargs rm -f'", "bash -c 'git ls-files | xargs rm -f'"),
+        "bash-c-double-quoted": (
+            'bash -c "git 2>/dev/null ls-files | xargs rm -f"', 'bash -c "git ls-files | xargs rm -f"'),
+        "bash-c-merge": (
+            "bash -c 'git 2>&1 ls-files | xargs rm -f'", "bash -c 'git ls-files | xargs rm -f'"),
+        "eval": (
+            "eval 'git 2>/dev/null ls-files | xargs rm -f'", "eval 'git ls-files | xargs rm -f'"),
+        "here-string-quoted": (
+            'while read f; do rm -f "$f"; done <<< "$(git 2>/dev/null ls-files)"',
+            'while read f; do rm -f "$f"; done <<< "$(git ls-files)"'),
+        "here-string-bare": (
+            'while read f; do rm -f "$f"; done <<< $(git 2>/dev/null ls-files)',
+            'while read f; do rm -f "$f"; done <<< $(git ls-files)'),
+        "here-string-glued": (
+            'while read f; do rm -f "$f"; done <<<$(git 2>/dev/null ls-files)',
+            'while read f; do rm -f "$f"; done <<<$(git ls-files)'),
+    }
+
+    #: key -> (spelling, its redirect-free control): mentions, and a quoted
+    #: substitution that is one word, each allowed as its control is
+    _MENTION_ROWS = {
+        "echoed-double-quoted": (
+            'echo "git 2>/dev/null ls-files | xargs rm -f"', 'echo "git ls-files | xargs rm -f"'),
+        "echoed-single-quoted": (
+            "echo 'git 2>/dev/null ls-files | xargs rm -f'", "echo 'git ls-files | xargs rm -f'"),
+        "for-over-one-quoted-word": (
+            'for f in "$(git 2>/dev/null ls-files)"; do rm -f "$f"; done',
+            'for f in "$(git ls-files)"; do rm -f "$f"; done'),
+    }
+
+    @staticmethod
+    def _verdict(command: str, tmp_path: Path) -> tuple[str, str]:
+        out = run_guard_tool("Bash", {"command": command}, tmp_path).stdout or ""
+        if not out.strip():
+            return ("allow", "")
+        decided = json.loads(out).get("hookSpecificOutput", {})
+        return (decided.get("permissionDecision", "allow"), decided.get("permissionDecisionReason", ""))
+
+    @pytest.mark.parametrize("key", list(_ROWS))
+    def test_each_spelling_meets_its_controls_refusal(self, key, tmp_path, monkeypatch):
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        spelling, control = self._ROWS[key]
+        expected = self._verdict(control, tmp_path)
+        assert expected[0] == "deny", f"{key}: the control itself"
+        assert self._verdict(spelling, tmp_path) == expected, f"{key}: not the control's refusal"
+
+    @pytest.mark.parametrize("key", list(_MENTION_ROWS))
+    def test_a_mention_keeps_its_controls_allow(self, key, tmp_path, monkeypatch):
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        spelling, control = self._MENTION_ROWS[key]
+        assert self._verdict(control, tmp_path) == ("allow", ""), f"{key}: the control itself"
+        assert self._verdict(spelling, tmp_path) == ("allow", ""), f"{key}: a false deny"
+
+    @pytest.mark.parametrize("scan, expected", [
+        ("bash -c 'a 2>b c'", "bash -c 'a     c'"),
+        ('sh -c "a 2> b c"', 'sh -c "a      c"'),
+        ("eval 'a 2>&1 c'", "eval 'a      c'"),
+        # the blanks before the word are walked whatever their length
+        ("bash -c" + " " * 70 + "'a 2>b c'", "bash -c" + " " * 70 + "'a     c'"),
+        ('x "$(a 2>b c)" d', 'x "$(a     c)" d'),
+        ('x "y $(a 2>b c) $(d 2>e)"', 'x "y $(a     c) $(d    )"'),
+        # a parenthesis in a single-quoted span of the body is text
+        ('x "$(a \')\' 2>b c)"', 'x "$(a \')\'     c)"'),
+        # a body's own view reads the exec-quoted word inside it
+        ('x "$(bash -c \'a 2>b c\')"', 'x "$(bash -c \'a     c\')"'),
+        ('cat <<< "$(a 2>b c)"', 'cat <<< "$(a     c)"'),
+        ("cat <<< $(a 2>b c)", "cat <<< $(a     c)"),
+        ("cat <<<$(a 2>b c)", "cat <<<$(a     c)"),
+        # a here-string of plain text is no feed: blanked whole, as before
+        ('cat <<< "a 2>b c"', "cat" + " " * 14),
+    ])
+    def test_the_view_reads_the_program_one_level_down(self, scan, expected):
+        view = _bash_patterns_module()._redirects_blanked(scan, powershell=False)
+        assert view == expected and len(view) == len(scan)
+
+    @pytest.mark.parametrize("scan", [
+        'echo "a 2>b c"',
+        "echo 'a 2>b c'",
+        # a substitution in single quotes is text
+        "echo '$(a 2>b c)'",
+        # a `-c` word the outer scan does not read in place is read one level
+        # down by the reader that judges it, with its own view
+        "bash -c 'a 2>b $x'",
+        "bash -lc 'a 2>b c'",
+        "bash -c 'sudo a 2>b c'",
+        # arithmetic holds no program
+        'x "$((a >b))"',
+        # a body the close walk cannot read ends its word's reading: the stop
+        # that keeps the walk linear on one word (`_programs_handed_down`)
+        'x "$((a >b)) $(c 2>d)"',
+        # a body holding a backslash or a backtick is left as before
+        'x "$(a \\x 2>b c)"',
+        'x "$(a `b` 2>c)"',
+        # a head past the lookback leaves the word unread, as before
+        "sh" + " " * 70 + "-c 'a 2>b c'",
+    ])
+    def test_a_quoted_word_that_hands_nothing_down_stays_whole(self, scan):
+        assert _bash_patterns_module()._redirects_blanked(scan, powershell=False) == scan
+
+    def test_powershell_reads_no_bash_program_one_level_down(self):
+        scan = "bash -c 'a 2>b c'"
+        assert _bash_patterns_module()._redirects_blanked(scan, powershell=True) == scan
+
+    def test_a_blind_of_the_view_blinds_the_reading_one_level_down(self, monkeypatch):
+        """The nested reading calls the view by its module name, so a test
+        that blinds `_redirects_blanked` (R4's remedy-helper rows) blinds the
+        reading one level down as well, and a reader that misses the view
+        there reds with it. The builder is called unmemoised."""
+        b = _bash_patterns_module()
+        build = b._redirects_blanked_built.__wrapped__
+        scan = "bash -c 'a 2>b c'"
+        assert build(scan, False) == "bash -c 'a     c'"
+        monkeypatch.setattr(b, "_redirects_blanked", lambda text, *, powershell: text)
+        assert build(scan, False) == scan
+
+    @pytest.mark.parametrize("scan, expected", [
+        ("bash -c 'a - 2>b <<c'", "bash -c 'a -     <<c'"),
+        ('x "$(a - 2>b <<c)"', 'x "$(a -     <<c)"'),
+    ])
+    def test_the_heredoc_view_keeps_the_operator_one_level_down(self, scan, expected):
+        """`_heredoc_opener_view` promises each heredoc and here-string
+        operator as the scan has it. With the view blanking redirects one
+        level down, the operator inside a handed-down program is put back by
+        that program's own heredoc view, as at the top level (the
+        failure-mode review's F1: the builder read the quoted word whole and
+        left the operator blanked there)."""
+        assert _bash_patterns_module()._heredoc_opener_view(scan) == expected
+
+    def test_the_entry_reading_blanks_the_redirect_one_level_down(self):
+        command = "bash -c 'git 2>/dev/null ls-files | xargs rm -f'"
+        free = _bash_patterns_module().stderr_redirect_free_command(command, powershell=False)
+        assert free == "bash -c 'git             ls-files | xargs rm -f'"
+
+    def test_the_loop_readers_read_the_here_string_feed(self):
+        b = _bash_patterns_module()
+        command = 'while read f; do rm -f "$f"; done <<< "$(git 2>/dev/null ls-files)"'
+        assert list(b.iter_unnarrowed_loop_remove_roots(command, wipes_only=True)) == [["."]]
+        assert ("delete", ".") in b.iter_removed_or_relocated_operands(command)
