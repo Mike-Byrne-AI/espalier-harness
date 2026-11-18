@@ -1057,6 +1057,133 @@ census at P]:
 The census prints, for each of the 43 names, the commands that reach it and its concern
 (`names.per_name`).
 
+### Task 6: the ledger triage at P
+
+**The population** [verified, `python3 scripts/cli_cost_census.py --at 3330a5a --json ledger_rows`,
+whose `rule` field states the tokenizer]: tier 2 holds 30 rows and tier 3 holds 6, so 36 rows.
+The triage below lists the same 36 ids, checked equal to the census's. Beside them are the 2 rows
+that count only under the authoring's rule, which counts a path mention (`DEF-346c`, `DEF-883`).
+`DEF-985` was tier 2 at `17d83e0` and is struck at P (#715). Tier 1 reads 23, or 22 if a dotfile
+counts as a first path (`DEF-623`).
+
+**How each column is read:**
+- *Layer and concern* [mechanical]: the census's units for the row's cited `espalier/cli.py::X`
+  symbols. `none` means a symbol in no layer (reached only from `::main` or `::build_parser`).
+  `—` means the row cites no symbol.
+- *Class* [hand]: judged against a **module move**, meaning bodies copied verbatim, with the
+  row's tests and citations re-pointed in the move's lane by wave 1's tools. Under the
+  operator's definitions:
+  - `before`: the move would change or bury the code the fix edits;
+  - `in`: the fix is what the move's lane itself rewrites;
+  - `independent`: neither.
+
+  A verbatim move changes no body, so **under this rule `before` is empty by construction**, and
+  the column separates `DEF-4123` from the rest and nothing else. Two other columns do separate
+  rows:
+  - *If decomposed* [hand]: the class if the unit's large functions are rewritten from the
+    inside, as the accretion read's cuts would rewrite them.
+  - *Probe reads cli.py by path* [mechanical, the census's `probes` section, `by` holding
+    `path`]: once the cited symbol moves, the probe prints a new value while the defect stands,
+    and the row is offered as a false strike.
+
+  Counting those 8 rows as `before` makes the probe flip a class. Task 3 already prices the
+  flips as a move cost, so the class column leaves them out rather than count them twice [hand].
+  Both readings are printed, and which one grades the rows is the operator's choice.
+- *Held at P* [mechanical]: a live claim or live dispatcher job whose `re.ids` names the row. It is
+  folded by `tools/cc/mail.py`'s own `live_claims` and `live_assignments` over every mail ref, cut
+  at P's commit time, with the dispatcher read from `espalier.toml`.
+
+| Row | Tier | Layer | Concern | Class (module move) | If decomposed | Probe reads cli.py by path | Held at P |
+|---|---|---|---|---|---|---|---|
+| `DEF-400b` | 2 | commands | refresh-self-host-pin | independent | independent | yes |  |
+| `DEF-623` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-736` | 2 | deploy | init-upgrade-deploy | independent | independent | yes |  |
+| `DEF-835` | 2 | none | entry | independent | independent |  |  |
+| `DEF-875` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-930` | 2 | commands | init-upgrade-deploy | independent | before | yes |  |
+| `DEF-932` | 2 | commands | init-upgrade-deploy | independent | before | yes |  |
+| `DEF-943` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-945` | 2 | commands | init-upgrade-deploy | independent | independent | yes |  |
+| `DEF-947` | 2 | commands, interpreter core | init-upgrade-deploy, shared by 11 | independent | in |  |  |
+| `DEF-996` | 2 | commands, deploy, none, settings | init-upgrade-deploy, entry | independent | independent |  |  |
+| `DEF-1001` | 2 | commands, deploy, settings | init-upgrade-deploy | independent | before |  |  |
+| `DEF-1005` | 2 | commands, none | init-upgrade-deploy, entry | independent | independent | yes |  |
+| `DEF-1006` | 2 | none | entry | independent | independent |  |  |
+| `DEF-1021` | 2 | commands, deploy | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1028` | 2 | deploy | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1057` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1077` | 2 | deploy | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1079` | 2 | commands | init-upgrade-deploy | independent | independent | yes |  |
+| `DEF-1085` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1086` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1088` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1093` | 2 | deploy | init-upgrade-deploy | independent | before |  |  |
+| `DEF-1094` | 2 | commands | shared: release (3 commands) | independent | independent |  |  |
+| `DEF-2095` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-3096` | 2 | — | — | independent | independent | yes, and a bare file cite |  |
+| `DEF-4123` | 2 | — | — | in | in |  |  |
+| `DEF-5089` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-5099` | 2 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-5113` | 2 | commands, settings | init-upgrade-deploy | independent | before |  |  |
+| `DEF-877` | 3 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-900` | 3 | deploy | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-1089` | 3 | deploy | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-3065` | 3 | none | entry | independent | independent |  |  |
+| `DEF-5095` | 3 | commands | init-upgrade-deploy | independent | independent |  |  |
+| `DEF-5118` | 3 | settings | init-upgrade-deploy | independent | independent |  | claim `631616` |
+| `DEF-346c` (authoring rule only) | 3 | — | — | independent | independent |  |  |
+| `DEF-883` (authoring rule only) | 3 | — | — | independent | independent |  |  |
+
+**The counts, over the census's 36:**
+- *Class, module move:* `in` 1 (`DEF-4123`, whose fix is the moves) and `independent` 35.
+- *If decomposed:* `before` 5 (`DEF-930`, `DEF-932`, `DEF-1001`, `DEF-1093`, `DEF-5113`), `in` 2
+  (`DEF-4123`, `DEF-947`) and `independent` 29.
+- *Probe by path:* 8 rows.
+- *Layer:* commands 24, deploy 9, settings 4, interpreter core 1, none 5 and no symbol 2. A row
+  citing several layers counts in each.
+- *Concern:* 29 of the 36 sit in init-upgrade-deploy, the concern that holds 61% of the file
+  (Task 2).
+- *Held:* 1 (`DEF-5118`).
+
+So the rows a split would meet are concentrated in the last unit a bottom-up order moves, the
+commands layer of that concern.
+
+**A second, blind read** [hand]: a reader in its own context was given the rows' text and their
+placements, but not the first read's classes. It agreed on 33 of the 38. On `DEF-1001` the first
+read's rule was at fault: it counted a fix that spans units as `before`, a rule it did not apply
+to `DEF-5113`, which crosses the same line. The class was taken from the second read and the
+rule corrected. The 4 rows still differing (`DEF-930`, `DEF-932`, `DEF-1005`, `DEF-3096`) differ
+by rule, not by reading: the second read let a path-reading probe decide the class, and it did
+so for 4 of the 8 such rows. 10 rows are marked unsure in the triage's own record: `DEF-930`,
+`DEF-932`, `DEF-947`, `DEF-996`, `DEF-1001`, `DEF-1005`, `DEF-1093`, `DEF-3096`, `DEF-5113` and
+`DEF-5118`.
+
+**What the triage adds to a move's cost:**
+- **False strike offers** [verified on the probe files at P]. The 8 path-reading probes are listed
+  in Task 3. One the first read missed: `DEF-736`'s probe AST-reads `espalier/cli.py` for the
+  `differs from packaged` literal. Once `::deploy_harness`'s narrator leaves cli.py, the probe
+  prints False while the defect stands.
+- **Citations the re-key tool's four spellings do not match** (Task 3):
+  - `DEF-3096`'s site cell cites the bare file with no `::X`;
+  - `DEF-835` anchors `::main` at a line number, which drifts as units leave even though `main`
+    stays;
+  - 7 rows cite with a shorthand `::X` after a first full cite (`DEF-4123`, `DEF-736`, `DEF-930`,
+    `DEF-945`, `DEF-947`, `DEF-996`, `DEF-5113`).
+
+  The shorthand is a fifth spelling for wave 1's tool, unmeasured beyond these rows.
+- **Rows to schedule as one:**
+  - `DEF-2095` and `DEF-5089`, entirely before or entirely after the commands unit moves.
+    `DEF-2095`'s row says "the lane that takes DEF-5089 takes this" [verified].
+  - `DEF-930` and `DEF-5113` probably share one fix. In both, `::cmd_init` writes
+    `reports/harness_config.json` before `::deploy_harness` has decided what it did. Neither row
+    says so [probable].
+- **The held row:** `DEF-5118`'s lane is built and parked under claim `631616`, which names
+  cli.py. A settings-unit move landing first would make that diff re-derive onto moved lines: a
+  sequencing cost, not a class.
+
+The triage ran in a scratch directory. Its per-row record (reasons, unsure notes, the second
+read's verdicts) is not in this lane (Files touched), so a re-run rebuilds it from the rules above.
+
 ### The authoring figures that do not reproduce, in one place
 
 For the Gate A call to link one list (the dispatcher's ack `20261118T042249Z-air-0b1f6b`). Each
