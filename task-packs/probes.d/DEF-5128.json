@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5128",
+ "subject": "scripts/handoff_mechanics.py",
+ "cmd": "python -c \"import sys; sys.path[:0] = ['scripts']; import handoff_mechanics as h; print(len(h.compose_commit_message('x' * 80, [], 'T').splitlines()[0]) > 72)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "9bfd3a089a59",
+ "text_sha": "ada2315d33cc",
+ "verified_2026_11_18": "OPEN (filed 2026-11-18; probe driven at filing here and in the export of HEAD 2264af699ef1)"
+}

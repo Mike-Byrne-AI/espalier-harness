@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5129",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the drift is between two prose texts, read by hand (TP-708a Task 2); a mechanical probe needs the one owner the fix makes",
+ "row_sha": "06f9c042a119",
+ "text_sha": "46c714b5ef70",
+ "verified_2026_11_18": "OPEN (filed 2026-11-18; probe driven at filing)"
+}
