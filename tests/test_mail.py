@@ -1003,9 +1003,11 @@ class TestTheNameReadersSayAFailedRead:
         refusal = mail.assign_refusal(tmp_path, "air", run=self._git_at({}, {})) or ""
         assert "could not be read" in refusal and "fix it first" in refusal, refusal
 
-    def _naming(self, tmp_path, *, clone, sibling=(1, "", ""), back=(0, "air-wt\n", "")):
+    def _naming(self, tmp_path, *, clone, sibling=(1, "", ""), back=(0, "air-wt\n", ""), listing=None):
         """The git name_this_worktree meets in .claude-style worktree `wt` of a
-        clone `air` with one other worktree `other`, extension on."""
+        clone `air` with one other worktree `other`, extension on. ``sibling``
+        answers the name `other` writes under (``mail.checkout_names`` reads
+        it at the effective scope, as the writer does, DEF-3098)."""
         wt, other = tmp_path / "wt", tmp_path / "other"
         wt.mkdir()
         other.mkdir()
@@ -1019,10 +1021,11 @@ class TestTheNameReadersSayAFailedRead:
             ("rev-parse", "--show-toplevel"): (0, f"{wt}\n", ""),
             ("config", "--get", "core.worktree"): (1, "", ""),
             ("config", "--get", "core.bare"): (0, "false\n", ""),
-            ("worktree", "list", "--porcelain"): (0, f"worktree {wt}\nworktree {other}\n", ""),
+            ("worktree", "list", "--porcelain"): listing or (0, f"worktree {wt}\nworktree {other}\n", ""),
             ("config", "--worktree", "espalier.machine", "air-wt"): (0, "", ""),
         }
-        run = self._git_at({str(wt): {own: [(1, "", ""), back]}, str(other): {own: sibling}}, default)
+        run = self._git_at({str(wt): {own: [(1, "", ""), back]},
+                            str(other): {("config", "--get", "espalier.machine"): sibling}}, default)
         return wt, run
 
     def test_name_this_worktree_says_a_failed_clone_read(self, mail, tmp_path):
@@ -1046,6 +1049,39 @@ class TestTheNameReadersSayAFailedRead:
             wt, run = self._naming(sub, clone=(0, "air\n", ""), sibling=failed)
             name, said = mail.name_this_worktree(wt, run=run)
             assert name is None and "could not be told" in said and mail.MACHINE_UNREAD in said, said
+
+    def test_name_this_worktree_refuses_when_the_checkouts_cannot_be_listed(self, mail, tmp_path):
+        """Dies to: a listing git could not give read as no siblings, which
+        named the worktree past a twin unseen (DEF-3098's lane: the loop read
+        nothing on a failed listing)."""
+        for failed in ((128, "", "fatal: bad object"), mail.Unresolvable("git took longer than 10s")):
+            sub = tmp_path / type(failed).__name__
+            sub.mkdir()
+            wt, run = self._naming(sub, clone=(0, "air\n", ""), listing=failed)
+            name, said = mail.name_this_worktree(wt, run=run)
+            assert name is None and "could not be told" in said and mail.LISTING_UNREAD in said, said
+
+    def test_name_this_worktree_asks_no_sibling_past_its_first_answer(self, mail, tmp_path):
+        """Inside SessionStart's 13 s wall each sibling's read is a bounded git
+        call, so the naming stops at the first sibling that answers it, one
+        unread or one holding the name, and a sibling listed after it is never
+        asked. Dies to: every sibling read before any is compared (k hung
+        siblings cost k timeouts; DEF-3098's review)."""
+        for label, sibling in (("unread", (128, "", "fatal: bad config line 3")), ("taken", (0, "air-wt\n", ""))):
+            sub = tmp_path / label
+            sub.mkdir()
+            third = sub / "third"
+            third.mkdir()
+            listing = (0, f"worktree {sub / 'wt'}\nworktree {sub / 'other'}\nworktree {third}\n", "")
+            wt, run = self._naming(sub, clone=(0, "air\n", ""), sibling=sibling, listing=listing)
+            asked: list[str] = []
+
+            def recording(argv, cwd=None, run=run, asked=asked, **kw):
+                asked.append(str(cwd))
+                return run(argv, cwd=cwd, **kw)
+            name, said = mail.name_this_worktree(wt, run=recording)
+            assert name is None and "other" in said, (label, said)
+            assert str(third) not in asked, (label, asked)
 
     def test_a_failed_read_back_is_named_as_one(self, mail, tmp_path):
         """Dies to a read-back that failed reported as a name that did not read
@@ -1085,6 +1121,17 @@ class TestNamingSteps:
     def test_a_plain_clone_gets_the_two_commands(self, mail, tmp_path):
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
         assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
+
+    def test_a_reader_in_another_checkout_gets_one_command_a_line(self, mail, tmp_path):
+        """The board's form: two quoted ``git -C`` commands, one a line, each of
+        which runs alone (DEF-3098). Dies to: the pair chained with ``&&``,
+        which Windows PowerShell 5.1 does not parse, so the board's remedy
+        failed where it was pasted."""
+        at = "C:/x y/wt"
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}), at=at)
+        assert steps.split("\n") == [f'git -C "{at}" config extensions.worktreeConfig true',
+                                     f'git -C "{at}" config --worktree espalier.machine <name>'], steps
+        assert "&&" not in steps, steps
 
     def test_a_bare_clone_gets_one_change_at_its_path_then_a_fresh_session(self, mail, tmp_path):
         """Dies to: a second change, a command, the path not computed (the
@@ -2675,6 +2722,89 @@ class TestNameThisWorktree:
         long = mail.worktree_seat_name("win", "a-very-long-worktree-name-from-a-branch-slug")
         assert long and len(long) <= 32 and mail._MACHINE_RE.match(long) and not long.endswith("-")
         assert mail.worktree_seat_name("win", "___") is None
+
+
+class TestCheckoutNames:
+    """``mail.checkout_names``, the one reader of which checkouts answer a
+    seat name (DEF-3098): every checkout git lists, each by the name it
+    writes under, which is the read ``send`` makes in it. Driven on real git,
+    since git's config scoping is the thing under test."""
+
+    _git = TestNameThisWorktree._git
+    _clone = TestNameThisWorktree._clone
+
+    def _by_folder(self, mail, repo):
+        return {Path(r["path"]).name: r for r in mail.checkout_names(repo)}
+
+    def test_every_listed_worktree_is_read_by_the_name_it_writes_under(self, mail, tmp_path):
+        """A worktree outside ``.claude/worktrees/`` is read like one inside,
+        one with no name of its own answers its clone's, and each row's name
+        is the one ``machine_setting`` reads there, the writer's read. Dies to:
+        the population taken from the folder (the outside twin unseen, air's
+        cf1b9f), or a worktree's name read at the clone's ``--local`` scope
+        (every named worktree read as the clone)."""
+        repo = self._clone(tmp_path)
+        inside = repo / ".claude" / "worktrees" / "a"
+        outside, nameless = tmp_path / "outside", tmp_path / "nameless"
+        for wt in (inside, outside, nameless):
+            self._git("worktree", "add", "-q", "--detach", str(wt), cwd=repo)
+        self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
+        for wt in (inside, outside):
+            self._git("config", "--worktree", "espalier.machine", "win-x", cwd=wt)
+        rows = mail.checkout_names(repo)
+        assert Path(rows[0]["path"]).name == "repo" and rows[0]["main"], rows
+        assert {Path(r["path"]).name: (r["main"], r["name"], r["unread"]) for r in rows} == {
+            "repo": (True, "win", ""), "a": (False, "win-x", ""), "outside": (False, "win-x", ""),
+            "nameless": (False, "win", "")}, rows
+        for row in rows:
+            assert row["name"] == (mail.machine_setting(Path(row["path"]))[0] or ""), row
+
+    def test_the_main_checkout_answers_its_own_worktree_name(self, mail, tmp_path):
+        """A main checkout given a ``--worktree`` name writes under it, not
+        under its clone's shared name (DEF-3098's second seam). Dies to: the
+        main checkout read by ``clone_machine`` (``--local``)."""
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", "--detach", str(tmp_path / "wt"), cwd=repo)
+        self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
+        self._git("config", "--worktree", "espalier.machine", "win-main", cwd=repo)
+        rows = self._by_folder(mail, repo)
+        assert rows["repo"]["name"] == "win-main" and mail.clone_machine(repo)[0] == "win", rows
+        assert rows["wt"]["name"] == "win", "a nameless worktree reads its clone's shared name, never main's own"
+
+    def test_a_gone_folder_is_listed_with_no_name_read(self, mail, tmp_path):
+        import shutil
+        repo = self._clone(tmp_path)
+        self._git("worktree", "add", "-q", "--detach", str(tmp_path / "gone"), cwd=repo)
+        shutil.rmtree(tmp_path / "gone")
+        row = self._by_folder(mail, repo)["gone"]
+        assert row["gone"] and row["name"] == "" and row["unread"] == "", row
+
+    def test_a_failed_name_read_is_unread_never_no_name(self, mail, tmp_path):
+        """Dies to: a read git could not answer taken for a checkout that
+        answers no name, which a caller would read as no twin."""
+        other = tmp_path / "other"
+        other.mkdir()
+        listing = f"worktree {tmp_path}\nHEAD {'1' * 40}\nbranch refs/heads/main\n\nworktree {other}\ndetached\n"
+
+        def run(argv, cwd=None, **kw):
+            if argv[1:3] == ["worktree", "list"]:
+                return 0, listing, ""
+            if cwd == str(other):
+                return 128, "", "fatal: bad config line 3"
+            return 0, "win\n", ""
+        rows = mail.checkout_names(tmp_path, run=run)
+        assert [(r["name"], r["branch"], r["detached"]) for r in rows] == [("win", "main", False), ("", "", True)]
+        assert rows[1]["unread"].startswith(mail.MACHINE_UNREAD) and "bad config line 3" in rows[1]["unread"], rows
+
+    def test_a_listing_git_cannot_give_is_raised_by_name(self, mail, tmp_path):
+        for answer in ((128, "", "fatal: not a git repository"), mail.Unresolvable("git took longer than 10s")):
+            def run(argv, answer=answer, **kw):
+                if isinstance(answer, BaseException):
+                    raise answer
+                return answer
+            with pytest.raises(mail.Unresolvable) as caught:
+                mail.checkout_names(tmp_path, run=run)
+            assert str(caught.value).startswith(mail.LISTING_UNREAD), caught.value
 
 
 class TestCursor:

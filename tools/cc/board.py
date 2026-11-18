@@ -1168,9 +1168,10 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
     registry (``checkout_sync.live_sessions``: an entry whose process is
     alive), each counted for the DEEPEST checkout that holds its cwd, since a
     worktree sits inside the main checkout's folder. A checkout's seat is the
-    name it answers (``mail.machine_setting`` run in it, the name its mail
-    ref is written under: a worktree named by hand, or one still answering
-    its clone's name, reads as what it is); '' where it answers none (a name
+    name it answers (``mail.checkout_names``, the one reader, which runs
+    ``mail.machine_setting`` in it: the name its mail ref is written under,
+    so a worktree named by hand, or one still answering its clone's name,
+    reads as what it is); '' where it answers none (a name
     the channel refuses turns it off there), with ``name_unread`` saying why
     where git could not be asked at all; and ``<clone>-<directory>``
     (SessionStart's naming) only for a listed worktree whose folder is gone,
@@ -1187,10 +1188,6 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
         import checkout_sync   # lazily: a fixture that copies the board without it costs this read only
     except ImportError as exc:
         return {"checkouts": [], "unread": f"checkout_sync.py could not be loaded beside the board ({exc})"}
-    rc, listing, err = run_(["git", "worktree", "list", "--porcelain"], cwd=str(root), timeout=GH_TIMEOUT,
-                            env=_git_env())
-    if rc != 0:
-        return {"checkouts": [], "unread": f"git could not list this clone's checkouts: {err.strip()[:160]}"}
     sessions = checkout_sync.live_sessions(config_dir)
     if sessions is None:
         return {"checkouts": [], "unread": "Claude Code's session registry could not be read in full"}
@@ -1210,24 +1207,29 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
     if clone_how.startswith(mail.MACHINE_UNREAD):
         return {"checkouts": [], "unread": f"this clone's own machine name could not be read ({clone_how})"}
     clone = named_clone or ""
+    try:
+        # The one reader of which checkouts answer a seat name (DEF-3098): the
+        # name each writes under, read there as the mail writer reads it.
+        listed = mail.checkout_names(root, run=run_, timeout=GH_TIMEOUT)
+    except mail.Unresolvable as exc:
+        return {"checkouts": [], "unread": str(exc)}
     checkouts: list[dict] = []
-    for i, block in enumerate(checkout_sync.parse_worktrees(listing)):
-        path = block.get("worktree") or ""
-        if not path or "bare" in block:
+    for i, row in enumerate(listed):
+        path = row["path"]
+        if not path or row["bare"]:
             continue
         # A folder removed under a running session (Assumption 6's 2026-10-08
         # cleanup) is still listed and still holds that session, so it stays;
         # with no folder to ask, its seat is the derived name. A folder that is
         # there answers its own name, or none (a name the channel refuses turns
         # the channel off there), and none is no seat name, never a derived one.
-        gone = not Path(path).is_dir()
+        gone = row["gone"]
         name_unread = naming = ""
         if gone:
             seat = clone if i == 0 else ((mail.worktree_seat_name(clone, Path(path).name) or "") if clone else "")
         else:
-            named, how = mail.machine_setting(Path(path), run=run_)
-            seat = named or ""
-            name_unread = how if named is None and how.startswith(mail.MACHINE_UNREAD) else ""
+            seat = row["name"]
+            name_unread = row["unread"]
             if i:
                 # Read in the worktree itself: whether its clone's shared config
                 # sets core.bare or core.worktree is the one owner's call, as is
@@ -1318,7 +1320,10 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
             # a second owner here once handed a core.worktree clone the pair,
             # which points the worktree at the main checkout's files.
             naming = checkout.get("naming") or ""
-            remedy = f"name it: {naming}" if naming else ""
+            # Two commands come one a line (mail.naming_steps); the section
+            # prints each on a line of its own, indented under the row.
+            remedy = (f"name it, one command a line:\n{naming}" if "\n" in naming
+                      else f"name it: {naming}" if naming else "")
             row = rows.setdefault(key, {"seat": key, "last_mail": None, "name_shared_with": first, "remedy": remedy})
         else:
             row = rows.setdefault(key, {"seat": key, "last_mail": None})
@@ -1911,10 +1916,13 @@ def _seat_line(row: dict, mail_unread: bool) -> str:
         if row.get("shared"):
             named = ", ".join(f"pid {s.get('pid')} session {str(s.get('session_id') or '?')[:8]}" for s in sessions)
             text += f" ({named}): {_SHARED}"
-    for extra in (row.get("note"), row.get("remedy")):
-        if extra:
-            text += f"; {extra}"
-    return text
+    if row.get("note"):
+        text += f"; {row['note']}"
+    # The remedy goes last, at the return, so nothing is ever appended after
+    # it: its commands can come one a line (mail.naming_steps), and text added
+    # here later would land on the last command's line, pasted with it.
+    remedy = row.get("remedy")
+    return f"{text}; {remedy}" if remedy else text
 
 
 def _job(re_: dict) -> str:
@@ -2313,7 +2321,11 @@ def render(board: dict) -> str:
     # that keeps only this line still sees how many there are.
     seats_head = f"seats:    {len(rows)} seat{'s' if len(rows) != 1 else ''}: " if rows else "seats:    "
     for i, text in enumerate(seat_lines or ["none: no machine has mail and no checkout here holds a live session"]):
-        lines.append((seats_head if i == 0 else "          ") + text)
+        # A row's remedy can hold commands one a line: each goes on a line of
+        # its own, indented under the row, so a reader pastes it alone.
+        first, *commands = text.split("\n")
+        lines.append((seats_head if i == 0 else "          ") + first)
+        lines.extend("            " + command for command in commands)
     lines.extend(records_lines(board))
     if board.get("mail_unread"):
         lines.append(head + f"unread (the mail could not be read: {board['mail_unread']})")

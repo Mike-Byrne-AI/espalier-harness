@@ -390,6 +390,13 @@ count for every other file is never printed. That module's new tests count as
 red (the import is the assertion); say so in the Landing line rather than
 folding them into the measured number. Remove the worktree and `git worktree
 prune` before the next filesystem scanner runs (the leftover-worktree footgun).
+*Amended 2026-11-17 (DEF-3098's review):* make the scratch copy with
+`git archive <old-head>` extracted into a scratch folder, not `git worktree
+add`. Run inside a named seat's worktree, `git worktree add` copies that
+worktree's per-worktree config (driven on git 2.52.0), so the copy answers the
+seat's name and a send from it writes the seat's mail ref; an archive carries
+no config and leaves nothing to prune. Run the tests there with an absolute
+`PYTHONPATH` set to the extracted folder, so its conftest and its modules load.
 
 **`ledger_row.py repin` and `file` accept a probe that prints its open value
 for the wrong reason (2026-09-12).** The first re-pin of a partially closed row

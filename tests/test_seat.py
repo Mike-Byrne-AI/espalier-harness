@@ -426,20 +426,20 @@ class TestASeatNameTwoCheckoutsAnswer:
         said = str(caught.value)
         assert f"only {a.as_posix()} holds a session; if it is the seat" in said and self._rename(b) in said, said
 
-    def test_the_askers_own_clone_is_given_no_shape_beside_a_worktree_named_back(self, seat, clone, registry,
-                                                                                monkeypatch):
+    def test_the_askers_own_window_in_the_clone_holds_no_twins_rename_back(self, seat, clone, registry,
+                                                                          monkeypatch):
         """The asker's window in the clone, a worktree named back to the
-        clone's name: weak evidence, and the clone answers, so not even the
-        shape is given (the operator could run it on the clone). Dies to: the
-        shape gated on the clone being among the ones to rename, which it is
-        not when it is the lone checkout."""
+        clone's name: the clone's own name is the main checkout's by
+        construction (DEF-3098), so who asks from where is no evidence either
+        way, and the worktree gets its rename. Dies to: the clone's name read
+        like any other, which made this the operator's call with no command."""
         a = _worktree(clone, "a", name="box")
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", f"s{registry(clone)}")
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert f"only {clone.as_posix()} holds a session, and a session there is the one asking" in said, said
-        assert "git -C" not in said and "so no command is given" in said and a.as_posix() in said, said
+        assert self._rename(a) in said and f'git -C "{clone.as_posix()}"' not in said, said
+        assert "the operator's call" not in said, said
 
     def test_a_worktree_named_back_to_the_clones_name_is_refused(self, seat, clone, registry, monkeypatch,
                                                                  capsys):
@@ -451,23 +451,33 @@ class TestASeatNameTwoCheckoutsAnswer:
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert "answered by 2 checkouts" in said and f"only {clone.as_posix()} holds a session" in said, said
+        assert "answered by 2 checkouts" in said, said
+        assert f"the main checkout ({clone.as_posix()}) answers its clone's name by construction" in said, said
         assert self._rename(a) in said, said
         monkeypatch.chdir(a)
         assert seat.main(["launch", "box", "--print"]) == 1
         assert "answered by 2 checkouts" in capsys.readouterr().err
 
     def test_the_clone_is_never_handed_a_rename(self, seat, clone, registry):
-        """The live session in a worktree that took the clone's name: the
-        rename would go to the clone, which moves every seat name derived from
-        it. Dies to: the clone given a rename like any session-less checkout."""
+        """The live session in a worktree named back to the clone's name: a
+        rename of the clone moves every seat name derived from it, so the main
+        checkout is the seat by construction and the worktree, live or not, is
+        the one renamed (DEF-3098), after the words that its live session
+        releases its claims from it first: renamed under it, that session's
+        next send goes out under the new name and leaves its claims under the
+        clone's where it can no longer release them (the second review). Dies
+        to: the clone given a rename like any session-less checkout, the
+        operator's call where the seat is known, and a bare rename of a
+        checkout a window is live in."""
         a = _worktree(clone, "a", name="box")
         registry(a)
         with pytest.raises(seat.Undecided) as caught:
             seat.resolve(clone, "box")
         said = str(caught.value)
-        assert "the operator's call" in said and "took the clone's own name" in said, said
-        assert "git -C" not in said and "espalier.machine" not in said, said
+        assert f'git -C "{clone.as_posix()}"' not in said and "the operator's call" not in said, said
+        assert (f"{a.as_posix()} was named back to the clone's name; a session in it writes under the clone's name "
+                "now: release its claims from it first") in said, said
+        assert f"or end that session; then rename it:\n{self._rename(a)}" in said, said
 
     def test_brief_of_the_clones_name_from_the_clone_composes_beside_a_twin(self, seat, clone, registry,
                                                                             monkeypatch, capsys):
@@ -634,6 +644,336 @@ class TestASeatNameTwoCheckoutsAnswer:
         said = str(caught.value)
         assert "could not be read" in said and "worktree is gone" not in said, said
         assert feat.is_dir()
+
+
+def _outside(work: Path, folder: str, *, name: str | None = None) -> Path:
+    """A worktree outside ``.claude/worktrees/``, as ``git worktree add`` makes
+    one for a reviewer's scratch copy (air's cf1b9f; this box's ``C:/tmp/wt*``)."""
+    path = work.parent / folder
+    _git(work, "worktree", "add", "--quiet", "-b", f"lane/{folder}", str(path), "origin/main")
+    if name:
+        _git(path, "config", "--worktree", "espalier.machine", name)
+    return path
+
+
+class TestEveryListedCheckoutIsRead:
+    """DEF-3098: the resolver reads every checkout git lists, each by the name
+    it writes under (``mail.checkout_names``, the reader the board reads too),
+    so a twin the board flags is one the seat driver refuses. Dies to: the
+    population taken from ``.claude/worktrees/`` (the outside twin resolved
+    past in silence), or the main checkout read at the clone's ``--local``
+    scope (one name to the resolver, another to the writer)."""
+
+    def test_a_twin_outside_the_worktrees_folder_is_refused(self, seat, clone, registry):
+        """The row's probe shape: one inside, one outside, both ``box-x``."""
+        inside, outside = _worktree(clone, "a", name="box-x"), _outside(clone, "outside", name="box-x")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-x")
+        said = str(caught.value)
+        assert "answered by 2 checkouts" in said and "one mail ref" in said, said
+        assert f"{inside.as_posix()} on lane/a at" in said and f"{outside.as_posix()} on lane/outside at" in said, said
+
+    def test_a_seat_named_outside_the_folder_resolves_to_its_checkout(self, seat, clone):
+        outside = _outside(clone, "solo", name="box-solo")
+        target = seat.resolve(clone, "box-solo")
+        assert (target.path, target.exists, target.is_clone) == (outside, True, False), target
+
+    def test_a_worktree_named_back_to_the_clone_outside_the_folder_is_its_twin(self, seat, clone, registry):
+        """A ``--worktree`` setting of the clone's own name writes under the
+        clone's ref, with no session or with one (DEF-3097's rule, now read
+        outside the folder too). Dies to: the outside worktree skipped."""
+        back = _outside(clone, "back", name="box")
+        registry(clone)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert f'git -C "{back.as_posix()}" config --worktree espalier.machine <name>' in said, said
+        assert f'git -C "{clone.as_posix()}"' not in said, said
+
+    def test_a_nameless_worktree_is_the_clones_twin_only_while_a_session_holds_it(self, seat, clone, registry):
+        """A worktree with no name of its own writes under the clone's name,
+        but only a session writes: a dormant one (a reviewer's scratch copy)
+        is no twin, while one a session holds is, inside the folder or out,
+        and one under the folder keeps its derived launch name. Dies to: every
+        nameless worktree read as a twin (the clone refused beside each
+        scratch copy), or none (a live writer on the clone's ref unseen)."""
+        scratch, plain = _outside(clone, "scratch"), _worktree(clone, "plain")
+        assert seat.resolve(clone, "box").path == clone
+        assert seat.resolve(clone, "box-plain").path == plain
+        # A launch targets a derived name only under the folder (DEF-3098's
+        # second reviews): `launch box-scratch` makes .claude/worktrees/scratch
+        # rather than start a session in someone's stale copy.
+        target = seat.resolve(clone, "box-scratch")
+        assert (target.path, target.exists) == (clone / ".claude" / "worktrees" / "scratch", False), target
+        for live in (scratch, plain):
+            pid = registry(live)
+            with pytest.raises(seat.Undecided) as caught:
+                seat.resolve(clone, "box")
+            assert f"{live.as_posix()} on lane/" in str(caught.value), caught.value
+            (registry.dir / "sessions" / f"{pid}.json").unlink()
+        assert seat.resolve(clone, "box-plain").path == plain
+
+    def test_the_main_checkout_answers_its_own_worktree_name(self, seat, clone):
+        """A ``--worktree`` name set in the main checkout is the name its mail
+        is written under (the writer's effective read), so the resolver reads
+        the same; asked for the clone's name it is refused by name, and the
+        derived names stay built on the clone's. Dies to: the main checkout
+        resolved by the clone's ``--local`` name."""
+        # Added first: `git worktree add` copies the per-worktree config of the
+        # checkout it runs in (driven on git 2.52.0), so one this fixture added
+        # after would answer box-main too (the launcher unsets the copy: pinned
+        # by test_a_name_git_copies_from_the_main_checkout_is_unset_at_create).
+        plain = _worktree(clone, "plain")
+        _git(clone, "config", "--worktree", "espalier.machine", "box-main")
+        target = seat.resolve(clone, "box-main")
+        # The clone's seat by its path, never by the name asked for.
+        assert (target.path, target.is_clone) == (clone, True), target
+        with pytest.raises(seat.Refused) as caught:
+            seat.resolve(clone, "box")
+        assert not isinstance(caught.value, seat.Undecided), caught.value
+        assert "the main checkout answers 'box-main', not its clone's name 'box'" in str(caught.value), caught.value
+        assert seat.resolve(clone, "box-plain").path == plain
+
+    def test_the_list_shows_a_named_or_live_worktree_outside_the_folder(self, seat, clone, registry):
+        """So the twin refusal's pointer (`seat.py list`) shows the twin; a
+        dormant one with no name of its own is left out, and none outside the
+        folder is ever offered for removal. Dies to: the listing kept to the
+        folder."""
+        named, back = _outside(clone, "named", name="box-n"), _outside(clone, "back", name="box")
+        dormant, live = _outside(clone, "dormant"), _outside(clone, "live")
+        registry(live)
+        found, _note = seat.seats(clone, fetch=False)
+        rows = {s.path: (s.name, s.naming, s.where, s.removal) for s in found}
+        assert str(dormant) not in rows, rows
+        assert rows[str(named)] == ("box-n", "own", named.as_posix(), seat.OUTSIDE_KEPT), rows
+        assert rows[str(back)] == ("box", "own", back.as_posix(), seat.OUTSIDE_KEPT), rows
+        assert rows[str(live)] == ("box", "inherited", live.as_posix(), seat.OUTSIDE_KEPT), rows
+        text = seat.render(found, "")
+        assert "(no name of its own: it answers its clone's)" in text and "kept -- outside .claude/worktrees/" in text
+        assert text.isascii()
+
+    def test_retire_refuses_a_seat_outside_the_folder_before_anything_is_sent(self, seat, clone, registry):
+        solo = _outside(clone, "solo", name="box-solo")
+        sent = _send(seat, solo, "box-solo", "claim", "a lane", lane="lane/solo")
+        with pytest.raises(seat.Refused) as caught:
+            seat.cmd_retire(clone, "box-solo", dry_run=False, fetch=True)
+        said = str(caught.value)
+        assert seat.OUTSIDE_KEPT in said and "nothing was released or removed" in said, said
+        assert f"--ack {sent['id']}" in said, said
+        assert solo.is_dir()
+
+    def test_a_bare_clone_is_stood_for_by_the_checkout_it_runs_from(self, seat, clone, registry):
+        """A bare clone's first listed entry is the repository itself, where no
+        session runs: the checkout the driver runs from stands for the clone,
+        as before DEF-3098, and is no twin of itself while a session holds it.
+        Dies to: the bare repository's folder handed over as the clone's seat
+        (a launch where there is no work tree), or that checkout counted twice."""
+        bare = clone.parent / "box.git"
+        _git(clone.parent, "clone", "--quiet", "--bare", str(clone.parent / "origin.git"), str(bare))
+        _git(bare, "config", "espalier.machine", "box")
+        here = clone.parent / "bare-here"
+        _git(bare, "worktree", "add", "--quiet", str(here), "main")
+        registry(here)
+        target = seat.resolve(here, "box")
+        assert (target.path, target.exists, target.is_clone) == (here, True, True), target
+
+    def test_an_unread_copy_outside_the_folder_refuses_with_its_makers_remedy(self, seat, clone):
+        """One copy made by hand whose name git cannot read refuses every seat
+        name (it may be the twin), so the refusal says whose it is to fix: no
+        seat driver made it. Dies to: the bare retry, which a config git
+        cannot parse never answers."""
+        scratch = _outside(clone, "scratch")
+        _worktree(clone, "a", name="box-a")
+        (clone / ".git" / "worktrees" / "scratch" / "config.worktree").write_bytes(b"[espalier\n")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box-a")
+        said = str(caught.value)
+        assert "could not be read" in said and scratch.name in said, said
+        assert "it is outside .claude/worktrees/, so no seat driver made it: fix its config" in said, said
+
+    def test_a_nameless_worktree_nobody_can_see_into_refuses_with_the_registrys_remedy(self, seat, clone,
+                                                                                         monkeypatch):
+        """Who is in a worktree that answers the clone's name could not be told
+        (the registry unread): the remedy is the registry's, never git's. Dies
+        to: the git retry printed for a read git answered."""
+        _outside(clone, "scratch")
+        monkeypatch.setattr(seat.sync, "live_sessions", lambda *a, **k: None)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert "Claude Code's session registry could not be read in full" in said, said
+        assert "retry once Claude Code's session registry reads in full" in said, said
+        assert seat.mail.RETRY_HINT not in said, said
+
+    def test_the_main_checkouts_unread_name_refuses_every_seat_with_gits_remedy(self, seat, clone, monkeypatch):
+        """A coverage pin of the arm no real git reaches alone (a main
+        checkout's config git cannot parse fails its listing too): the main
+        checkout's name unread resolves no seat, its own or a worktree's. Dies
+        to: the main checkout skipped when its read fails."""
+        _worktree(clone, "a", name="box-a")
+        real = seat.mail.checkout_names
+
+        def main_unread(root, **kw):
+            rows = real(root, **kw)
+            rows[0].update(name="", unread=f"{seat.mail.MACHINE_UNREAD} (git config took longer than 10s)")
+            return rows
+        monkeypatch.setattr(seat.mail, "checkout_names", main_unread)
+        for name in ("box", "box-a"):
+            with pytest.raises(seat.Undecided) as caught:
+                seat.resolve(clone, name)
+            said = str(caught.value)
+            assert f"the seat name of {clone} (" in said and seat.mail.RETRY_HINT in said, (name, said)
+
+    def test_a_dormant_copy_named_back_beside_an_idle_main_checkout_gets_its_rename(self, seat, clone, registry):
+        """The clone's own name is the main checkout's by construction, so it
+        is never the operator's call there, whoever holds a session (DEF-3098's
+        review). Dies to: the clone's name read like any other name, which with
+        no session anywhere named no checkout to rename."""
+        back = _outside(clone, "back", name="box")
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert (f"{back.as_posix()} was named back to the clone's name; rename it:\n"
+                f'git -C "{back.as_posix()}" config --worktree espalier.machine <name>') in said, said
+        assert f'git -C "{clone.as_posix()}"' not in said and "the operator's call" not in said, said
+
+    def test_a_nameless_live_copy_gets_the_boards_own_naming_text(self, seat, clone, registry):
+        """A worktree with no name of its own that a session holds writes
+        under the clone's name: its remedy is naming it, and the words are the
+        board's (``mail.naming_steps`` read for a reader in another checkout,
+        as ``board.read_sessions`` calls it), never "took the clone's own name".
+        Dies to: the operator's call where the main checkout is the seat."""
+        copy = _outside(clone, "copy")
+        registry(copy)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        row = next(r for r in seat.mail.checkout_names(clone) if Path(r["path"]).name == "copy")
+        naming = seat.mail.naming_steps(Path(row["path"]), at=row["path"])
+        assert naming.count("\n") == 1 and naming.endswith("config --worktree espalier.machine <name>"), naming
+        assert (f"{copy.as_posix()} has no name of its own; a session in it writes under the clone's name now: "
+                "release its claims from it first") in said, said
+        assert f"or end that session; then name it, one command a line:\n{naming}" in said, said
+        assert said.endswith(naming), said
+        assert f'git -C "{clone.as_posix()}"' not in said and "took the clone's own name" not in said, said
+
+    def test_a_seat_beside_a_dormant_copy_of_its_folder_name_resolves_to_the_seat(self, seat, clone):
+        """A copy made by hand elsewhere with a seat's folder name is no twin:
+        the seat holds the name, and the copy's next session is refused it
+        (``mail.name_this_worktree``: the name is taken), so the launch, brief
+        and retire of the seat are not refused for it. Dies to: a derived name
+        read outside ``.claude/worktrees/`` (DEF-3098's second reviews: a false
+        twin, and a launch into someone's stale copy)."""
+        inside = _worktree(clone, "scratch", name="box-scratch")
+        copy = clone.parent / "elsewhere" / "scratch"
+        _git(clone, "worktree", "add", "--quiet", "--detach", str(copy), "origin/main")
+        target = seat.resolve(clone, "box-scratch")
+        assert (target.path, target.is_clone) == (inside, False), target
+        name, said = seat.mail.name_this_worktree(copy)
+        assert name is None and "is taken by" in said, said
+
+    def test_every_listed_checkout_sends_under_the_name_the_reader_gives_it(self, seat, clone):
+        """The reader's name is the writer's: a send from each listed checkout
+        as the name ``mail.checkout_names`` gives it lands on that name's ref
+        (``send`` refuses a message from any other name). Dies to: either side
+        read at another scope (FM-W4: the agreement was a docstring)."""
+        _worktree(clone, "a", name="box-a")
+        _outside(clone, "out")
+        _outside(clone, "named", name="box-n")
+        _git(clone, "config", "--worktree", "espalier.machine", "box-main")
+        rows = seat.mail.checkout_names(clone)
+        assert sorted(r["name"] for r in rows) == ["box", "box-a", "box-main", "box-n"], rows
+        origin = clone.parent / "origin.git"
+        for row in rows:
+            sent = _send(seat, Path(row["path"]), row["name"], "note", f"from {Path(row['path']).name}")
+            held = _git(origin, "show", f"{seat.mail.ref_for(row['name'])}:mail.jsonl").stdout
+            assert sent["id"] in held, (row, held)
+
+    def test_the_twin_refusal_reads_each_checkouts_sessions_once(self, seat, clone, registry, monkeypatch):
+        """The resolver counted a nameless copy a twin for its session, then
+        the refusal read again and could call it one with none. Dies to: the
+        refusal's own second read."""
+        copy = _outside(clone, "copy")
+        registry(copy)
+        real, reads = seat.sync.occupancy, []
+
+        def gone_on_the_second_read(path, **kw):
+            reads.append(seat.sync._norm(path))
+            if reads.count(seat.sync._norm(copy)) > 1 and seat.sync._norm(path) == seat.sync._norm(copy):
+                return seat.sync.Occupancy([], "registry")
+            return real(path, **kw)
+        monkeypatch.setattr(seat.sync, "occupancy", gone_on_the_second_read)
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert reads.count(seat.sync._norm(copy)) == 1, reads
+        assert f"{copy.as_posix()} on lane/copy at" in said and "1 live session(s)" in said, said
+
+    def test_a_name_git_copies_from_the_main_checkout_is_unset_at_create(self, seat, clone, registry, no_claude,
+                                                                         capsys):
+        """`git worktree add` copies the per-worktree config of the checkout it
+        runs in (driven on git 2.52.0), so a main checkout with a ``--worktree``
+        name of its own handed it to the seat the launcher made, a twin of the
+        main by construction. Dies to: the copy left (the launch refused: the
+        new worktree answers box-main, not box-3)."""
+        _git(clone, "config", "--worktree", "espalier.machine", "box-main")
+        probe = _worktree(clone, "probe")
+        if _git(probe, "config", "--worktree", "--get", "espalier.machine", check=False).stdout.strip() != "box-main":
+            pytest.skip("this git does not copy the per-worktree config at worktree add (git 2.36 and later do)")
+        assert seat.cmd_launch(clone, "box-3", [], maintenance=False, unchecked=False, print_only=False,
+                               brief=False, mod=False) == 0
+        made = clone / ".claude" / "worktrees" / "3"
+        assert _out(made, "config", "--worktree", "--get", "espalier.machine") == "box-3"
+        assert _out(clone, "config", "--worktree", "--get", "espalier.machine") == "box-main"
+        out = capsys.readouterr().out
+        assert "unset the seat name 'box-main' git copied into" in out and "named this worktree box-3" in out, out
+
+    def test_a_worktree_holding_the_main_checkouts_copied_name_is_told_the_unset(self, seat, clone):
+        """A launch whose unset failed leaves its worktree answering the main
+        checkout's own name (git copied it in); the next launch is told the
+        unset, never to launch that name, which would be the main checkout's
+        twin. Dies to: the plain "launch <its name>" hint."""
+        _git(clone, "config", "--worktree", "espalier.machine", "box-main")
+        made = _worktree(clone, "3")
+        if _git(made, "config", "--worktree", "--get", "espalier.machine", check=False).stdout.strip() != "box-main":
+            pytest.skip("this git does not copy the per-worktree config at worktree add (git 2.36 and later do)")
+        with pytest.raises(seat.Refused) as caught:
+            seat.resolve(clone, "box-3")
+        said = str(caught.value)
+        assert f'git -C "{made.as_posix()}" config --worktree --unset-all espalier.machine' in said, said
+        assert "launch box-main" not in said, said
+
+    def test_the_clones_name_where_per_worktree_config_is_unread_is_the_operators_call(self, seat, clone,
+                                                                                        registry, monkeypatch):
+        """The per-twin commands need per-worktree config read: where it went
+        unread, the clone's name is the operator's call too, and no command is
+        given. Dies to: the guard dropped (a --worktree set handed out where it
+        may fail)."""
+        _outside(clone, "back", name="box")
+        real = seat.mail._worktree_config
+        monkeypatch.setattr(seat.mail, "_worktree_config", lambda root, **kw: (
+            (None, "git exited 128") if Path(root) == clone else real(root, **kw)))
+        with pytest.raises(seat.Undecided) as caught:
+            seat.resolve(clone, "box")
+        said = str(caught.value)
+        assert "the operator's call" in said and "per-worktree config is on could not be read" in said, said
+        assert "git -C" not in said, said
+
+    def test_the_list_on_a_clone_that_names_none_drops_a_dormant_copy(self, seat, clone):
+        """On a clone that names no machine, a dormant copy outside the folder
+        answers no name and writes nothing, as on a named clone; and a main
+        checkout's own ``--worktree`` name is not called "not its clone's"
+        where the clone has none. Dies to: the drop kept to a named clone, and
+        the words written for one."""
+        dormant, named = _outside(clone, "dormant"), _outside(clone, "named", name="box-n")
+        _git(clone, "config", "--unset", "espalier.machine")
+        _git(clone, "config", "--worktree", "espalier.machine", "solo")
+        found, _note = seat.seats(clone, fetch=False, sessions=[])
+        paths = {s.path: s for s in found}
+        assert str(dormant) not in paths and paths[str(named)].name == "box-n", paths
+        text = seat.render(found, "")
+        assert "seat solo (a --worktree name set in the main checkout; its clone names none) -- the clone" in text, text
+        assert "not its clone's" not in text, text
 
 
 class TestLaunch:
