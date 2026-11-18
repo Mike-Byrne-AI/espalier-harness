@@ -771,3 +771,220 @@ class TestAWaveIsPaidOnThePrimaryNotOnTheLength:
         assert _CENSUS.wave_payoff(100, 71, primary_paid=True)["lane_read_fell"] is False
         assert _CENSUS.wave_payoff(100, 70, primary_paid=True)["lane_read_fell"] is True
         assert _CENSUS.wave_payoff(0, 0, primary_paid=True)["lane_read_fell"] is False
+
+
+# ---------------------------------------------------------------- transcripts (Task 0 Item 3's oracle)
+
+_ROOT = "/work/repo"
+
+
+def _use(tid: str, name: str, at: str, branch: str, **inp) -> dict:
+    return {"type": "assistant", "timestamp": at, "gitBranch": branch, "cwd": _ROOT,
+            "message": {"content": [{"type": "tool_use", "id": tid, "name": name, "input": inp}]}}
+
+
+def _result(tid: str, text: str = "", meta: dict | None = None) -> dict:
+    return {"type": "user", "toolUseResult": meta,
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tid, "content": text}]}}
+
+
+def _lines(n: int) -> str:
+    return "\n".join(f"line {i}" for i in range(n))
+
+
+_LENGTHS = {"espalier/cli.py": 900, "espalier/doctor.py": 100, "docs/a.md": 50}
+
+
+def _calls(records: list[dict], roots=(_ROOT,)) -> list[dict]:
+    return _CENSUS.calls_of(records, list(roots), "2020-01-02T03:04:05Z", lambda p: _LENGTHS.get(p, 0))
+
+
+class TestATranscriptCallIsReadByTheRuledRules:
+    def test_a_read_with_a_limit_counts_the_lines_it_returned_not_the_file(self):
+        """Dies to: a Read call's lines counted from the whole file (900) instead of what its
+        `limit` returned (40, the result's `numLines`)."""
+        calls = _calls([_use("t1", "Read", "2020-01-01T01:00:00Z", "lane/a",
+                             file_path=f"{_ROOT}/espalier/cli.py", offset=100, limit=40),
+                        _result("t1", _lines(40), {"file": {"numLines": 40}})])
+        assert [c["reads"] for c in calls] == [[("espalier/cli.py", 40)]]
+
+    def test_a_piped_whole_read_counts_what_came_out_not_the_file(self):
+        """Dies to: a piped read charged the whole file (900): `cat cli.py | head -50` put 50
+        lines in front of the seat."""
+        calls = _calls([_use("t1", "Bash", "2020-01-01T01:00:00Z", "lane/a",
+                             command="cat espalier/cli.py | head -50"),
+                        _result("t1", "", {"stdout": _lines(50)})])
+        assert calls[0]["reads"] == [("espalier/cli.py", 50)]
+
+    def test_a_path_in_a_heredoc_or_a_redirect_is_not_a_read(self):
+        """Dies to: the here-document left in (its body names cli.py, a mention) or a
+        redirection's target read as an operand (`> docs/a.md` is a write), either of which
+        counts a read here."""
+        calls = _calls([_use("t1", "Bash", "2020-01-01T01:00:00Z", "lane/a",
+                             command="cat <<'EOF' > docs/a.md\nsed -n 1,5p espalier/cli.py\nEOF"),
+                        _result("t1", "", {"stdout": ""}),
+                        _use("t2", "Bash", "2020-01-01T01:01:00Z", "lane/a",
+                             command="sed -n 1,5p espalier/doctor.py 2>/dev/null"),
+                        _result("t2", "", {"stdout": _lines(5)})])
+        assert [c["reads"] for c in calls] == [[("espalier/doctor.py", 5)]]
+
+    def test_a_read_in_a_fork_s_gone_worktree_is_a_read_of_the_repo_path(self):
+        """Dies to: a worktree that no longer exists read as a path inside the checkout around it
+        (`.claude/worktrees/agent-x/espalier/cli.py`, never the CLI module), which zeroed three
+        lanes' subagent reads at P (#357, #429, #512)."""
+        calls = _calls([_use("t1", "Read", "2020-01-01T01:00:00Z", "lane/a",
+                             file_path=f"{_ROOT}/.claude/worktrees/agent-a1b2/espalier/cli.py"),
+                        _result("t1", _lines(12), {"file": {"numLines": 12}})])
+        assert calls[0]["reads"] == [("espalier/cli.py", 12)]
+
+    def test_a_scratchpad_copy_maps_only_onto_a_file_at_the_pin(self):
+        """Dies to: every path under a scratchpad taken as a tree copy (a note there is no repo
+        file), or no copy mapped at all (#530's reads of cli.py were in a scratchpad clone)."""
+        calls = _calls([_use("t1", "Read", "2020-01-01T01:00:00Z", "lane/a",
+                             file_path="/tmp/s/sess/scratchpad/review-clone/espalier/cli.py"),
+                        _result("t1", _lines(7), {"file": {"numLines": 7}}),
+                        _use("t2", "Read", "2020-01-01T01:01:00Z", "lane/a",
+                             file_path="/tmp/s/sess/scratchpad/notes/plan.md"),
+                        _result("t2", _lines(9), {"file": {"numLines": 9}})])
+        assert [c["reads"] for c in calls] == [[("espalier/cli.py", 7)]]
+
+    def test_a_call_is_counted_once_and_cut_at_the_pin_by_its_own_stamp(self):
+        """Dies to: calls deduped by nothing (a record written twice counts twice) or cut by
+        anything but the record's own stamp (a call after the pin counted)."""
+        use = _use("t1", "Read", "2020-01-01T01:00:00Z", "lane/a", file_path=f"{_ROOT}/espalier/cli.py")
+        late = _use("t2", "Read", "2020-01-03T00:00:00Z", "lane/a", file_path=f"{_ROOT}/espalier/cli.py")
+        calls = _calls([use, use, _result("t1", "", {"file": {"numLines": 30}}),
+                        late, _result("t2", "", {"file": {"numLines": 500}})])
+        assert [(c["id"], c["reads"]) for c in calls] == [("t1", [("espalier/cli.py", 30)])]
+
+
+class TestTheLaneOfACall:
+    """Seat s holds lane/a 00:00 to 02:00 (merged 02:30) and lane/b 02:15 to 05:00; lane/x is
+    seat t's."""
+    SEATS = {"lane/a": "s", "lane/b": "s", "lane/x": "t"}
+    WINDOWS = {"s": [("2020-01-01T00:00:00Z", "2020-01-01T02:00:00Z", "lane/a"),
+                     ("2020-01-01T02:15:00Z", "2020-01-01T05:00:00Z", "lane/b")]}
+    MERGED = {"lane/a": "2020-01-01T02:30:00Z", "lane/b": "2020-01-01T06:00:00Z", "lane/x": "2020-01-01T03:00:00Z"}
+
+    def _of(self, branch, at):
+        return _CENSUS.lane_of("s", branch, f"2020-01-01T{at}:00Z", seats=self.SEATS,
+                               windows=self.WINDOWS, merged=self.MERGED)
+
+    def test_a_call_on_the_lane_s_branch_is_that_lane_s_and_never_the_other(self):
+        """Dies to: a session attributed to the seat's other lane: on lane/a's branch inside
+        lane/b's window, before lane/a merged (its catch-up or its row), the call is lane/a's."""
+        assert self._of("lane/a", "01:00") == "lane/a"
+        assert self._of("lane/a", "02:20") == "lane/a"
+
+    def test_the_default_branch_falls_back_to_the_one_claim_the_seat_holds(self):
+        """Dies to: the claim fallback reading the wrong window (lane/a for a call in lane/b's)
+        or picking one of two held claims instead of saying ambiguous."""
+        assert self._of("main", "04:00") == "lane/b"
+        assert self._of("main", "01:00") == "lane/a"
+        assert self._of("main", "05:30") == "unattributed"
+        assert _CENSUS.lane_of("s", "HEAD", "2020-01-01T02:20:00Z", seats=self.SEATS,
+                               windows={"s": [*self.WINDOWS["s"], ("2020-01-01T02:10:00Z", "2020-01-01T02:40:00Z", "lane/c")]},
+                               merged=self.MERGED) == "ambiguous"
+
+    def test_a_merged_lane_s_branch_yields_to_the_one_claim_the_seat_then_holds(self):
+        """Dies to: the branch taken on its word after its lane merged: the checkout still on
+        lane/a's merged branch while the seat holds lane/b's claim (the work in another clone)
+        is lane/b's; with no other claim held it stays lane/a's."""
+        assert self._of("lane/a", "03:00") == "lane/b"
+        assert self._of("lane/b", "07:00") == "lane/b"
+
+    def test_another_seat_s_lane_is_no_unit_of_this_seat(self):
+        """Dies to: a branch of another seat's lane re-placed by this seat's clock."""
+        assert self._of("lane/x", "04:00") == "other branch"
+        assert self._of("lane/unmerged", "04:00") == "other branch"
+
+
+class TestItem3IsGradedOnTheCommittedRule:
+    def test_unmeasured_when_the_read_cannot_see_the_effect(self):
+        """Dies to: "not real" given on a read whose minimum detectable ratio is past 2.0 (the
+        zeros of lanes that read nothing make the spread wide), or arms under 8 graded."""
+        out = _CENSUS.item3_verdict([0, 0, 5000, 3, 0, 40, 7000, 2, 0], [300, 250, 280, 10, 900, 20, 400, 60])
+        assert out["verdict"] == "unmeasured" and out["realised_mdr"] > 2.0
+        small = _CENSUS.item3_verdict([10, 11, 12], [10, 11, 12])
+        assert small["realised_mdr"] <= 2.0 and small["verdict"] == "unmeasured"
+
+    def test_real_only_when_all_three_hold(self):
+        """Dies to: one of (a) 1,500 lines, (b) twice E, (c) p under 0.05 dropped: R twice E and
+        significant but under 1,500 is not real."""
+        e = [100, 120, 90, 110, 105, 95, 115, 100, 98, 102]
+        assert _CENSUS.item3_verdict([1600, 1700, 1650, 1800, 1550, 1900, 1620, 1750, 1680, 1710], e)["verdict"] == "real"
+        low = _CENSUS.item3_verdict([600, 700, 650, 800, 550, 900, 620, 750, 680, 710], e)
+        assert low["a"] is False and low["b"] is True and low["c"] is True and low["verdict"] == "not real"
+
+
+class TestTheTranscriptsSection:
+    @staticmethod
+    def _claim(mid, at, lane):
+        return {"id": mid, "type": "claim", "from": "air-work", "at": at,
+                "re": {"lane": lane, "paths": ["espalier/cli.py"]}}
+
+    @staticmethod
+    def _release(mid, at, lane):
+        return {"id": mid, "type": "release", "from": "air-work", "at": at, "re": {"lane": lane}}
+
+    @pytest.fixture
+    def section(self, repo, tmp_path):
+        """lane/a (#1) changes cli.py: treatment. lane/c (#2) changes docs/x.md: control. The
+        seat's transcript reads 40 lines of cli.py on lane/a's branch (a limit of a 900-line
+        file), 5 of docs/x.md there, 7 of docs/x.md and 99 of cli.py on main inside lane/c's
+        claim, and 500 of cli.py after the pin. The project folder differs in case from the
+        checkout's derived name."""
+        (repo / "docs").mkdir()
+        (repo / "docs" / "x.md").write_text("one\ntwo\n", encoding="utf-8")
+        _commit_all(repo, "docs")
+        _trunk(repo)
+        _lane(repo, "lane/a", "    return 1\n", "    return 2\n")
+        _land(repo, 1, "lane/a")
+        _lane(repo, "lane/c", "two\n", "three\n", path="docs/x.md")
+        _land(repo, 2, "lane/c")
+        d = "2020-01-01T"
+        mail = {"air-work": [self._claim("m1", d + "00:00:00Z", "lane/a"), self._release("m2", d + "02:00:00Z", "lane/a"),
+                             self._claim("m3", d + "03:00:00Z", "lane/c"), self._release("m4", d + "05:00:00Z", "lane/c")]}
+        root = str(repo)
+        proj = tmp_path / "projects" / "proj-work"
+        proj.mkdir(parents=True)
+
+        def use(tid, at, branch, name, **inp):
+            return {**_use(tid, name, at, branch, **inp), "cwd": root}
+        recs = [use("t1", d + "01:00:00Z", "lane/a", "Read", file_path=f"{root}/espalier/cli.py", limit=40),
+                _result("t1", "", {"file": {"numLines": 40}}),
+                use("t2", d + "01:10:00Z", "lane/a", "Bash", command="sed -n 1,5p docs/x.md"),
+                _result("t2", "", {"stdout": _lines(5)}),
+                use("t3", d + "04:00:00Z", "main", "Read", file_path=f"{root}/docs/x.md"),
+                _result("t3", "", {"file": {"numLines": 7}}),
+                use("t4", d + "04:30:00Z", "main", "Read", file_path=f"{root}/espalier/cli.py"),
+                _result("t4", "", {"file": {"numLines": 99}}),
+                use("t5", "2020-01-03T00:00:00Z", "lane/a", "Read", file_path=f"{root}/espalier/cli.py"),
+                _result("t5", "", {"file": {"numLines": 500}})]
+        (proj / "s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+
+        def run():
+            ctx = _ctx(repo, _mail_at=mail, projects_dir=str(tmp_path / "projects"),
+                       checkouts=[{"path": root, "seat": "air-work", "folder": "Proj-Work"}])
+            return _CENSUS.section_transcripts(ctx)
+        return run
+
+    def test_each_lane_reads_its_own_calls(self, section):
+        """Dies to: a Read counted from the whole file, a call attributed to the seat's other lane
+        (t4, on main in lane/c's claim, charged to lane/a), the cut at the pin dropped (t5), or E
+        read over every file rather than the lane's edited ones."""
+        out = section()
+        t, = out["treatment"]
+        c, = out["control"]
+        assert (t["pr"], t["r"], t["e"], t["total"], t["calls"]) == (1, 40, 40, 45, 2)
+        assert (c["pr"], c["r"], c["e"], c["total"], c["calls"]) == (2, 99, 7, 106, 2)
+        assert out["calls"]["own"] == 4 and out["calls"]["not_on_a_lane"] == {}
+        # the population counts the records stamped at or before the pin: t1 to t4, never t5 (a
+        # live session appending after P) nor an unstamped line, so a re-run a day later agrees
+        assert out["population"][0]["folder"] == "proj-work" and out["population"][0]["records"] == 4
+        assert out["seats"] == ["air", "air-work"] and out["of_seats"] == 4
+
+    def test_two_runs_at_one_pin_read_the_same_section(self, section):
+        """Dies to: an unsorted walk or a clock read inside the section: two runs at one pin must
+        print the same transcripts section (Pass criteria)."""
+        assert json.dumps(section(), sort_keys=True, default=sorted) == json.dumps(section(), sort_keys=True, default=sorted)

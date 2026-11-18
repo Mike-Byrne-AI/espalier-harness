@@ -1578,6 +1578,11 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
         if skip_next:
             skip_next = False
             continue
+        if re.fullmatch(r"\d*>>?|&>>?|<", a):
+            skip_next = True          # a redirection's target is written (or fed), never a read operand
+            continue
+        if re.fullmatch(r"\d*>>?\S+|&>\S+|<\S+", a):
+            continue
         if a in ("-e", "-f") and prog in ("sed", "awk"):
             skip_next, script_given = True, True
             continue
@@ -1593,11 +1598,25 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
     return "read", files, rng
 
 
-def _relative(path: str, cwd: str, roots: list[str]) -> str | None:
+_WORKTREE_PREFIX = re.compile(r"^\.claude/worktrees/[^/]+/")
+_SCRATCH_COPY = re.compile(r"/scratchpad/[^/]+/")
+
+
+def _relative(path: str, cwd: str, roots: list[str], known=None) -> str | None:
+    """The repository path ``path`` names, or ``None``. A worktree under a
+    checkout that is gone by the read (a fork's ``.claude/worktrees/agent-*``)
+    is no root any more, so its files map onto the checkout around it with the
+    worktree's prefix: that prefix is taken off. A path in a tree copy under a
+    session scratchpad (``.../scratchpad/<copy>/espalier/cli.py``) maps where
+    ``known(rest)`` says the rest is a file at the pin."""
     full = os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd or "", path))
     for r in sorted(roots, key=len, reverse=True):
         if full == r or full.startswith(r.rstrip("/") + "/"):
-            return full[len(r.rstrip("/")) + 1:]
+            return _WORKTREE_PREFIX.sub("", full[len(r.rstrip("/")) + 1:])
+    if known is not None:
+        m = _SCRATCH_COPY.search(full)
+        if m and known(full[m.end():]):
+            return full[m.end():]
     return None
 
 
@@ -1649,11 +1668,11 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
             if "/tool-results/" in fp:
                 call["reads"] = [(src, n) for src in saved.get(fp, [])]
             else:
-                rel = _relative(fp, u["cwd"], roots)
+                rel = _relative(fp, u["cwd"], roots, length)
                 if rel:
                     call["reads"] = [(rel, n)]
         elif u["name"] == "Grep":
-            rel = _relative(str(u["input"].get("path") or ""), u["cwd"], roots)
+            rel = _relative(str(u["input"].get("path") or ""), u["cwd"], roots, length)
             if rel:
                 call["searches"] = [(rel, _line_count(res["text"]))]
         elif u["name"] == "Bash":
@@ -1670,7 +1689,7 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
                 if got is None:
                     continue
                 kind, files, rng = got
-                rels = [r for r in (_relative(f, cwd, roots) for f in files) if r]
+                rels = [r for r in (_relative(f, cwd, roots, length) for f in files) if r]
                 if kind == "search":
                     searches += [(r, 0) for r in rels]
                     continue
@@ -1747,15 +1766,27 @@ def item3_verdict(r: list[int], e: list[int]) -> dict:
             "pooled_sd_ln": round(s, 3), "realised_mdr": round(mdr, 2)}
 
 
-def _records(path: Path) -> tuple[int, list[dict]]:
+_STAMP_KEY = '"timestamp":'
+_STAMP_VALUE = re.compile(r'\s*"([^"]{19})')
+
+
+def _records(path: Path, until: str | None = None) -> tuple[int, list[dict]]:
     """``(record count, the records a call can be read from)`` of one
     transcript, streamed: a line holding neither a ``tool_use`` nor a
     ``tool_result`` is counted and never parsed (the folders run to gigabytes
-    on an 8 GB box)."""
+    on an 8 GB box). With ``until``, the count is of the records stamped at
+    or before it, so a live session appending after the pin leaves a re-run's
+    count where it was (an unstamped line is not counted)."""
     count, keep = 0, []
     with path.open(encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            count += 1
+            if until is None:
+                count += 1
+            else:
+                at = line.find(_STAMP_KEY)
+                stamp = _STAMP_VALUE.match(line, at + len(_STAMP_KEY)) if at >= 0 else None
+                if stamp and stamp.group(1) <= until[:19]:
+                    count += 1
             if '"tool_use"' not in line and '"tool_result"' not in line:
                 continue
             try:
@@ -1763,6 +1794,27 @@ def _records(path: Path) -> tuple[int, list[dict]]:
             except ValueError:
                 continue
     return count, keep
+
+
+def lane_of(seat: str, branch: str, when: str, *, seats: dict[str, str],
+            windows: dict[str, list[tuple[str, str, str]]], merged: dict[str, str]) -> str:
+    """The lane a call at ``when`` on ``branch`` of ``seat`` belongs to: the
+    record's own branch where it names a lane of the seat; a branch naming any
+    other lane is no unit (never re-placed by the clock); the default branch
+    (or none) falls back to the seat's claim windows, and so does a lane's
+    branch the checkout still names after that lane merged, where the seat
+    then holds exactly one other lane's claim (the work went on in another
+    clone or worktree: #530, built in a scratchpad clone while the checkout
+    sat on #527's merged branch)."""
+    held = {lane for s, e, lane in windows.get(seat, []) if s <= when <= e}
+    if branch in merged and seats.get(branch) == seat:
+        others = held - {branch}
+        if when[:19] > merged[branch][:19] and len(others) == 1:
+            return others.pop()
+        return branch
+    if branch and branch not in ("main", "master", "HEAD"):
+        return "other branch"
+    return held.pop() if len(held) == 1 else ("ambiguous" if held else "unattributed")
 
 
 def section_transcripts(ctx: dict) -> dict:
@@ -1798,16 +1850,10 @@ def section_transcripts(ctx: dict) -> dict:
     def length(path: str) -> int:
         return len((source_at(root, at, path) or "").splitlines())
 
-    def lane_of(seat: str, branch: str, when: str) -> str:
-        """The record's own branch where it names a unit; a branch naming any
-        other lane is no unit (never re-placed by the clock); only the default
-        branch or none falls back to the seat's claim windows."""
-        if branch in lanes and seats.get(branch) == seat:
-            return branch
-        if branch and branch not in ("main", "master", "HEAD"):
-            return "other branch"
-        held = {lane for s, e, lane in windows.get(seat, []) if s <= when <= e}
-        return held.pop() if len(held) == 1 else ("ambiguous" if held else "unattributed")
+    merged = {lane: pr["date"] for lane, pr in lanes.items()}
+
+    def place(seat: str, branch: str, when: str) -> str:
+        return lane_of(seat, branch, when, seats=seats, windows=windows, merged=merged)
 
     population, own, subs = [], [], []
     for c, folder in folders:
@@ -1815,16 +1861,17 @@ def section_transcripts(ctx: dict) -> dict:
         files = sorted(folder.glob("*.jsonl"))
         counts = {}
         for f in files:
-            counts[f.name], recs = _records(f)
+            counts[f.name], recs = _records(f, until)
             for call in calls_of(recs, roots, until, length):
-                call.update(seat=c["seat"], session=f.stem, lane=lane_of(c["seat"], call["branch"], call["at"]))
+                call.update(seat=c["seat"], session=f.stem, lane=place(c["seat"], call["branch"], call["at"]))
                 own.append(call)
             for r in recs:
                 for item in ((r.get("message") or {}).get("content") or []) if r.get("type") == "assistant" else []:
                     if isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name") in ("Agent", "Task"):
                         agent_calls[item["id"]] = (str(r.get("gitBranch") or ""), str(r.get("timestamp") or ""))
             del recs
-        population.append({"seat": c["seat"], "folder": folder.name, "files": len(files),
+        counts = {name: n for name, n in counts.items() if n}
+        population.append({"seat": c["seat"], "folder": folder.name, "files": len(counts),
                            "records": sum(counts.values()), "per_file": counts})
         for meta in sorted(folder.glob("*/subagents/*.meta.json")):
             try:
@@ -1837,7 +1884,7 @@ def section_transcripts(ctx: dict) -> dict:
             log = meta.with_name(meta.name[: -len(".meta.json")] + ".jsonl")
             _n, recs = _records(log) if log.is_file() else (0, [])
             for call in calls_of(recs, roots, until, length):
-                call.update(seat=c["seat"], session=log.stem, lane=lane_of(c["seat"], branch, when))
+                call.update(seat=c["seat"], session=log.stem, lane=place(c["seat"], branch, when))
                 subs.append(call)
     modules = set(ctx["modules"])
 
@@ -1877,7 +1924,8 @@ def section_transcripts(ctx: dict) -> dict:
                        "subagent_r": sum(t["subagent_r"] for t in treatment),
                        "control_with_py_only": item3_verdict([t["r"] for t in treatment],
                                                              [c["e"] for c in control if c["has_py"]])},
-            "calls": {"own": len(own), "subagents": len(subs), "not_on_a_lane": unplaced},
+            "calls": {"own": len(own), "subagents": len(subs), "not_on_a_lane": unplaced,
+                      "off_a_merged_branch": sum(1 for c in own if c["branch"] in lanes and c["lane"] != c["branch"])},
             "hand_sample": sample}
 
 
