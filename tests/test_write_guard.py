@@ -25369,6 +25369,42 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             'Compress-Archive -Path "{S}" -DestinationPath out.zip'),
         "secret-ps-dotnet-move": ("PowerShell", "deny", "_PS_DOTNET_FILE_RE", '[IO.File]::Move("{S}", "x")'),
         "secret-ps-git-mv": ("PowerShell", "deny", "_PS_GIT_RM_MV_RE", 'git mv "{S}" x'),
+        # DEF-5123: New-Item's link item types, the twin of the two `ln` rows:
+        # the link's target is an alias, whichever value parameter names it,
+        # and a value a file is made with is its content
+        "secret-ps-symlink-target": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType SymbolicLink -Path link -Target "{S}"'),
+        "secret-ps-symlink-value-bound-by-a-colon": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType SymbolicLink -Path link -Value:"{S}"'),
+        "secret-ps-hardlink-by-the-type-alias": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'ni -Type HardLink link -Target "{S}"'),
+        "secret-ps-junction-target-before-the-type": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -Target "{S}" -Path link -ItemType Junction'),
+        # the colon split read on one token (the failure-mode review: only the
+        # quoted value, two tokens, was pinned), and a link inside a group
+        "secret-ps-hardlink-target-bound-by-a-colon-unquoted": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", "New-Item -ItemType HardLink -Path link -Target:{S}"),
+        "secret-ps-symlink-type-bound-by-a-colon": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", 'New-Item -ItemType:SymbolicLink -Path link -Target "{S}"'),
+        "secret-ps-hardlink-inside-a-group": (
+            "PowerShell", "deny", "_PS_NEW_ITEM_RE", '(New-Item -ItemType HardLink -Path link -Target "{S}")'),
+        # a link's span ends at the close of its block or group: the next
+        # statement's or element's value is a file's content (both reviews)
+        "secret-ps-control-a-link-s-block-then-a-file-s-value": (
+            "PowerShell", "allow", "a file's value is its content",
+            'if ($a) { New-Item -ItemType Junction -Path x -Target y } else { Add-Content .gitignore -Value "{S}" }'),
+        "secret-ps-control-an-array-s-next-element-is-a-file-s-value": (
+            "PowerShell", "allow", "a file's value is its content",
+            '@(New-Item -ItemType HardLink -Path a -Target notes.txt), (New-Item -Path .gitignore -Value "{S}")'),
+        "secret-bash-nested-pwsh-hardlink": (
+            "Bash", "deny", "nested-program",
+            'powershell -Command "New-Item -ItemType HardLink -Path link -Target {S}"'),
+        "secret-ps-control-link-to-a-plain-file": (
+            "PowerShell", "allow", "not a secret", "New-Item -ItemType HardLink -Path link -Target notes.txt"),
+        "secret-ps-control-a-file-s-value-is-its-content": (
+            "PowerShell", "allow", "a file's value is its content", 'New-Item -ItemType File -Path n.txt -Value "{S}"'),
+        "secret-ps-control-no-item-type-value-is-content": (
+            "PowerShell", "allow", "a file's value is its content", 'New-Item -Path n.txt -Value "{S}"'),
         "secret-ps-python-open-read": (
             "PowerShell", "deny", "_PY_READ_RES", "python -c \"print(open('{S}').read())\""),
         "secret-ps-control-copy": ("PowerShell", "deny", "existing-read-roster", 'Copy-Item "{S}" x'),
@@ -25684,6 +25720,49 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         assert len(still_denied) < len(rows), (
             f"{arm}: every row still denies with the arm blinded -- {rows}"
         )
+
+
+class TestTheNewItemLinkLimits:
+    """DEF-5123's residue: New-Item's link item types are read in their plain
+    spellings (the operand class's `_PS_NEW_ITEM_RE` rows), and the
+    spellings below that Windows PowerShell 5.1 binds are declared limits by
+    the dispatcher's assign (87e5f5, under 40ec7f's rule: no session
+    records them): a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`,
+    `-Va`), an item type cut to a prefix (`hard`), and a target bound from
+    the pipeline. Each made a hard link to a file on 5.1 (driven
+    2026-11-17; `-It` and `-Ty` by the failure-mode review's `-WhatIf`).
+    Through the real hook, each beside its control one step inside, so the
+    day a reader follows one its row reds and docs/HOOKS.md's sentence is
+    rewritten on purpose."""
+
+    _LIMITS = {
+        "the-item-type-parameter-cut-to-a-prefix": (
+            "New-Item -It HardLink -Path link -Target .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "the-type-alias-cut-to-a-prefix": (
+            "New-Item -Ty HardLink -Path link -Target .env",
+            "New-Item -Type HardLink -Path link -Target .env"),
+        "a-target-cut-to-a-prefix": (
+            "New-Item -ItemType HardLink -Path link -Ta .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "a-value-cut-to-a-prefix": (
+            "New-Item -ItemType HardLink -Path link -Va .env",
+            "New-Item -ItemType HardLink -Path link -Value .env"),
+        "an-item-type-cut-to-a-prefix": (
+            "New-Item -ItemType hard -Path link -Target .env",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+        "a-target-from-the-pipeline": (
+            "'.env' | New-Item -ItemType HardLink -Path link",
+            "New-Item -ItemType HardLink -Path link -Target .env"),
+    }
+
+    @pytest.mark.parametrize("key", list(_LIMITS))
+    def test_the_declared_link_limits_are_pinned_as_allows(self, key, tmp_path):
+        assert_hook_allowed(_run_ps_guard(self._LIMITS[key][0], tmp_path))
+
+    @pytest.mark.parametrize("key", list(_LIMITS))
+    def test_each_link_limit_s_control_one_step_inside_is_denied(self, key, tmp_path):
+        assert_hook_denied(_run_ps_guard(self._LIMITS[key][1], tmp_path), contains_reason=".env")
 
 
 

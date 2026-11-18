@@ -1288,7 +1288,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    variable, a substitution, `cd -` -- leaves the directory unknown, and an
    unknown directory resolves against the root as before (the indirection
    class, declared; pinned by
-   `tests/test_write_guard.py::TestTheDirectoryAWriteRunsIn::test_bash`). A delete reads it more strictly (item 3): the unknown
+   `TestTheDirectoryAWriteRunsIn::test_bash`). A delete reads it more strictly (item 3): the unknown
    directory joins the start, so a bare glob or `$PWD` after it is
    refused, and so is one anywhere in a command that is not plain. On
    PowerShell the .NET file API (`[IO.File]`,
@@ -2503,6 +2503,20 @@ spellings of them are work:
   reader unless a real session records the slip (the last bullet's rule). One
   level of a program handed to a shell as a quoted string (`bash -c '...'`,
   `pwsh -Command "..."`) is not this shape; it stays in the contract above.
+- **A link to a secret made through `New-Item`, by ruling (2026-11-17).** The
+  secret-path check reads the target of a `New-Item` (or `ni`) whose
+  `-ItemType` or `-Type` names a `SymbolicLink`, `HardLink` or `Junction`,
+  given by `-Target` or `-Value` after a blank or a colon, as it reads the
+  target of `ln` and `ln -s` on Bash, so a link either verb makes to a
+  secret-bearing path is refused; other verbs that make a link (`mklink`,
+  `fsutil hardlink`, the .NET link methods) are not read for it, and a read
+  through a link that already exists is judged by the name it is read by.
+  Spellings Windows PowerShell 5.1 also binds are declared limits, each
+  pinned at allow beside its denied control by
+  `tests/test_write_guard.py::TestTheNewItemLinkLimits::test_the_declared_link_limits_are_pinned_as_allows`:
+  a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`, `-Va`), an item
+  type cut to a prefix (`-ItemType hard`) and a target piped into the cmdlet
+  (`'.env' | New-Item -ItemType HardLink -Path link`).
 - **An error-stream redirect among a command's words.** Each hard check (the
   zone checks, the secret-path check, and the Bash and PowerShell hard
   tiers) is judged a second time, where its first reading allowed, on the
