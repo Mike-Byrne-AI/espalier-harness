@@ -742,7 +742,9 @@ def section_clusters(ctx: dict) -> dict:
     the rest (``dead``). The two import reads come from the importers
     section; where it cannot be read they are ``None``, never an empty list,
     and ``dead`` is then ``None`` too, no claim, with ``clusters.importers``
-    named under ``unread``. Each split is
+    named under ``unread``; where it read in part (a ``.py`` file left
+    unparsed or unread) the three splits are partial and ``clusters.importers``
+    is named too. Each split is
     given over every definition and over functions alone, and the census
     asserts the sum. A command a hand concern names that the pin does not hold
     is named under ``missing_commands``, never dropped in silence."""
@@ -764,10 +766,14 @@ def section_clusters(ctx: dict) -> dict:
             files = imp["files"].values()
             external = sorted({n for f in files if not f["test"] for n in f["names"]})
             tested = sorted({n for f in files if f["test"] for n in f["names"]})
+            left = []
             if imp["unparsed"]:
-                _partial(ctx, "clusters", "importers", f"the importers read left {len(imp['unparsed'])} file(s) "
-                                                       f"unparsed, so external, tests_only and dead are partial: "
-                                                       f"{imp['unparsed'][:5]}")
+                left.append(f"{len(imp['unparsed'])} file(s) unparsed {imp['unparsed'][:5]}")
+            if imp["unread"]:
+                left.append(f"{len(imp['unread'])} tracked .py file(s) unread {imp['unread'][:5]}")
+            if left:
+                _partial(ctx, "clusters", "importers", f"the importers read left {' and '.join(left)}, so "
+                                                       f"external, tests_only and dead are partial")
     outside = closure(edges, [n for n in external or () if n in edges], stop=set(commands))
     in_tests = closure(edges, [n for n in tested or () if n in edges], stop=set(commands))
     fns = {n for n in edges if kinds[n] == FUNCTION}
@@ -1076,21 +1082,26 @@ _PATCHERS = {"setattr": "setattr", "delattr": "delattr", "object": "patch.object
 #: ``setattr``/``delattr``/``setitem`` take any; ``object`` and ``dict`` are
 #: ``patch``'s (``patch.object``, ``mock.patch.dict``, ``mocker.patch.object``),
 #: and ``patch`` is ``mock``'s or ``mocker``'s. A bare name is a patcher only as
-#: ``setattr``, ``delattr``, ``setitem`` or ``patch``: a builtin ``dict(...)``,
-#: ``object()`` or ``something.object(cli, "Z")`` patches nothing.
+#: ``setattr``, ``delattr``, ``setitem`` or ``patch``: a builtin ``dict(...)`` or
+#: ``object()`` patches nothing. One of those attributes on any other base
+#: (``mpatch.object``, an aliased ``patch``; ``um.patch``, an aliased ``mock``;
+#: ``something.object``) is a patcher the census cannot tell is one.
 _PATCHER_BASES = {"object": ("patch",), "dict": ("patch",), "patch": ("mock", "mocker")}
 _PATCHER_NAMES = ("setattr", "delattr", "setitem", "patch")
 
 
-def _patcher_kind(func: ast.AST) -> str | None:
+def _patcher_kind(func: ast.AST) -> tuple[str | None, bool]:
+    """``(kind, known)``: the patcher a call's callable names (``None`` for
+    none), and whether its base is one ``_PATCHER_BASES`` admits (a bare name,
+    and monkeypatch's attributes on any name, always are)."""
     if isinstance(func, ast.Name):
-        return _PATCHERS[func.id] if func.id in _PATCHER_NAMES else None
+        return (_PATCHERS[func.id], True) if func.id in _PATCHER_NAMES else (None, False)
     if not isinstance(func, ast.Attribute) or func.attr not in _PATCHERS:
-        return None
+        return None, False
     need = _PATCHER_BASES.get(func.attr)
     base = func.value
     last = base.attr if isinstance(base, ast.Attribute) else base.id if isinstance(base, ast.Name) else None
-    return _PATCHERS[func.attr] if need is None or last in need else None
+    return _PATCHERS[func.attr], need is None or last in need
 
 
 def _import_call_module(node: ast.AST) -> str | None:
@@ -1139,10 +1150,13 @@ def _cli_chain(node: ast.AST, aliases: set[str]) -> tuple[bool, list[str] | None
 
 
 def _shadowed_heads(tree: ast.Module, heads: set[str]) -> dict[int, set[str]]:
-    """``{id(node): heads}`` for each node inside a function or lambda that
-    takes a parameter named like the first name of an alias of cli (a fixture
-    ``cli``): there that name is the parameter, which the census cannot
-    resolve, never the import (another alias stays the import)."""
+    """``{id(node): heads}`` for each node in the body of a function or
+    lambda that takes a parameter named like the first name of an alias of
+    cli (a fixture ``cli``): there that name is the parameter, which the
+    census cannot resolve, never the import (another alias stays the import).
+    The function's own decorators, defaults and annotations are read in the
+    scope around it, where the name is still the import (as ``_module_refs``
+    reads them)."""
     out: dict[int, set[str]] = {}
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1150,8 +1164,9 @@ def _shadowed_heads(tree: ast.Module, heads: set[str]) -> dict[int, set[str]]:
         a = fn.args
         hidden = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg) if x is not None} & heads
         if hidden:
-            for n in ast.walk(fn):
-                out.setdefault(id(n), set()).update(hidden)
+            for stmt in [fn.body] if isinstance(fn, ast.Lambda) else fn.body:
+                for n in ast.walk(stmt):
+                    out.setdefault(id(n), set()).update(hidden)
     return out
 
 
@@ -1163,18 +1178,18 @@ def _through_shadow(node: ast.AST, first: ast.AST, shadowed: dict[int, set[str]]
 
 def cli_aliases(tree: ast.Module) -> set[str]:
     """The dotted names a test file binds to the cli module itself: ``from
-    espalier import cli [as x]``, ``import espalier.cli [as x]`` and
-    ``x = importlib.import_module("espalier.cli")``, anywhere in the file."""
+    espalier import cli [as x]``, ``import espalier.cli [as x]``, and a name
+    assigned an import call that returns cli (``_cli_chain``:
+    ``x = importlib.import_module("espalier.cli")``, a bare
+    ``import_module("espalier.cli")``, ``__import__("espalier.cli").cli``),
+    anywhere in the file."""
     out: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "espalier" and not node.level:
             out.update(a.asname or "cli" for a in node.names if a.name == "cli")
         elif isinstance(node, ast.Import):
             out.update(a.asname or CLI_MODULE for a in node.names if a.name == CLI_MODULE)
-        elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
-              and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "import_module"
-              and node.value.args and isinstance(node.value.args[0], ast.Constant)
-              and node.value.args[0].value == CLI_MODULE):
+        elif isinstance(node, ast.Assign) and _cli_chain(node.value, set()) == (True, []):
             out.update(t.id for t in node.targets if isinstance(t, ast.Name))
     return out
 
@@ -1204,14 +1219,18 @@ def patch_sites(tree: ast.Module) -> tuple[list[dict], int]:
     ``setitem(cli.REG, "k", v)`` and ``patch.dict(cli.REG)`` patch cli's
     ``REG``, as ``patch.dict("espalier.cli.REG")`` does. Inside a function
     that takes a parameter named like the alias the name is that parameter:
-    unresolved, never cli."""
+    unresolved, never cli. A string target is a site whatever the patcher's
+    base is named (``um.patch("espalier.cli.Y")``, ``mocker_fixture.patch``);
+    a patcher attribute on a base ``_patcher_kind`` does not know
+    (``mpatch.object(cli, "X")``) whose first argument reaches cli is
+    unresolved, never dropped."""
     aliases = cli_aliases(tree)
     shadowed = _shadowed_heads(tree, {a.split(".")[0] for a in aliases})
     sites: list[dict] = []
     unresolved = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            kind = _patcher_kind(node.func)
+            kind, known = _patcher_kind(node.func)
             if kind is None or not node.args:
                 continue
             raising = next((k.value for k in node.keywords if k.arg == "raising"), None)
@@ -1225,6 +1244,9 @@ def patch_sites(tree: ast.Module) -> tuple[list[dict], int]:
                                   "raising_false": raising_false})
                 continue
             resolved, chain = _cli_chain(first, aliases)
+            if not known:
+                unresolved += 1 if chain is not None else 0
+                continue
             if not resolved or (chain is not None and _through_shadow(node, first, shadowed)):
                 unresolved += 1
                 continue
@@ -1826,7 +1848,11 @@ def section_citations(ctx: dict) -> dict:
     only in that spelling, and the other spellings are counted beside it; the
     unchecked, which rot with no red; and the protected zone under
     ``tools/cc/``, each file beside its vendored twin. The parts sum to the
-    totals, asserted."""
+    totals, asserted. Two struck counts are kept by two rules and are not
+    read against each other: ``split.struck.struck_fragments`` counts
+    citations by the sweep's line rule, while ``fragments.struck`` counts
+    fragments by the authoring's line-2 id cell (``cells[1]`` starts ``~~``),
+    the rule ``beside`` keeps."""
     texts = _texts_for(ctx, "citations")
     modules = ctx["modules"]
     pats = citation_patterns(modules)
@@ -1918,7 +1944,10 @@ def section_citations(ctx: dict) -> dict:
                               "swept_live is a population: the sweep reds only its backticked path::symbol "
                               "spellings",
                      "beside_substring": "the authoring's read: one part per file, a ledger fragment whose "
-                                         "line 2 cells[1] starts '~~' struck whole"},
+                                         "line 2 cells[1] starts '~~' struck whole",
+                     "fragments": "all: the ledger fragments; struck: those whose line 2 cells[1] starts '~~' "
+                                  "(the id-cell rule beside_substring keeps), not the sweep's line rule "
+                                  "split.struck.struck_fragments counts by"},
             "files_tracked": meta.get("tracked"), "files_read": meta.get("read"),
             "binary": len(meta.get("binary", [])), "files_unread": meta.get("unread", []),
             "record_set": sorted(sweep["record"]),
@@ -3075,10 +3104,11 @@ def pr_meta(ctx: dict) -> dict[int, dict]:
 
 def mail_refs(root: Path) -> dict[str, str]:
     """``{machine: oid}`` of each remote-tracking mail ref: read once, at the
-    start of a run, and written into the pin, so a re-run names what it read."""
-    rc, out, _err = git(root, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin/mail/")
+    start of a run, and written into the pin, so a re-run names what it read.
+    A ``git for-each-ref`` that fails is ``Unread``, never a clone of no mail."""
+    rc, out, err = git(root, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin/mail/")
     if rc != 0:
-        return {}
+        raise Unread(f"git for-each-ref refs/remotes/origin/mail/ failed: {err.strip()[:200]}")
     refs = {}
     for line in out.splitlines():
         oid, _sp, ref = line.partition(" ")
@@ -3089,9 +3119,13 @@ def mail_refs(root: Path) -> dict[str, str]:
 def mail_at(ctx: dict) -> dict[str, list[dict]]:
     """Every machine's messages at the pinned mail oids, cut at the pin's
     date by each message's own stamp: a message sent after P is not in a
-    read at P, whatever the ref holds now."""
+    read at P, whatever the ref holds now. Mail refs the run could not read
+    (``ctx["_mail_refs_unread"]``, set by ``census``) are ``Unread`` with
+    that reason, never a clone of no mail."""
     if "_mail_at" in ctx:
         return ctx["_mail_at"]
+    if ctx.get("_mail_refs_unread"):
+        raise Unread(f"the mail refs could not be read: {ctx['_mail_refs_unread']}")
     refs = ctx["pin"].get("mail_refs") or {}
     if not refs:
         raise Unread("no mail refs in this clone (refs/remotes/origin/mail/*)")
@@ -3481,8 +3515,11 @@ READ_PROGRAMS = {"sed", "cat", "head", "tail", "nl", "awk"}
 SEARCH_PROGRAMS = {"grep", "rg", "ugrep", "egrep", "fgrep"}
 #: Record types that repeat a request's content (the blob records): skipped, never counted twice.
 SKIP_RECORDS = {"api-request-blob", "api-request", "api-request-shape"}
-#: A here-document's operator and tag (``<<EOF``, ``<<-'EOF'``), never a
-#: here-string's ``<<<``, whose word is the whole of its input.
+#: The old per-line read of a here-document's operator and tag (``<<EOF``,
+#: ``<<-'EOF'``, never a here-string's ``<<<``): ``_heredoc_tags`` reads the
+#: operator in its context and the delimiter as a shell word, and this regex is
+#: kept only to name the commands where the two disagree
+#: (``heredoc_tag_misses``).
 _HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 _SAVED = re.compile(r"(?:Full output|Output) saved to:?\s*(\S+/tool-results/\S+)")
 
@@ -3512,8 +3549,11 @@ def checkouts(root: Path) -> list[dict]:
     seat name (``espalier.machine``, the per-worktree one first), whether that
     name is its own (``own_name``, from ``_own_name``; the main checkout is
     the porcelain's first entry), its project folder, and ``gone`` where its
-    directory is not there (so no seat can be read for it). A ``git worktree
-    list`` that fails is ``Unread``, never a clone of no checkouts."""
+    directory is not there (so no seat can be read for it). ``seat_error``
+    names a ``git config`` that failed (an exit other than 0, or 1 for a key
+    that is not set: a config file git cannot parse), so that checkout's seat
+    reads unread, never "no espalier.machine". A ``git worktree list`` that
+    fails is ``Unread``, never a clone of no checkouts."""
     rc, out, err = git(root, "worktree", "list", "--porcelain", "-z")
     if rc != 0:
         raise Unread(f"git worktree list failed: {err.strip()[:200]}")
@@ -3521,31 +3561,89 @@ def checkouts(root: Path) -> list[dict]:
     rows = []
     for idx, p in enumerate(paths):
         gone = not Path(p).is_dir()
-        rc, name, _err = (1, "", "") if gone else git(Path(p), "config", "--get", "espalier.machine")
-        seat = name.strip() or None
+        rc, name, err = (1, "", "") if gone else git(Path(p), "config", "--get", "espalier.machine")
+        seat = name.strip() or None if rc == 0 else None
         own = None if gone or seat is None else _own_name(Path(p), main=idx == 0)
-        rows.append({"path": p, "seat": seat, "own_name": own, "folder": project_folder(p), "gone": gone})
+        rows.append({"path": p, "seat": seat, "own_name": own, "folder": project_folder(p), "gone": gone,
+                     "seat_error": None if rc in (0, 1) else f"git config failed (exit {rc}): {err.strip()[:200]}"})
     return rows
 
 
 #: The characters a word starts after: a ``#`` there opens a comment.
 _WORD_BREAKS = frozenset(" \t\n;&|()<>")
+#: The characters that end a here-document's delimiter word, unquoted: a blank or an operator's.
+_DELIMITER_ENDS = frozenset(" \t;&|()<>")
+#: The contexts a newline ends a command line in, so a here-document's body can start after it.
+_COMMAND_KINDS = ("cmd", "sub", "`")
+#: The contexts a ``${`` parameter expansion opens inside itself: its quotes and substitutions.
+_PARAM_OPENS = (("$((", "arith"), ("$(", "sub"), ("${", "param"), ("'", "'"), ('"', '"'))
 
 
-def _heredoc_tags(line: str, stack: list[list]) -> list[str]:
-    """The tags of the here-documents one line of a command opens, read where
-    the shell reads ``<<`` as a redirection: in a command's own context (the
-    command line, a subshell, or a ``$(`` there or inside double quotes), and
-    never inside quotes, inside ``$((...))`` or ``((...))`` (a shift there),
-    or in a comment (a ``#`` that starts a word in that context). ``stack``
-    holds the contexts open at the line's start and is left holding those
-    open at its end, so a quote or a substitution carries to the next line as
-    the shell's does. Each entry is ``[kind, depth]``: ``cmd`` (the base,
-    never popped), ``sub`` (a ``$(``), ``'``, ``"``, ``$'``, or ``arith``; the
-    depth counts the parentheses open inside it. A ``case`` pattern's ``)``
-    inside a ``$(`` is read as closing it, and a backquote is not a context."""
-    tags: list[str] = []
+def _heredoc_word(line: str, i: int) -> tuple[str, bool, int] | None:
+    """The here-document the ``<<`` at ``line[i]`` opens: ``(tag, dash, end)``,
+    or ``None`` where no word follows it. After ``<<`` or ``<<-`` and any
+    blanks the delimiter is a shell word, everything up to the next unquoted
+    blank or operator character; the tag is that word with its quotes and
+    backslashes taken out, so ``<<\\EOF``, ``<<'END X'``, ``<<E'OF'``,
+    ``<<END-X``, ``<<1X`` and ``let x<<=2``'s ``=2`` each delimit a body, as
+    both shells read them. ``dash`` marks ``<<-``, whose delimiter line may
+    carry leading tabs."""
+    n = len(line)
+    j = i + 2
+    dash = line.startswith("-", j)
+    j += dash
+    while j < n and line[j] in " \t":
+        j += 1
+    start, word, quote = j, [], ""
+    while j < n:
+        ch = line[j]
+        if quote == '"' and ch == "\\" and line[j + 1:j + 2] in ('"', "\\", "$", "`"):
+            word.append(line[j + 1])
+            j += 2
+        elif quote:
+            quote = "" if ch == quote else quote
+            word.append(ch if quote else "")
+            j += 1
+        elif ch in "'\"":
+            quote = ch
+            j += 1
+        elif ch == "\\":
+            word.append(line[j + 1:j + 2])
+            j += 2
+        elif ch in _DELIMITER_ENDS:
+            break
+        else:
+            word.append(ch)
+            j += 1
+    if j == start:
+        return None
+    return "".join(word), dash, min(j, n)
+
+
+def _heredoc_tags(line: str, stack: list[list]) -> list[tuple[str, bool, int]]:
+    """The here-documents one line of a command opens, each ``(tag, dash,
+    depth)`` (``_heredoc_word``; ``depth`` the stack's height at its ``<<``),
+    read where the shell reads ``<<`` as a redirection: in a command's own
+    context (the command line, a subshell, a ``$(`` there or inside double
+    quotes, or a backquote inside double quotes), and never inside quotes,
+    inside ``$((...))``, ``((...))`` or ``$[...]`` (a shift there), inside a
+    ``${...}`` parameter expansion, or in a comment (a ``#`` that starts a
+    word in that context). ``stack`` holds the contexts open at the line's
+    start and is left holding those open at its end, so a quote or a
+    substitution carries to the next line as the shell's does. Each entry is
+    ``[kind, depth]``: ``cmd`` (the base, never popped), ``sub`` (a ``$(``),
+    ``'``, ``"``, ``$'``, ``arith``, ``brack`` (a ``$[``), ``param`` (a
+    ``${``), a backquote, or ``cont``: a backslash-newline that ends the line,
+    carrying whether the next line starts at a word start (it starts mid-word
+    unless a blank came before the backslash). The depth counts the
+    parentheses (a ``${``'s braces) open inside it. Limits, named: a ``case``
+    pattern's ``)`` inside a ``$(`` is read as closing it, and a backquote is
+    a context only inside double quotes (on the command line it is read as a
+    plain character)."""
+    tags: list[tuple[str, bool, int]] = []
     i, n, brk = 0, len(line), True
+    if stack[-1][0] == "cont":
+        brk = stack.pop()[1]
     while i < n:
         top = stack[-1]
         kind, ch = top[0], line[i]
@@ -3574,23 +3672,59 @@ def _heredoc_tags(line: str, stack: list[list]) -> list[str]:
             elif line.startswith("$(", i):
                 stack.append(["sub", 0])
                 i += 2
+            elif ch == "`":
+                stack.append(["`", 0])
+                i += 1
             else:
                 i += 1
             brk = False
-        elif ch == "\\":                              # cmd or sub from here on
+        elif kind == "brack":
+            if ch == "[":
+                top[1] += 1
+            elif ch == "]" and top[1]:
+                top[1] -= 1
+            elif ch == "]":
+                stack.pop()
+            i, brk = i + 1, False
+        elif kind == "param":
+            opened = next(((c, k) for c, k in _PARAM_OPENS if line.startswith(c, i)), None)
+            if ch == "\\":
+                i += 2
+            elif ch == "}" and not top[1]:
+                stack.pop()
+                i += 1
+            elif opened:
+                stack.append([opened[1], 0])
+                i += len(opened[0])
+            else:
+                top[1] += 1 if ch == "{" else -1 if ch == "}" else 0
+                i += 1
+            brk = False
+        elif ch == "\\":                              # cmd, sub or a backquote from here on
+            if i + 1 == n:
+                stack.append(["cont", brk])
             i, brk = i + 2, False
+        elif ch == "`" and kind == "`":
+            stack.pop()
+            i, brk = i + 1, False
         elif ch == "#" and brk:
-            break
+            close = line.find("`", i) if kind == "`" else -1
+            if close < 0:
+                break
+            i = close
         elif line.startswith("<<<", i):
             i, brk = i + 3, False
         elif line.startswith("<<", i):
-            m = _HEREDOC.match(line, i)
+            m = _heredoc_word(line, i)
             if m:
-                tags.append(m.group(2))
-            i, brk = (m.end(), False) if m else (i + 2, True)
+                tags.append((m[0], m[1], len(stack)))
+            i, brk = (m[2], False) if m else (i + 2, True)
         elif line.startswith("$((", i) or (brk and line.startswith("((", i)):
             stack.append(["arith", 0])
             i, brk = i + (3 if ch == "$" else 2), False
+        elif line.startswith("${", i) or line.startswith("$[", i):
+            stack.append(["param" if line[i + 1] == "{" else "brack", 0])
+            i, brk = i + 2, False
         elif line.startswith("$(", i) or line.startswith("$'", i):
             stack.append(["sub" if line[i + 1] == "(" else "$'", 0])
             i, brk = i + 2, line[i + 1] == "("
@@ -3606,24 +3740,62 @@ def _heredoc_tags(line: str, stack: list[list]) -> list[str]:
     return tags
 
 
-def strip_heredocs(command: str) -> str:
-    """The command with every here-document's body taken out: a path inside
-    one is the text of a message or a script, never a read. Only a ``<<`` the
-    shell reads as a redirection opens one (``_heredoc_tags``, its contexts
-    carried across the command's lines); a body's own lines are never read
-    for one."""
+def _heredoc_scan(command: str) -> tuple[list[str], list[tuple[int, list[str]]]]:
+    """``(kept, read)``: the command's lines with every here-document's body
+    taken out, and each line read for operators (by its index) with the tags
+    ``_heredoc_tags`` found on it. A body starts after the newline that ends
+    its operator's line in the operator's own context: not while a quote, an
+    expansion or a backslash-newline opened after the operator is still open
+    there (the shells read the body after the logical line), and a
+    here-document inside a ``$(`` starts at that substitution's own newline.
+    A ``<<`` body ends at the first line equal to its tag, a ``<<-`` body at
+    the first equal to it once leading tabs are taken off; a body's own lines
+    are never read for operators."""
     out, lines, i = [], command.split("\n"), 0
     stack: list[list] = [["cmd", 0]]
+    pending: list[tuple[str, bool, int]] = []
+    read: list[tuple[int, list[str]]] = []
     while i < len(lines):
         line = lines[i]
         out.append(line)
         tags = _heredoc_tags(line, stack)
+        read.append((i, [t for t, _dash, _depth in tags]))
+        pending += tags
         i += 1
-        for tag in tags:
-            while i < len(lines) and lines[i].strip() != tag:
+        if not pending or stack[-1][0] not in _COMMAND_KINDS:
+            continue
+        here = len(stack)
+        for tag, dash, _depth in [p for p in pending if p[2] >= here]:
+            while i < len(lines) and (lines[i].lstrip("\t") if dash else lines[i]) != tag:
                 i += 1
             i += 1
-    return "\n".join(out)
+        pending = [p for p in pending if p[2] < here]
+    return out, read
+
+
+def strip_heredocs(command: str) -> str:
+    """The command with every here-document's body taken out: a path inside
+    one is the text of a message or a script, never a read. Only a ``<<`` the
+    shell reads as a redirection opens one (``_heredoc_tags``, its contexts
+    carried across the command's lines); its body starts and ends where the
+    shells' does (``_heredoc_scan``)."""
+    return "\n".join(_heredoc_scan(command)[0])
+
+
+def heredoc_tag_misses(command: str) -> list[str]:
+    """The tags the old per-line regex (``_HEREDOC``) finds on a line the
+    scanner reads where ``_heredoc_tags`` finds no tag of that name, and that a
+    later line of the command equals once stripped: a here-document the
+    scanner may have missed (the ``case``-``)`` inside a ``$(`` limit among
+    them), so its body was read as commands. A candidate, never a verdict:
+    the count names how often to look."""
+    lines = command.split("\n")
+    missed = []
+    for idx, tags in _heredoc_scan(command)[1]:
+        for m in _HEREDOC.finditer(lines[idx]):
+            if m.group(2) not in tags and any(later.strip() == m.group(2) for later in lines[idx + 1:]):
+                missed.append(m.group(2))
+    return missed
 
 
 def shell_text(command: str) -> str:
@@ -3632,7 +3804,10 @@ def shell_text(command: str) -> str:
     continuation joined, as the shell joins it outside single quotes; and each
     comment cut, a ``#`` that starts a word outside quotes, which ends at its
     own line's end and never takes a later line (``${#x}`` and ``a#b`` are no
-    comment). Quotes open on one line carry to the next, as the shell's do."""
+    comment). Quotes open on one line carry to the next, as the shell's do. An
+    ANSI-C quote (``$'it\\'s'``, where a backslash escapes the quote) is handed
+    on as the single-quoted word it is (``'it'"'"'s'``), which the lexer reads
+    whole; its other escapes are kept as written."""
     text = strip_heredocs(command)
     out: list[str] = []
     quote, i, n, at_break = "", 0, len(text), True
@@ -3642,6 +3817,17 @@ def shell_text(command: str) -> str:
             quote = "" if ch == "'" else quote
             out.append(ch)
             i += 1
+        elif quote == "$'":
+            nxt = text[i + 1:i + 2] if ch == "\\" else ""
+            if ch == "'":
+                quote = ""
+            out.append("'\"'\"'" if nxt == "'" else nxt if nxt == "\\" else text[i:i + 2] if nxt else ch)
+            i += 2 if nxt else 1
+        elif quote == "" and text.startswith("$'", i):
+            quote = "$'"
+            out.append("'")
+            i += 2
+            at_break = False
         elif ch == "\\":
             if text[i + 1:i + 2] == "\n":
                 i += 2              # a continuation: the shell takes both out
@@ -3674,7 +3860,13 @@ def simple_commands(command: str) -> list[tuple[list[str], bool]]:
     comments cut line by line): split on ``;``, ``&&``, ``||``, ``|``, ``&``
     and newlines. ``piped`` marks one whose output goes into, or comes from, a
     pipe. The lexer keeps no comment character of its own, so a ``#`` it is
-    handed is a word's."""
+    handed is a word's. A command the lexer refuses (an unbalanced quote) is
+    ``[]`` here; ``lexed_commands`` tells it apart, and ``calls_of`` counts it."""
+    return lexed_commands(command) or []
+
+
+def lexed_commands(command: str) -> list[tuple[list[str], bool]] | None:
+    """``simple_commands``, or ``None`` where the lexer refuses the command."""
     text = shell_text(command).replace("\n", " ; ")
     lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
     lex.whitespace_split = True
@@ -3682,7 +3874,7 @@ def simple_commands(command: str) -> list[tuple[list[str], bool]]:
     try:
         tokens = list(lex)
     except ValueError:
-        return []
+        return None
     out, cur, seps = [], [], []
     for tok in [*tokens, ";"]:
         if tok and set(tok) <= set(";&|()"):
@@ -3703,7 +3895,10 @@ def simple_commands(command: str) -> list[tuple[list[str], bool]]:
 
 def _range(program: str, args: list[str]) -> int | None:
     """The lines a read program's own options select, or ``None`` for a
-    whole file (or a range it cannot tell)."""
+    whole file (or a range it cannot tell). ``head``'s and ``tail``'s long
+    form (``--lines N``, ``--lines=N``) is read as ``-n N`` is."""
+    args = [w for a in args for w in (["-n", a[len("--lines="):]] if a.startswith("--lines=") else
+                                      ["-n"] if a == "--lines" else [a])]
     if program == "sed":
         total, saw = 0, False
         for a in args:
@@ -3739,10 +3934,12 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
     ``kind`` is ``read`` (the allowlist: ``sed`` without ``-i``, ``cat``,
     ``head``, ``tail``, ``nl``, ``awk``, ``git show <rev>:<path>`` after any
     of git's global options) or ``search``; the files are the whole operands
-    the program reads, a file fed on its stdin (``prog < file``) among them.
-    A redirection's target is written, never read; a here-document's tag and
-    a here-string's word name no file; the count ``-n``/``-c`` takes on
-    ``head`` and ``tail`` is no file either."""
+    the program reads, and a file fed on its stdin (``prog < file``) only
+    where the program reads its stdin: with no file operand, or a ``-`` among
+    them (``cat a < b`` reads ``a`` alone). A redirection's target is
+    written, never read; a here-document's tag and a here-string's word name
+    no file; the count ``-n``/``-c`` takes on ``head`` and ``tail`` is no file
+    either."""
     while argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
         argv = argv[1:]
     if not argv:
@@ -3766,7 +3963,7 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
         return None
     files: list[str] = []
     fed: list[str] = []
-    skip_next, feed_next, script_given = False, False, False
+    skip_next, feed_next, script_given, dash = False, False, False, False
     for a in args:
         if skip_next or feed_next:
             if feed_next:
@@ -3796,13 +3993,16 @@ def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
         if a in ("-n", "-c", "--lines", "--bytes") and prog in ("head", "tail"):
             skip_next = True
             continue
+        if a == "-":
+            dash = True               # the program's stdin, among its operands
+            continue
         if a.startswith("-") or a.startswith("+"):
             continue
         files.append(a)
     if prog in ("sed", "awk") and not script_given and files:
         files = files[1:]
     rng = _range(prog, args)
-    return "read", files + fed, rng
+    return "read", files + (fed if dash or not files else []), rng
 
 
 _WORKTREE_PREFIX = re.compile(r"^\.claude/worktrees/[^/]+/")
@@ -3835,6 +4035,48 @@ def _relative(path: str, cwd: str, roots: list[str], known=None) -> str | None:
     return None
 
 
+def _program(argv: list[str]) -> str:
+    """A simple command's program name, past any leading ``VAR=value``."""
+    while argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
+        argv = argv[1:]
+    return Path(argv[0]).name if argv else ""
+
+
+def _git_dir(argv: list[str], cwd: str) -> str:
+    """The directory a ``git`` command runs in: its ``-C`` options joined in
+    order onto ``cwd``, as git applies them, else ``cwd``."""
+    while argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
+        argv = argv[1:]
+    where, args = cwd, argv[1:]
+    while args and args[0].startswith("-"):
+        if args[0] == "-C" and len(args) > 1:
+            where = _joined(args[1], where)
+        args = args[2:] if args[0] in _GIT_VALUE_OPTIONS else args[1:]
+    return where
+
+
+def _repository_root(directory: str, roots: list[str]) -> str:
+    """The root of the repository a command run in ``directory`` reads: the
+    checkout root holding it (the longest; a fork's worktree under
+    ``.claude/worktrees/`` is its own root, as is a tree copy under a session
+    scratchpad), else ``directory`` itself."""
+    d = directory.replace("\\", "/").rstrip("/")
+    for r in sorted((root.replace("\\", "/").rstrip("/") for root in roots), key=len, reverse=True):
+        if d == r or d.startswith(r + "/"):
+            m = _WORKTREE_PREFIX.match(d[len(r) + 1:] + "/") if d != r else None
+            return f"{r}/{m.group(0)}".rstrip("/") if m else r
+    m = _SCRATCH_COPY.search(d + "/")
+    return d[:m.end() - 1] if m else d
+
+
+def _show_anchor(path: str, argv: list[str], cwd: str, roots: list[str]) -> str:
+    """The directory ``git show REV:path`` reads ``path`` from: the root of the
+    repository the command runs in (``_git_dir``, ``_repository_root``), or
+    that directory itself where ``path`` starts ``./`` or ``../``."""
+    where = _git_dir(argv, cwd)
+    return where if path.startswith(("./", "../")) else _repository_root(where, roots)
+
+
 def _result_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -3847,15 +4089,24 @@ def _line_count(text: str) -> int:
     return len(text.splitlines())
 
 
-def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[dict]:
+def calls_of(records: list[dict], roots: list[str], until: str, length, misses: dict | None = None,
+             modules=()) -> list[dict]:
     """One session's file reads and searches, by the ruled rules: each
     ``tool_use`` once (deduped by id), the blob records skipped, cut at the
     pin's date by each record's own stamp. Each call carries its stamp, its
     branch, and ``reads``: ``[(repo path, lines)]``. ``length(path)`` is a
     file's length at the pin (a piped or multi-file whole read's range). A
     ``Read`` counts its result's ``numLines``, 0 included (a read past the end
-    returns a warning, no line of the file); only a result with none counts its
-    text's lines.
+    returns a warning, no line of the file); a refused one (its result
+    ``is_error``, or a ``toolUseResult`` that is no dict: the over-the-token-
+    limit refusal is the string ``Error: File content ... exceeds maximum
+    allowed tokens``) counts 0, never its error text's lines; only a result
+    with no ``numLines`` otherwise counts its text's lines. ``git show
+    REV:path`` reads ``path`` from the root of the repository it runs in
+    (``_show_anchor``), never the shell's cwd. ``misses``, where given, counts
+    the Bash commands the lexer refuses (``unlexed``, which book nothing) and
+    those ``heredoc_tag_misses`` flags (``heredoc_tag_missed``), each with how
+    many hold a path of ``modules`` (``*_naming_cli``).
 
     Limits, named and not corrected: a saved output (``Output saved to``) that
     holds several files' reads credits each file the saved file's whole
@@ -3879,17 +4130,19 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
                                  "cwd": r.get("cwd") or ""}
             elif r.get("type") == "user" and c.get("type") == "tool_result":
                 results.setdefault(c.get("tool_use_id"), {"text": _result_text(c.get("content")),
-                                                           "meta": r.get("toolUseResult")})
+                                                           "meta": r.get("toolUseResult"),
+                                                           "error": bool(c.get("is_error"))})
     saved: dict[str, list[str]] = {}   # a saved output's path -> the files whose read it holds
     calls = []
     for u in sorted(uses.values(), key=lambda u: (u["at"], u["id"])):
-        res = results.get(u["id"]) or {"text": "", "meta": None}
+        res = results.get(u["id"]) or {"text": "", "meta": None, "error": False}
         meta = res["meta"] if isinstance(res["meta"], dict) else {}
         call = {"id": u["id"], "at": u["at"], "branch": u["branch"], "reads": [], "searches": []}
         if u["name"] == "Read":
             fp = str(u["input"].get("file_path") or "")
             num = (meta.get("file") or {}).get("numLines")
-            n = int(num) if num is not None else _line_count(res["text"])
+            refused = res["error"] or (u["id"] in results and not isinstance(res["meta"], dict))
+            n = 0 if refused else int(num) if num is not None else _line_count(res["text"])
             if "/tool-results/" in fp:
                 call["reads"] = [(src, n) for src in saved.get(fp, [])]
             else:
@@ -3903,7 +4156,14 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
         elif u["name"] == "Bash":
             out = str(meta.get("stdout") if meta.get("stdout") is not None else res["text"])
             hit = _SAVED.search(out)
-            parts = simple_commands(str(u["input"].get("command") or ""))
+            command = str(u["input"].get("command") or "")
+            parts = lexed_commands(command)
+            if misses is not None:
+                naming = any(m in command for m in modules)
+                for key, missed in (("unlexed", parts is None), ("heredoc_tag_missed", bool(heredoc_tag_misses(command)))):
+                    misses[key] = misses.get(key, 0) + missed
+                    misses[f"{key}_naming_cli"] = misses.get(f"{key}_naming_cli", 0) + (missed and naming)
+            parts = parts or []
             cwd = u["cwd"]
             reads, searches = [], []
             for argv, piped in parts:
@@ -3914,7 +4174,9 @@ def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[
                 if got is None:
                     continue
                 kind, files, rng = got
-                rels = [r for r in (_relative(f, cwd, roots, length) for f in files) if r]
+                show = kind == "read" and _program(argv) == "git"
+                rels = [r for r in (_relative(f, _show_anchor(f, argv, cwd, roots) if show else cwd, roots, length)
+                                    for f in files) if r]
                 if kind == "search":
                     searches += [(r, 0) for r in rels]
                     continue
@@ -4061,7 +4323,16 @@ def section_transcripts(ctx: dict) -> dict:
     (``own_name`` False: a fork's worktree, which no session ran in) and has
     no transcript folder is named under ``skipped_never_named`` and read as
     holding none; any other box-seat checkout with no folder is a seat's
-    transcripts gone, and ``Unread``."""
+    transcripts gone, and ``Unread``. Only the lanes of the seats whose
+    folders were read (``seats``) enter the arms: a box seat with no checkout
+    read here (none of this clone names it, its checkout is gone, its name or
+    its config cannot be read) is named under ``unread`` as
+    ``transcripts.seats`` with the reason, never a lane of zero lines. A
+    command the lexer refuses books no read: ``calls.unlexed`` counts them,
+    own and subagent apart, with those that hold a CLI module's path, and
+    ``transcripts.unlexed`` names them under ``unread``;
+    ``calls.heredoc_tag_missed`` counts the commands ``heredoc_tag_misses``
+    flags, the same way."""
     root, at = ctx["root"], ctx["pin"]["at"]
     until = ctx["pin"]["window"]["until"]
     base = Path(ctx.get("projects_dir") or Path.home() / ".claude" / "projects")
@@ -4074,7 +4345,7 @@ def section_transcripts(ctx: dict) -> dict:
                if f is None and c.get("own_name") is False]
     folders = [(c, f) for c, f in seated if not (f is None and c.get("own_name") is False)]
     unseated = [{"path": c["path"], "folder": c["folder"], "why": "directory gone" if c.get("gone") else
-                 "no espalier.machine"} for c in outs if c["seat"] is None]
+                 c.get("seat_error") or "no espalier.machine"} for c in outs if c["seat"] is None]
     if not folders:
         raise Unread(f"no checkout of this clone is a box seat {list(BOX_SEATS)} "
                      f"({len(outs)} checkout(s), {len(unseated)} with no seat read, "
@@ -4082,11 +4353,24 @@ def section_transcripts(ctx: dict) -> dict:
     missing = [c["folder"] for c, f in folders if f is None]
     if missing:
         raise Unread(f"transcript folder(s) missing: {missing}")
+    read_seats = sorted({c["seat"] for c, _f in folders})
+    not_read = {}
+    for s in BOX_SEATS:
+        if s in read_seats:
+            continue
+        only_skipped = [k["path"] for k in skipped if k["seat"] == s]
+        not_read[s] = (f"its only checkout(s) here were never named and hold no transcript folder: {only_skipped}"
+                       if only_skipped else "no checkout of this clone reads as it" + (
+                           f"; {len(unseated)} checkout(s) whose seat could not be read: "
+                           f"{[(u['path'], u['why']) for u in unseated][:5]}" if unseated else ""))
+    if not_read:
+        _partial(ctx, "transcripts", "seats", "box seat(s) whose transcripts were not read, so their lanes are left "
+                                              "out of both arms: " + "; ".join(f"{s}: {w}" for s, w in not_read.items()))
     roots = [c["path"] for c in outs]
     by_machine = mail_at(ctx)
     seats = _mail().lane_seats(by_machine)
     claims = claim_intervals(by_machine, until)
-    lanes = {pr["branch"]: pr for pr in _window_prs(ctx) if seats.get(pr["branch"]) in BOX_SEATS}
+    lanes = {pr["branch"]: pr for pr in _window_prs(ctx) if seats.get(pr["branch"]) in read_seats}
     windows: dict[str, list[tuple[str, str, str]]] = {}
     for c in claims:
         if c["lane"] in lanes and c["machine"] == seats.get(c["lane"]):
@@ -4102,13 +4386,16 @@ def section_transcripts(ctx: dict) -> dict:
         return lane_of(seat, branch, when, seats=seats, windows=windows, merged=merged)
 
     population, own, subs = [], [], []
+    modules = set(ctx["modules"])
+    own_misses: dict[str, int] = {}
+    sub_misses: dict[str, int] = {}
     for c, folder in folders:
         agent_calls: dict[str, tuple[str, str]] = {}
         files = sorted(folder.glob("*.jsonl"))
         counts = {}
         for f in files:
             counts[f.name], recs = _records(f, until)
-            for call in calls_of(recs, roots, until, length):
+            for call in calls_of(recs, roots, until, length, own_misses, sorted(modules)):
                 call.update(seat=c["seat"], session=f.stem, lane=place(c["seat"], call["branch"], call["at"]))
                 own.append(call)
             for r in recs:
@@ -4129,13 +4416,22 @@ def section_transcripts(ctx: dict) -> dict:
                 continue
             log = meta.with_name(meta.name[: -len(".meta.json")] + ".jsonl")
             _n, recs = _records(log) if log.is_file() else (0, [])
-            for call in calls_of(recs, roots, until, length):
+            for call in calls_of(recs, roots, until, length, sub_misses, sorted(modules)):
                 call.update(seat=c["seat"], session=log.stem, lane=place(c["seat"], branch, when))
                 subs.append(call)
     if not sum(p["records"] for p in population):
         raise Unread(f"the box seats' transcript folders hold no record up to {until}: "
                      f"{[p['folder'] for p in population]}")
-    modules = set(ctx["modules"])
+
+    def missed(key: str) -> dict:
+        return {who: {"commands": m.get(key, 0), "naming_cli": m.get(f"{key}_naming_cli", 0)}
+                for who, m in (("own", own_misses), ("subagents", sub_misses))}
+
+    unlexed = missed("unlexed")
+    if unlexed["own"]["commands"] or unlexed["subagents"]["commands"]:
+        _partial(ctx, "transcripts", "unlexed", "Bash commands the lexer refuses book no read: "
+                 + ", ".join(f"{w} {v['commands']} ({v['naming_cli']} holding a CLI module's path)"
+                             for w, v in unlexed.items()))
 
     def per_lane(calls: list[dict]) -> dict[str, dict]:
         out: dict[str, dict] = {}
@@ -4165,7 +4461,7 @@ def section_transcripts(ctx: dict) -> dict:
     unplaced = {k: v["calls"] for k, v in mine.items() if k in ("ambiguous", "unattributed")}
     step = max(1, len(treatment) // 3)
     sample = [t["pr"] for t in treatment[::step][:3]] + [c["pr"] for c in control[:: max(1, len(control) // 2)][:2]]
-    return {"seats": list(BOX_SEATS), "of_seats": 4, "population": population,
+    return {"seats": read_seats, "of_seats": 4, "seats_not_read": not_read, "population": population,
             "checkouts_without_a_seat": unseated, "skipped_never_named": skipped,
             "cutoff": until, "lanes": len(lanes), "treatment": treatment, "control": control,
             "item3": verdict,
@@ -4175,7 +4471,8 @@ def section_transcripts(ctx: dict) -> dict:
                        "control_with_py_only": item3_verdict([t["r"] for t in treatment],
                                                              [c["e"] for c in control if c["has_py"]])},
             "calls": {"own": len(own), "subagents": len(subs), "not_on_a_lane": unplaced,
-                      "off_a_merged_branch": sum(1 for c in own if c["branch"] in lanes and c["lane"] != c["branch"])},
+                      "off_a_merged_branch": sum(1 for c in own if c["branch"] in lanes and c["lane"] != c["branch"]),
+                      "unlexed": unlexed, "heredoc_tag_missed": missed("heredoc_tag_missed")},
             "hand_sample": sample}
 
 
@@ -4222,9 +4519,18 @@ def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...]
     move cost's ingredients, a file that did not parse, the importers under the
     clusters' split) is named there as ``<section>.<part>``, a section the run
     read only as another's input included, so no figure rests on a part read
-    in silence."""
+    in silence. The mail refs are read once, before any section: where that
+    read fails (any of ``_READ_FAILURES``) the pin's ``mail_refs`` is ``None``,
+    ``pin.mail_refs`` is named under ``unread``, each section that reads the
+    mail is ``Unread`` with the reason, and every other section still reads."""
     ctx = {"root": root, "pin": resolve_pin(root, at), "modules": modules, **(extra or {})}
-    ctx["pin"].setdefault("mail_refs", (extra or {}).get("mail_refs") or mail_refs(root))
+    if "mail_refs" not in ctx["pin"]:
+        try:
+            ctx["pin"]["mail_refs"] = (extra or {}).get("mail_refs") or mail_refs(root)
+        except _READ_FAILURES as exc:
+            ctx["pin"]["mail_refs"] = None
+            ctx["_mail_refs_unread"] = str(_unread(exc))
+            _partial(ctx, "pin", "mail_refs", ctx["_mail_refs_unread"])
     result: dict = {"unread": {}}
     for name in sections:
         reader = SECTION_READERS.get(name)
