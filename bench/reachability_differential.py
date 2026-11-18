@@ -103,7 +103,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -781,6 +781,12 @@ def _delete_operands(cmd: str) -> list[str]:
     condition (9) refuses a substitution whose opener is among the operands
     (DEF-5085: the nine rows of that wrapper were read as carrying one).
     """
+    return _rm_operands(_lex_whole(cmd), moved=False)
+
+
+def _lex_whole(cmd: str) -> list[str]:
+    """`cmd`'s words, lexed whole (`_delete_operands` says why), a lone
+    backtick that ends it dropped; raises where it cannot be lexed."""
     lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     try:
@@ -790,22 +796,219 @@ def _delete_operands(cmd: str) -> list[str]:
             f"cannot lex {cmd!r} to check its delete operands: {exc}") from None
     if tokens and tokens[-1] == "`":
         tokens.pop()
+    return tokens
 
+
+#: The commands that make a link: coreutils' `ln` and `link`, by the name a
+#: path to them ends in.
+_LINK_HEADS = frozenset({"ln", "link"})
+
+#: cp's long switches that make links in place of copies, which it takes
+#: abbreviated (`--sym`).
+_CP_LINK_SWITCHES = ("--link", "--symbolic-link")
+
+
+def _link_maker(cmd: str) -> "str | None":
+    """The word of `cmd` that makes a link, or None (condition 10's
+    `makes_links`): an `ln` or a `link`, by the name its path ends in, and a
+    `cp` with a switch among its words that makes one (`-s`, `-l` or a
+    cluster holding either, `--link` or `--symbolic-link` and their
+    abbreviations). Read on the lexed words, so quote removal and an escape
+    put a split head back together (`l''n`, `\\ln`), and any such word counts,
+    a command's or not (`echo ln`): an over-read the population pin prices at
+    0 of its 2755 rows. Not read: a link inside an interpreter program (one
+    quoted word to the lexer), a head computed or glued to an expansion
+    (`ln${IFS}-s`), a script the row runs, and a bind mount."""
+    tokens = _lex_whole(cmd)
+    for i, tok in enumerate(tokens):
+        name = tok.rsplit("/", 1)[-1]
+        if name in _LINK_HEADS:
+            return tok
+        if name != "cp":
+            continue
+        for switch in tokens[i + 1:]:
+            if switch in _OPERAND_STOP or switch == "--":
+                break
+            long = switch.split("=", 1)[0]
+            if (len(long) > 2 and long.startswith("--")
+                    and any(full.startswith(long) for full in _CP_LINK_SWITCHES)):
+                return f"{tok} {switch}"
+            if switch[:1] == "-" and switch[1:2] != "-" and set("sl") & set(switch[1:]):
+                return f"{tok} {switch}"
+    return None
+
+
+#: The redirect operators condition (10)'s reading skips with the word after
+#: them, their target: bash passes the words after a redirect on to the
+#: command (driven 2026-11-17 on WSL's bash 5.2: `printf` behind `< f` and
+#: `2>&1` printed both of its words).
+_REDIRECTS = frozenset({">", ">>", "<", "<<", "<<<", ">&", "<&", "&>", "&>>", ">|", "<>"})
+
+#: A file-descriptor number glued to a redirect (`2>&1`): a word of digits
+#: alone, after a blank or a separator, that bash reads as the descriptor,
+#: not an argument.
+_FD_BEFORE_REDIRECT_RE = re.compile(r"(?<![^\s;&|()<>])\d+(?=[<>])")
+
+#: find's options before its start paths (`-H`, `-L`, `-P`; `-D` takes a
+#: word, `-O` glues its level).
+_FIND_LEADING_SWITCHES = frozenset({"-H", "-L", "-P"})
+
+
+#: The two words that hand one pipeline stage's output to the next.
+_PIPES = frozenset({"|", "|&"})
+
+#: bash's reserved words that may stand before a stage's command, none of
+#: which changes what it lists (`{ find … | xargs rm; }`, the `brace_group`
+#: wrapper's two carrier rows, read `{` as the head before).
+_STAGE_OPENERS = frozenset({"{", "!", "time", "do", "then", "else", "elif", "if", "while",
+                            "until"})
+
+
+def _stage_start(tokens: list[str], at: int) -> int:
+    """The index of the first word of the simple command holding
+    ``tokens[at]``: walking back, the first word made of separator characters
+    alone (shlex glues a run of them, as in ``)|``) ends it, and a redirect,
+    which holds a ``<`` or a ``>``, does not."""
+    while at > 0 and not (set(tokens[at - 1]) <= set(";&|()") and tokens[at - 1]):
+        at -= 1
+    return at
+
+
+def _is_find_stage(tokens: list[str], start: int) -> "int | None":
+    """The index of the ``find`` the stage beginning at ``tokens[start]``
+    runs, past the reserved words that open a stage; None where it runs
+    something else."""
+    while start < len(tokens) - 1 and tokens[start] in _STAGE_OPENERS:
+        start += 1
+    return start if tokens[start] == "find" else None
+
+
+def _find_start_paths(tokens: list[str], at: int) -> list[str]:
+    """The start paths of the ``find`` at ``tokens[at]``, `.` where it names
+    none: find lists from the working directory then, and it prints each name
+    under its start path."""
+    j = at + 1
+    while j < len(tokens) and (tokens[j] in _FIND_LEADING_SWITCHES or tokens[j] == "-D"
+                               or tokens[j].startswith("-O")):
+        j += 2 if tokens[j] == "-D" else 1
+    named = []
+    while (j < len(tokens) and tokens[j] not in _OPERAND_STOP
+           and tokens[j][:1] not in ("-", "!", ",")):
+        named.append(tokens[j])
+        j += 1
+    return named or ["."]
+
+
+def _feeding_listing(tokens: list[str], at: int) -> list[str]:
+    """What the names an ``rm`` at ``tokens[at]`` reads (from a pipe, or a
+    find's ``{}``) lie under: the start paths of the ``find`` heading its own
+    simple command (``find … -exec rm {} +``), or else of the one heading the
+    stage piped straight into it (``find … | xargs rm``); `.` otherwise, the
+    directory the row stands in. A find anywhere else in the row feeds it
+    nothing: before, any find on the delete's line was credited, so a decoy
+    (``find <victim>; cd /tmp; ls | xargs rm``) vouched for a listing of
+    ``/tmp`` (both second reviews of DEF-2099, the BLOCK). A stage between the
+    find and the delete (``find … | sort | xargs rm``), a head the find
+    stands behind (``sudo find``) and a group's output read the same way, as
+    `.`: an over-read, priced by the population pin."""
+    start = _stage_start(tokens, at)
+    find = _is_find_stage(tokens, start)
+    if find is None and start > 0 and tokens[start - 1] in _PIPES:
+        find = _is_find_stage(tokens, _stage_start(tokens, start - 1))
+    return ["."] if find is None else _find_start_paths(tokens, find)
+
+
+def _rm_operands(tokens: list[str], *, moved: bool) -> list[str]:
+    """The operands of every ``rm`` in `tokens`: the one walk both readers
+    take, so a head or a stop one learns, the other learns too (DEF-2099's
+    failure-mode review). Every word after ``--`` is an operand, a dash or
+    not (``rm -- -x`` removes ``-x``), and so is a lone ``-``.
+
+    `moved` is condition (10)'s reading (`_moved_operands`): it skips a
+    redirect and its target where (7)'s reading ends at the redirect; an
+    ``rm`` that names no operand, which reads its names from a pipe
+    (``find … | xargs rm``), is judged by the listing that feeds it
+    (`_feeding_listing`); and so is the ``{}`` a find or an xargs puts those
+    names in for, a ``+`` after it being the find's terminator, not an
+    operand. Only whether those are relative is judged (condition 10): where
+    an absolute listing starts is no condition's (`DEF-2101`)."""
     operands: list[str] = []
     i = 0
     while i < len(tokens):
         if tokens[i] != "rm":
             i += 1
             continue
+        at = i
         i += 1
+        named = 0
+        switches = True
         while i < len(tokens):
             tok = tokens[i]
+            if moved and tok in _REDIRECTS:
+                i += 2
+                continue
             if tok in _OPERAND_STOP:
                 break
-            if not tok.startswith("-"):
+            if moved and tok == "{}":
+                operands.extend(_feeding_listing(tokens, at))
+                named += 1
+                if tokens[i + 1:i + 2] == ["+"]:
+                    i += 1
+            elif switches and tok == "--":
+                switches = False
+            elif not (switches and tok.startswith("-") and tok != "-"):
                 operands.append(tok)
+                named += 1
             i += 1
+        if moved and not named:
+            operands.extend(_feeding_listing(tokens, at))
     return operands
+
+
+def _moved_operands(cmd: str) -> "list[str] | None":
+    """The delete operands condition (10) judges: each delete's own words,
+    read command line by command line, with a redirect and its target skipped
+    and the descriptor number glued to one dropped, and a delete that names
+    none judged by the listing that feeds it (`_rm_operands`).
+
+    `_delete_operands` reads on past a newline and through a redirect's
+    pieces (a heredoc's terminator, the next line's words, `2>&1` as three
+    operands), which condition (7) passes because it resolves each against
+    the sandbox. This leg vouches for no relative operand (condition 10), so
+    those would refuse calibrated rows (59 on WSL's bash behind a `cd`), every
+    one a word bash never hands the delete. So condition (10) reads each line
+    alone, a backslash-newline joined first, and a line that does not lex
+    alone (a quoted span across lines: 201 of the pin's 2755 rows) together
+    with the lines after it up to the one its quote closes on, as bash reads
+    them: a newline inside the quote is the quoted word's, and the next
+    outside one ends the command. Before, such a row was read whole, as (7)
+    reads it, so a delete on its other lines lost the redirect skip and the
+    listing judgment (both second reviews). None only where the rest of the
+    command never lexes, and the set then judges the operands (7) read.
+
+    ⚠ ADDITIVE, NOT A SECOND DEFINITION FOR (7) TO (9). This reading also
+    reads the words behind a redirect, which `_delete_operands` stops at, and
+    like it, it ends at a quoted separator (`DEF-2101`); condition (10) is the
+    only one that reads it, so what it misses is what the set missed before
+    (10).
+    """
+    operands: list[str] = []
+    pending: "str | None" = None
+    for line in cmd.replace("\\\n", "").split("\n"):
+        text = line if pending is None else f"{pending}\n{line}"
+        lexer = shlex.shlex(_FD_BEFORE_REDIRECT_RE.sub(" ", text), posix=True,
+                            punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            pending = text
+            continue
+        pending = None
+        if tokens and tokens[-1] == "`":
+            tokens.pop()
+        operands.extend(_rm_operands(tokens, moved=True))
+    return None if pending is not None else operands
 
 
 #: How this leg's rows meet the one condition set
@@ -814,9 +1017,19 @@ def _delete_operands(cmd: str) -> list[str]:
 BASH = _confinement.Shell(
     name="bash",
     delete_operands=_delete_operands,
+    # each delete's own command line, redirects skipped, a delete fed from a
+    # pipe judged by the listing in its own pipeline: the whole command's
+    # reading holds a heredoc's terminator and the next line's words
+    # (`_moved_operands`)
+    moved_operands=_moved_operands,
     # `bash_run` substitutes the victim's absolute path, unique to its
-    # throwaway, so its presence anywhere in the row is the substitution
-    victim_spellings=lambda victim: (str(victim),),
+    # throwaway, so its presence anywhere in the row is the substitution. It
+    # is spelled with forward slashes (`_render`): bash's quote removal takes
+    # a Windows spelling's backslashes (`_bash_oracle_available`), so on a
+    # Windows host, where this leg never runs, the population pin's rows
+    # would read the victim as a relative name, which condition (10) refuses.
+    # On POSIX it is the native spelling; every render and test spells it so.
+    victim_spellings=lambda victim: (victim.as_posix(),),
     spelling_opens_a_word=False,
     catastrophic=_CATASTROPHIC_OPERAND_RE,
     # none: the victim is spelled ABSOLUTE here, so the escaping form refuses
@@ -832,6 +1045,22 @@ BASH = _confinement.Shell(
     # `x`; with `globskipdots` off, as in every bash before 5.2, `.?` echoed
     # `..`). No mapped drive: a colon is a name character here.
     expansions=frozenset({"brace", "dot-glob"}),
+    # condition (10): None. This leg does not read its moves, so it vouches
+    # for no relative delete operand, move or no move. bash spells a move
+    # more ways than a roster holds: both reviews of DEF-2099 (2026-11-17)
+    # found a head split by quotes (`c''d`), escaped (`c\d`) or glued to
+    # `${IFS}`, env's abbreviated `--ch=`, a redirect or a comment where the
+    # destination would be, a brace inside it, `sudo -D`, `cdable_vars`,
+    # find's `-execdir` and a `CDPATH` search, each accepted by the roster
+    # this replaced while bash moved (driven on WSL's bash 5.2, or read).
+    # The rows spell the victim absolute, and refusing every relative
+    # operand costs no row: 0 of the pin's 2755 carry one under
+    # `_moved_operands` (in memory on Windows and on WSL, 2026-11-17).
+    allowlist=None,
+    # a row that makes a link has no delete vouched for, absolute or not:
+    # 0 of the pin's 2755 rows make one (in memory on Windows, 2026-11-18),
+    # so the dispatcher's note on DEF-2099 put it in this lane
+    makes_links=_link_maker,
 )
 
 
@@ -921,6 +1150,12 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
 #: `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` go with every `GH_` name).
 _GH_TOKEN_NAMES = frozenset({"GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN"})
 
+#: The operator's variables that reach into what a row's bash does: a
+#: non-interactive bash runs `BASH_ENV`'s file first, and `CDPATH` sends a
+#: relative `cd` somewhere no condition reads (the dispatcher's ruling on
+#: DEF-2099; `bench/guard_metamorphic.py` drops `BASH_ENV` too).
+_SHELL_REACH = frozenset({"BASH_ENV", "CDPATH"})
+
 
 def _sandbox_env(sandbox: Path) -> dict[str, str]:
     """The environment a row's shell runs in.
@@ -936,7 +1171,7 @@ def _sandbox_env(sandbox: Path) -> dict[str, str]:
     nothing to say about a commit -- this is the belt for the git rows.
     """
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("GIT_", "GH_")) and k not in _GH_TOKEN_NAMES}
+           if not k.startswith(("GIT_", "GH_")) and k not in _GH_TOKEN_NAMES | _SHELL_REACH}
     # The gh rows (DEF-1014) run the host's real gh, which must never act as
     # the operator: no token from the environment, and a config directory of
     # the sandbox's own, so no stored login, alias or editor setting reaches
@@ -957,6 +1192,13 @@ def _sandbox_env(sandbox: Path) -> dict[str, str]:
     return env
 
 
+def _render(template: str, victim: PurePath) -> str:
+    """`template` with the victim in its placeholder's place, as each row
+    reaches bash and as the population pin reads it: spelled with forward
+    slashes (`BASH.victim_spellings`)."""
+    return template.replace(_TARGET, victim.as_posix())
+
+
 def bash_run(template: str) -> tuple[bool, int | None]:
     """Run one rendered row in a fresh sandbox. The oracle.
 
@@ -975,7 +1217,7 @@ def bash_run(template: str) -> tuple[bool, int | None]:
         victim = sandbox / "victim"
         victim.mkdir()
         (victim / "canary").write_text("x", encoding="utf-8")
-        cmd = template.replace(_TARGET, str(victim))
+        cmd = _render(template, victim)
         env = _sandbox_env(sandbox)
         assert_safe_to_execute(cmd, victim, sandbox, env=env)
         rc, timed_out = run_bash_group(["/bin/bash", "-c", cmd], cwd=sandbox,
