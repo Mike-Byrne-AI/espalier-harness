@@ -844,7 +844,31 @@ and graded on nothing until the call's ruling:
 |---|---|---|---|---|---|
 | Census at `aa3fa7d01` (as committed) | 15 / 126 | 33 | 275 | 6.35 | unmeasured |
 | Census at `e592d0b5f` (the defects fixed) | 15 / 126 | 42 | 277 | 6.31 | unmeasured |
+| Census at `ae313a4a8` (the review folds) | 15 / 126 | 42 | 277 | 6.24 | unmeasured |
 | air-work alone, the confirmed seat (**post hoc**, not pre-registered) | 14 / 82 | 88 | 558.5 | 4.21 | unmeasured |
+
+**What moved from `e592d0b5f` to `ae313a4a8`, and why** [verified: two runs on this box at P,
+2026-11-18 08:21-08:30Z, each rc 0 with empty stderr]. The census as it stood before the review
+folds (`dd00ad351`'s copy), run again in the same window, reproduces the `e592d0b5f` row in every figure: 194
+lanes, 15 / 126, median R 42, median E 277, MDR 6.31, 7,854 unattributed, subagent R 6,786. So
+the transcripts did not change, and the move is the code fixes' alone. Those fixes were made
+**after these reads had been seen**:
+- fold items 14, 15 and 24 (`5bb09b9e3`): a `#` comment line no longer drops the rest of a
+  multi-line command; the splitter joins continuations, leaves here-strings alone, counts a file
+  fed on stdin, and skips `head -c`'s count and git's global options; a `Read` that reports 0
+  lines counts 0;
+- the heredoc scanner (`ae313a4a8`): a `<<` the shell does not read as a here-document no longer
+  drops the command's later lines;
+- `skipped_never_named` (`ae313a4a8`): a fork's worktree with no transcript folder is listed
+  instead of refusing the read. It is empty at P.
+
+Lane by lane: R and the search calls are unchanged on all 15 cli.py lanes, and so is subagent R.
+E moved on 11 control lanes (10 up and 1 down, net +51 lines) and on one cli.py lane (+1); median
+E stays 277. The seats' own read calls fell from 28,179 to 27,697, the unattributed from 7,854 to
+7,814, and the calls moved off a merged branch from 117 to 109. So the MDR moves (6.31 to 6.24)
+only through the spread of ln E (pooled SD 2.709 to 2.691), and the verdict stays unmeasured.
+Beside it, never graded: with only the control lanes that edit a Python file, the MDR moves from
+3.60 to 3.56.
 
 Beside them, never graded: the forks' reads of the CLI modules on the 15 lanes sum to 6,786 lines
 (1,635 before the worktree fix), and air-work's median R plus its forks' is 416. Search calls on
