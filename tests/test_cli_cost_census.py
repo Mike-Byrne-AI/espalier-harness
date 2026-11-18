@@ -2478,6 +2478,17 @@ class TestTheBatchReadKeepsEachPathToItsOwnText:
         with pytest.raises(_CENSUS.Unread, match="short"):
             _CENSUS.blobs_at(repo, "HEAD", ["a.md"])
 
+    def test_a_submodule_header_carries_no_body(self, repo, monkeypatch):
+        """Dies to: the bodiless `<oid> submodule` header newer git writes for a gitlink path (the
+        CI cells' git; the Air's 2.39 writes none) read as a header it cannot read, so the whole
+        read failed where the one path should go unread (#725's test (3.12) and (3.14) reds)."""
+        def reply(argv, **_kw):
+            return subprocess.CompletedProcess(argv, 0, stdout=b"1111 submodule\n2222 blob 6\nalpha\n\n",
+                                               stderr=b"")
+
+        monkeypatch.setattr(_CENSUS, "run_bounded", reply)
+        assert _CENSUS.blobs_at(repo, "HEAD", ["tests/test_sub.py", "docs/a.md"]) == {"docs/a.md": "alpha\n"}
+
 
 # ---------------------------------------------------------------- the review fold: reads the census missed
 

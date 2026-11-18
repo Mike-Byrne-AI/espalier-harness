@@ -182,8 +182,11 @@ def blobs_at(root: Path, at: str, paths: list[str]) -> dict[str, str]:
     git cannot read (absent, not a blob, or a name holding a newline, which
     the batch's line protocol cannot carry) is left out, so a caller counts
     what it read. A reply the batch cut short is ``Unread``: every entry but a
-    ``missing`` one carries a body, which is stepped over whatever its type,
-    so no path's text is read as another's."""
+    ``missing``, ``ambiguous`` or ``submodule`` one carries a body, which is
+    stepped over whatever its type, so no path's text is read as another's.
+    A gitlink's ``<oid> submodule`` header, bodiless, is newer git's (the CI
+    cells'; the Air's 2.39 writes none), and its path goes unread like a
+    missing one."""
     asked = [p for p in paths if "\n" not in p]
     if not asked:
         return {}
@@ -199,7 +202,7 @@ def blobs_at(root: Path, at: str, paths: list[str]) -> dict[str, str]:
             raise Unread(f"git cat-file --batch at {at[:12]} replied short: no header for {path}")
         header = data[pos:end]
         pos = end + 1
-        if header.endswith((b" missing", b" ambiguous")):
+        if header.endswith((b" missing", b" ambiguous", b" submodule")):
             continue
         parts = header.split()
         if len(parts) != 3 or not parts[2].isdigit():
