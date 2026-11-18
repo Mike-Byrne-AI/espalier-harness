@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5127",
+ "subject": "tests/test_python_floor.py",
+ "cmd": "python -c 'import ast; t = ast.parse(open(\"tests/test_python_floor.py\", encoding=\"utf-8\").read()); print(sum(1 for n in ast.walk(t) if isinstance(n, ast.Call) and getattr(n.func, \"attr\", \"\") == \"setattr\" and len(n.args) == 3 and getattr(n.args[1], \"value\", None) == \"_warn_interpreter_below_floor\" and isinstance(n.args[2], ast.Attribute) and n.args[2].attr == \"append\"))'",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "c03b6093ba12",
+ "text_sha": "07beb92b1534",
+ "verified_2026_11_17": "OPEN (filed 2026-11-17; probe driven at filing here and in the export of HEAD e10d2efc8622)"
+}
