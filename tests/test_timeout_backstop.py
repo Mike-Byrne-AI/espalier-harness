@@ -239,6 +239,34 @@ class TestEveryMethodStashesItsCeiling:
         assert backstop.armed() is None
 
 
+class TestTheArmedCeilingSaysWhatIsLeft:
+    """DEF-2093: tests/_hook_spawn.py retries a start-up refusal only while
+    the running test's ceiling holds another attempt, so the arming records
+    when the ceiling's clock started and ``left`` reads the seconds under it."""
+
+    def test_the_seconds_left_count_down_from_the_arming(self, monkeypatch):
+        pytest_timeout = pytest.importorskip("pytest_timeout")
+        monkeypatch.setattr(pytest_timeout, "pytest_timeout_set_timer", lambda item, settings: None)
+        monkeypatch.setattr(backstop, "_ARMED", None, raising=False)
+        clock = [100.0]
+        monkeypatch.setattr(backstop, "_now", lambda: clock[0])
+        item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x")
+        plugin = backstop.TimeoutBackstop(owns_patch=False)
+        plugin.pytest_timeout_set_timer(item=item, settings=pytest_timeout.Settings(180.0, "thread", False, False))
+        assert backstop.left() == 180.0
+        clock[0] = 142.5
+        assert backstop.left() == 137.5
+
+    def test_outside_every_test_nothing_is_left_to_read(self, monkeypatch):
+        monkeypatch.setattr(backstop, "_ARMED", None, raising=False)
+        assert backstop.left() is None
+
+    def test_this_test_has_its_ceiling_less_what_it_has_run(self, request):
+        pytest.importorskip("pytest_timeout")
+        left = backstop.left()
+        assert left is not None and 0 < left <= request.node.stash[backstop._CEILING], left
+
+
 _CONFTEST = (
     "import sys\n"
     f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"

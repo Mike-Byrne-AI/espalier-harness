@@ -2,7 +2,9 @@
 the statusline, as a real child (DEF-2014). A miss (a timeout, or write_guard's
 budget refusal) is retried once under the same bound, so a stalled runner
 answers the second time and a hook that is slow every time reds; any other
-answer is the first attempt's, so a wrong verdict is never retried away. These
+answer is the first attempt's, so a wrong verdict is never retried away; past
+the one retry, a refusal saying the guard's start-up spent the time is retried
+within the row's count, the process's pool and its ceiling (DEF-2093). These
 rows pin each of those, because a retry that hid a regression would be worse
 than the stall it absorbs. The children here are small scripts that count
 their own runs. The rows that read
@@ -26,7 +28,11 @@ from tests import _hook_spawn as hs
 # .espalier-state, change one file there and remove another, then sleep past
 # the bound, and answer with what it read there, as a speed bump reads its
 # flag (``-cc``: write under the project's cc/ and sleep past the bound); the
-# ``first-`` modes miss on the first run only.
+# ``first-`` modes miss on the first run only, the ``upto<N>-`` modes on the
+# first N, and ``seq:<kind>,<kind>,...`` behaves as ``always-<kind>`` by run
+# (its last kind past the list). ``notbegun``, ``begunsplit`` and
+# ``unreadstart`` refuse at the parent's deadline with each start-up reading
+# write_guard gives (``tools/cc/hooks/write_guard.py::_spent``, DEF-2091).
 _CHILD = r'''
 import os, sys, time
 from pathlib import Path
@@ -35,7 +41,22 @@ with open(counter, "a", encoding="utf-8") as fh:
     fh.write("x")
 runs = len(open(counter, encoding="utf-8").read())
 project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-miss = mode.startswith("always-") or (mode.startswith("first-") and runs == 1)
+if mode.startswith("seq:"):
+    kinds = mode[4:].split(",")
+    mode = "always-" + kinds[min(runs, len(kinds)) - 1]
+miss = mode.startswith("always-") or (mode.startswith("first-") and runs == 1) or (
+    mode.startswith("upto") and runs <= int(mode[4:mode.index("-")]))
+readings = {
+    "notbegun": "its judging child had not begun judging: start-up took all 4.0 s",
+    "begunsplit": "1.2 s went to start-up and 2.8 s to judging",
+    "unreadstart": "whether its judging child had begun judging was not read",
+}
+kind = mode.split("-")[-1]
+if miss and kind in readings:
+    print('{"reason": "Command blocked: write_guard could not finish judging this command within its 4.0 s '
+          + "time budget (the hook's deadline, counted from its start; " + readings[kind]
+          + '), so the call is refused rather than let through unjudged."}')
+    sys.exit(0)
 if mode == "slow":
     time.sleep(4.5)
 if mode.endswith("-state"):
@@ -128,6 +149,9 @@ def child(tmp_path, monkeypatch):
     monkeypatch.setattr(hs, "HOOK_S", 3.0)
     monkeypatch.setattr(hs, "STATUSLINE_S", 3.0)
     monkeypatch.setattr(hs, "_RETRIED", set())
+    monkeypatch.setattr(hs, "_START_UPS", hs._StartUpRetries())
+    # The rows here read the count and the pool; the clock rows set it themselves.
+    monkeypatch.setattr(hs, "_ceiling_left", lambda: None)
     # A row with no project of its own resolves the working directory, this
     # checkout, where a live session's writes would refuse every retry.
     (tmp_path / "quiet").mkdir()
@@ -644,3 +668,167 @@ class TestALongerBoundRetriesTheRefusalOnce:
         with pytest.warns(hs.HookSpawnRetried, match="budget's refusal"):
             again = hs.run_hook_through(argv("first-fallback", "short.txt"), env=None, input="{}")
         assert (again.stdout.strip(), runs("short.txt")) == ("answered", 2)
+
+
+def _write_guards_spent():
+    """write_guard's own ``_spent`` (the words its refusal says spent the
+    time, DEF-2091), compiled alone from the hook's source, so the reader is
+    held to what the guard writes without importing the guard here."""
+    import ast
+    tree = ast.parse(hs._WRITE_GUARD.read_text(encoding="utf-8"))
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_spent"]
+    assert len(found) == 1, "write_guard.py has no one top-level _spent: re-read where its refusal's reading is written"
+    fn = found[0]
+    fn.returns = None
+    for arg in fn.args.args:
+        arg.annotation = None
+    namespace: dict = {}
+    # The one function alone, never the hook module: the reader is held to the
+    # guard's own words, and no hook import binds tools/cc modules here.
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(hs._WRITE_GUARD), "exec"), namespace)  # noqa: S102
+    return namespace["_spent"]
+
+
+def _refused_with(spent: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        [sys.executable, "write_guard.py"], 0,
+        stdout=_deny(f"Command blocked: write_guard could not finish judging this command within its 4.0 s time "
+                     f"budget (the hook's deadline, counted from its start; {spent}), so the call is refused."),
+        stderr="")
+
+
+class TestAStartUpRefusalIsRetriedWithinTheCeiling:
+    """DEF-2093: a refusal saying write_guard's judging child had not begun
+    judging (DEF-2091's reading: the guard's start-up spent the time, on a
+    busy runner) is retried past the row's one retry, up to
+    ``START_UP_RETRIES`` a row and ``START_UP_POOL`` a process, while the
+    running test's ceiling holds two more bounds and the teardown. Every
+    other miss keeps the one retry, so a judgment slow every time still reds
+    every time, and a start-up slow every time reds once the count is spent.
+    Before it, portability (windows-latest) redded on rows its lanes never
+    touched with both attempts refused at the parent's deadline (#671, #673,
+    #704)."""
+
+    def test_start_up_refusals_are_retried_until_the_guard_answers(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried, match="3 attempts missed") as warned:
+            result = hs.run_hook_through(argv("upto3-notbegun"), env=None, input="{}")
+        assert (result.stdout.strip(), runs()) == ("answered", 4)
+        assert str(warned[0].message).count("had not begun judging") == 3, str(warned[0].message)
+
+    def test_a_start_up_slow_every_time_reds_once_the_rows_start_up_retries_are_spent(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.run_hook_through(argv("always-notbegun"), env=None, input="{}")
+        text = str(failed.value)
+        attempts = 2 + hs.START_UP_RETRIES
+        assert runs() == attempts and f"missed on {attempts} attempts" in text, text
+        assert text.count("had not begun judging") == attempts, text
+        assert f"spent its {hs.START_UP_RETRIES} start-up retries" in text, text
+
+    @pytest.mark.parametrize("kind", ["begunsplit", "unreadstart", "budget"])
+    def test_a_refusal_that_does_not_say_start_up_spent_it_keeps_one_retry(self, child, kind):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception, match="missed on both attempts"):
+            hs.run_hook_through(argv(f"always-{kind}"), env=None, input="{}")
+        assert runs() == 2
+
+    def test_a_judging_refusal_among_start_up_ones_fails_the_row_at_once(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception, match="missed on 3 attempts") as failed:
+            hs.run_hook_through(argv("seq:notbegun,notbegun,begunsplit"), env=None, input="{}")
+        assert runs() == 3 and "went to start-up and 2.8 s to judging" in str(failed.value), str(failed.value)
+
+    def test_a_timeout_never_takes_a_start_up_retry(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception, match="missed on both attempts"):
+            hs.run_hook_through(argv("seq:notbegun,sleep"), env=None, input="{}")
+        assert runs() == 2
+
+    def test_the_rows_one_retry_is_spent_before_any_start_up_retry(self, child):
+        """The one retry keeps the row's worst case at three bounds: a start-up
+        retry, granted against the clock, comes only after it, so a judging
+        refusal on a later spawn still fails at once."""
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.run_hook_through(argv("first-notbegun", "one.txt"), env=None, input="{}")
+        with pytest.raises(pytest.fail.Exception, match="spent its one retry"):
+            hs.run_hook_through(argv("first-begunsplit", "two.txt"), env=None, input="{}")
+        assert (runs("one.txt"), runs("two.txt")) == (2, 1)
+
+    def test_a_later_spawns_start_up_refusal_is_retried_after_the_one_retry_is_spent(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.run_hook_through(argv("first-sleep", "one.txt"), env=None, input="{}")
+        with pytest.warns(hs.HookSpawnRetried, match="had not begun judging"):
+            result = hs.run_hook_through(argv("first-notbegun", "two.txt"), env=None, input="{}")
+        assert (result.stdout.strip(), runs("one.txt"), runs("two.txt")) == ("answered", 2, 2)
+
+    def test_the_rows_start_up_retries_are_counted_across_its_spawns(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.run_hook_through(argv(f"upto{1 + hs.START_UP_RETRIES}-notbegun", "one.txt"), env=None, input="{}")
+        with pytest.raises(pytest.fail.Exception, match="start-up retries"):
+            hs.run_hook_through(argv("first-notbegun", "two.txt"), env=None, input="{}")
+        assert (runs("one.txt"), runs("two.txt")) == (2 + hs.START_UP_RETRIES, 1)
+
+    def test_no_start_up_retry_where_the_ceiling_cannot_hold_two_more_bounds(self, child, monkeypatch):
+        argv, runs = child
+        room = 2 * hs.HOOK_S + hs.RETRY_TEARDOWN_S
+        monkeypatch.setattr(hs, "_ceiling_left", lambda: room - 0.1)
+        with pytest.raises(pytest.fail.Exception, match="missed on both attempts") as failed:
+            hs.run_hook_through(argv("always-notbegun"), env=None, input="{}")
+        assert runs() == 2 and f"{room - 0.1:.1f} s of its ceiling left" in str(failed.value), str(failed.value)
+
+    def test_a_start_up_retry_where_the_ceiling_holds_two_bounds_and_the_teardown(self, child, monkeypatch):
+        argv, runs = child
+        monkeypatch.setattr(hs, "_ceiling_left", lambda: 2 * hs.HOOK_S + hs.RETRY_TEARDOWN_S)
+        with pytest.warns(hs.HookSpawnRetried, match="2 attempts missed"):
+            result = hs.run_hook_through(argv("upto2-notbegun"), env=None, input="{}")
+        assert (result.stdout.strip(), runs()) == ("answered", 3)
+
+    def test_a_process_stops_retrying_start_ups_once_its_pool_is_spent(self, child, monkeypatch):
+        """A start-up slow on every spawn (a slower import before the begun
+        mark) would otherwise multiply a whole run's length until its job's
+        own time limit cancelled it with no verdict: past the pool, a start-up
+        refusal fails the row as any miss does."""
+        argv, runs = child
+        monkeypatch.setattr(hs, "_START_UPS", hs._StartUpRetries(pool=1))
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.run_hook_through(argv("upto2-notbegun", "one.txt"), env=None, input="{}")
+        with pytest.raises(pytest.fail.Exception, match="this process has spent its 1 start-up retries") as failed:
+            hs.run_hook_through(argv("first-notbegun", "two.txt"), env=None, input="{}")
+        assert (runs("one.txt"), runs("two.txt")) == (3, 1), str(failed.value)
+
+    @pytest.mark.parametrize("kind, reading", [
+        ("notbegun", "its judging child had not begun judging: start-up took all 4.0 s"),
+        ("begunsplit", "1.2 s went to start-up and 2.8 s to judging"),
+        ("unreadstart", "whether its judging child had begun judging was not read"),
+        ("budget", "its refusal says nothing of its start-up"),
+    ])
+    def test_each_miss_names_its_start_up_reading(self, child, kind, reading):
+        """#704's red (run 44072897089) said only the bound twice, so whether
+        start-up spent its time could not be read from its log."""
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.run_hook_through(argv(f"seq:{kind},begunsplit"), env=None, input="{}")
+        assert reading in str(failed.value).split(", then ")[0], str(failed.value)
+
+    def test_the_reader_reads_every_reading_write_guard_writes(self):
+        """The reader against write_guard's own ``_spent``, never a hand copy:
+        a rewording there reds here, where before every start-up refusal would
+        have kept its one retry, said nothing of its start-up, and redded."""
+        spent = _write_guards_spent()
+        cases = [((False, 4.0, 0.0), True), ((None, None, None), False),
+                 ((True, None, None), False), ((True, 1.25, 2.75), False)]
+        for args, not_begun in cases:
+            words = spent(*args)
+            refused = _refused_with(words)
+            assert hs.start_up_reading(refused) == words, (args, hs.start_up_reading(refused))
+            assert hs.had_not_begun(refused) is not_begun, args
+
+    def test_the_ceiling_left_is_read_from_the_running_tests_arming(self, request):
+        pytest.importorskip("pytest_timeout")
+        from tests import _timeout_backstop as backstop
+        left = hs._ceiling_left()
+        assert left is not None and 0 < left <= request.node.stash[backstop._CEILING], left

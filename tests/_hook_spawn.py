@@ -9,14 +9,15 @@ change never touched, a different row each time: seven of ten at the rows'
 verdict row reads as a wrong answer. A stall is transient; a regression is
 not. So a miss (a timeout, or the budget's refusal) is retried once under the
 SAME bound: a stalled runner answers the second time, while a hook that hangs,
-or is slow every time, misses both and reds on every runner, naming both
-elapsed times. Any other answer, a wrong verdict included, is the first
+or is slow every time, misses both and reds on every runner, naming each
+elapsed time. Any other answer, a wrong verdict included, is the first
 attempt's.
 
-Three limits keep the retry honest:
+Four rules keep the retry honest:
 
 - one retry per test row, so a row that spawns several times waits at most
-  one bound longer than it did, and a second miss fails at once;
+  one bound longer than it did, and a second miss fails at once, unless it
+  is a start-up refusal (the last rule below);
 - the retry starts from the state the first attempt began with (DEF-2030):
   a timed-out attempt's whole process group is ended (a budget refusal has
   already exited), then the files under the
@@ -33,7 +34,17 @@ Three limits keep the retry honest:
   back, everything. The real home audit log, which live sessions share, is
   never put back; no hook decision reads it (driven 2026-11-07 over every
   spawn through here: 4975 spawns, 3743 rows);
-- the statusline keeps its own 5 s bound, its prompt-delay check.
+- the statusline keeps its own 5 s bound, its prompt-delay check;
+- past the row's one retry, a budget refusal saying write_guard's judging
+  child had not begun judging (DEF-2091's reading: its start-up spent the
+  time, which a busy runner does and a quieter attempt passes) is retried
+  again (DEF-2093), at most ``START_UP_RETRIES`` a row and ``START_UP_POOL``
+  a process, and only while the running test's armed ceiling
+  (``tests/_timeout_backstop.py::left``) holds the retried attempt and one
+  later miss at the bound each, and ``RETRY_TEARDOWN_S``; every other miss,
+  a refusal whose child had begun included, keeps the one retry, so a
+  judgment slow every time still reds every time. Each miss names the
+  refusal's start-up reading (``start_up_reading``) beside its bound.
 
 A retry that answers is a ``HookSpawnRetried`` warning, which the run's summary
 counts (``tests/conftest.py::pytest_terminal_summary``). The budget itself is
@@ -115,6 +126,29 @@ HOOK_S = 15.0
 STATUSLINE_S = 5.0
 #: The bound on ending a missed attempt's process group and draining its pipes.
 KILL_S = 5.0
+#: How many more attempts past its one retry a row may spend on refusals that
+#: say write_guard's judging child had not begun judging (``NOT_BEGUN``,
+#: DEF-2093): the guard's start-up spent the time on a busy runner, which a
+#: later attempt can pass, while a judgment that had begun keeps the one
+#: retry. Each is granted only while the running test's ceiling holds it
+#: (``RETRY_TEARDOWN_S``). Three is a judgment, not a measurement: no miss on
+#: record reached a third attempt (#671, #673, #704 each failed on its second).
+START_UP_RETRIES = 3
+#: How many such retries one process may spend over its run (an xdist worker
+#: is one process): past it a start-up refusal fails as any miss does, so a
+#: start-up slow on every spawn (a slower import before the begun mark,
+#: DEF-2084's subject) reds at about today's pace rather than multiplying a
+#: run's length until its job's own time limit cancels it with no verdict.
+#: Ten is a judgment too: #671's run, the worst on record, failed 4 rows.
+START_UP_POOL = 10
+#: What a start-up retry leaves under the running test's ceiling beside its
+#: own bound and one later miss's: the kill and the teardown, the room
+#: ``tests/test_hook_spawn_routing.py`` holds the row's worst case to and
+#: ``tests/test_test_suite_contract.py::_RETRY_TEARDOWN_S`` the long bound's.
+RETRY_TEARDOWN_S = 10.0
+#: The module tests/conftest.py registers the timeout backstop from, read as
+#: tests/_wait_budget.py reads it: from ``sys.modules``, importing nothing.
+_BACKSTOP_MODULE = "tests._timeout_backstop"
 
 #: The test rows that have spent their one retry, by PYTEST_CURRENT_TEST.
 _RETRIED: set[str] = set()
@@ -126,7 +160,53 @@ STATE_DIR = ".espalier-state"
 
 
 class HookSpawnRetried(UserWarning):
-    """A hook row's first attempt missed and its retry answered."""
+    """A hook row's attempt missed and a retry answered."""
+
+
+def _ceiling_left() -> float | None:
+    """The seconds left under the running test's armed ceiling
+    (``tests/_timeout_backstop.py::left``), from the backstop the session
+    registered; None outside every test, with no ceiling armed, or where no
+    backstop is registered (a script, a probe)."""
+    backstop = sys.modules.get(_BACKSTOP_MODULE)
+    return None if backstop is None else backstop.left()
+
+
+class _StartUpRetries:
+    """The start-up retries spent (DEF-2093), by row and by this process,
+    under a lock: a probe's or a fixture's threads may spawn at once."""
+
+    def __init__(self, pool: int | None = None) -> None:
+        self.pool = START_UP_POOL if pool is None else pool
+        self.spent = 0
+        self.by_row: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def take(self, row: str, in_this_call: int, bound: float) -> str | None:
+        """Spend one start-up retry for ``row``, or say why none is left: the
+        row's count (``in_this_call`` counts a nameless row's, where no test
+        names it and the call is its unit), this process's pool, or the
+        running test's ceiling, which must hold the retried attempt and one
+        later miss at ``bound`` each, and the teardown."""
+        with self._lock:
+            spent_here = self.by_row.get(row, 0) if row else in_this_call
+            if spent_here >= START_UP_RETRIES:
+                return f"this row has spent its {START_UP_RETRIES} start-up retries"
+            if self.spent >= self.pool:
+                return f"this process has spent its {self.pool} start-up retries"
+            left = _ceiling_left()
+            need = 2 * bound + RETRY_TEARDOWN_S
+            if left is not None and left < need:
+                return (f"the row has {left:.1f} s of its ceiling left, under the {need:.0f} s another attempt "
+                        f"and a later miss need ({bound:.0f} s each, and {RETRY_TEARDOWN_S:.0f} s to tear down)")
+            self.spent += 1
+            if row:
+                self.by_row[row] = spent_here + 1
+            return None
+
+
+#: This process's start-up retries.
+_START_UPS = _StartUpRetries()
 
 
 def _end_the_group(proc: subprocess.Popen) -> None:
@@ -482,11 +562,49 @@ def refusing_bound(result: subprocess.CompletedProcess) -> str:
     return _guard_bounds().get(float(figure), f"a {figure} s bound that is neither of write_guard's")
 
 
+#: Each reading write_guard's budget refusal gives of what spent its time, in
+#: its own words (``tools/cc/hooks/write_guard.py::_spent``, DEF-2091):
+#: whether the judging child had begun was not read; it had not begun; it had
+#: begun at a time not read; or how the time split.
+_START_UP_READING_RE = re.compile(
+    r"whether its judging child had begun judging was not read"
+    r"|its judging child had not begun judging: start-up took all [0-9]+(?:\.[0-9]+)? s"
+    r"|its judging child had begun judging, at a time not read"
+    r"|[0-9]+(?:\.[0-9]+)? s went to start-up and [0-9]+(?:\.[0-9]+)? s to judging")
+#: The reading that the guard's start-up spent the time: no judgment ran, so
+#: a later attempt on a quieter runner can pass (DEF-2093). Narrower than the
+#: guard's own re-issue rule on purpose (``write_guard.py::_start_up_spent_it``
+#: also asks for the re-issue where its child had begun, start-up took at
+#: least judging's share and the call is short): a split keeps the one retry
+#: here, as assign 285e5d and the row's fix shape say, since a judgment that
+#: ran could be the slow one. A red whose misses read such a split (each miss
+#: now names its reading) is what would reopen it.
+NOT_BEGUN = "its judging child had not begun judging"
+#: What a refusal holding no reading is said to say (a kept, older guard).
+NO_START_UP_READING = "its refusal says nothing of its start-up"
+
+
+def start_up_reading(result: subprocess.CompletedProcess) -> str:
+    """What write_guard's refusal in ``result`` says spent its time, in its own
+    words (DEF-2091), or ``NO_START_UP_READING``: a miss names it beside its
+    bound, since #704's red (run 44072897089) named the bound alone and left
+    whether start-up spent the time unread."""
+    found = _START_UP_READING_RE.search(_stdout_text(result))
+    return found.group(0) if found else NO_START_UP_READING
+
+
+def had_not_begun(result: subprocess.CompletedProcess) -> bool:
+    """Whether the refusal says its judging child had not begun judging: the
+    one miss a start-up retry is spent on (DEF-2093). Any other reading, none
+    included, keeps the row's one retry."""
+    return start_up_reading(result).startswith(NOT_BEGUN)
+
+
 def _miss_text(result: subprocess.CompletedProcess, seconds: float) -> str:
     crash = crash_head(_stdout_text(result))
     if crash is not None:
         return f"a write_guard crash after {seconds:.1f} s: {crash}"
-    return f"the budget's refusal after {seconds:.1f} s, {refusing_bound(result)}"
+    return f"the budget's refusal after {seconds:.1f} s, {refusing_bound(result)}; {start_up_reading(result)}"
 
 
 def _script(result: subprocess.CompletedProcess) -> str:
@@ -561,7 +679,12 @@ def retry_a_budget_miss(
     keeps, so a row waits at most one more spawn whichever helper it spends
     it in; a pooled fixture build passes its ``RetryAllowance`` instead.
     A crash is the same miss unless the row passes ``crash_expected``
-    (DEF-2096)."""
+    (DEF-2096).
+
+    A start-up refusal gets no more here than any refusal (DEF-2093 left
+    this helper at its one retry on purpose): the spawn's bound is in its
+    lambda, unread at runtime, so no grant could check the ceiling holds
+    another attempt at it, as ``run_hook_through``'s does."""
     before = _Before(env, cwd)
     began = time.monotonic()
     first = spawn()
@@ -694,7 +817,10 @@ def run_hook_through(
     crash_expected: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a hook as Claude Code does, text in and out (or bytes, when the
-    input is bytes), with one retry on a miss under the same bound.
+    input is bytes), with one retry on a miss under the same bound, and past
+    it, a start-up retry on each refusal saying write_guard's judging child
+    had not begun judging, while the row's count, the process's pool and the
+    running test's ceiling allow one (``_StartUpRetries.take``, DEF-2093).
 
     write_guard judging a shell payload in a temp project gets the protected
     tree laid first (``lays_the_protected_tree``, DEF-2045); ``bare_project``
@@ -711,8 +837,11 @@ def run_hook_through(
     before = _Before(env, cwd)
     put_back: list[str] = []
     misses: list[str] = []
-    for _attempt_no in range(2):
+    start_ups = 0   # this call's start-up retries: a nameless row's count
+    refused: str | None = None   # why no start-up retry was granted
+    while True:
         began = time.monotonic()
+        not_begun = False
         try:
             result = _attempt(argv, statusline=statusline, binary=isinstance(input, bytes),
                               input=input, cwd=cwd, env=env)
@@ -722,24 +851,45 @@ def run_hook_through(
             if not _budget_refused(result, crash_expected):
                 if misses:
                     began_with = f", from the {' and '.join(put_back)} it began with" if put_back else ""
+                    took = f"{time.monotonic() - began:.1f} s{began_with}"
                     warnings.warn(HookSpawnRetried(
-                        f"{name}: the first attempt missed ({misses[0]}); "
-                        f"the retry answered in {time.monotonic() - began:.1f} s{began_with}"), stacklevel=2)
+                        f"{name}: the first attempt missed ({misses[0]}); the retry answered in {took}"
+                        if len(misses) == 1 else
+                        f"{name}: {len(misses)} attempts missed: {', then '.join(misses)}. Attempt "
+                        f"{len(misses) + 1} answered in {took}"), stacklevel=2)
                 return result
             _fail_a_crash_in_the_judgment(name, result, crash_expected)
             misses.append(_miss_text(result, time.monotonic() - began))
-        if len(misses) == 2:
-            break
+            not_begun = had_not_begun(result)
         row = _row()
-        if row and row in _RETRIED:
-            pytest.fail(f"{name} missed ({misses[0]}) and this row has spent its one retry "
-                        f"(each attempt bounded at {bound:.0f} s).")
-        put_back = _ready_for_the_retry(name, misses[0], before)
-        _RETRIED.add(row)
-    why = ("A runner fault that comes back on the second call is the guard's to fix, not a stalled "
-           "runner's." if any(m.startswith("a write_guard crash") for m in misses) else
-           "A stalled runner misses once; a hook that hangs, or is slow every time, misses every "
-           "time, on every runner.")
+        # The row's one retry first: it keeps the row's worst case at three
+        # bounds (tests/test_hook_spawn_routing.py), and a start-up retry,
+        # granted against the ceiling, only ever comes after it.
+        if len(misses) == 1 and not (row and row in _RETRIED):
+            put_back = _ready_for_the_retry(name, misses[0], before)
+            _RETRIED.add(row)
+            continue
+        refused = _START_UPS.take(row, start_ups, bound) if not_begun else None
+        if not_begun and refused is None:
+            start_ups += 1
+            # Every tree any restore put back, not the last restore's alone.
+            put_back += [t for t in _ready_for_the_retry(name, misses[-1], before) if t not in put_back]
+            continue
+        break
+    no_start_up = f" No start-up retry either: {refused}." if not_begun else ""
+    if len(misses) == 1:
+        pytest.fail(f"{name} missed ({misses[0]}) and this row has spent its one retry "
+                    f"(each attempt bounded at {bound:.0f} s).{no_start_up}")
+    if any(m.startswith("a write_guard crash") for m in misses):
+        why = "A runner fault that comes back on a later call is the guard's to fix, not a stalled runner's."
+    elif not_begun:
+        why = (f"Its refusal said start-up spent the time, and no further attempt is granted: {refused}. A "
+               "stalled runner misses now and then; a guard whose start-up runs past its deadline every time "
+               "is slow every time (DEF-2084), on every runner.")
+    else:
+        why = ("A stalled runner misses once; a hook that hangs, or is slow every time, misses every "
+               "time, on every runner.")
+    count = "both attempts" if len(misses) == 2 else f"{len(misses)} attempts"
     pytest.fail(
-        f"{name} missed on both attempts: {misses[0]}, then {misses[1]} (each bounded at "
+        f"{name} missed on {count}: {', then '.join(misses)} (each bounded at "
         f"{bound:.0f} s). {why}")
