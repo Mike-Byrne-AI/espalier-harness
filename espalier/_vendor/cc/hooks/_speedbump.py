@@ -2465,14 +2465,15 @@ def _box_lock_record(path: str) -> dict[str, Any] | None:
 def _box_lock_slot_files(path: str) -> list[str]:
     """Every slot file of the box lock at ``path``: the lock itself, and on a
     box of several slots ``<lock>.slot<k>``, by the count beside it
-    (``tools/cc/_json_safe.py::box_lock_slots``, the one reader). The lock
-    alone where the deployed primitive predates the slots, the box of one it
-    ran."""
-    try:
-        from _json_safe import box_lock_slots
-    except ImportError:  # fail-open: ok deliberate -- a primitive that predates the slots locks the one file it always did
+    (``tools/cc/_json_safe.py::box_lock_slots``, the one reader), read from
+    the module ``_hook_utils`` already loaded beside it: no import of its own,
+    which would cross the hooks folder without ``_hook_utils``' path shim. The
+    lock alone where that module is not loaded or predates the slots, the box
+    of one it ran."""
+    reader = getattr(sys.modules.get("_json_safe"), "box_lock_slots", None)
+    if reader is None:  # fail-open: ok deliberate -- a primitive that predates the slots locks the one file it always did
         return [path]
-    return box_lock_slots(path)[0]
+    return reader(path)[0]
 
 
 def _box_lock_holders() -> list[dict[str, Any]]:

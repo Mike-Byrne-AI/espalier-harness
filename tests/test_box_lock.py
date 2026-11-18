@@ -784,7 +784,8 @@ class TestTheBoxsSlots:
         worker = threading.Thread(target=lock.acquire, daemon=True)
         worker.start()
         try:
-            deadline, record = time.monotonic() + 20, None
+            deadline = time.monotonic() + 20
+            record = None
             while time.monotonic() < deadline:
                 record = bl.read_record(tmp_path / "box.lock")
                 if record:
