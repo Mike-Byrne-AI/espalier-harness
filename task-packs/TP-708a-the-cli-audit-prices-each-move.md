@@ -922,7 +922,9 @@ The read ran in a scratch directory. Its scripts and per-branch list are not in 
 **The population** is the census's own `patch_sites` at P, loaded read-only: 149 direct patch
 sites on 43 targets in 19 files, plus 8 sites that patch another module through cli, 157 in all
 [mechanical]. The `_INTERPRETER_WARNING_EMITTED` figures match the pack: 45 sites, 39 of them
-`raising=False`.
+`raising=False`. The population is as the census read it when the sample was drawn: its rule
+has since been widened (Task 3's test patches) and reads 150 sites on 44 targets. The 44th,
+`_git_ignorecase` (one site in `tests/test_bounded_spawn.py`), was not in the draw.
 
 **The sample** is 56 sites, drawn by a fixed rule, never by hand:
 - the first site (by file, then line) of each of the 43 targets;
@@ -1051,17 +1053,19 @@ of 103 callable stubs, it is the only one that mismatches every call site.
 
 **Task 4's two counts overlap; they are not a split** [verified, the census's `patches` section at
 P]. Task 4 names 31 targets with more than one loader (131 sites) and 12 that cli imports from
-elsewhere (30 sites). The census reads the same four figures. They sum to 161 sites against the
-149 in all because the two sets overlap: 10 of the 12 imported names also have more than one
-loader. The 43 add up by coincidence. The partition at P:
+elsewhere (30 sites). The census first read the same four figures; since its rule was widened
+(Task 3's test patches, below) it reads 32 targets with more than one loader (132 sites) and
+the same 12 (30 sites). They sum to 162 sites against the 150 in all because the two sets
+overlap: 10 of the 12 imported names also have more than one loader. The 44 add up by
+coincidence. The partition at P, the one new target in its first row:
 
-| Targets of the 43 | Targets | Sites |
+| Targets of the 44 | Targets | Sites |
 |---|---|---|
-| More than one loader, defined in cli | 21 | 104 |
+| More than one loader, defined in cli | 22 | 105 |
 | More than one loader, imported into cli | 10 | 27 |
 | One loader, imported into cli | 2 | 3 |
 | One loader, defined in cli | 10 | 15 |
-| All | 43 | 149 |
+| All | 44 | 150 |
 
 This read was first sent to the dispatcher as an inconsistency (request `71f10f`). It is not one.
 
@@ -1080,9 +1084,16 @@ control of 75 tests.
   Item 1's table has the authoring's 62 beside it). Tests import 242 distinct cli names from 101
   files, which is the figure Task 4 quotes. The unreproduced 101 of the regex reads is dropped, as
   Task 3 says.
-- **Test patches** (`patches`): 149 sites on 43 targets in 19 files (146 `setattr`, 3 direct
+- **Test patches** (`patches`): 150 sites on 44 targets in 20 files (147 `setattr`, 3 direct
   assignments), no string targets, and 8 more that patch another module through cli. The
-  partition is under Task 4 above.
+  partition is under Task 4 above. **These moved after they were first read** (149 sites on 43
+  targets in 19 files, 146 `setattr`): the census's own code review found a patcher the rule did
+  not read as cli, `m.setattr(__import__("espalier.cli").cli, "_git_ignorecase", ...)` in
+  `tests/test_bounded_spawn.py`, and the widened rule counts it (one site on `_git_ignorecase`,
+  defined in cli, three loaders, all in the "init, upgrade and deploy" group). The section now
+  also counts apart the 47 patcher calls in 11 test files whose first argument it cannot resolve
+  statically (a `getattr(import_module(...))`, a `sys.modules[...]`), so a patch of cli the AST
+  read misses still shows; none is counted as cli's.
 - **Readers by path** (`readers`), by class:
   - loud: 20 symbol keys in 7 files, 67 path literals in 33 files and 16 `/ "cli.py"` joins in 11;
   - silent: 3 joins in 3 files and 1 literal;
@@ -1147,10 +1158,15 @@ source with its vendor twin, and that is the Gate A question. Struck and record 
 | settings layer (members = tie-closed) | 82 (46) | 1,812 | 14 / 15 | 51 / 30 | 3 / 14 | 3 | 15 / 20 / 12 / 66 / 0 | 2 | 13 | 3 | none |
 | deploy layer, members | 101 (70) | 3,637 | 29 / 33 | 55 / 38 | 8 / 18 | 4 | 37 / 35 / 10 / 115 / 1 | 3 | 18 | 28 | `doctor`, `render_surface` |
 | deploy layer, tie-closed | 104 (73) | 3,752 | 30 / 34 | 56 / 38 | 9 / 22 | 4 | 37 / 35 / 10 / 118 / 1 | 3 | 18 | 35 | `doctor`, `render_surface` |
-| init, upgrade and deploy (hand group) | 323 (225) | 10,929 | 55 / 62 | 163 / 73 | 16 / 46 | 12 | 131 / 91 / 24 / 338 / 6 | 13 | 37 | 22 | `doctor`, `render_surface` |
+| init, upgrade and deploy (hand group) | 323 (225) | 10,929 | 55 / 62 | 163 / 73 | 17 / 47 | 12 | 131 / 91 / 24 / 338 / 6 | 13 | 37 | 22 | `doctor`, `render_surface` |
 | scan and scope-check (hand group) | 11 (5) | 658 | 0 / 0 | 5 / 10 | 0 / 0 | 0 | 2 / 5 / 0 / 15 / 0 | 0 | 0 | 2 | none |
 | the 28 single-command concerns, summed | 46 (39) | 1,974 | 1 / 2 | 33 / (not summed) | 1 / 2 | 5 | 3 / 9 / 8 / 40 / 0 | 1 | 1 | 51 | `cleanup` (`cmd_clean_generated`), `doctor` (`cmd_doctor`) |
 
+- **One unit moved after it was first read.** The "init, upgrade and deploy" group's patches
+  (17 / 47 in 12 files) and its re-export figures below (45 stale sites, 486 and 381 loud) each
+  hold one site more than at the first read: the `_git_ignorecase` patch the widened `patches`
+  rule counts (Task 3's test patches). The concern sums move with it (150 sites on 44 targets,
+  120 on 32 defined in cli, 49 on 18 in concern units). No other unit's figure moved.
 - The hand group "init, upgrade and deploy" holds 10,929 of the file's 15,542 function lines
   (70%) and most of every ingredient. It is also the only unit whose members fuse calls with an
   `argparse.Namespace` built by hand (`::cmd_init` and `::cmd_install_ci`), which no parser
@@ -1195,7 +1211,7 @@ source with its vendor twin, and that is the Gate A question. Struck and record 
 | settings layer (members = tie-closed) | 9 (0) | 19 | 0 | 0 | 0 | 137 | 33 | 0 | 0 |
 | deploy layer, members | 18 (17) | 18 | 0 | 1 | 0 | 161 | 52 | 0 | 0 |
 | deploy layer, tie-closed | 18 (17) | 65 | 0 | 1 | 4 | 167 | 53 | 0 | 4 |
-| init, upgrade and deploy (hand group) | 44 (10) | 86 | 0 | 1 | 4 | 485 | 380 | 0 | 4 |
+| init, upgrade and deploy (hand group) | 45 (10) | 86 | 0 | 1 | 4 | 486 | 381 | 0 | 4 |
 | scan and scope-check (hand group) | 0 (0) | 6 | 0 | 0 | 0 | 15 | 4 | 0 | 0 |
 | the 28 single-command concerns, summed | 0 (0) | 17 | 0 | 0 | 0 | 84 | 16 | 0 | 0 |
 
@@ -1222,7 +1238,7 @@ What the two tables say for Gate A's re-export decision:
   same four would also live in a second copy of cli [probable, never run]. `python -m
   espalier.cli` is named in 11 code, 4 doc, 39 test and 9 record files at P.
 - **Without re-exports, the loud count depends on how cli reaches the moved names.**
-  - For the big hand group, 485 sites fail where cli reaches them through the module, and 380
+  - For the big hand group, 486 sites fail where cli reaches them through the module, and 381
     where cli from-imports the 24 names it still loads.
   - For deploy's members, the drop is from 161 to 52, because cli keeps 57 of them bound.
   - The difference between the two counts is the sites that stop failing under the from-import
@@ -1407,7 +1423,7 @@ result.** The rest are recorded where they fall and raise nothing.
 | Task 3, citations: in `.py`/`.cmd` | 57 in 29 files | 56 in 30 (57 in 31 by plain text), at `17d83e0` | the occurrence differs by one non-citation (a string prefix in `tests/test_python_floor.py`); the file count is **not explained** |
 | Task 3, citations: live fragments and swept docs | 132 in 36; 31 in 7 | 131 in 35; 28 in 7 plus 3 struck, at `17d83e0` | one prose mention in `DEF-4123`; 3 on lines the sweep skips as closed rows. Each reproduces by plain text |
 | Task 3, ledger probes on cli | about 27 [probable] | 24 | the authoring counted the word "cli" in a probe file; `DEF-5043`, `DEF-645` and `DEF-900` do not read cli |
-| Task 4, the 31 and 12 targets | 131 + 30 sites | the same | reproduced. They overlap rather than split (Task 4 above) |
+| Task 4, the 31 and 12 targets | 131 + 30 sites | the same at the first read; 32 and 12, 132 + 30 sites since the rule was widened | reproduced at the first read; the widened rule adds one target with more than one loader (`_git_ignorecase`, Task 3's test patches). They overlap rather than split (Task 4 above) |
 | Task 5, the 43 names by kind | 32 functions, 1 class, 10 constants | 34, 1, 8 | **rule not named** |
 | Task 5, doctor functions holding the imports | 19 | 11 (innermost) | **rule not named** |
 | Task 5, doctor alone | 2 names | 1 name, plus 2 closure members no command reaches | the second of the authoring's two is a closure member, not one of the 43 |
