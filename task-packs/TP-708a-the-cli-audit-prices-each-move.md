@@ -788,7 +788,8 @@ A windowed row may differ only by the pull requests between the two pins (#714 t
 | Catch-ups carrying cli.py, 30 days | 54 | 48 at `17d83e0`, 49 at P | **reproduced under the authoring's rule**: 48 catch-ups plus 6 other lane-side merges (stacks and merges of a commit) = 54. The census counts `merge_cost_census.CATCH_UP` alone. Context, never graded |
 | Cross-seat claim-overlap lane pairs | 18 (stated over 30 days and over about 42) | 10 over the 30 days to P; 9 over 30 days to `17d83e0`; 20 over 2026-10-06 to `17d83e0` (a claim-side rule: 20 over 71 lanes) | **NOT reproduced** under either stated window. Item 1's refuting result, re-raised (request `651334`) and put to the operator by the dispatcher as call `20261118T032647Z-air-7a763a` (continue, recommended, or stop). The 18 grades nothing: C2 is graded from the census over the 30 days to P |
 
-Items 2 and 3 are graded only after that call's ruling. The 42-day C2 share (31 of 71, 43.7%) is
+Items 2 and 3 were graded after that call's ruling: (A), continue, by the operator at
+2026-11-18T08:07Z (ack `20261118T080812Z-air-2bef6b`). The 42-day C2 share (31 of 71, 43.7%) is
 context and stays out of the graded section.
 
 ### The transcripts read, diagnosed (Item 3's oracle, before any grade)
@@ -1191,7 +1192,10 @@ control of 75 tests.
   The parts sum to the 737. The sweep's population rule is ported from P and pinned by a digest, so a change to it makes
   those parts unread rather than wrong.
 - **Ledger probes** (`probes`): 24 of the 169 probes read cli, all on live rows: 19 by their
-  command (11 by import, 8 by path, 3 by running it, 1 by a patch) and 5 by subject alone. The
+  command and 5 by subject alone. The census counts each way a probe reads cli, so the 19 read it
+  23 ways: 11 by import, 8 by path, 3 by running it and 1 by a patch. Four read it two ways:
+  `DEF-1001` by import and a patch, and `DEF-1005`, `DEF-736` and `DEF-945` by path and import.
+  21 of the 24 also name cli in their subject. The
   rows are `DEF-1001`, `1005`, `1006`, `1021`, `1057`, `1077`, `1079`, `1085`, `1086`, `1088`,
   `2095`, `3096`, `400b`, `4123`, `5089`, `5099`, `5113`, `736`, `930`, `932`, `943`, `945`,
   `947` and `996`. A probe that reads a moved symbol out of cli.py prints a new value, and its
@@ -1221,7 +1225,10 @@ such as `cmd_frobnicate` and `X`, the prefix `INIT_`, and names cli no longer de
 `get_seed_docs` and `DENIED_PATTERNS`. All 39 `raising=False` patches sit on a target no concern
 unit owns: `_INTERPRETER_WARNING_EMITTED`, which is shared.
 
-**What a move touches, per unit** [mechanical, at P]. Citations are split as in Task 3 above.
+**What a move touches, per unit** [mechanical, at P]. Citations are split as in Task 3 above,
+but counted in all three spellings that name a member (`path::X`, bare `cli.py::X` and dotted
+`espalier.cli.X`; the line form names none), where Task 3's split counts `path::X` alone. So the
+hand group's protected 24 is 12 sources and their 12 twins [verified, `move_cost`'s `rule`].
 Swept-live and unchecked-live are the re-key tool's work list. Protected counts each `tools/cc/`
 source with its vendor twin, and that is the Gate A question. Struck and record stay as they are.
 
@@ -1320,8 +1327,9 @@ What the two tables say for Gate A's re-export decision:
     binding. So the branch decision names the spelling as well as the branch.
 
 These tables are the move cost Task 8's unit table carries, and nothing here grades a wave.
-Gate A is the operator's. Nothing is graded while operator call `20261118T032647Z-air-7a763a` is
-open.
+Gate A is the operator's. Nothing was graded while operator call `20261118T032647Z-air-7a763a`
+was open. It was ruled (A), continue, at 08:07Z (ack `20261118T080812Z-air-2bef6b`), and the
+grades are in Task 0's verdicts below.
 
 ### Task 5: the doctor boundary at P
 
@@ -1488,7 +1496,7 @@ result.** The rest are recorded where they fall and raise nothing.
 
 | Where | Authoring | Census | The difference |
 |---|---|---|---|
-| Item 1, claim-overlap lane pairs | 18 (over 30 days and over about 42) | 10 over the 30 days to P; 20 over 42 days to `17d83e0` | **not explained**: operator call `7a763a` |
+| Item 1, claim-overlap lane pairs | 18 (over 30 days and over about 42) | 10 over the 30 days to P; 20 over 42 days to `17d83e0` | **not explained**: operator call `7a763a`, ruled continue (ack `2bef6b`) |
 | Item 1, importers outside tests | 62 | 65 | reproduced under the authoring's rule (each file's from-imports summed) |
 | Item 1, patches through cli | four | 8 sites, 3 targets, 3 files | reproduced under the authoring's rule (a same-line text match) |
 | Item 1, catch-ups carrying cli.py | 54 | 49 at P | reproduced under the authoring's rule (48 catch-ups + 6 other lane merges, at `17d83e0`) |
@@ -1504,6 +1512,212 @@ result.** The rest are recorded where they fall and raise nothing.
 | Task 5, the closure | 139 definitions, 3,283 lines | 141 and 3,283 at `17d83e0`; 141 and 3,301 at P | 139 on loads alone; the two latches reached only by a write make 141 |
 | Task 6, tier 3 | 8 at `17d83e0` | 6 | `DEF-346c` and `DEF-883` cite cli.py by path only. Counting a path mention gives 8 |
 | Task 6, tier 2 | 31 at `17d83e0` | 31 at `17d83e0`, 30 at P | reproduced. #715 struck `DEF-985` |
+
+### Task 0 at P: the three verdicts and the exit cell
+
+Each item is graded on the thresholds committed at step 1 (`6a91bc51b`). Items 2 and 3 were
+graded after the operator ruled on call `20261118T032647Z-air-7a763a`: (A), continue, at
+2026-11-18T08:07Z (ack `20261118T080812Z-air-2bef6b`) [verified, the mail].
+
+| Item | Verdict | The read at P | Where it is read |
+|---|---|---|---|
+| 1. Do the authoring figures hold? | **Refuted on one figure; ruled continue** | Every structural row reproduces exactly, and every windowed row but one is explained. The 18 cross-seat claim-overlap pairs reproduce under neither stated window: 10 over the 30 days to P, 20 over the 42 days to `17d83e0`. The 18 grades nothing | Item 1 at P; the list above |
+| 2. Is there a collision cost? | **Not real** | C1 1 against 4. C2 15 of 33 lanes (45.5%) against 50%, two lanes short. C3 2 holds against 8. C4 1 replay conflict, not graded | Item 2 at P |
+| 3. Is there a reading cost? | **Unmeasured** | Two causes, each enough alone. The hand sample confirms 3 of 3 air-work lanes and 0 of 2 air lanes, so the attribution fails for the two-seat population. And the realised minimum detectable ratio is 6.24, above the committed 2.0 [to re-read after the second fold] | The transcripts read |
+
+**The exit cell: collision not real, reading unmeasured. The exit table has no such cell.** Its
+row for "collision not real" has two cells: no refactor waves (reading not real), and
+decomposition waves graded on reading (reading real). Task 0 says what an unmeasured item is:
+never a silent kill and never a license. So this read licenses no wave. It also cannot support
+striking `DEF-4123` as "no cost". The call says both.
+
+**Beside the verdict, never graded** [to re-read after the second fold]. The observed direction
+runs against a reading cost. On the median cli.py lane, the seat read 42 lines of the CLI
+modules. Threshold (a) is 1,500. On the median control lane, the seat read 277 lines of the files
+it edited. Add the forks' reads, and air-work's median cli.py lane read 416, still under a
+third of (a). These are medians of an unmeasured read. They say which way it leans, not that it is
+settled.
+
+**How far a decidable read is** [probable: the step-1 formula at the observed spread; nothing was
+read for it]. The committed minimum detectable ratio is exp(2.49 · s · √(1/n_t + 1/n_c)). At P,
+the pooled s of ln(1 + lines) is 2.691. For the ratio to reach 2.0, 1/n_t + 1/n_c must be at
+most (ln 2 / (2.49 · 2.691))², which is 0.0107. So:
+- even with unlimited control lanes, it needs 94 or more cli.py lanes;
+- at this box's rate (15 cli.py lanes and 126 control lanes in the 30 days to P), that is about
+  7 months: about 105 cli.py lanes and 880 control lanes;
+- with all four seats' transcripts read (36 cli.py lanes in the 30 days to P), it is at least
+  2.6 months, and about 2.9 at this box's ratio of control lanes. That needs the Windows seats'
+  transcripts read on their own box, and their attribution passing a hand sample. Here, air's
+  lanes fail one;
+- for air-work alone (post hoc; its s is about 2.0, worked back from its ratio of 4.21 at
+  14 / 82), it is about 4.3 months.
+
+The spread is the obstacle, more than the count. At P's counts, the ratio would reach 2.0 only
+with s at about 1.02. Many lanes read few lines or none, and ln(1 + 0) is 0. **So on this box,
+under the committed design, Item 3 cannot be decided inside a quarter.** A later pin could
+pre-register a read with less spread, or read all four seats' transcripts. That is a new
+pre-registration, never a change to this one.
+
+### The recommendation
+
+**No refactor waves now.** No graded component is at its threshold. The one item that could
+license decomposition waves is unmeasured, and on this box it stays unmeasured for about seven
+months under its committed design. Unmeasured is never a license.
+
+In order:
+1. **Re-scope `DEF-4123`; do not strike it.** That is the operator's word at Gate A; this lane
+   edits no row (Status). A strike says there is no cost, and Item 3 cannot say that. Each of the
+   row's two premises, as read at P:
+   - "collides with the next lane in it": not real on every graded component;
+   - "reads a file of more than 17,000 lines": unmeasured as a cost, and the observed medians sit
+     far below the threshold.
+
+   The size and the accretion stand [verified, Task 2]. The re-scoped row names what reopens it:
+   C2 at or over 50% in a later 30-day window, or a decidable reading read.
+2. **Re-read the collision section at a later pin.** That is one census run, not a lane. C2 is
+   the one component near its threshold: 17 of 33 lanes would have crossed it. A later window can
+   cross it with no change in how the seats work. Expected: C2 near 45% again, the rest at their
+   floors [judgment].
+3. **Land the census as the standing instrument.** It lands under every cell (Status). Each later
+   read is one run at a new pin.
+
+No unit is offered as a wave's payoff. A component no proposed shape can move is reported and
+never offered (Task 7). The one component a decomposition is built to move, the primary, is
+unmeasured.
+
+**The strongest case for refactoring anyway, and why it does not hold on this evidence.**
+- cli.py is 17,817 lines [verified, at P]. One hand group holds 70% of its function lines.
+- `::cmd_upgrade` grew from 498 to 929 lines since the seed, through about 12 row guards in one
+  arm, and it cites 26 ids [verified, Task 2].
+- The seats hand cli.py work to forks (#357, #429, #540). The forks' reads of the CLI modules sum
+  to 6,786 lines on the 15 lanes, against the seats' own median of 42.
+- C2 says nearly half the cli.py lanes overlap another seat's live claim on the file. C1, C3 and
+  C4 say almost none of those overlaps became a conflict or a hold. That could be the claim
+  protocol working at a cost no census counts: mail `45df70` placed code "by function, to stay
+  off the live claims".
+
+Each of these is real or plausible. None is a measured cost to a seat:
+- The size and the growth are lengths. Task 0 says a function's length decides nothing, since a
+  move keeps it.
+- The forks' reads spend the forks' context, not the seat's, and the seat's is what threshold (a)
+  prices. Counted with them, air-work's median is 416, still under 1,500 by more than three times.
+- The protocol's placement cost is a hypothesis with one mail behind it. No section reads it
+  [unmeasured]. The call should name it as the cost the audit could not price, not as a
+  payoff.
+
+What holds is narrower. `::cmd_upgrade`'s "nothing to do" arm is a stack of row special cases,
+and a table of check, clause and remedy is a cut worth testing [hand, Task 2; a hypothesis].
+That is a lane for a row that names its cost, not a refactor wave.
+
+### The alternatives, priced
+
+**(i) Strike or re-scope `DEF-4123` now.** Neither costs a lane: either is one edit to the
+row, made by the operator or the dispatcher.
+- *Strike:* says there is no cost. Item 2 supports that for collisions. Item 3 does not support it
+  for reading, and the row's who-is-hurt goes with it. Not recommended.
+- *Re-scope:* keeps the row live with its premises re-read at P and its reopening condition
+  named (the recommendation, item 1). New evidence comes only from later census runs.
+  Recommended.
+
+**(ii) Decompose only `::cmd_upgrade` and `::build_parser`, with no wider map.**
+- *What they are at P* [verified, the census at P]. `::cmd_upgrade` has 929 lines and
+  `::build_parser` 890: 1,819 together, 11.7% of the file's 15,542 function lines. In
+  `lane_read` they are 30.1% (7,910 lines) and 16.8% (4,428 lines) of the 26,298 lines summed
+  over the window's 36 cli.py lanes, and they appear in 9 and 5 of those lanes. They are unlike
+  things (Task 2). `::build_parser` is declaration: 324 of its lines are help text, and it cites
+  1 id. `::cmd_upgrade` is accretion, with 26 ids.
+- *What an in-file split touches* [verified, the census at P, unless tagged]. The two names stay
+  in cli, so nothing breaks that imports, test-imports or patches them by name. The split
+  touches only what reads their bodies:
+  - 1 symbol key, `tests/test_json_safe_program_word.py::_TYPED_IN_A_WRITER`, which counts 7
+    typed spellings in `::cmd_upgrade`'s body. A split that moves one into a helper reds it,
+    loudly [probable];
+  - 1 patch site on `build_parser`;
+  - 2 probes that read `build_parser` by path, `DEF-1005` and `DEF-945`. Either could print a
+    new value once its text moves into a helper, which offers a false strike [probable].
+    9 more probes name `cmd_upgrade` among the commands that reach their symbols;
+  - name citations stay valid: `cmd_upgrade` 36 (26 struck, 6 swept-live, 4 unchecked) and
+    `build_parser` 20 (7 struck, 8 swept-live, 5 unchecked). The 17 line-form citations in the
+    file drift with any edit.
+- *Cost* [judgment]: two lanes, one for each function, each a pure refactor inside cli.py with
+  its review. `::cmd_upgrade`'s lane carries the risk, since the order of its arm's guards is
+  behaviour.
+- *What it can move:* `lane_read`, by construction. That is never a payoff alone, and this
+  shape is the must-not-pass case's own shape. The primary, which is unmeasured. No collision
+  component: C1's one uncertified pair (#429 / #430) is `unplaced`, and a split inside a function
+  moves no module-level line [judgment].
+- *Evidence it would produce:* nothing that grades under this pack's rules.
+
+**(iii) The navigation aid alone.**
+- *What exists:* the census already prints the concern map and the layer view at any pin
+  (`clusters`, `layers`), and each unit's move cost (`move_cost`).
+- *Cost* [judgment]: one lane to land the map as a generated region the census rewrites, with a
+  check that reds when the map is stale. After that, the upkeep is a census run whenever cli.py's
+  top level changes.
+- *What it touches:* nothing in cli.py. No importer, patch, citation or probe moves.
+- *What it can move:* the primary only, as a hypothesis (Task 7's table). Its payoff is unread on
+  this box inside the quarter, as is every shape's.
+- It is the cheapest shape that could move the primary. If the operator wants one lane spent on
+  the reading premise, this is the one whose cost is near zero and whose risk to the code is
+  none.
+
+### The Gate A decisions
+
+**1. Re-exports or none (Task 4).** Moot under no waves. If a wave is approved: **none**, with cli
+reaching the moved names through the module (`newmod.X`), and the static re-pointing check on the
+lane's diff as wave 1's oracle in either branch. The figures, all at P:
+- *With re-exports,* for interpreter core: 65 of its 68 patch sites go stale, and 55 of those stay
+  green through a loader left in cli. Its 5 latches split.
+- *Without:* 54 sites fail loudly, which is a cost, not a risk. 42 patch sites (the 39
+  `raising=False` patches of the warn-once flag and 3 assignments) create the attribute on cli and
+  reach nothing. So a red means the site was read, not that it is guarded, and a green run proves
+  nothing in either branch.
+- *The from-import spelling is re-exports in effect.* For the hand group, 486 sites fail when cli
+  reaches the names through the module, and 381 when it from-imports them. The 105 that stop
+  failing stay green on a stale binding.
+- *The latch hazard holds in both branches.* Under the deploy layer's tie closure and the hand
+  group, `::_refuse_below_floor_wiring` and `::_warn_venv_fallback_outside` write four latches by
+  `global`: `_BELOW_FLOOR_ANSWER`, `_BELOW_FLOOR_REFUSING`, `_INTERPRETER_WARNING_EMITTED` and
+  `_VENV_FALLBACK_OUTSIDE`. Move them with their writers, or have the writers write `cli.X`.
+
+**2. The doctor cycle (Task 5). Leave it as it is.** The answer is the same with waves or without.
+- doctor.py holds 20 lazy imports of 43 cli names, in 11 functions.
+- Their closure is 141 definitions and 3,301 function lines.
+- Moving the closure moves the cycle rather than ending it: `::_not_python3_from_entries` calls 4
+  doctor functions.
+- Ending it is a doctor.py change, which ruling 2 excludes.
+
+**3. The protected-zone citations (Task 4).** Moot under no waves. If a wave is approved: **keep
+the cited names in cli.py for wave 1.** Allow a `tools/cc/` re-key lane, with its vendor sync,
+only for a unit that has to move one of them. The figures at P [verified, `citations` and
+`move_cost`]:
+- In all three spellings, 17 occurrences sit in 9 `tools/cc/` files, on 12 names, and each is
+  matched by its twin under `espalier/_vendor/cc/`. 10 of the 17, in 5 files, are the `path::X`
+  spelling Task 3 lists.
+- 12 of the 17 name members of the "init, upgrade and deploy" group, led by `INIT_HOOK_SCRIPTS`
+  (4) and `INIT_TOOL_SCRIPTS` (2). 4 name members of two single-command concerns
+  (`cmd_memory_prune` 3, `cmd_integrity` 1), and 1 a member of the interpreter core layer.
+- A re-key edits the harness's protected zone, so it runs under maintenance mode with
+  `scripts/sync_vendor_cc.py` [judgment on what that costs].
+
+**4. Which components grade a wave (Task 7).** Moot for now; it is needed at the next pin.
+Recommended: **C2 grades a module move. C1 and C3 are reported and graded on nothing. The primary
+grades nothing until a read of it can be decided. `lane_read` never grades alone, and C4 never.**
+
+| Component | Baseline at P | Committed threshold | Graded at P | Recommended to grade a wave |
+|---|---|---|---|---|
+| Primary: lines of the CLI modules a lane's seat read | median R 42; median E 277; MDR 6.24 [to re-read after the second fold] | (a) median R ≥ 1,500, (b) ≥ 2 × E, (c) p < 0.05; not real only with MDR ≤ 2.0 | unmeasured | no, until a decidable read |
+| `lane_read` (secondary) | 36 lanes, median 337, max 2,784, summed 26,298 | none: only beside the primary | not graded | never alone |
+| C1. Uncertified concurrent cli.py pairs | 1 | 4 | not real | no: reported |
+| C2. Share of cli.py lanes in a cross-seat claim overlap | 45.5% (15 of 33) | 50% | not real, near | **yes**, for a module move |
+| C3. Dispatcher holds over a cli.py overlap | 2 | 8 | not real | no: reported |
+| C4. Replay conflicts on cli.py | 1 | not graded (floor) | not graded | never |
+
+Why. Task 7 pays a wave on a component only when that component falls at least 30% from its
+baseline at P. C2's baseline is 45.5%, so a 30% fall is to 31.8% or under, a share a 30-day
+window can show. C1's baseline is 1 pair and C3's is 2 holds. With counts that small, one event
+missing reads as a fall of 100% or 50%, which is noise, not a payoff [judgment]. The primary is
+unmeasured at P (Task 0's verdicts above).
 
 
 ## Landing
@@ -1533,12 +1747,16 @@ result.** The rest are recorded where they fall and raise nothing.
     - N1, N2, N4, N5, N6 and N7 in the text, N8 in the row, and N9 in the row's fix shape;
   - the reasoning review on the Audit result and the census: pending;
   - the code review the tier names: pending.
-- Pre-registration commit:
+- Pre-registration commit: `6a91bc51b` (2026-11-18T02:46:56Z), "the cli audit's thresholds are
+  fixed before any metric is read"
 - Deviation, not a pass: the criterion that `git diff --name-only origin/main...HEAD` lists only
   Files touched fails by its letter on `task-packs/ledger.d/DEF-5127.md` and
   `task-packs/probes.d/DEF-5127.json`. These are a test that reds for the wrong reason, found by
   Task 4's sample, and not a vacuous patch. They are kept on the lane by the dispatcher's ack
   `20261118T040752Z-air-ff0cf7`.
 - Reach: see Reach; `DEF-4123` stays live
-- Task 0:
-- Date:
+- Task 0: Item 1 refuted on one figure (the 18 claim-overlap pairs), ruled continue (ack
+  `20261118T080812Z-air-2bef6b`); Item 2 not real; Item 3 unmeasured. The cell, collision not
+  real × reading unmeasured, is not one of the table's: no wave is licensed, and `DEF-4123` is
+  recommended for a re-scope, not a strike
+- Date: 2026-11-18
