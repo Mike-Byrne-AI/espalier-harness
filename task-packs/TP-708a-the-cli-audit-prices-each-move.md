@@ -851,6 +851,127 @@ Beside them, never graded: the forks' reads of the CLI modules on the 15 lanes s
 the CLI modules: 77. The air seat has one cli.py lane in the window (#349), so the reading cost on
 this box is in effect air-work's, as step 1 said.
 
+### Task 2: the accretion read, the eight longest definitions at P
+
+The same eight as at authoring, at the same lengths, at P and at `17d83e0` [verified, by AST at
+both pins]. Only the offsets past `::deploy_harness` moved (+27, from #715's `2e50d259b`, which
+touches none of the eight).
+
+**The mechanical cues** [mechanical], each read on the definition's exact AST span at P:
+- the `DEF-\d+` and `TP-\d+` ids cited inside the span;
+- its commits, from `git log -L <start>,<end>:espalier/cli.py 3330a5a`. The span is given by
+  line, because no Python diff driver is configured and the `:funcname:` form runs past the
+  function's end;
+- the string literals of 30 characters or more it shares with `espalier/doctor.py` at P;
+- the deploy helpers it calls.
+
+The history at P is short. The repository's root commit is `d00f6de45`, the seeded public tree of
+2026-09-24, so `git log -L` covers about eight weeks. The history before it is read from
+`archive/main` (`238a00ab1`), whose cli.py is byte-identical to the seed's. Of the commits traced
+after the seed, 2 name a row in their message, so the ids are read from the span's text, not the
+log.
+
+**The branches and their classes.** A branch is an `if`/`elif`/`else` arm, a loop or a `try` at
+the first or second nesting level, 20 lines or more. A first-level branch with second-level
+children is classed on its own lines, so the branches partition the lines they cover. Each one is
+classed by a reader in its own context [hand]: (a) a row's special case, (b) logic duplicated
+with doctor, (c) the function's own work.
+
+| Definition | Lines at P (at the seed) | Ids cited | Commits, at P / before the seed | Shared doctor literals | Branches by class: count/lines | Dominant: branches / whole |
+|---|---|---|---|---|---|---|
+| `::cmd_upgrade` | 929 (498) | 26 | 41 / 26 | 0 | a 5/363, b 1/21, c 5/304; the rest 241, c | a / c |
+| `::build_parser` | 890 (836) | 1 | 14 / 70 | 0 | 18 subparser blocks, c 660; the rest 230, c | c / c |
+| `::deploy_harness` | 344 (264) | 4 | 13 / 43 | 0 | c 3/114; the rest 230, c | c / c |
+| `::cmd_init` | 337 (211) | 9 | 22 / 54 | 0 | c 1/77; the rest 260, c | c / c |
+| `::cmd_scope_check` | 311 (311) | 3 | 2 / 14 | 0 | a 1/80, c 3/46; the rest 185, c | a / c |
+| `::cmd_scan` | 304 (260) | 1 | 5 / 22 | 0 | c 2/128; the rest 176, c | c / c |
+| `::_print_init_summary` | 293 (233) | 7 | 19 / 18 | 0 | a 2/77; the rest 216, c | a / c |
+| `::_detect_python_command` | 284 (128) | 8 | 12 / 11 | 0 | a 2/104; the rest 180, a | a / a |
+
+"Commits at P" includes the seed commit. The 0 shared doctor literals is a real zero: the same
+check finds 7 shared-literal sites elsewhere in cli.py [mechanical], and those, not these eight,
+are where Task 5's boundary should look.
+
+**What the read finds** [hand, unless tagged]:
+1. **`::cmd_upgrade`'s "nothing to do" arm is row special cases, not doctor duplication.** It is
+   216 lines: a stack of about 12 guards, each added by a row that found "nothing to do" false
+   (`DEF-715`, `DEF-798`, `DEF-929`, `DEF-618`, `DEF-3088`, `DEF-2007` and `DEF-4071` among them).
+   It grew from 97 lines at the seed, over 17 commits since [mechanical]. Where it checks what
+   doctor checks, it calls doctor's own functions, so moving it into doctor.py would remove no
+   duplicate. A table of check, clause and remedy is the natural cut (a hypothesis, untested).
+2. **The one (b) branch is small.** It is 17 lines in `::cmd_upgrade`: the unstamped-seed note,
+   with the same state and the same remedies doctor prints. The two texts have already drifted
+   apart [verified, read at P].
+3. **`::_detect_python_command` is row special cases throughout.** It holds a 77-line docstring and
+   has more than doubled since the seed (128 to 284 lines) [mechanical]. Its fallback order, nine
+   ranked returns, lives in control flow. It writes `_BELOW_FLOOR_ANSWER` and
+   `_VENV_FALLBACK_OUTSIDE`, and doctor imports it. So any move takes both globals with it and
+   keeps the doctor cycle (Task 2's step 2, Task 5).
+4. **The alternative "decompose only `::cmd_upgrade` and `::build_parser`" prices two unlike
+   things.** `::build_parser` is declaration: 324 of its 890 lines are help text, and it cites one
+   id (`DEF-772`). `::cmd_upgrade` is accretion.
+5. **The growth is concentrated.** The eight grew by 951 lines since the seed. 853 of them are in
+   upgrade, init, deploy, the summary and the resolver [mechanical]. `::cmd_scope_check`'s 80-line
+   row branch predates the seed and has had no commits since [mechanical].
+
+The read ran in a scratch directory. Its scripts and per-branch list are not in this lane
+(Files touched), so a re-run rebuilds them from the rules above.
+
+### Task 4: the raising-sentinel sample
+
+**The population** is the census's own `patch_sites` at P, loaded read-only: 149 direct patch
+sites on 43 targets in 19 files, plus 8 sites that patch another module through cli, 157 in all
+[mechanical]. The `_INTERPRETER_WARNING_EMITTED` figures match the pack: 45 sites, 39 of them
+`raising=False`.
+
+**The sample** is 56 sites, drawn by a fixed rule, never by hand:
+- the first site (by file, then line) of each of the 43 targets;
+- all 8 sites that patch through cli;
+- 5 `raising=False` patches of `_INTERPRETER_WARNING_EMITTED`, at evenly spaced indices of the
+  sorted list, the sites already drawn removed.
+
+**The method.** It ran in a fresh clone at P, never in a live checkout. For each site, the patched
+value is replaced by a sentinel that raises on any use and logs where it is used. The site's tests
+run green first, and each run imports espalier from the clone.
+
+**The result** [measured, at P]:
+- **49 sites go red**, so their patches reach the code. All 8 through-cli sites are among them.
+- **7 stay green, and each is read by hand, never counted as vacuous.**
+  - 3 are live. One of them is called by cli, which swallows the sentinel's error; the original
+    patch value raises too, so the sentinel is the same input. The other two assert that a
+    recorder was not called. With the defect each test guards seeded, both go red, and the
+    sentinel is read.
+  - 4 are inert. The patched value is never read on the test's path, and the test's claim does
+    not depend on it. One function resets `_BELOW_FLOOR_ANSWER` itself before reading it; two set
+    the warn-once flag on paths that never warn; one asserts a refusal message the flag does not
+    control, and a seeded refusal turns it red with the flag never read.
+- **Vacuous: 0 of 56.** The pack expected 0 [probable], and it holds on this sample.
+
+Across all 88 test nodes the sample ran, 20 stay green under the sentinel. Five of those sit
+inside shared helpers that reach the code in some tests and not in others.
+
+**What it cannot see.** A read such as `x is None` passes the sentinel without triggering it,
+which is why every green with no logged read was checked by hand. Every cli name exists at P, so
+the hazard of `raising=False` does not show yet: it appears after a move without re-exports. Two
+of the 5 sampled `raising=False` patches are read today and would then miss silently. That is
+Task 4's re-export branch, priced below.
+
+**One test defect, found and filed** (`DEF-5127`, §C0, minor): in
+`tests/test_python_floor.py::TestFloorAtTheThreeDecisionSites::test_detect_python_command_does_not_promise_working_guards_on_python_2`
+the recorder over `::_warn_interpreter_below_floor` takes one argument, and its one caller passes
+two. With `DEF-727`'s shape seeded back, the test fails with a `TypeError` and its assertion never
+runs. The row is not a vacuous patch, so it is outside the one case Files touched names; it goes
+to the dispatcher as request `20261118T035754Z-air-work-71f10f` (recommended: keep it, with the
+deviation named in Landing).
+
+**An inconsistency in the authoring text, for Task 4's sizing.** Task 4 splits the 43 targets as
+31 with more than one loader (131 sites) and 12 that cli imports from elsewhere (30 sites). The
+31 and 12 sum to 43 targets, but the 131 and 30 sum to 161 sites, against the pack's own 149. The
+census recomputes the split at P below.
+
+The sample ran in a scratch clone. Its harness is not in this lane (Files touched), so a re-run
+rebuilds it from the rule and the method above.
+
 
 ## Landing
 - State: DRAFT
