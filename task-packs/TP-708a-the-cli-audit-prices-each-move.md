@@ -1112,6 +1112,127 @@ control of 75 tests.
   `947` and `996`. A probe that reads a moved symbol out of cli.py prints a new value, and its
   row is offered as a strike candidate.
 
+### Tasks 3 and 4: the move cost per unit, in both re-export branches, at P
+
+Every figure is from `python3 scripts/cli_cost_census.py --at 3330a5a --json move_cost`, a static
+read at P with no window. The section names its rule for each count in its own `rule` block. Two
+runs at P printed every figure equal: the builder's, in its own worktree, and mine on the lane's
+copy. Their rule text differs by the one sentence added since, named below. It has 110 fixture tests and 51 mutants, each killed by the test it names, against a green
+control. Its rules review (in its own context) found 2 BLOCKERs, 3 MAJORs and 5 MINORs, all
+folded before these figures were read. The one minor left is named in the rule text: a builtin
+`setattr(cli, ...)`, a `create=True` patch and a `patch.dict` on a re-exported memo are not told
+apart from a plain patch. `tests/` holds none of them at P [verified, `git grep` at `3330a5a`].
+
+**The units are two cuts, and only one partitions.** The layer rows (each layer's members, and its
+tie-closed set) and the concern rows (the two hand groups and the 28 single-command concerns)
+price the same definitions two ways, so rows do not add across the two. The concern units own 380
+of the 438 top-level definitions at P, and the other 58 are shared or unreached. The census
+asserts that no two concern units hold one definition, and that for every ingredient the concern
+units plus the rest equal the defined total (`move_partition`). It also asserts that each
+ingredient's per-name tally meets its section's own total (`move_sums`). The names each sum sets
+apart are listed, not absorbed. Citations, for example: 780 occurrences on names defined in cli, 1
+on a name cli imports, and 26 on 21 names cli does not bind, 807 in all. The 21 are placeholders
+such as `cmd_frobnicate` and `X`, the prefix `INIT_`, and names cli no longer defines, such as
+`get_seed_docs` and `DENIED_PATTERNS`. All 39 `raising=False` patches sit on a target no concern
+unit owns: `_INTERPRETER_WARNING_EMITTED`, which is shared.
+
+**What a move touches, per unit** [mechanical, at P]. Citations are split as in Task 3 above.
+Swept-live and unchecked-live are the re-key tool's work list. Protected counts each `tools/cc/`
+source with its vendor twin, and that is the Gate A question. Struck and record stay as they are.
+
+| Unit | Definitions (functions) | Function lines | Importers outside tests: names / pairs | Test imports: names / files | Patches: targets / sites | Symbol keys | Citations: swept / unchecked / protected / struck / record | Probes | Doctor names | Back edges (definitions) | Cycles closed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| interpreter core layer, members | 26 (18) | 656 | 4 / 5 | 14 / 10 | 12 / 68 | 0 | 3 / 4 / 2 / 35 / 2 | 0 | 4 | 0 | none |
+| interpreter core layer, tie-closed | 34 (24) | 807 | 6 / 7 | 17 / 10 | 13 / 72 | 0 | 3 / 5 / 2 / 41 / 2 | 0 | 5 | 0 | none |
+| settings layer (members = tie-closed) | 82 (46) | 1,812 | 14 / 15 | 51 / 30 | 3 / 14 | 3 | 15 / 20 / 12 / 66 / 0 | 2 | 13 | 3 | none |
+| deploy layer, members | 101 (70) | 3,637 | 29 / 33 | 55 / 38 | 8 / 18 | 4 | 37 / 35 / 10 / 115 / 1 | 3 | 18 | 28 | `doctor`, `render_surface` |
+| deploy layer, tie-closed | 104 (73) | 3,752 | 30 / 34 | 56 / 38 | 9 / 22 | 4 | 37 / 35 / 10 / 118 / 1 | 3 | 18 | 35 | `doctor`, `render_surface` |
+| init, upgrade and deploy (hand group) | 323 (225) | 10,929 | 55 / 62 | 163 / 73 | 16 / 46 | 12 | 131 / 91 / 24 / 338 / 6 | 13 | 37 | 22 | `doctor`, `render_surface` |
+| scan and scope-check (hand group) | 11 (5) | 658 | 0 / 0 | 5 / 10 | 0 / 0 | 0 | 2 / 5 / 0 / 15 / 0 | 0 | 0 | 2 | none |
+| the 28 single-command concerns, summed | 46 (39) | 1,974 | 1 / 2 | 33 / (not summed) | 1 / 2 | 5 | 3 / 9 / 8 / 40 / 0 | 1 | 1 | 51 | `cleanup` (`cmd_clean_generated`), `doctor` (`cmd_doctor`) |
+
+- The hand group "init, upgrade and deploy" holds 10,929 of the file's 15,542 function lines
+  (70%) and most of every ingredient. It is also the only unit whose members fuse calls with an
+  `argparse.Namespace` built by hand (`::cmd_init` and `::cmd_install_ci`), which no parser
+  checks.
+- Interpreter core is the one unit with no back edge: its members load no cli definition outside
+  it, so a new module holding it would not import cli. 41 cli definitions outside it load or
+  write its members.
+- Settings is the same set under both cuts: its tie closure pulls in nothing.
+- The 28 single commands are small: the largest by function lines are `::cmd_memory_prune` (351),
+  `::cmd_integrity` (242) and `::cmd_freshness_pin` (232).
+- Not attributed to any unit, by rule: 8 patch sites through cli (targets
+  `_doctor._interpreter_is_python3`, `shutil.which` and `sys.platform`, none of them a member's
+  name), 17 line-form citations, 69 path literals and 19 path joins (they name no symbol), and 9
+  probes (4 read cli with no symbol named, 5 by subject alone).
+
+**The two branches, per unit** [mechanical, at P, except the `-m` column]:
+- *With re-exports* (moved names stay importable from cli):
+  - a stale site is a patch on cli's binding of a target a moved member loads, so the moved
+    loader goes unpatched. The bracket counts those whose target also keeps a loader in cli, so
+    the test stays green through the loader left behind;
+  - stale in both is a target outside the unit that a member loads, taken by the new module's
+    from-import;
+  - a split latch is a bool or `None` latch among the members, which cli's re-export copies once
+    and never sees rebound.
+- *Without re-exports* (cli reaches the names it still loads through the module, `newmod.X`):
+  - a loud site fails at once (a test import, a patch with neither `raising=False` nor an
+    assignment, an outside importer, a loud symbol key);
+  - a silent create is a `raising=False` or assigned patch, which creates the attribute on cli
+    and reaches nothing.
+- *Without, cli from-imports* is the spelling where cli instead writes
+  `from espalier.newmod import X` for each name it still loads. cli then keeps a binding, so
+  those parts stop failing, and their patches stay green on a stale binding, as with re-exports.
+- *Latches across* are latches left in cli that a member writes or reads. They split in **both**
+  branches unless the moved code reaches them through the module (`cli.X`).
+- *`-m`* is the state a second copy of cli would hold under `python -m espalier.cli`. It is read
+  from Python's `-m` semantics and never run [probable].
+
+| Unit | With: stale sites (loaders both sides) | With: stale in both | With: latches split | Memos shared | Latches across (both branches) | Without: loud sites | Without, cli from-imports: loud sites | Without: silent creates | `-m`: second-copy state |
+|---|---|---|---|---|---|---|---|---|---|
+| interpreter core layer, members | 65 (55) | 20 | 5 | 1 | 0 | 54 | 15 | 42 | 0 |
+| interpreter core layer, tie-closed | 67 (10) | 20 | 5 | 2 | 0 | 63 | 24 | 42 | 0 |
+| settings layer (members = tie-closed) | 9 (0) | 19 | 0 | 0 | 0 | 137 | 33 | 0 | 0 |
+| deploy layer, members | 18 (17) | 18 | 0 | 1 | 0 | 161 | 52 | 0 | 0 |
+| deploy layer, tie-closed | 18 (17) | 65 | 0 | 1 | 4 | 167 | 53 | 0 | 4 |
+| init, upgrade and deploy (hand group) | 44 (10) | 86 | 0 | 1 | 4 | 485 | 380 | 0 | 4 |
+| scan and scope-check (hand group) | 0 (0) | 6 | 0 | 0 | 0 | 15 | 4 | 0 | 0 |
+| the 28 single-command concerns, summed | 0 (0) | 17 | 0 | 0 | 0 | 84 | 16 | 0 | 0 |
+
+What the two tables say for Gate A's re-export decision:
+- **No branch is safe by a test run, for interpreter core.** With re-exports, 65 of its 68 patch
+  sites go stale. 55 of them are on targets that a loader left in cli still reads, so the old
+  patch stays green there while the moved loader goes unpatched. The 5 latches it owns split:
+  - `_BELOW_FLOOR_ANSWER`, `_BELOW_FLOOR_REFUSING`, `_INTERPRETER_WARNING_EMITTED`,
+    `_POWERSHELL_CALL_NOTE_SAID` and `_VENV_FALLBACK_OUTSIDE`;
+  - `tests/conftest.py::_restore_interpreter_warn_flag` would restore cli's copy of the third.
+
+  Without re-exports, 26 of the 68 patch sites fail loudly (54 loud sites in all, with its test
+  imports and outside importers), which is a cost and not a risk. The other 42 patch sites create
+  the attribute on cli and reach nothing: the 39 `raising=False` patches of the warn-once flag and
+  3 direct assignments. This is Task 4's sentinel finding, priced: a red means read, not guarded. So the
+  oracle for wave 1 is the static re-pointing check on the lane's diff, in either branch.
+- **The latch hazard does not depend on the branch.** Under the deploy layer's tie closure and
+  under the "init, upgrade and deploy" group, `::_refuse_below_floor_wiring` and
+  `::_warn_venv_fallback_outside` write four latches by `global` that stay in cli:
+  `_BELOW_FLOOR_ANSWER`, `_BELOW_FLOOR_REFUSING`, `_INTERPRETER_WARNING_EMITTED` and
+  `_VENV_FALLBACK_OUTSIDE`. Moved with a from-import of the latch, the write rebinds the new
+  module's copy, and cli's reader never sees it, with no error in either branch. Wave 1's contract
+  either moves those latches with their writers or has the writers write `cli.X`. Under `-m`, the
+  same four would also live in a second copy of cli [probable, never run]. `python -m
+  espalier.cli` is named in 11 code, 4 doc, 39 test and 9 record files at P.
+- **Without re-exports, the loud count depends on how cli reaches the moved names.**
+  - For the big hand group, 485 sites fail where cli reaches them through the module, and 380
+    where cli from-imports the 24 names it still loads.
+  - For deploy's members, the drop is from 161 to 52, because cli keeps 57 of them bound.
+  - The difference between the two counts is the sites that stop failing under the from-import
+    spelling. Their imports then work, and the patches among them stay green on cli's stale
+    binding. So the branch decision names the spelling as well as the branch.
+
+These tables are the move cost Task 8's unit table carries, and nothing here grades a wave.
+Gate A is the operator's. Nothing is graded while operator call `20261118T032647Z-air-7a763a` is
+open.
+
 ### Task 5: the doctor boundary at P
 
 Read by `python3 scripts/cli_cost_census.py --at 3330a5a --json doctor_boundary` [verified, the
