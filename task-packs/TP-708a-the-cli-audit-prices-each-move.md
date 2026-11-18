@@ -639,6 +639,136 @@ What this audit is most likely to get wrong (the reviews' starting points):
 *(Filled at execution, at P. Empty at authoring. Step 1 writes the pin and the thresholds here
 first.)*
 
+**The 0-A review, folded as ruled.** The in-lane 0-A pack review read REQUEST CHANGES, 1 BLOCK
+and 4 WARN (request `20261118T022759Z-air-work-7e16a8`). The dispatcher ruled all five fold,
+amended (ack `20261118T024509Z-air-aae43b`, note `20261118T024512Z-air-b96288`). Each fold is
+below, where the rule it changes sits.
+
+### Pin and pre-registration (step 1, committed before any metric read)
+
+**P** = `3330a5a4dcadb35c1872edb0f6b14d9feb487886`, the merge of #718, committed
+2026-11-18T01:23:09Z [verified, `git log -1 --format=%cI`]. Every figure below and in the census
+is read at P, never at `origin/main` or the clock.
+
+**Windows, anchored to P's commit date:**
+- *30 days to P:* merged at or after 2026-10-19T01:23:09Z and at or before 2026-11-18T01:23:09Z.
+  The census resolves the pull-request number range from `mergedAt` and writes it into its `pin`
+  block. At step 1 a `gh pr list --search "merged:2026-10-19T01:23:09Z..2026-11-18T01:23:09Z"`
+  read 387 merged pull requests, #323 to #717, with #718 (P itself) on the boundary [verified].
+- *Whole record:* from the first merge on the record (2026-09-24) to P.
+
+**Population at P, counts only, read before any metric** (the minimum detectable difference
+needs them):
+- The 387 by seat (`tools/cc/mail.py::lane_seats`): air-work 147, air 48, win 96, win-2 78,
+  unattributed 18. Those touching `espalier/cli.py`: air-work 14, air 1, win 8, win-2 10,
+  unattributed 3 [verified].
+- Transcript folders on this box: the main checkout's 391 `*.jsonl`, the `work` worktree's 207
+  [verified, `find -maxdepth 1`], and the subagents' transcripts under `<session>/subagents/`,
+  1,183 at the ruling [the dispatcher's verifier; unverified here]. This lane opened no
+  transcript before this commit. The main checkout's folder is the dispatcher's, which reads
+  almost nothing of cli.py, so on this box the reading cost is in effect air-work's alone. Every
+  "2 of 4 seats" figure says so.
+
+**What was known before this commit, and so could have steered a threshold.** The Motivation
+table's authoring reads are visible: 1 replay conflict on cli.py in 511, 3 concurrent cli.py
+pairs in 30 days (probable, all verdicts together), 18 cross-seat claim-overlap pairs over about
+42 days (probable), 1 hold, and the function-length proxy (median 337). The observed reading
+figure has never been read. The rule each threshold follows is stated first. Where a known
+figure sits near a threshold, that is said beside it.
+
+The ruling carried one more read: a verifier's count of **calls** over about 8 days of the
+air and air-work transcripts. Read on cli.py was 18 calls in 6 sessions; Bash commands naming the
+path were 241 in 49 sessions, 73 of them reads (in 20 sessions), plus 9 `git show rev:path`; the
+subagents made 479 cli.py calls to the seats' 259. These are counts of calls, not of lines
+returned, over a shorter window than the census reads. Every threshold below was drafted before
+the ruling arrived and is committed as drafted: the threshold handoff set the draft aside in
+commit `b958adb42` at 2026-11-18T02:29:20Z, 16 minutes before the ruling, and the diff from it to
+this commit changes no threshold. That commit is on no branch (the restore's soft reset took it
+off), so the check runs only on this box's reflog [verified locally]. Only the counting rules
+changed.
+
+**The rule for the collision thresholds: a weekly standing tax.** A collision event that
+recurs about once a week is a standing cost on the dispatcher or a seat. One that is rarer is an
+incident, and a refactor program of several lanes plus its wave-1 tooling does not pay for an
+incident rate [judgment]. A component is graded on its own, and Item 2 reads *real* when any
+graded component is at or above its threshold.
+
+| Component (CLI modules = `espalier/cli.py` plus any module that receives a moved definition) | Window | Threshold: real at or above | Known before this commit |
+|---|---|---|---|
+| C1. Concurrent PR pairs sharing a CLI module whose verdict is not certified: `shared symbol` or `unplaced` (`different functions` is certified, `path only` cannot occur on a `.py`) | 30 days to P | **4** | 3 pairs, all verdicts, in another 30-day read [probable]. Near the threshold: the weekly rule set it, not the known figure |
+| C2. Share of the window's cli.py lanes whose claim window overlaps another seat's live claim on the same CLI module | 30 days to P | **50%** | 18 overlapping pairs over 70 lanes in 42 days [probable]. The share of lanes in any overlap was never read. An overlap is an opportunity for cost, so it grades only when it is the norm |
+| C3. Dispatcher holds over a CLI-module overlap (a dispatcher message whose text holds a lane for another's) | whole record (about 54 days) | **1 per 7 days of record**, so **8** at P | 1, a lower bound [verified] |
+| C4. Replay conflicts on a CLI module | whole record | **not graded** (floor: 1 in 511) | 1 |
+
+**The replay (WARN 1 and 2, as ruled).** `scripts/merge_cost_census.py` turns merge drivers off and
+replays only the catch-up merges its pull-request list holds (469 of the 511 at authoring), while
+the authoring replay ran with the CHANGELOG union driver on over all 511. It slices `--prs-json` to
+`--prs`, whose default is 30, so the census passes `--prs` at the list's length, and the list must
+reach #57 for cli.py's one conflict (`42cd25d4c`) to be in it. cli.py's 1 must then reproduce
+exactly. The "any file" figure is reported under both instruments, each by name.
+
+**Item 3, the reading cost (the primary, never read before this commit).**
+- *Unit:* a merged lane of seat air or air-work in the 30 days to P (the Windows seats'
+  transcripts are on their own box: 2 of 4 seats, said on every figure).
+- *Reads counted (the BLOCK's fold, as ruled):* the primary counts `Read` calls on a file and the
+  `Bash` reads of one. A seat on this box reads with `sed -n` more often than with `Read`, so a
+  `Read`-only count would undercount both arms. A `Bash` read is found by stripping heredocs,
+  splitting the command into simple commands, and keeping only a program on the read allowlist:
+  `sed` without `-i`, `cat`, `head`, `tail`, `nl`, `awk`, and `git show <rev>:<path>`. The path
+  must be a whole file operand; a path inside a commit message, a mail text or a plan step is a
+  mention and is not counted. The `Grep` tool and the search programs (`grep`, `rg`, `ugrep`,
+  `git grep`) are counted apart and reported beside the primary, each with its share.
+- *Lines returned:* for `Read`, the result's `numLines`. For a lone range read, the line count of
+  its result. For a piped or multi-file read, the command's own range. A whole-file read that the
+  tool saved under `tool-results/` is followed to the later `Read` of that saved file, which
+  never names the source path.
+- *Whose reads:* the seats' own sessions. The subagents' reads (the `subagents/` transcripts, the
+  ruling's WARN 4) are counted apart, each attributed to its lane through its `meta.json`
+  `toolUseId` (the parent's `Agent` call), and reported beside the primary, never inside it.
+  Threshold (a) is set by the seat's own context budget, which a subagent's reads do not spend.
+- *Attribution:* a call is attributed to a lane by the transcript entry's own `gitBranch` where it
+  names a lane, else by the seat's claim-to-release window on the mail. *Refuted if* a hand sample
+  of five lanes cannot confirm the attribution: the section is then reported unread.
+- *Reproducible at one pin (WARN 3, as amended):* the `pin` block records the transcript folder
+  list (matched case-insensitively: the main folder is spelled with capitals on disk), each
+  file's record count, and the object id of each mail ref read. A file in the list that is
+  missing at a re-run is reported unread. Records are cut off by each record's own UTC
+  timestamp at P's commit date, never by file mtime (live sessions append). Blob records are
+  skipped, calls are deduped by `tool_use` id, and the census lane's own sessions and its
+  reviewers' (the dispatcher's verifier included) are excluded. The output is sorted.
+- *Treatment:* lanes whose diff touches a CLI module. Their **R** is the lines returned on the
+  CLI modules.
+- *Control:* lanes whose diff touches no CLI module, and whose edited non-test `.py` files each
+  had under 3,000 lines at the lane's merge-base (an ordinary module, so that another god file
+  does not stand in as the baseline). Their **E** is the lines returned on the files they edited.
+- *Real* when all three hold:
+  (a) median R ≥ **1,500 lines**. At cli.py's 52 bytes a line plus the Read tool's line-number
+  prefix, that is about 22k tokens, about a tenth of the 200k-token handoff threshold
+  (`handoff_context_tokens`) [the bytes verified at P, the token rate probable];
+  (b) median R ≥ **2 ×** median E;
+  (c) a one-sided Mann-Whitney test of R over E at **p < 0.05**.
+- *Minimum detectable difference, written down now:* at one-sided α = 0.05 and power 0.8, the
+  smallest standardised difference in ln(1 + lines) is d = 2.49 · √(1/n_t + 1/n_c). With
+  n_t = 15 (the air and air-work cli.py lanes above) and n_c = 30, d = 0.79. As a ratio that is
+  exp(0.79 · s), where s is the pooled standard deviation of ln(1 + lines): 2.2× at s = 1.0, 1.7×
+  at s = 0.7. The census computes the realised figure, exp(2.49 · s · √(1/n_t + 1/n_c)), from
+  the observed s and counts.
+- *Not real* only when (a), (b) or (c) fails **and** the realised minimum detectable ratio is at
+  most 2.0, with n_t ≥ 8 and n_c ≥ 8. Otherwise Item 3 is **unmeasured**.
+- *Reported beside it, never graded:* R as a share of the lane's total lines returned (the
+  roadmap's "against the lane's total reads"), and the function-length proxy `lane_read`.
+
+**Task 7's targets for a later wave** (graded at that wave's own pin, over an equal window):
+a wave is paid on a component only when that component falls by at least **30%** from its
+baseline at P, and it was graded at P. For the primary, the post-wave R is compared with the
+same rule (a) to (c), against the baseline R in place of E. `lane_read` is never a payoff alone.
+Its must-not-pass case is an arbitrary equal split of a top function, which a decomposition grade
+must read as no payoff.
+
+**Fixed by this commit:** none of the figures above may change after it. A census defect that
+moves a figure changes the census, never the threshold.
+
+
 ## Landing
 - State: DRAFT
 - Commits:
