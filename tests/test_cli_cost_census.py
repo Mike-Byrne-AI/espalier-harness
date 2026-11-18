@@ -11,6 +11,7 @@ must not be read beside the committed text that must."""
 # lane_read classes build small branch histories (about 30 spawns the largest), each test measured under 3 s
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import os
@@ -615,6 +616,20 @@ class TestTheCitations:
              "twin_in_tree": True, "twin_occurrences": {"path_symbol": 1}}]
         assert section["unread"] == {}
 
+    def test_each_symbol_is_tallied_by_the_part_it_is_cited_in(self, section):
+        """Dies to: the per-symbol tally read off the path spelling alone (`_reader`, cited only
+        bare in a struck row, would vanish), the line form counted under a symbol, or a symbol's
+        occurrences filed under its file's part where the sweep skips the line as struck
+        (`gone`, in a closed row of a swept doc, read as swept)."""
+        per = section["per_symbol"]
+        assert per["_helper"] == {"struck/struck_fragments": 2, "unchecked_live/code": 1}
+        assert per["_reader"] == {"struck/struck_fragments": 1}
+        assert per["gone"] == {"struck/struck_lines_in_swept_docs": 1}
+        assert per["main"] == {"swept_live/docs": 2}
+        assert per["TABLE"] == {"protected_zone/sources": 1, "protected_zone/vendor_twins": 1, "swept_live/docs": 1}
+        assert sum(n for cell in per.values() for n in cell.values()) == sum(
+            section["totals"][s]["occurrences"] for s in ("path_symbol", "bare_symbol", "dotted"))
+
     def test_a_sweep_whose_rule_changed_at_the_pin_reads_its_split_unread(self, repo):
         """Dies to: the sweep's rule taken on trust where its text differs from the one ported
         (a changed `_swept_docs` read as the old one), so a population it no longer reads is
@@ -844,6 +859,556 @@ class TestAnUnreadSectionIsNamedNeverZero:
         out = _CENSUS.census(repo, _head(repo), ["functions"])
         assert out["functions"] is None
         assert "espalier/cli.py is not in" in out["unread"]["functions"]
+
+
+# ---------------------------------------------------------------- the move cost per unit
+
+#: A cli with two hand layers and one hand concern. `core` is `_core` with what it writes and
+#: loads; its latch `_SAID` is read by `_core_reader` too (so a patch of `_SAID` has a loader on
+#: each side of the core's members), and `_core_reader` also reads `_ANSWER`, written by
+#: `_remember`, so the core's tie-closed set pulls both. `deploy` is `_deploy` and what it calls
+#: above the core, its memo `_CACHE` with it. `setup` (init and install-ci) owns `_remember`,
+#: whose write of `_ANSWER` crosses out of it, and `deploy`; `cmd_scan` is a concern of its own
+#: that no parser wires.
+_MOVE_CLI = '''\
+import os
+from espalier import doctor as _doctor
+from espalier._text import plural
+
+_SAID = False
+_ANSWER = None
+_CACHE = {}
+LIMIT = 3
+
+
+def _core():
+    global _SAID
+    _SAID = not _SAID
+    return LIMIT
+
+
+def _core_reader():
+    return _SAID and _ANSWER
+
+
+def _remember():
+    global _ANSWER
+    _ANSWER = 1
+
+
+def _uses_cache(key):
+    _CACHE[key] = plural(1)
+    return _core()
+
+
+class Report:
+    pass
+
+
+def _deploy():
+    from espalier import fuse
+    from espalier.models import Plan
+    return _core() + _uses_cache("k") + fuse.X + _doctor.check() + Plan + Report()
+
+
+def _shared():
+    return _core_reader()
+
+
+def cmd_init(args):
+    _remember()
+    return _deploy() + _shared()
+
+
+def cmd_install_ci(args):
+    return _deploy()
+
+
+def cmd_scan(args):
+    from espalier import doctor
+    return _shared() + _core() + doctor.X
+
+
+def build_parser():
+    parser = object()
+    parser.set_defaults(func=cmd_init)
+    parser.set_defaults(func=cmd_install_ci)
+    return parser
+'''
+
+_MOVE_FILES = {
+    "espalier/cli.py": _MOVE_CLI,
+    "espalier/fuse.py": '''\
+import argparse
+
+from espalier.cli import LIMIT
+
+
+def run(out):
+    from espalier.cli import _core, cmd_init, cmd_install_ci
+    ns = argparse.Namespace(repo=out, yes=True)
+    cmd_install_ci(out)
+    return cmd_init(ns), _core(), LIMIT
+
+
+def other():
+    from espalier.cli import cmd_scan
+    return cmd_scan(argparse.Namespace(repo="."))
+''',
+    "espalier/doctor.py": '''\
+def check():
+    from espalier.cli import GONE, _shared
+    return _shared(), GONE
+
+
+def verdict():
+    from espalier import cli as _cli
+    return _cli._remember()
+''',
+    "scripts/gen.py": "from espalier import cli\n\nROWS = (cli.LIMIT, cli._deploy, cli.plural)\n",
+    "tests/test_m.py": '''\
+from espalier import cli
+from espalier.cli import _core, plural
+
+
+def test_a(monkeypatch):
+    monkeypatch.setattr(cli, "_core", lambda: 0)
+    monkeypatch.setattr(cli, "_SAID", True, raising=False)
+    monkeypatch.setattr(cli, "plural", str)
+    monkeypatch.setattr(cli, "_NEW_FLAG", 1, raising=False)
+    cli._ANSWER = 2
+    assert cli._deploy() and _core() and plural and cli.__file__
+''',
+    "tests/test_n.py": '''\
+from espalier.cli import _core, cmd_scan
+
+
+def test_b(monkeypatch):
+    monkeypatch.setattr("espalier.cli._uses_cache", lambda k: 0)
+    monkeypatch.setattr("espalier.cli._core", lambda: 0)
+    assert cmd_scan(None) is not None and _core
+''',
+    "tests/test_r.py": '''\
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+KEYS = {("espalier/cli.py", "_deploy"): 1, ("espalier/cli.py", "_core"): 2, ("espalier/cli.py", "not_here"): 3}
+
+
+def test_text_has_no_tabs():
+    assert "\\t" not in (ROOT / "espalier" / "cli.py").read_text()
+
+
+def test_names_a_member():
+    src = (ROOT / "espalier" / "cli.py").read_text()
+    assert "_remember" in src
+''',
+    "tests/test_flat.py": 'import glob\nFILES = glob.glob("espalier/*.py")\n',
+    "tests/test_doc_source_citations.py": _SWEEP_COPY,
+    "espalier/surface_contract.py": _CONTRACT_COPY,
+    "task-packs/ledger.d/DEF-1.md": ("<!-- class: §C0 -->\n"
+                                     "| `DEF-1` | `espalier/cli.py::_core` | the body cites `cli.py::_remember` |\n"),
+    "task-packs/ledger.d/DEF-2.md": "<!-- class: §C0 -->\n| ~~`DEF-2`~~ | `espalier/cli.py::_deploy` | closed |\n",
+    "docs/GUIDE.md": ("See `espalier/cli.py::_core`, `espalier.cli.plural`, `espalier/cli.py::gone` and "
+                      "espalier/cli.py:12.\n"),
+    "docs/session-archive.md": "Found `espalier/cli.py::_uses_cache` then.\n",
+    "task-packs/TP-9-plan.md": "Move `espalier/cli.py::cmd_scan`.\n",
+    "tools/cc/hook.py": "# reads espalier/cli.py::LIMIT\nX = 1\n",
+    "espalier/_vendor/cc/hook.py": "# reads espalier/cli.py::LIMIT\nX = 1\n",
+    "task-packs/probes.d/DEF-1.json": json.dumps({
+        "id": "DEF-1", "subject": "docs/x.md", "cmd": "python -c 'from espalier import cli; print(cli._core())'"}),
+    "task-packs/probes.d/DEF-2.json": json.dumps({
+        "id": "DEF-2", "subject": "espalier/cli.py",
+        "cmd": "python3 -c \"import ast; t=ast.parse(open('espalier/cli.py').read()); "
+               "print(any(getattr(n,'name','')=='_deploy' for n in ast.walk(t)))\""}),
+    "task-packs/probes.d/DEF-3.json": json.dumps({"id": "DEF-3", "subject": "espalier/cli.py", "cmd": None}),
+    "task-packs/probes.d/DEF-4.json": json.dumps({
+        "id": "DEF-4", "subject": "docs/y.md",
+        "cmd": "python -c 'from espalier import cli; print(cli.LIMIT, cli.plural, cli._core)'"}),
+    "task-packs/probes.d/DEF-5.json": json.dumps({
+        "id": "DEF-5", "subject": "docs/z.md", "cmd": "python3 -c \"print(open('espalier/cli.py').read().count('d'))\""}),
+}
+
+_MOVE_EXTRA = {
+    "layer_seeds": (("core", ("_core",)), ("deploy", ("_deploy",))),
+    "concerns": {"setup": ("cmd_init", "cmd_install_ci")},
+    "reader_classes": (("tests/test_r.py", "test_text_has_no_tabs", "silent"),
+                       ("tests/test_r.py", "test_names_a_member", "silent"),
+                       ("tests/test_flat.py", None, "flat-module")),
+}
+
+#: Each ingredient's section, and where in it the total the move cost sums against lives.
+_TOTAL_AT = {
+    "importers_outside": ("importers", ("outside_tests", "distinct_names")),
+    "test_imports": ("importers", ("tests", "distinct_names")),
+    "patch_sites": ("patches", ("sites",)),
+    "patch_targets": ("patches", ("targets",)),
+    "patch_raising_false": ("patches", ("raising_false", "_SAID", "raising_false")),
+    "symbol_keys": ("readers", ("by_kind", "symbol_key", "sites")),
+    "citations": ("citations", ("totals", "path_symbol", "occurrences")),
+    "probes": ("probes", ("symbols_named", "pairs")),
+    "doctor": ("doctor_boundary", ("names", "count")),
+    "lazy_imports": ("functions", ("unresolved", "lazy_imports")),
+}
+
+
+class TestTheMoveCost:
+    """Every ingredient's value differs between the units, and between a unit's members and its
+    tie-closed set, so a figure read over the wrong set, the whole file, or the wrong side of a
+    loader lands on another unit's number."""
+
+    @pytest.fixture
+    def moving(self, repo):
+        _add(repo, _MOVE_FILES)
+        return repo
+
+    @pytest.fixture
+    def section(self, moving):
+        out = _CENSUS.census(moving, _head(moving), ["move_cost"], extra=dict(_MOVE_EXTRA))
+        assert out["unread"] == {}
+        units = {(u["unit"], u["set"]): u for u in out["move_cost"]["units"]}
+        return out["move_cost"], units
+
+    def test_the_units_are_each_layer_twice_and_each_concern_once(self, section):
+        """Dies to: the tie-closed set left unpriced (the core then moves without the reader of
+        its latch), the concern priced over its reach instead of what it owns (`_shared` and the
+        core would join `setup`), or a single-command concern dropped."""
+        _mc, units = section
+        assert list(units) == [("core", "members"), ("core", "tie_closed"), ("deploy", "members"),
+                               ("deploy", "tie_closed"), ("setup", "owned"), ("cmd_scan", "owned")]
+        assert units[("core", "members")]["members"] == ["LIMIT", "_SAID", "_core"]
+        assert units[("core", "tie_closed")]["members"] == ["LIMIT", "_ANSWER", "_SAID", "_core", "_core_reader",
+                                                            "_remember"]
+        assert units[("setup", "owned")]["members"] == ["Report", "_CACHE", "_deploy", "_remember", "_uses_cache",
+                                                        "cmd_init", "cmd_install_ci"]
+        assert (units[("setup", "owned")]["cluster_source"], units[("cmd_scan", "owned")]["cluster_source"]) == (
+            "hand", "command")
+
+    def test_size_counts_every_kind_and_function_lines_only_over_functions(self, section):
+        """Dies to: the unit's definitions read as its functions (3, not 7, for setup), or the
+        class's and the names' lines counted as function lines."""
+        _mc, units = section
+        assert units[("core", "tie_closed")]["size"] == {"definitions": 6, "functions": 3, "classes": 0, "names": 3,
+                                                         "function_lines": 9}
+        assert units[("setup", "owned")]["size"] == {"definitions": 7, "functions": 5, "classes": 1, "names": 1,
+                                                     "function_lines": 15}
+
+    def test_the_importers_outside_tests_are_named_by_file_and_by_how(self, section):
+        """Dies to: every import read as lazy (fuse's module-level `LIMIT` and scripts/gen.py's
+        alias are top-level), the (file, name) pairs read as distinct names (3 against 2), or a
+        test file's import counted outside tests."""
+        _mc, units = section
+        core = units[("core", "members")]["importers_outside"]
+        assert core["files"] == {"espalier/fuse.py": {"lazy": ["_core"], "top": ["LIMIT"]},
+                                 "scripts/gen.py": {"top": ["LIMIT"]}}
+        assert (core["names"], core["pairs"]) == (2, 3)
+        tied = units[("core", "tie_closed")]["importers_outside"]
+        assert tied["files"]["espalier/doctor.py"] == {"lazy": ["_remember"]}
+        assert (tied["names"], tied["pairs"]) == (3, 4)
+
+    def test_a_hand_built_namespace_is_flagged_on_the_unit_that_holds_the_command(self, section):
+        """Dies to: the Namespace read only where it is built inline (fuse binds `cmd_init`'s to a
+        name first), a call with a plain argument flagged (`cmd_install_ci(out)`), or the flag
+        put on every unit rather than the one holding the command."""
+        mc, units = section
+        assert units[("setup", "owned")]["importers_outside"]["namespace_by_hand"] == [
+            {"file": "espalier/fuse.py", "name": "cmd_init", "line": 10, "attributes": ["repo", "yes"]}]
+        assert units[("cmd_scan", "owned")]["importers_outside"]["namespace_by_hand"] == [
+            {"file": "espalier/fuse.py", "name": "cmd_scan", "line": 15, "attributes": ["repo"]}]
+        assert units[("deploy", "members")]["importers_outside"]["namespace_by_hand"] == []
+        assert [c["name"] for c in mc["namespace_by_hand"]["espalier/fuse.py"]] == ["cmd_init", "cmd_scan"]
+
+    def test_the_names_tests_import_are_counted_by_name_and_by_file(self, section):
+        """Dies to: the test files read as one per name (`_core` is imported by two), or the names
+        loaded through a test's alias of cli (`cli._ANSWER`) left out."""
+        _mc, units = section
+        assert units[("core", "members")]["test_imports"] == {"names": 1, "files": 2, "pairs": 2,
+                                                              "stored_only_pairs": 0, "per_name": {"_core": 2}}
+        assert units[("core", "tie_closed")]["test_imports"] == {"names": 2, "files": 2, "pairs": 3,
+                                                                 "stored_only_pairs": 1,
+                                                                 "per_name": {"_ANSWER": 1, "_core": 2}}
+
+    def test_a_patch_target_s_loaders_are_split_by_the_unit(self, section):
+        """Dies to: the loaders outside the unit read as every loader (then `_uses_cache`, loaded
+        only by `_deploy`, reads as left behind), a target a member loads but the unit does not
+        hold (`_core`, `plural` for deploy) left out of the hazard, or a target left behind read
+        by one side alone: `_core`, whose loaders all stay in cli, is reached by its patch, and
+        `_ANSWER`, whose one loader moves with it, has no loader left behind to keep it green."""
+        _mc, units = section
+        core = units[("core", "members")]["patches"]
+        assert (core["targets"], core["sites"], core["raising_false"], core["files"]) == (2, 3, 1, 2)
+        assert core["per_target"]["_core"] == {"sites": 2, "raising_false": 0, "assign": 0, "loaders_inside": [],
+                                               "loaders_outside": ["_deploy", "_uses_cache", "cmd_scan"]}
+        assert core["per_target"]["_SAID"]["loaders_inside"] == ["_core"]
+        assert core["left_behind_loader"] == {"targets": ["_SAID"], "sites": 1}
+        tied = units[("core", "tie_closed")]["patches"]
+        assert tied["left_behind_loader"] == {"targets": [], "sites": 0}
+        assert tied["per_target"]["_SAID"]["loaders_inside"] == ["_core", "_core_reader"]
+        assert tied["per_target"]["_ANSWER"]["loaders_inside"] == ["_core_reader"]
+        deploy = units[("deploy", "members")]["patches"]
+        assert deploy["per_target"]["_uses_cache"]["loaders_outside"] == []
+        assert deploy["left_behind_loader"] == {"targets": [], "sites": 0}
+        assert deploy["loaded_not_member"] == {"targets": ["_core", "plural"], "sites": 3}
+
+    def test_readers_name_their_keys_and_a_silent_reader_covers_what_it_names(self, section):
+        """Dies to: the symbol keys read over the whole file (3, not 1, on each unit), or a silent
+        reader that names one definition (`_remember`) read as covering the whole file, so it
+        lands on the core it never reads."""
+        _mc, units = section
+        core = units[("core", "members")]["readers"]
+        assert core["symbol_key"] == {"sites": 1, "files": 1, "symbols": ["_core"],
+                                      "by_class": {"loud": 1, "silent": 0, "flat-module": 0}}
+        assert core["silent"] == [{"path": "tests/test_r.py", "symbol": "test_text_has_no_tabs",
+                                   "covers": "whole file"}]
+        assert core["flat_module"] == [{"path": "tests/test_flat.py", "symbol": None, "covers": "whole file"}]
+        tied = units[("core", "tie_closed")]["readers"]["silent"]
+        assert [s["symbol"] for s in tied] == ["test_text_has_no_tabs", "test_names_a_member"]
+        assert tied[1]["covers"] == ["_remember"]
+
+    def test_citations_are_split_by_where_they_live(self, section):
+        """Dies to: a member's citations filed under the wrong split (the record's `_uses_cache`
+        read as swept, a test's dotted string as a doc), or one file counted once per citation."""
+        _mc, units = section
+        core = units[("core", "members")]["citations"]
+        assert core["occurrences"] == 5
+        assert core["split"]["swept_live"] == {"live_fragments": {"occurrences": 1, "files": 1},
+                                               "docs": {"occurrences": 1, "files": 1}}
+        assert core["split"]["unchecked_live"]["code"] == {"occurrences": 1, "files": 1}
+        assert core["split"]["protected_zone"] == {"sources": {"occurrences": 1, "files": 1},
+                                                   "vendor_twins": {"occurrences": 1, "files": 1}}
+        tied = units[("core", "tie_closed")]["citations"]["split"]["swept_live"]
+        assert tied["live_fragments"] == {"occurrences": 2, "files": 1}
+        deploy = units[("deploy", "members")]["citations"]
+        assert deploy["occurrences"] == 3
+        assert deploy["split"]["record"]["record_set"]["occurrences"] == 1
+        assert deploy["split"]["struck"]["struck_fragments"]["occurrences"] == 1
+        assert deploy["split"]["swept_live"]["docs"]["occurrences"] == 0
+
+    def test_probes_are_named_by_the_symbols_they_read(self, section):
+        """Dies to: a probe attributed by its subject alone (DEF-3 reads cli.py by subject and
+        names nothing), or every probe read against every unit."""
+        mc, units = section
+        assert units[("core", "members")]["probes"] == {"ids": ["DEF-1", "DEF-4"], "pairs": 3,
+                                                        "by_row": {"live": 1, "struck": 0, "no row": 1}}
+        assert units[("deploy", "members")]["probes"] == {"ids": ["DEF-2"], "pairs": 1,
+                                                          "by_row": {"live": 0, "struck": 1, "no row": 0}}
+        assert units[("cmd_scan", "owned")]["probes"]["ids"] == []
+        assert mc["not_attributed"]["probes"] == {"reading_cli_no_symbol": ["DEF-5"], "subject_only": ["DEF-3"]}
+
+    def test_the_probes_section_totals_the_symbol_pairs_the_move_cost_sums(self, moving):
+        """Dies to: the total read as the probes that read cli (4), the rows that name a symbol
+        (3) or the distinct symbols (4), where the move cost sums (probe, symbol) pairs (5:
+        DEF-4 names three, one of them `_core`, which DEF-1 names too)."""
+        out = _CENSUS.census(moving, _head(moving), ["probes"], extra=dict(_MOVE_EXTRA))["probes"]
+        assert out["symbols_named"] == {"pairs": 5, "distinct": 4, "probes": 3}
+        assert out["reading_cli"] == 4
+
+    def test_outbound_edges_name_the_back_edge_and_the_cycles_they_close(self, section):
+        """Dies to: the back edges read over the members too (deploy's own `_uses_cache` call
+        counted), a top-level import a member loads left out (`_doctor` is deploy's edge into
+        doctor), or a cycle through an importer called closed where cli keeps no caller of the
+        unit (`cmd_scan`, which no parser wires, imports doctor and doctor takes none of it)."""
+        _mc, units = section
+        deploy = units[("deploy", "members")]["outbound"]
+        assert deploy["lazy"] == {"statements": 2, "by_module": {"espalier.fuse": 1, "espalier.models": 1}}
+        assert deploy["top_level_imports_loaded"] == {"espalier._text": ["plural"], "espalier.doctor": ["_doctor"]}
+        assert deploy["back_edges"] == {"definitions": 1, "edges": 2, "writes": 0, "names": ["_core"]}
+        assert deploy["cli_callers"] == {"definitions": 2, "edges": 2, "members_kept_bound": ["_deploy"]}
+        assert deploy["cli_cycle"] is True
+        assert [(c["module"], c["via"], c["closes"]) for c in deploy["importer_cycles"]] == [
+            ("espalier.doctor", ["top"], True), ("espalier.fuse", ["lazy"], True)]
+        setup = units[("setup", "owned")]["outbound"]
+        assert setup["back_edges"] == {"definitions": 3, "edges": 4, "writes": 1, "names": ["_ANSWER", "_core", "_shared"]}
+        assert setup["importer_cycles"][1]["takes_members"] == ["cmd_init", "cmd_install_ci"]
+        scan = units[("cmd_scan", "owned")]["outbound"]
+        assert scan["cli_callers"] == {"definitions": 0, "edges": 0, "members_kept_bound": []}
+        assert scan["cli_cycle"] is False
+        assert scan["importer_cycles"] == [{"module": "espalier.doctor", "via": ["lazy"], "takes_members": [],
+                                            "takes_other_names": 3, "closes": False}]
+        core = units[("core", "members")]["outbound"]
+        assert core["back_edges"]["edges"] == 0
+        assert core["cli_callers"] == {"definitions": 4, "edges": 4, "members_kept_bound": ["_SAID", "_core"]}
+
+    def test_the_doctor_names_are_the_members_doctor_takes(self, section):
+        """Dies to: every doctor name read against every unit, or a name doctor takes through
+        its alias of cli (`_cli._remember`) left out."""
+        _mc, units = section
+        assert units[("core", "members")]["doctor"] == {"names": [], "count": 0}
+        assert units[("core", "tie_closed")]["doctor"] == {"names": ["_remember"], "count": 1}
+        assert units[("setup", "owned")]["doctor"] == {"names": ["_remember"], "count": 1}
+
+    def test_with_re_exports_the_stale_sites_and_the_split_latches_are_named(self, section):
+        """Dies to: a patch read as stale where every loader of its target stays in cli (the
+        core's `_core`, loaded only outside it), a `None` latch left out of the split (`_ANSWER`),
+        a memo dict read as one that splits, or the cycle read as needing a caller left in cli
+        (with re-exports cli imports the new module itself, so a back edge alone closes one)."""
+        _mc, units = section
+        core = units[("core", "members")]["with_reexports"]
+        assert core["stale_patch_sites"] == {"targets": ["_SAID"], "sites": 1, "of_which_loaders_on_both_sides": 1}
+        assert core["latches_split"] == [{"latch": "_SAID", "value": "bool", "users_outside": ["_core_reader"]}]
+        assert (core["loud_readers"], core["cli_cycle"]) == (1, False)
+        tied = units[("core", "tie_closed")]["with_reexports"]
+        assert tied["stale_patch_sites"] == {"targets": ["_ANSWER", "_SAID"], "sites": 2,
+                                             "of_which_loaders_on_both_sides": 0}
+        assert [r["latch"] for r in tied["latches_split"]] == ["_ANSWER", "_SAID"]
+        deploy = units[("deploy", "members")]["with_reexports"]
+        assert deploy["stale_patch_sites"] == {"targets": ["_uses_cache"], "sites": 1,
+                                               "of_which_loaders_on_both_sides": 0}
+        assert deploy["stale_in_both"] == {"targets": ["_core", "plural"], "sites": 3}
+        assert (deploy["latches_split"], deploy["memos_shared"]) == ([], ["_CACHE"])
+        scan = units[("cmd_scan", "owned")]
+        assert (scan["with_reexports"]["cli_cycle"], scan["outbound"]["cli_cycle"]) == (True, False)
+
+    def test_a_latch_left_in_cli_that_a_member_writes_is_named_in_both_branches(self, section):
+        """Dies to: the split latches read only among the members, so `setup`, which moves
+        `_remember` and leaves `_ANSWER` in cli, reads as splitting nothing while its moved
+        `global _ANSWER` write would rebind the new module's copy; or the latch read as crossing
+        where no member touches it (deploy)."""
+        _mc, units = section
+        setup = units[("setup", "owned")]
+        assert setup["latches_across"] == [{"latch": "_ANSWER", "value": "None", "members_writing": ["_remember"],
+                                            "members_reading": []}]
+        assert setup["with_reexports"]["latches_across"] == setup["without_reexports"]["latches_across"] == ["_ANSWER"]
+        assert units[("deploy", "members")]["latches_across"] == []
+        assert units[("core", "members")]["latches_across"] == []
+
+    def test_a_unit_that_imports_cli_back_is_named_for_the_module_run(self, section):
+        """Dies to: the `-m` second copy left unread, or read as holding state for a unit that
+        never imports cli (the core has no back edge)."""
+        _mc, units = section
+        assert units[("setup", "owned")]["module_run"] == {"imports_cli": True, "state_in_a_second_copy": ["_ANSWER"]}
+        assert units[("deploy", "members")]["module_run"] == {"imports_cli": True, "state_in_a_second_copy": []}
+        assert units[("core", "members")]["module_run"] == {"imports_cli": False, "state_in_a_second_copy": []}
+
+    def test_without_re_exports_the_loud_sites_leave_out_the_silent_creates(self, section):
+        """Dies to: a `raising=False` patch or an assignment counted as failing loudly (each
+        creates the attribute and reaches nothing), the assignment counted again as a loud test
+        import (`cli._ANSWER = 2` only stores), or the loud total summed over the wrong parts."""
+        _mc, units = section
+        tied = units[("core", "tie_closed")]["without_reexports"]
+        assert tied["test_imports"] == {"names": 2, "files": 2, "pairs": 3, "stored_only_pairs": 1, "loud_pairs": 2}
+        assert tied["patches"] == {"loud_sites": 2, "silent_creates": 2}
+        assert tied["outside_importers"] == {"names": 3, "pairs": 4, "files": 3}
+        assert (tied["loud_readers"], tied["loud_sites"]) == (1, 9)
+        assert units[("setup", "owned")]["without_reexports"]["loud_sites"] == 7
+
+    def test_without_re_exports_the_names_cli_still_loads_are_priced_both_ways(self, section):
+        """Dies to: the loud sites read as loud whatever spelling cli keeps for the names it still
+        calls: where cli from-imports them, `cli._core` stays bound and its test imports, patches
+        and importers stop failing; or the names read off the members a test touches rather than
+        those a definition left in cli loads (`setup` keeps `cmd_init` and `cmd_install_ci`
+        bound only for the parser)."""
+        _mc, units = section
+        tied = units[("core", "tie_closed")]["without_reexports"]["if_cli_from_imports_what_it_still_loads"]
+        assert tied == {"names": ["_core", "_core_reader", "_remember"], "test_import_pairs": 2, "patch_sites": 2,
+                        "outside_importer_pairs": 2, "loud_sites": 3}
+        setup = units[("setup", "owned")]["without_reexports"]
+        assert setup["if_cli_from_imports_what_it_still_loads"] == {
+            "names": ["cmd_init", "cmd_install_ci"], "test_import_pairs": 0, "patch_sites": 0,
+            "outside_importer_pairs": 2, "loud_sites": 5}
+        assert setup["stale_in_both"] == units[("setup", "owned")]["with_reexports"]["stale_in_both"]
+
+    def test_the_concern_units_partition_the_file_and_their_figures_sum(self, section):
+        """Dies to: a concern unit priced over a set other than what it owns, or a per-unit
+        figure aggregated over the wrong set, which the whole-file sum cannot see."""
+        mc, _units = section
+        part = mc["partition"]
+        assert (part["concern_units"], part["owned"], part["rest"], part["unchecked"]) == (2, 8, 7, {})
+        assert part["ingredients"]["patch_sites"] == {"concern_units": 1, "rest": 4, "defined": 5}
+        assert part["ingredients"]["citations"] == {"concern_units": 5, "rest": 5, "defined": 10}
+
+    def test_a_split_part_the_units_do_not_read_is_refused(self, moving, monkeypatch):
+        """Dies to: the partition not asserted, so a citation part missing from the split the
+        units are priced from (here `unchecked_live/code`, which holds test_n's dotted
+        `espalier.cli._uses_cache`) leaves every unit short with the whole-file sum still whole."""
+        real = _CENSUS.SECTION_READERS["citations"]
+
+        def dropped(ctx):
+            out = copy.deepcopy(real(ctx))
+            del out["split"]["unchecked_live"]["code"]
+            return out
+
+        monkeypatch.setitem(_CENSUS.SECTION_READERS, "citations", dropped)
+        with pytest.raises(AssertionError, match="move_cost: citations's concern units read"):
+            _CENSUS.census(moving, _head(moving), ["move_cost"], extra=dict(_MOVE_EXTRA))
+
+    def test_each_ingredient_sums_over_the_file_with_cli_s_imports_apart(self, section):
+        """Dies to: a name cli imports (`plural`) counted with the names it does not bind at all
+        (`_NEW_FLAG`, `GONE`, `__file__`), or with its definitions."""
+        mc, _units = section
+        sums = mc["sums"]
+        assert {k: (v["defined"], v["imported_into_cli"], v["not_bound_in_cli"], v["section_total"])
+                for k, v in sums.items()} == {
+            "importers_outside": (8, 1, 1, 10), "test_imports": (4, 1, 1, 6), "patch_sites": (5, 1, 1, 7),
+            "patch_targets": (4, 1, 1, 6), "patch_raising_false": (1, 0, 1, 2), "symbol_keys": (2, 0, 1, 3),
+            "citations": (10, 1, 1, 12), "probes": (4, 1, 0, 5), "doctor": (2, 0, 1, 3), "lazy_imports": (3, 0, 0, 3)}
+        assert sums["patch_sites"]["apart"] == {"imported_into_cli": ["plural"], "not_bound_in_cli": ["_NEW_FLAG"]}
+        assert sums["test_imports"]["apart"]["not_bound_in_cli"] == ["__file__"]
+
+    @pytest.mark.parametrize("ingredient", sorted(_TOTAL_AT))
+    def test_a_section_total_the_tallies_do_not_reach_is_refused(self, moving, monkeypatch, ingredient):
+        """Dies to: an ingredient's sum not asserted, so a tally that misses part of its section's
+        total (one site, one name) is priced as if it were whole."""
+        section, path = _TOTAL_AT[ingredient]
+        real = _CENSUS.SECTION_READERS[section]
+
+        def bumped(ctx):
+            out = copy.deepcopy(real(ctx))
+            cell = out
+            for key in path[:-1]:
+                cell = cell[key]
+            cell[path[-1]] += 1
+            return out
+
+        monkeypatch.setitem(_CENSUS.SECTION_READERS, section, bumped)
+        with pytest.raises(AssertionError, match=f"move_cost: {ingredient} reads"):
+            _CENSUS.census(moving, _head(moving), ["move_cost"], extra=dict(_MOVE_EXTRA))
+
+    def test_a_section_s_own_split_the_apart_parts_do_not_match_is_refused(self, moving, monkeypatch):
+        """Dies to: the apart parts never checked against the split the section states itself
+        (the patches section's imported-into-cli sites), so a name read as defined in one and
+        imported in the other passes."""
+        real = _CENSUS.SECTION_READERS["patches"]
+
+        def moved(ctx):
+            out = copy.deepcopy(real(ctx))
+            out["imported_into_cli"]["sites"] += 1
+            return out
+
+        monkeypatch.setitem(_CENSUS.SECTION_READERS, "patches", moved)
+        with pytest.raises(AssertionError, match="move_cost: patch_sites's apart parts"):
+            _CENSUS.census(moving, _head(moving), ["move_cost"], extra=dict(_MOVE_EXTRA))
+
+    def test_two_concern_units_holding_one_definition_are_refused(self, moving):
+        """Dies to: the concern units never checked for overlap, so a definition priced in two
+        units (here `_deploy`, added to `cmd_scan`'s as well as `setup`'s) is paid for twice and
+        the partition's sum reads over a file that is larger than it is."""
+        clusters = _CENSUS.census(moving, _head(moving), ["clusters"], extra=dict(_MOVE_EXTRA))["clusters"]
+        doubled = copy.deepcopy(clusters)
+        doubled["concerns"]["per_root"]["cmd_scan"]["members"].append("_deploy")
+        with pytest.raises(AssertionError, match="move_cost: _deploy is in two concern units"):
+            _CENSUS.census(moving, _head(moving), ["move_cost"], extra={**_MOVE_EXTRA, "_clusters": doubled})
+
+    def test_an_ingredient_whose_section_is_unread_is_named_never_zero(self, repo):
+        """Dies to: a unit priced at zero citations or zero doctor names on a pin where the sweep
+        or doctor.py cannot be read, which reads as a free move."""
+        out = _CENSUS.census(repo, _head(repo), ["move_cost"],
+                             extra={"layer_seeds": (("low", ("_reader",)),), "concerns": {}})
+        assert "espalier/doctor.py is not in" in out["unread"]["move_cost.doctor"]
+        assert "test_doc_source_citations.py is not in" in out["unread"]["move_cost.citations"]
+        unit = out["move_cost"]["units"][0]
+        assert (unit["doctor"], unit["citations"]) == (None, None)
+        assert "doctor" not in out["move_cost"]["sums"] and "citations" not in out["move_cost"]["sums"]
+        assert unit["patches"] is not None
+
+    def test_a_pin_without_cli_py_names_the_section_unread(self, repo):
+        """Dies to: a pin with no cli.py priced as a file of no units."""
+        _git(repo, "rm", "-q", "espalier/cli.py")
+        _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "drop")
+        _CENSUS.source_at.cache_clear()
+        out = _CENSUS.census(repo, _head(repo), ["move_cost"])
+        assert out["move_cost"] is None
+        assert "espalier/cli.py is not in" in out["unread"]["move_cost"]
 
 
 # ---------------------------------------------------------------- collision and lane_read: small histories

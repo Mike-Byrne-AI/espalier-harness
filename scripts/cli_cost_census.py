@@ -55,7 +55,7 @@ CLI = "espalier/cli.py"
 #: The windowed components read the 30 days to the pin's commit date.
 WINDOW_DAYS = 30
 SECTIONS = ("pin", "functions", "layers", "clusters", "importers", "readers", "patches",
-            "citations", "probes", "doctor_boundary", "ledger_rows", "collision", "transcripts",
+            "citations", "probes", "doctor_boundary", "move_cost", "ledger_rows", "collision", "transcripts",
             "lane_read")
 GIT_TIMEOUT = 120.0
 
@@ -726,6 +726,7 @@ def imports_of_cli(path: str, tree: ast.Module) -> list[dict]:
     for alias, lazy in aliases.items():
         dotted = alias.split(".")
         names: set[str] = set()
+        loaded: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute):
                 chain, cur = [], node.value
@@ -734,8 +735,48 @@ def imports_of_cli(path: str, tree: ast.Module) -> list[dict]:
                     cur = cur.value
                 if isinstance(cur, ast.Name) and [cur.id, *chain] == dotted:
                     names.add(node.attr)
-        out.append({"names": sorted(names), "line": None, "lazy": lazy, "via": f"alias {alias}"})
+                    if isinstance(node.ctx, ast.Load):
+                        loaded.add(node.attr)
+        # ``stored_only``: names the file only assigns or deletes through the
+        # alias (``cli.X = ...``), never reads; they are in ``names`` too.
+        out.append({"names": sorted(names), "line": None, "lazy": lazy, "via": f"alias {alias}",
+                    "stored_only": sorted(names - loaded)})
     return out
+
+
+def _is_namespace_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and (
+        (isinstance(node.func, ast.Name) and node.func.id == "Namespace")
+        or (isinstance(node.func, ast.Attribute) and node.func.attr == "Namespace"))
+
+
+def namespace_calls(tree: ast.Module, names: set[str], aliases: set[str]) -> list[dict]:
+    """Each call, in one importer of cli, of a name it takes from cli that is
+    handed an ``argparse.Namespace`` built by hand: passed directly, or through
+    a name bound to one in the same scope. The attributes it sets are a
+    contract no parser checks, so a move that changes the command's attributes
+    breaks the caller with nothing to catch it. ``names`` are the names the
+    file takes; ``aliases`` the names it binds to cli itself (``_cli.cmd_x(ns)``)."""
+    out: dict[tuple[str, int], dict] = {}
+    for scope in ast.walk(tree):
+        if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        built = {t.id: sub.value for sub in ast.walk(scope) if isinstance(sub, ast.Assign)
+                 and _is_namespace_call(sub.value) for t in sub.targets if isinstance(t, ast.Name)}
+        for sub in ast.walk(scope):
+            if not isinstance(sub, ast.Call):
+                continue
+            f = sub.func
+            called = (f.id if isinstance(f, ast.Name) else
+                      f.attr if isinstance(f, ast.Attribute) and _dotted(f.value) in aliases else None)
+            if called not in names:
+                continue
+            for arg in [*sub.args, *(k.value for k in sub.keywords)]:
+                ns = arg if _is_namespace_call(arg) else built.get(arg.id) if isinstance(arg, ast.Name) else None
+                if ns is not None:
+                    out[(called, sub.lineno)] = {"name": called, "line": sub.lineno,
+                                                 "attributes": sorted(k.arg for k in ns.keywords if k.arg)}
+    return [out[k] for k in sorted(out)]
 
 
 def _importers(ctx: dict) -> dict:
@@ -746,6 +787,8 @@ def _importers(ctx: dict) -> dict:
     py = [p for p in tracked if p.endswith(".py") and p not in ctx["modules"]]
     texts = blobs_at(root, at, py)
     files: dict[str, dict] = {}
+    statements: dict[str, list[dict]] = {}
+    namespaces: dict[str, list[dict]] = {}
     unparsed = []
     for path in sorted(texts):
         if "espalier.cli" not in texts[path] and "cli" not in texts[path]:
@@ -760,8 +803,12 @@ def _importers(ctx: dict) -> dict:
             files[path] = {"names": sorted({n for f in found for n in f["names"]}),
                            "lazy": any(f["lazy"] for f in found), "sites": len(found),
                            "test": path.startswith("tests/")}
+            statements[path] = found
+            if not files[path]["test"]:
+                namespaces[path] = namespace_calls(tree, set(files[path]["names"]),
+                                                   {f["via"].split(" ", 1)[1] for f in found if f["via"] != "from"})
     ctx["_importers"] = {"files": files, "unparsed": unparsed, "read": len(texts), "tracked_py": len(py),
-                         "tracked": tracked}
+                         "tracked": tracked, "statements": statements, "namespaces": namespaces}
     return ctx["_importers"]
 
 
@@ -907,7 +954,7 @@ def section_patches(ctx: dict) -> dict:
     on_cli = [(p, s) for p, ss in by_file.items() for s in ss if s["through"] is None]
     through = [(p, s) for p, ss in by_file.items() for s in ss if s["through"] is not None]
     targets = sorted({s["target"] for _p, s in on_cli})
-    loaders = {t: 0 for t in targets}
+    loader_names: dict[str, list[str]] = {t: [] for t in targets}
     for d in defs:
         if d["kind"] == NAME:
             continue
@@ -916,7 +963,11 @@ def section_patches(ctx: dict) -> dict:
                 and (n.id not in local or n.id in declared)}
         for t in targets:
             if t in seen and t != d["name"]:
-                loaders[t] += 1
+                loader_names[t].append(d["name"])
+    loaders = {t: len(v) for t, v in loader_names.items()}
+    # Kept for the move cost, which prices each site and loader by unit.
+    ctx["_patch_sites"] = [(p, s) for p, s in on_cli]
+    ctx["_patch_loaders"] = loader_names
     sites_of = {t: sum(1 for _p, s in on_cli if s["target"] == t) for t in targets}
     multi = [t for t in targets if loaders[t] > 1]
     imported = [t for t in targets if t not in defined]
@@ -1127,6 +1178,7 @@ def section_readers(ctx: dict) -> dict:
         for s in found:
             klass = next((e["class"] for e in entries if inside(e, p, s["line"])), "loud")
             rows.append({**s, "path": p, "class": klass})
+    ctx["_reader_rows"] = rows  # kept for the move cost, which prices each symbol key by unit
     for e in entries:
         e["sites"] = sum(1 for r in rows if inside(e, r["path"], r["line"]))
         # A test that reads the file through a module-level name (``CLI_PATH =
@@ -1328,6 +1380,9 @@ def ledger_fragments(texts: dict[str, str]) -> dict[str, dict]:
 
 
 CITATION_SPELLINGS = ("path_symbol", "bare_symbol", "line", "dotted")
+#: The spellings that name a symbol. The line form names a line as it stood
+#: when the citation was written, so it is attributed to no definition.
+CITATION_SYMBOL_SPELLINGS = ("path_symbol", "bare_symbol", "dotted")
 
 
 def citation_patterns(modules) -> dict[str, re.Pattern]:
@@ -1398,6 +1453,7 @@ def section_citations(ctx: dict) -> dict:
     frags = ledger_fragments(texts)
     tokens = {Path(m).name for m in modules} | {m[:-3].replace("/", ".") for m in modules if m.endswith(".py")}
     rows: list[tuple[str, str, str, str, int]] = []
+    named: list[tuple[str, str, str, str, str]] = []  # (path, split, part, spelling, symbol), one per occurrence
     substring: dict[str, list] = {}
     for path in sorted(texts):
         text = texts[path]
@@ -1412,13 +1468,15 @@ def section_citations(ctx: dict) -> dict:
         for line in text.splitlines():
             if not any(t in line for t in tokens):
                 continue
-            counts = {s: len(rx.findall(line)) for s, rx in pats.items()}
+            found = {s: rx.findall(line) for s, rx in pats.items()}
+            counts = {s: len(v) for s, v in found.items()}
             if not any(counts.values()):
                 continue
             s_, p_ = split, part
             if split == "swept_live" and _is_struck_line(line, sweep):
                 s_, p_ = "struck", "struck_lines_in_swept_docs"
             rows.extend((path, s_, p_, s, n) for s, n in counts.items() if n)
+            named.extend((path, s_, p_, s, sym) for s in CITATION_SYMBOL_SPELLINGS for sym in found[s])
 
     def tally(sel: list[tuple]) -> dict:
         return {s: {"occurrences": sum(r[4] for r in sel if r[3] == s), "files": len({r[0] for r in sel if r[3] == s})}
@@ -1445,6 +1503,13 @@ def section_citations(ctx: dict) -> dict:
               for s in CITATION_SPELLINGS}
     assert summed == {s: totals[s]["occurrences"] for s in CITATION_SPELLINGS}, \
         f"the citation split does not sum to the totals: {summed} against {totals}"
+    per_symbol: dict[str, dict[str, int]] = {}
+    for _path, split, part, _s, sym in named:
+        cell = per_symbol.setdefault(sym, {})
+        cell[f"{split}/{part}"] = cell.get(f"{split}/{part}", 0) + 1
+    assert sum(n for cell in per_symbol.values() for n in cell.values()) == sum(
+        totals[s]["occurrences"] for s in CITATION_SYMBOL_SPELLINGS), "the per-symbol tally does not sum to the totals"
+    ctx["_citation_named"] = named  # kept for the move cost, which prices each symbol's files by unit
     per_file: dict[str, dict[str, int]] = {}
     for path, split, _part, s, n in rows:
         if split == "protected_zone":
@@ -1475,6 +1540,9 @@ def section_citations(ctx: dict) -> dict:
             "record_set": sorted(sweep["record"]),
             "fragments": {"all": len(frags), "struck": sum(1 for f in frags.values() if f["struck"])},
             "totals": totals, "by_extension": by_ext, "split": split_out,
+            "per_symbol_rule": "each occurrence in the path_symbol, bare_symbol and dotted spellings, by the symbol "
+                               "it names and its 'split/part' (the line form names no symbol)",
+            "per_symbol": {s: dict(sorted(v.items())) for s, v in sorted(per_symbol.items())},
             "unread": {"swept_live": f"the sweep's rule differs at the pin: {sweep['differs']}",
                        "unchecked_live": "the swept population is unread, so its complement is too"}
             if sweep["differs"] else {},
@@ -1603,6 +1671,9 @@ def section_probes(ctx: dict) -> dict:
             "by_row": {s: sum(1 for r in rows if r["row"] == s) for s in ("live", "struck", "no row")},
             "live_reading_cli": sum(1 for r in reading if r["row"] == "live"),
             "live_any": sum(1 for r in rows if r["row"] == "live"),
+            "symbols_named": {"pairs": sum(len(r["symbols"]) for r in rows),
+                              "distinct": len({s for r in rows for s in r["symbols"]}),
+                              "probes": sum(1 for r in rows if r["symbols"])},
             "rows": rows}
 
 
@@ -1790,6 +1861,642 @@ def section_doctor_boundary(ctx: dict) -> dict:
                                        "write_reached": sorted(members - by_loads)}},
             "calls_back_into_doctor": calls_back,
             "call_back_edges": sum(len(v) for v in calls_back.values())}
+
+
+# ---------------------------------------------------------------- the move cost per unit (Tasks 3 and 4)
+
+def _section(ctx: dict, name: str):
+    """One section's result, read once a run and kept in ``ctx``: the move
+    cost reads eight sections, and one the run also prints is not read twice.
+    An ``Unread`` is kept too, and raised again."""
+    done = ctx.setdefault("_done", {})
+    if name not in done:
+        reader = SECTION_READERS.get(name)
+        try:
+            if reader is None:
+                raise Unread("no reader for this section in this census")
+            done[name] = reader(ctx)
+        except Unread as exc:
+            done[name] = exc
+    if isinstance(done[name], Unread):
+        raise done[name]
+    return done[name]
+
+
+def _tracked(ctx: dict) -> list[str]:
+    if "_tracked" not in ctx:
+        ctx["_tracked"] = tracked_at(ctx["root"], ctx["pin"]["at"])
+    return ctx["_tracked"]
+
+
+def _module_of(path: str) -> str:
+    """A tracked ``.py`` file's dotted module name (a package's ``__init__`` is the package)."""
+    mod = path[:-3].replace("/", ".") if path.endswith(".py") else path.replace("/", ".")
+    return mod[: -len(".__init__")] if mod.endswith(".__init__") else mod
+
+
+def _imported_module(base: str, name: str, known: set[str]) -> str:
+    """The module ``from base import name`` loads: ``base.name`` where that is a
+    tracked module (a submodule's import), else ``base``."""
+    return f"{base}.{name}" if f"{base}.{name}" in known else base
+
+
+def import_bindings(tree: ast.Module, path: str, known: set[str]) -> dict[str, str]:
+    """``{name: module}``: each name a top-level import of ``path`` binds (in a
+    module-level ``if`` or ``try`` too), with the module it comes from. A name
+    a test patches on cli that is bound here is cli's import, not a definition
+    of cli: a module that receives a moved loader gets its own binding of it."""
+    out: dict[str, str] = {}
+    for node in _top_statements(tree.body):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            base = _absolute(path, node)
+            for a in node.names:
+                if a.name != "*":
+                    out[a.asname or a.name] = _imported_module(base, a.name, known)
+    return out
+
+
+def lazy_targets(node: ast.AST, path: str, known: set[str]) -> list[dict]:
+    """Each import statement inside one definition (the graph's ``lazy_imports``),
+    with the modules it loads, resolved."""
+    out = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.ImportFrom):
+            base = _absolute(path, sub)
+            out.append({"line": sub.lineno, "modules": sorted({_imported_module(base, a.name, known) for a in sub.names})})
+        elif isinstance(sub, ast.Import):
+            out.append({"line": sub.lineno, "modules": sorted({a.name for a in sub.names})})
+    return out
+
+
+def _bound_loads(d: dict, bindings: dict[str, str]) -> set[str]:
+    """The names bound by cli's top-level imports that one definition loads (a
+    local of the same name excluded): the imports a new module would need too."""
+    if d["kind"] == NAME:
+        root = d["node"].value if getattr(d["node"], "value", None) is not None else d["node"]
+        local: set[str] = set()
+        declared: set[str] = set()
+    else:
+        root = d["node"]
+        local, declared = _locally_bound(root)
+    return {n.id for n in ast.walk(root) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            and n.id in bindings and (n.id not in local or n.id in declared)}
+
+
+def _initial_value(d: dict) -> str:
+    """A module-level name's first bound value, by kind: ``bool``, ``None``,
+    another constant's type, or the AST node's kind (``dict``, ``call``)."""
+    value = getattr(d["node"], "value", None)
+    if value is None:
+        return "unassigned"
+    if isinstance(value, ast.Constant):
+        return "None" if value.value is None else "bool" if isinstance(value.value, bool) else type(value.value).__name__
+    return type(value).__name__.lower()
+
+
+#: Each ingredient's tally, the section that holds its total, and the total.
+MOVE_TOTALS: dict[str, str] = {
+    "importers_outside": "importers.outside_tests.distinct_names",
+    "test_imports": "importers.tests.distinct_names",
+    "patch_sites": "patches.sites",
+    "patch_targets": "patches.targets",
+    "patch_raising_false": "patches.raising_false[*].raising_false, summed",
+    "symbol_keys": "readers.by_kind.symbol_key.sites",
+    "citations": "citations.totals[path_symbol, bare_symbol, dotted].occurrences, summed",
+    "probes": "probes.symbols_named.pairs",
+    "doctor": "doctor_boundary.names.count",
+    "lazy_imports": "functions.unresolved.lazy_imports",
+}
+
+MOVE_RULES: dict[str, str] = {
+    "units": "each hand layer of the layers section, priced over its members and over its tie_closed set (members "
+             "and pulled); each concern of the clusters section's concern tally, over the definitions it owns "
+             "(per_root): a hand group (cluster_source hand) or a command left a concern of its own (command)",
+    "size": "the unit's definitions by kind; function_lines over its functions",
+    "importers_outside": "imports_of_cli over each tracked .py outside tests/: per file, the members it takes, by "
+                         "statement lazy (inside a function or class) or top (module level); names = distinct "
+                         "members, pairs = (file, member); namespace_by_hand: a call of a member handed an "
+                         "argparse.Namespace built by hand in the same scope (namespace_calls)",
+    "test_imports": "imports_of_cli over tests/: the members test files take (from-imports and attributes read or "
+                    "stored through an alias of cli), with the files; pairs = (file, member); stored_only_pairs: a "
+                    "file that only assigns or deletes the member through the alias (cli.X = ...), never reads it, "
+                    "which is a patch site too",
+    "patches": "the patches section's sites on cli whose target is a member; raising_false and assign sites "
+               "beside; loaders (the patches section's: definitions of cli loading the target) inside and outside "
+               "the unit; left_behind_loader: a member target with loaders on both sides, so a move keeps the old "
+               "patch green through the loader left behind while the moved one goes unpatched (a target whose "
+               "loaders all stay behind is reached by its patch); loaded_not_member: a target outside the unit "
+               "that a member loads; not told apart from a plain patch: a builtin setattr(cli, ...) or a patch "
+               "passing create=True (each creates a missing attribute silently) and a patch.dict on a re-exported "
+               "memo (it changes the one shared dict, so it is not stale); tests/ held none of them at 3330a5a, "
+               "so a later pin that holds one misprices its branches",
+    "readers": "symbol_key: the readers section's (module path, symbol) sites naming a member, by class; silent "
+               "and flat_module: each hand-listed reader covering a member, a silent one covering the cli "
+               "definitions a string constant in its span names, or the whole file where it names none, a "
+               "flat-module one the whole file (it escapes only a move into a subpackage); path_literal and "
+               "path_join sites name no symbol and are attributed to no unit",
+    "citations": "the citations section's path_symbol, bare_symbol and dotted occurrences naming a member, by split "
+                 "and part, with the files; in_split sums the parts that were read; the line form names no symbol "
+                 "and is attributed to no unit",
+    "probes": "the probes section's rows whose symbols include a member, by row state; pairs = (probe, member); a "
+              "probe that reads cli and names no symbol, or reads it by subject alone, is attributed to no unit "
+              "(not_attributed)",
+    "outbound": "lazy: the import statements inside members, by each module they load (a statement counted once "
+                "per module); top_level_imports_loaded: names bound by cli's top-level imports that a member "
+                "loads, by module; back_edges: the cli definitions outside the unit its members load or write "
+                "(the import of cli a new module keeps); cli_callers: the definitions outside the unit that load "
+                "or write a member, members_kept_bound the members they reach (cli keeps a binding of each); "
+                "cli_cycle: both exist; importer_cycles: an outbound module that imports cli, closing a cycle "
+                "when it takes a member, or takes another name while cli keeps a caller",
+    "doctor": "the members among the names the doctor_boundary section reads doctor taking from cli",
+    "latches_across": "each latch outside the unit that a member writes or reads, in both branches: a moved "
+                      "'global X' write rebinds the new module's X, which cli's readers never see, and a moved read "
+                      "through a module-level 'from espalier.cli import X' reads the value at import time; only a "
+                      "read or write through the module (cli.X) keeps one copy",
+    "module_run": "static, read from Python's -m semantics and never run: imports_cli where the unit has back "
+                  "edges, so under 'python -m espalier.cli' (cli is __main__) the new module's import of "
+                  "espalier.cli loads a second module object; state_in_a_second_copy, the latches and memos "
+                  "outside the unit its members touch, which would be that copy's",
+    "with_reexports": "moved names stay importable from cli: stale_patch_sites, a member target with a loader "
+                      "inside the unit (the patch lands on cli's binding, the moved loader reads its own), of "
+                      "which the loaders_on_both_sides stay green; stale_in_both, a target outside the unit a "
+                      "member loads, where the new module takes it by from-import; latches_split, the latches "
+                      "among the members bound to a bool or None (the brief's cut; latches_other holds the rest, "
+                      "which split the same way), which cli's re-export copies once and never sees rebound; "
+                      "latches_across; memos_shared, the memo dicts among the members, one object under both "
+                      "names; loud_readers, symbol_key sites of class loud, which read cli.py's text either way; "
+                      "cli_cycle: cli imports the new module to re-export it, so any back edge closes a cycle",
+    "without_reexports": "moved names are not importable from cli and cli reaches the ones it still loads through "
+                         "the module (newmod.X): the sites that fail loudly are test imports (pairs, less the "
+                         "stored_only ones), patch sites on a member target that are no raising=False and no "
+                         "assignment (those create the attribute and reach nothing: silent_creates), outside "
+                         "importers (pairs), and loud symbol_key sites; loud_sites is their sum, None where any "
+                         "part is unread. if_cli_from_imports_what_it_still_loads: where cli instead takes the "
+                         "members it still loads or writes (members_kept_bound: a 'global X' write in a cli "
+                         "definition left behind counts, an upper bound over loads alone) by 'from newmod "
+                         "import X', cli.X stays bound and those parts stop failing (patches then stay green "
+                         "on a stale binding as with re-exports); "
+                         "stale_in_both and latches_across as in the other branch",
+    "sums": "each ingredient's tally over every top-level definition at the pin, plus the names it counts that "
+            "cli imports (imported_into_cli) and the names cli does not bind (not_bound_in_cli), equals the "
+            "section's own total (MOVE_TOTALS); the tally and the total are read from one list, so this checks "
+            "only that per-name attribution drops nothing; where the section splits its own total by a rule of "
+            "its own (patches: not defined in cli; doctor: not in cli), that split is checked against the "
+            "census's (bound by a top-level import of cli)",
+    "partition": "move_partition: the concern units are disjoint and, with the rest (shared and unreached), cover "
+                 "every definition; each ingredient's per-unit figures, aggregated from the unit's own sites and "
+                 "split cells, plus the tally over the rest, equal the defined total",
+}
+
+
+def _move_inputs(ctx: dict) -> dict:
+    """Every ingredient's tally per name over the whole of cli at the pin,
+    each beside its section's total, with the detail a unit is priced from.
+    An ingredient whose section is unread has a tally of ``None`` and is
+    named under ``unread``, never read as a zero."""
+    tree, defs, g = _functions_ctx(ctx)
+    known = {_module_of(p) for p in _tracked(ctx) if p.endswith(".py")}
+    tally: dict[str, dict[str, int] | None] = {}
+    total: dict[str, int | None] = {}
+    own_apart: dict[str, int] = {}
+    unread: dict[str, str] = {}
+    detail: dict = {}
+
+    def read(section: str, ingredients: tuple[str, ...]):
+        try:
+            got = _section(ctx, section)
+        except Unread as exc:
+            got = None
+            for k in ingredients:
+                unread[k] = f"the {section} section is unread: {exc}"
+        for k in ingredients:
+            tally[k] = None if got is None else {}
+            total[k] = None
+        return got
+
+    def add(k: str, name: str, n: int = 1) -> None:
+        tally[k][name] = tally[k].get(name, 0) + n
+
+    importers = read("importers", ("importers_outside", "test_imports"))
+    if importers is not None:
+        imp = _importers(ctx)
+        outside: dict[str, dict[str, set[str]]] = {}
+        tests: dict[str, set[str]] = {}
+        stored_only: dict[str, set[str]] = {}
+        for path, found in imp["statements"].items():
+            read_here: set[str] = set()
+            for f in found:
+                read_here |= set(f["names"]) - set(f.get("stored_only", ()))
+                for n in f["names"]:
+                    if imp["files"][path]["test"]:
+                        tests.setdefault(n, set()).add(path)
+                    else:
+                        outside.setdefault(n, {}).setdefault(path, set()).add("lazy" if f["lazy"] else "top")
+            if imp["files"][path]["test"]:
+                for n in set(imp["files"][path]["names"]) - read_here:
+                    stored_only.setdefault(n, set()).add(path)
+        tally["importers_outside"] = {n: 1 for n in outside}
+        tally["test_imports"] = {n: 1 for n in tests}
+        total["importers_outside"] = importers["outside_tests"]["distinct_names"]
+        total["test_imports"] = importers["tests"]["distinct_names"]
+        detail["module_run_files"] = {k: v["files"] for k, v in importers["entry_points"]["module_run"].items()}
+        detail.update(outside=outside, tests=tests, test_stored_only=stored_only,
+                      namespaces={p: c for p, c in sorted(imp["namespaces"].items()) if c},
+                      importer_modules={_module_of(p): set(f["names"]) for p, f in imp["files"].items() if not f["test"]})
+
+    patches = read("patches", ("patch_sites", "patch_targets", "patch_raising_false"))
+    if patches is not None:
+        by_target: dict[str, list[dict]] = {}
+        for path, s in ctx["_patch_sites"]:
+            add("patch_sites", s["target"])
+            tally["patch_targets"][s["target"]] = 1
+            if s["raising_false"]:
+                add("patch_raising_false", s["target"])
+            by_target.setdefault(s["target"], []).append({"file": path, "line": s["line"], "kind": s["kind"],
+                                                          "raising_false": s["raising_false"]})
+        total.update(patch_sites=patches["sites"], patch_targets=patches["targets"],
+                     patch_raising_false=sum(v["raising_false"] for v in patches["raising_false"].values()))
+        own_apart.update(patch_sites=patches["imported_into_cli"]["sites"],
+                         patch_targets=patches["imported_into_cli"]["targets"])
+        detail.update(patch_sites=by_target, loaders={t: set(v) for t, v in ctx["_patch_loaders"].items()})
+        defined_names = {d["name"] for d in defs}
+        detail["through_cli"] = {**patches["through_cli"], "first_part_defined_in_cli": sorted(
+            {t.split(".")[0] for t in patches["through_cli"]["targets"] if t.split(".")[0] in defined_names})}
+
+    readers = read("readers", ("symbol_keys",))
+    if readers is not None:
+        keys: dict[str, list[dict]] = {}
+        for r in ctx["_reader_rows"]:
+            if r["kind"] == "symbol_key":
+                add("symbol_keys", r["symbol"])
+                keys.setdefault(r["symbol"], []).append({"file": r["path"], "line": r["line"], "class": r["class"]})
+        total["symbol_keys"] = readers["by_kind"]["symbol_key"]["sites"]
+        texts = _tracked_texts(ctx)
+        defined = {d["name"] for d in defs}
+        cover = []
+        for e in readers["hand"]["entries"]:
+            if not e["exists"] or e["class"] not in ("silent", "flat-module"):
+                continue
+            named: set[str] = set()
+            if e["class"] == "silent":
+                try:
+                    rtree = ast.parse(texts[e["path"]])
+                except (SyntaxError, ValueError):
+                    rtree = None
+                named = {n.value for n in ast.walk(rtree or ast.Module(body=[], type_ignores=[]))
+                         if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in defined
+                         and any(a <= n.lineno <= b for a, b in e["spans"])}
+            cover.append({"path": e["path"], "symbol": e["symbol"], "class": e["class"],
+                          "covers": sorted(named) if named else "whole file"})
+        detail.update(keys=keys, cover=cover,
+                      reader_sites_not_attributed={k: readers["by_kind"][k]["sites"] for k in ("path_literal", "path_join")})
+
+    citations = read("citations", ("citations",))
+    if citations is not None:
+        cites: dict[str, dict[tuple[str, str], list]] = {}
+        for path, split, part, _s, sym in ctx["_citation_named"]:
+            add("citations", sym)
+            cell = cites.setdefault(sym, {}).setdefault((split, part), [0, set()])
+            cell[0] += 1
+            cell[1].add(path)
+        total["citations"] = sum(citations["totals"][s]["occurrences"] for s in CITATION_SYMBOL_SPELLINGS)
+        detail.update(cites=cites, citation_line_form=citations["totals"]["line"]["occurrences"],
+                      citation_splits={split: None if parts is None else [p for p in _SPLIT_PARTS[split] if p in parts]
+                                       for split, parts in citations["split"].items()})
+        for split, parts in citations["split"].items():
+            if parts is None:
+                unread[f"citations.{split}"] = citations["unread"].get(split, "the split is unread at the pin")
+
+    probes = read("probes", ("probes",))
+    if probes is not None:
+        ids: dict[str, list[tuple[str, str]]] = {}
+        for r in probes["rows"]:
+            for s in r["symbols"]:
+                add("probes", s)
+                ids.setdefault(s, []).append((r["id"], r["row"]))
+        total["probes"] = probes["symbols_named"]["pairs"]
+        detail["probes"] = ids
+        detail["probes_not_attributed"] = {
+            "reading_cli_no_symbol": sorted(r["id"] for r in probes["rows"] if set(r["by"]) - {"subject"}
+                                            and not r["symbols"]),
+            "subject_only": sorted(r["id"] for r in probes["rows"] if r["by"] == ["subject"])}
+
+    doctor = read("doctor_boundary", ("doctor",))
+    if doctor is not None:
+        tally["doctor"] = {n: 1 for n in doctor["names"]["per_name"]}
+        total["doctor"] = doctor["names"]["count"]
+        own_apart["doctor"] = len(doctor["names"]["not_in_cli"])
+
+    functions = read("functions", ("lazy_imports",))
+    lazy = {d["name"]: lazy_targets(d["node"], CLI, known) for d in defs if d["kind"] != NAME}
+    if functions is not None:
+        tally["lazy_imports"] = {n: len(v) for n, v in lazy.items() if v}
+        total["lazy_imports"] = functions["unresolved"]["lazy_imports"]
+    bindings = import_bindings(tree, CLI, known)
+    return {"tally": tally, "total": total, "own_apart": own_apart, "unread": unread, "detail": detail,
+            "lazy": lazy, "bindings": bindings, "bound_loads": {d["name"]: _bound_loads(d, bindings) for d in defs}}
+
+
+def move_sums(defs: list[dict], inp: dict) -> dict:
+    """Task 3's sum, asserted for each ingredient that was read: its tally
+    summed over every top-level definition at the pin, plus the names it
+    counts that cli imports and those cli does not bind, equals the section's
+    own total; where the section splits its own total, the two apart parts
+    equal that split."""
+    names = {d["name"] for d in defs}
+    out = {}
+    for k, tally in inp["tally"].items():
+        if tally is None:
+            continue
+        defined = sum(tally.get(d["name"], 0) for d in defs)
+        apart: dict[str, list[str]] = {"imported_into_cli": [], "not_bound_in_cli": []}
+        for n in sorted(tally):
+            if n not in names:
+                apart["imported_into_cli" if n in inp["bindings"] else "not_bound_in_cli"].append(n)
+        parts = {p: sum(tally[n] for n in v) for p, v in apart.items()}
+        assert defined + parts["imported_into_cli"] + parts["not_bound_in_cli"] == inp["total"][k], \
+            f"move_cost: {k} reads {defined} defined + {parts} apart against the section's {inp['total'][k]}"
+        if k in inp["own_apart"]:
+            assert parts["imported_into_cli"] + parts["not_bound_in_cli"] == inp["own_apart"][k], \
+                f"move_cost: {k}'s apart parts {parts} against the section's own split {inp['own_apart'][k]}"
+        out[k] = {"defined": defined, **parts, "section_total": inp["total"][k], "total_from": MOVE_TOTALS[k],
+                  "apart": apart}
+    return out
+
+
+#: Each ingredient's figure on one priced unit, aggregated from the unit's own
+#: sites, lists and split cells rather than from the whole-file tally.
+_UNIT_FIGURE = {
+    "importers_outside": lambda u: u["importers_outside"]["names"],
+    "test_imports": lambda u: u["test_imports"]["names"],
+    "patch_sites": lambda u: u["patches"]["sites"],
+    "patch_targets": lambda u: u["patches"]["targets"],
+    "patch_raising_false": lambda u: u["patches"]["raising_false"],
+    "symbol_keys": lambda u: u["readers"]["symbol_key"]["sites"],
+    "citations": lambda u: u["citations"]["in_split"],
+    "probes": lambda u: u["probes"]["pairs"],
+    "doctor": lambda u: u["doctor"]["count"],
+    "lazy_imports": lambda u: u["outbound"]["lazy"]["statements"],
+}
+
+
+def move_partition(defs: list[dict], concerns: list[dict], inp: dict, sums: dict) -> dict:
+    """The units checked against the whole file: the concern units are
+    disjoint, and with the definitions no concern owns (shared and unreached)
+    they cover every definition. For each ingredient that was read, the
+    concerns' figures (``_UNIT_FIGURE``) plus the tally over the rest equal the
+    ingredient's defined total, so a unit figure that loses a site, a member or
+    a citation split part fails here. A citation split unread at the pin
+    leaves that ingredient unchecked, named."""
+    seen: dict[str, str] = {}
+    for u in concerns:
+        for m in u["members"]:
+            assert m not in seen, f"move_cost: {m} is in two concern units, {seen[m]} and {u['unit']}"
+            seen[m] = u["unit"]
+    names = {d["name"] for d in defs}
+    assert set(seen) <= names, f"move_cost: concern members that are no definition: {sorted(set(seen) - names)}"
+    rest = names - set(seen)
+    out: dict = {"concern_units": len(concerns), "owned": len(seen), "rest": len(rest), "ingredients": {},
+                 "unchecked": {}}
+    for k, figure in _UNIT_FIGURE.items():
+        tally = inp["tally"].get(k)
+        if tally is None or k not in sums:
+            continue
+        if k == "citations" and any(v is None for u in concerns for v in u["citations"]["split"].values()):
+            out["unchecked"][k] = "a citation split is unread at the pin, so a unit's split cells are partial"
+            continue
+        units_sum = sum(figure(u) for u in concerns)
+        rest_sum = sum(tally.get(n, 0) for n in rest)
+        assert units_sum + rest_sum == sums[k]["defined"], \
+            f"move_cost: {k}'s concern units read {units_sum} + {rest_sum} over the rest against {sums[k]['defined']}"
+        out["ingredients"][k] = {"concern_units": units_sum, "rest": rest_sum, "defined": sums[k]["defined"]}
+    return out
+
+
+def section_move_cost(ctx: dict) -> dict:
+    """Task 3's move cost per unit, sized for both re-export branches (Task 4).
+    The units are each hand layer (its members, and its ``tie_closed`` set
+    beside them) and each concern the clusters section computes (the
+    definitions it owns). Each is priced by its size; its importers outside
+    tests (the hand-built ``argparse.Namespace`` flagged); the names tests
+    import; its test patches, with the loaders each target keeps outside the
+    unit; its readers by path; its citations by split; the ledger probes that
+    read it; its outbound edges and the cycles they would close; its doctor
+    names; the latches outside it that its members touch; what a second copy
+    of cli under ``-m`` would hold; and, per branch, what stays green while
+    wrong and what fails loudly. An ingredient whose section is unread is
+    ``None`` and named under the census's ``unread`` as
+    ``move_cost.<ingredient>``, never read as zero. Every ingredient's tally
+    over the whole file is summed against its section's own total
+    (``move_sums``), and the concern units' own figures against that tally
+    (``move_partition``)."""
+    tree, defs, g = _functions_ctx(ctx)
+    layers = _section(ctx, "layers")
+    clusters = _clusters(ctx)
+    inp = _move_inputs(ctx)
+    tally, detail = inp["tally"], inp["detail"]
+    kinds = {d["name"]: d["kind"] for d in defs}
+    lines = {d["name"]: d["lines"] for d in defs}
+    by_name = {d["name"]: d for d in defs}
+    table = latches(tree, defs, g)
+    sums = move_sums(defs, inp)
+
+    def read(*keys: str) -> bool:
+        return all(tally.get(k) is not None for k in keys)
+
+    def price(members: set[str]) -> dict:
+        ms = sorted(members)
+        callers = {(d, m) for d, es in g["edges"].items() if d not in members for m in es if m in members}
+        kept = {m for _d, m in callers}  # members a cli definition left behind still loads or writes
+        out: dict = {"size": {"definitions": len(ms), **_size(members, kinds, lines)}}
+        if read("importers_outside"):
+            files: dict[str, dict[str, list[str]]] = {}
+            for m in ms:
+                for path, how in detail["outside"].get(m, {}).items():
+                    for h in sorted(how):
+                        files.setdefault(path, {}).setdefault(h, []).append(m)
+            out["importers_outside"] = {
+                "names": sum(1 for m in ms if m in detail["outside"]),
+                "pairs": sum(len(detail["outside"].get(m, {})) for m in ms),
+                "files": dict(sorted(files.items())),
+                "namespace_by_hand": [{"file": p, **c} for p, calls in detail["namespaces"].items()
+                                      for c in calls if c["name"] in members]}
+            per_name = {m: len(detail["tests"][m]) for m in ms if m in detail["tests"]}
+            out["test_imports"] = {"names": len(per_name),
+                                   "files": len(set().union(*(detail["tests"][m] for m in per_name))),
+                                   "pairs": sum(per_name.values()),
+                                   "stored_only_pairs": sum(len(detail["test_stored_only"].get(m, ())) for m in ms),
+                                   "per_name": per_name}
+        else:
+            out["importers_outside"] = out["test_imports"] = None
+        if read("patch_sites"):
+            per_target = {}
+            for t in ms:
+                sites = detail["patch_sites"].get(t)
+                if not sites:
+                    continue
+                loaders = detail["loaders"].get(t, set())
+                per_target[t] = {"sites": len(sites), "raising_false": sum(1 for s in sites if s["raising_false"]),
+                                 "assign": sum(1 for s in sites if s["kind"] == "assign"),
+                                 "loaders_inside": sorted(loaders & members), "loaders_outside": sorted(loaders - members)}
+            left = sorted(t for t, v in per_target.items() if v["loaders_inside"] and v["loaders_outside"])
+            loaded = sorted(t for t, ls in detail["loaders"].items() if t not in members and ls & members)
+            out["patches"] = {
+                "targets": len(per_target), "sites": sum(v["sites"] for v in per_target.values()),
+                "raising_false": sum(v["raising_false"] for v in per_target.values()),
+                "files": len({s["file"] for t in per_target for s in detail["patch_sites"][t]}),
+                "left_behind_loader": {"targets": left, "sites": sum(per_target[t]["sites"] for t in left)},
+                "loaded_not_member": {"targets": loaded, "sites": sum(len(detail["patch_sites"][t]) for t in loaded)},
+                "per_target": per_target}
+        else:
+            out["patches"] = None
+        if read("symbol_keys"):
+            keyed = {m: detail["keys"][m] for m in ms if m in detail["keys"]}
+            sites = [s for v in keyed.values() for s in v]
+            out["readers"] = {
+                "symbol_key": {"sites": len(sites), "files": len({s["file"] for s in sites}), "symbols": sorted(keyed),
+                               "by_class": {c: sum(1 for s in sites if s["class"] == c) for c in READER_CLASS_NAMES}},
+                **{key: [{k: v for k, v in c.items() if k != "class"} for c in detail["cover"] if c["class"] == klass
+                         and ms and (c["covers"] == "whole file" or members & set(c["covers"]))]
+                   for key, klass in (("silent", "silent"), ("flat_module", "flat-module"))}}
+        else:
+            out["readers"] = None
+        if read("citations"):
+            split_out: dict = {}
+            for split, parts in detail["citation_splits"].items():
+                if parts is None:
+                    split_out[split] = None
+                    continue
+                split_out[split] = {}
+                for p in parts:
+                    cells = [detail["cites"][m][(split, p)] for m in ms if (split, p) in detail["cites"].get(m, {})]
+                    split_out[split][p] = {"occurrences": sum(c[0] for c in cells),
+                                           "files": len(set().union(*(c[1] for c in cells)))}
+            out["citations"] = {"occurrences": sum(tally["citations"].get(m, 0) for m in ms),
+                                "in_split": sum(cell["occurrences"] for parts in split_out.values() if parts
+                                                for cell in parts.values()),
+                                "split": split_out}
+        else:
+            out["citations"] = None
+        if read("probes"):
+            hits = [pair for m in ms for pair in detail["probes"].get(m, [])]
+            out["probes"] = {"ids": sorted({i for i, _row in hits}), "pairs": len(hits),
+                             "by_row": {r: len({i for i, row in hits if row == r}) for r in ("live", "struck", "no row")}}
+        else:
+            out["probes"] = None
+        lazy_by: dict[str, int] = {}
+        for m in ms:
+            for st in inp["lazy"].get(m, []):
+                for mod in st["modules"]:
+                    lazy_by[mod] = lazy_by.get(mod, 0) + 1
+        top_by: dict[str, set[str]] = {}
+        for m in ms:
+            for n in inp["bound_loads"][m]:
+                top_by.setdefault(inp["bindings"][n], set()).add(n)
+        back = {(m, t) for m in ms for t in g["edges"][m] if t not in members}
+        writes = {(m, t) for m in ms for t in g["writes"].get(m, ()) if t not in members}
+        cycles = None
+        if read("importers_outside"):
+            cycles = []
+            for mod in sorted(set(lazy_by) | set(top_by)):
+                takes = detail["importer_modules"].get(mod)
+                if takes is None:
+                    continue
+                took = sorted(takes & members)
+                others = len(takes - members)
+                cycles.append({"module": mod, "via": [v for v, on in (("lazy", mod in lazy_by), ("top", mod in top_by)) if on],
+                               "takes_members": took, "takes_other_names": others,
+                               "closes": bool(took) or (others > 0 and bool(callers))})
+        out["outbound"] = {
+            "lazy": {"statements": sum(len(inp["lazy"].get(m, [])) for m in ms), "by_module": dict(sorted(lazy_by.items()))},
+            "top_level_imports_loaded": {mod: sorted(v) for mod, v in sorted(top_by.items())},
+            "back_edges": {"definitions": len({t for _m, t in back}), "edges": len(back), "writes": len(writes),
+                           "names": sorted({t for _m, t in back})},
+            "cli_callers": {"definitions": len({d for d, _m in callers}), "edges": len(callers),
+                            "members_kept_bound": sorted(kept)},
+            "cli_cycle": bool(back) and bool(callers),
+            "importer_cycles": cycles}
+        out["doctor"] = None if not read("doctor") else {"names": [m for m in ms if m in tally["doctor"]],
+                                                         "count": sum(1 for m in ms if m in tally["doctor"])}
+        rows = [{"latch": n, "value": _initial_value(by_name[n]),
+                 "users_outside": sorted((set(t["writers"]) | set(t["readers"])) - members)}
+                for n, t in table["latches"].items() if n in members]
+        across = [{"latch": n, "value": _initial_value(by_name[n]), "members_writing": sorted(set(t["writers"]) & members),
+                   "members_reading": sorted(set(t["readers"]) & members)}
+                  for n, t in table["latches"].items() if n not in members and (set(t["writers"]) | set(t["readers"])) & members]
+        memos_across = sorted(n for n, t in table["memos"].items()
+                              if n not in members and (set(t["writers"]) | set(t["readers"])) & members)
+        out["latches_across"] = across
+        out["module_run"] = {"imports_cli": bool(back),
+                             "state_in_a_second_copy": sorted({a["latch"] for a in across} | set(memos_across)) if back else []}
+        patches, readers_ = out["patches"], out["readers"]
+        loud_readers = None if readers_ is None else readers_["symbol_key"]["by_class"]["loud"]
+        stale = [] if patches is None else [t for t, v in patches["per_target"].items() if v["loaders_inside"]]
+        across_names = [a["latch"] for a in across]
+        out["with_reexports"] = {
+            "stale_patch_sites": None if patches is None else {
+                "targets": stale, "sites": sum(patches["per_target"][t]["sites"] for t in stale),
+                "of_which_loaders_on_both_sides": patches["left_behind_loader"]["sites"]},
+            "stale_in_both": None if patches is None else patches["loaded_not_member"],
+            "latches_split": [r for r in rows if r["value"] in ("bool", "None")],
+            "latches_other": [r for r in rows if r["value"] not in ("bool", "None")],
+            "latches_across": across_names,
+            "memos_shared": sorted(n for n in table["memos"] if n in members),
+            "loud_readers": loud_readers,
+            "cli_cycle": bool(back)}
+        silent_of = {} if patches is None else {
+            t: sum(1 for s in detail["patch_sites"][t] if s["raising_false"] or s["kind"] == "assign")
+            for t in patches["per_target"]}
+        silent = None if patches is None else sum(silent_of.values())
+        loud_patches = None if patches is None else patches["sites"] - silent
+        imports, outside = out["test_imports"], out["importers_outside"]
+        loud_imports = None if imports is None else imports["pairs"] - imports["stored_only_pairs"]
+        parts = (loud_imports, loud_patches, None if outside is None else outside["pairs"], loud_readers)
+        loud = None if None in parts else sum(parts)
+        bound_parts = (
+            None if imports is None else sum(len(detail["tests"][m]) - len(detail["test_stored_only"].get(m, ()))
+                                             for m in ms if m in kept and m in detail["tests"]),
+            None if patches is None else sum(v["sites"] - silent_of[t] for t, v in patches["per_target"].items()
+                                             if t in kept),
+            None if outside is None else sum(len(detail["outside"][m]) for m in ms if m in kept and m in detail["outside"]))
+        out["without_reexports"] = {
+            "test_imports": None if imports is None else {
+                **{k: imports[k] for k in ("names", "files", "pairs", "stored_only_pairs")}, "loud_pairs": loud_imports},
+            "patches": None if patches is None else {"loud_sites": loud_patches, "silent_creates": silent},
+            "outside_importers": None if outside is None else {
+                "names": outside["names"], "pairs": outside["pairs"], "files": len(outside["files"])},
+            "loud_readers": loud_readers,
+            "loud_sites": loud,
+            "if_cli_from_imports_what_it_still_loads": {
+                "names": sorted(kept),
+                "test_import_pairs": bound_parts[0], "patch_sites": bound_parts[1], "outside_importer_pairs": bound_parts[2],
+                "loud_sites": None if loud is None or None in bound_parts else loud - sum(bound_parts)},
+            "stale_in_both": None if patches is None else patches["loaded_not_member"],
+            "latches_across": across_names}
+        return out
+
+    units = []
+    for layer in layers["layers"]:
+        base = set(layer["members"])
+        for which, members in (("members", base), ("tie_closed", base | set(layer["tie_closed"]["pulled"]))):
+            units.append({"unit": layer["name"], "kind": "layer", "set": which, "members": sorted(members),
+                          **price(members)})
+    con = clusters["concerns"]
+    for name, row in con["per_root"].items():
+        units.append({"unit": name, "kind": "concern", "cluster_source": "hand" if name in con["groups"] else "command",
+                      "set": "owned", "members": list(row["members"]), **price(set(row["members"]))})
+    partition = move_partition(defs, [u for u in units if u["kind"] == "concern"], inp, sums)
+    ctx.setdefault("_partial_unread", {})["move_cost"] = dict(inp["unread"])
+    return {"rule": MOVE_RULES, "units": units, "sums": sums, "partition": partition, "unread": inp["unread"],
+            "not_attributed": {"reader_sites": detail.get("reader_sites_not_attributed"),
+                               "citation_line_form": detail.get("citation_line_form"),
+                               "probes": detail.get("probes_not_attributed"),
+                               "patches_through_cli": detail.get("through_cli")},
+            "module_run_files": detail.get("module_run_files"),
+            "namespace_by_hand": detail.get("namespaces")}
 
 
 # ---------------------------------------------------------------- the record at the pin: merges, PRs, mail
@@ -2815,6 +3522,7 @@ SECTION_READERS = {
     "citations": section_citations,
     "probes": section_probes,
     "doctor_boundary": section_doctor_boundary,
+    "move_cost": section_move_cost,
     "ledger_rows": section_ledger_rows,
     "collision": section_collision,
     "lane_read": section_lane_read,
@@ -2825,7 +3533,9 @@ SECTION_READERS = {
 def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...] = (CLI,),
            extra: dict | None = None) -> dict:
     """Every named section read at ``at``. A section that raises ``Unread``,
-    or has no reader yet, is ``None`` under its key and named under ``unread``."""
+    or has no reader yet, is ``None`` under its key and named under ``unread``;
+    a part of a section that could not be read (the move cost's ingredients)
+    is named there as ``<section>.<part>``."""
     ctx = {"root": root, "pin": resolve_pin(root, at), "modules": modules, **(extra or {})}
     ctx["pin"].setdefault("mail_refs", (extra or {}).get("mail_refs") or mail_refs(root))
     result: dict = {"unread": {}}
@@ -2836,10 +3546,12 @@ def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...]
             result["unread"][name] = "no reader for this section in this census"
             continue
         try:
-            result[name] = reader(ctx)
+            result[name] = _section(ctx, name)
         except Unread as exc:
             result[name] = None
             result["unread"][name] = str(exc)
+        for part, why in sorted(ctx.get("_partial_unread", {}).get(name, {}).items()):
+            result["unread"][f"{name}.{part}"] = why
     if "pin" not in result:
         result["pin"] = section_pin(ctx)
     return result
