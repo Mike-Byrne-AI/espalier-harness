@@ -960,9 +960,11 @@ Task 4's re-export branch, priced below.
 `tests/test_python_floor.py::TestFloorAtTheThreeDecisionSites::test_detect_python_command_does_not_promise_working_guards_on_python_2`
 the recorder over `::_warn_interpreter_below_floor` takes one argument, and its one caller passes
 two. With `DEF-727`'s shape seeded back, the test fails with a `TypeError` and its assertion never
-runs. The row is not a vacuous patch, so it is outside the one case Files touched names; it goes
-to the dispatcher as request `20261118T035754Z-air-work-71f10f` (recommended: keep it, with the
-deviation named in Landing).
+runs. The row is not a vacuous patch, so it is outside the one case Files touched names. The
+dispatcher kept it on the lane (ack `20261118T040752Z-air-ff0cf7` on request `71f10f`): the
+lane's own sample found it, and it was filed through the same verb. Landing names its two files as a
+deviation from the Files-touched pass criterion. The test itself stays unmodified, as Files
+touched requires.
 
 **An inconsistency in the authoring text, for Task 4's sizing.** Task 4 splits the 43 targets as
 31 with more than one loader (131 sites) and 12 that cli imports from elsewhere (30 sites). The
@@ -988,6 +990,11 @@ rebuilds it from the rule and the method above.
   their own (Task 9).
 - Red-team in lane: the reasoning review on the Audit result and the census; the test-infrastructure read; the code review the tier names
 - Pre-registration commit:
+- Deviation, not a pass: the criterion that `git diff --name-only origin/main...HEAD` lists only
+  Files touched fails by its letter on `task-packs/ledger.d/DEF-5127.md` and
+  `task-packs/probes.d/DEF-5127.json`. These are a test that reds for the wrong reason, found by
+  Task 4's sample, and not a vacuous patch. They are kept on the lane by the dispatcher's ack
+  `20261118T040752Z-air-ff0cf7`.
 - Reach: see Reach; `DEF-4123` stays live
 - Task 0:
 - Date:
