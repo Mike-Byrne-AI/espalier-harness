@@ -7,7 +7,8 @@ test names, in its docstring, the mutation it dies to. The fixture's values and
 positions disagree with a wrong reading in both directions: a shadowed local
 that must give no edge beside a load that must, and a working-tree edit that
 must not be read beside the committed text that must."""
-# slow-exempt: a few `git init`/`commit` spawns per test in tmp_path, measured under 2 s for the module
+# slow-exempt: a few `git init`/`commit` spawns per test in tmp_path, measured under 2 s for the module; the collision and
+# lane_read classes build small branch histories (about 30 spawns the largest), each test measured under 3 s
 from __future__ import annotations
 
 import importlib.util
@@ -400,9 +401,9 @@ class TestAnUnreadSectionIsNamedNeverZero:
     def test_a_section_with_no_reader_is_none_and_named(self, repo):
         """Dies to: a section the census cannot read returned as an empty dict or a zero, which
         reads as clean."""
-        out = _CENSUS.census(repo, _head(repo), ["collision"])
-        assert out["collision"] is None
-        assert "collision" in out["unread"]
+        out = _CENSUS.census(repo, _head(repo), ["readers"])
+        assert out["readers"] is None
+        assert "readers" in out["unread"]
 
     def test_a_pin_without_cli_py_names_the_section_unread(self, repo):
         """Dies to: a missing cli.py at the pin read as a file of zero functions."""
@@ -412,3 +413,361 @@ class TestAnUnreadSectionIsNamedNeverZero:
         out = _CENSUS.census(repo, _head(repo), ["functions"])
         assert out["functions"] is None
         assert "espalier/cli.py is not in" in out["unread"]["functions"]
+
+
+# ---------------------------------------------------------------- collision and lane_read: small histories
+
+_UNTIL = "2020-01-02T03:04:05Z"
+
+
+def _git_try(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=_git_env(), timeout=45)
+
+
+def _commit_all(repo: pathlib.Path, message: str) -> None:
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message)
+
+
+def _trunk(repo: pathlib.Path) -> None:
+    _git(repo, "branch", "-M", "main")
+
+
+def _edit(repo: pathlib.Path, old: str, new: str, path: str = "espalier/cli.py") -> None:
+    target = repo / path
+    text = target.read_text(encoding="utf-8")
+    assert text.count(old) == 1, old
+    target.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def _lane(repo: pathlib.Path, branch: str, old: str, new: str, *, base: str = "main",
+          path: str = "espalier/cli.py") -> str:
+    """A branch off `base` with one commit editing `old` to `new`; its head."""
+    _git(repo, "checkout", "-q", "-b", branch, base)
+    _edit(repo, old, new, path)
+    _commit_all(repo, f"edit on {branch}")
+    return _head(repo)
+
+
+def _land(repo: pathlib.Path, number: int, branch: str) -> None:
+    """The pull request's merge on main, as GitHub writes it."""
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m",
+         f"Merge pull request #{number} from owner/{branch}", branch)
+
+
+def _ctx(repo: pathlib.Path, **extra) -> dict:
+    _CENSUS.source_at.cache_clear()
+    return {"root": repo, "pin": {**_CENSUS.resolve_pin(repo, _head(repo)), "mail_refs": {}},
+            "modules": (_CENSUS.CLI,), **extra}
+
+
+def _meta(created: str, merged: str) -> dict:
+    return {"created": created, "merged": merged}
+
+
+class TestTheReplayReadsAConflictOnTheCliModule:
+    def test_a_conflicting_catch_up_is_listed_and_clean_merges_are_not(self, repo):
+        """Three merges, none a pull request's: `main` into lane/x with the same line edited on both
+        sides (resolved in the merge), `main` into lane/y (a README only) and lane/y into lane/x.
+        Dies to: `replay_merges` reading rc 1 from `git merge-tree` as clean (then the conflict
+        on espalier/cli.py is lost and the count reads 0), or a clean merge listed as a conflict."""
+        _trunk(repo)
+        base = _head(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/y", base)
+        (repo / "README.md").write_text("readme\n", encoding="utf-8")
+        _commit_all(repo, "readme")
+        _git(repo, "checkout", "-q", "-b", "lane/x", base)
+        _edit(repo, "    return 1\n", "    return 2\n")
+        _commit_all(repo, "lane edit")
+        _git(repo, "checkout", "-q", "main")
+        _edit(repo, "    return 1\n", "    return 3\n")
+        _commit_all(repo, "main edit")
+        _git(repo, "checkout", "-q", "lane/y")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/y", "main")
+        _git(repo, "checkout", "-q", "lane/x")
+        assert _git_try(repo, "-c", "commit.gpgsign=false", "merge", "-m",
+                        "Merge branch 'main' into lane/x", "main").returncode == 1
+        (repo / "espalier" / "cli.py").write_text(_CLI_FIXTURE.replace("    return 1\n", "    return 4\n"),
+                                                  encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "--no-edit")
+        conflicted = _head(repo)
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'lane/y' into lane/x", "lane/y")
+        out = _CENSUS.conflicts(_ctx(repo))
+        side = out["lane_side"]
+        assert side["merges"] == 3
+        for arm in ("drivers_on", "drivers_off"):
+            assert side[arm]["conflicted_any_file"] == 1
+            assert [(r["oid"], r["paths"]) for r in side[arm]["on_cli_modules"]] == [
+                (conflicted, ["espalier/cli.py"])]
+            assert side[arm]["on_cli_modules"][0]["date"] == _UNTIL
+        assert out["catch_ups"]["prs"] == 0
+
+
+class TestConcurrentPairsAreGradedBySymbol:
+    @pytest.fixture
+    def pairs(self, repo):
+        """#1 and #2 (concurrent) change two different functions; #3 and #4 (concurrent, later)
+        change the same one, on lines apart; #5 lands on top of them and changes it too, but after
+        all of them merged."""
+        _trunk(repo)
+        base = _head(repo)
+        _lane(repo, "lane/p1", "    return 1\n", "    return 2\n", base=base)
+        _land(repo, 1, "lane/p1")
+        _lane(repo, "lane/p2", "    return _LATCH\n", "    return not _LATCH\n", base=base)
+        _land(repo, 2, "lane/p2")
+        _lane(repo, "lane/p3", "    _setter()\n", "    _setter()  # a\n", base=base)
+        _land(repo, 3, "lane/p3")
+        _lane(repo, "lane/p4", "    return _helper() + len(", "    return _helper() + 2 + len(", base=base)
+        _land(repo, 4, "lane/p4")
+        _lane(repo, "lane/p5", '    _MEMO["k"] = 1\n', '    _MEMO["k"] = 2\n')
+        _land(repo, 5, "lane/p5")
+        meta = {1: _meta("2020-01-01T00:00:00Z", "2020-01-01T10:00:00Z"),
+                2: _meta("2020-01-01T01:00:00Z", "2020-01-01T09:00:00Z"),
+                3: _meta("2020-01-01T12:00:00Z", "2020-01-01T20:00:00Z"),
+                4: _meta("2020-01-01T13:00:00Z", "2020-01-01T21:00:00Z"),
+                5: _meta("2020-01-02T00:00:00Z", "2020-01-02T01:00:00Z")}
+        return _CENSUS.concurrent_pairs(_ctx(repo, _pr_meta=meta))
+
+    def test_only_the_pair_on_one_function_is_graded(self, pairs):
+        """Dies to: the pairs counted over shared paths alone, the symbol verdicts dropped (both
+        pairs share espalier/cli.py, so two read as graded where one function is shared), or a
+        pair on different functions read as a shared symbol."""
+        assert pairs["prs"] == 5
+        assert pairs["concurrent_pairs"] == 2
+        assert pairs["by_verdict"]["different functions"] == 1
+        assert pairs["by_verdict"]["shared symbol"] == 1
+        assert pairs["graded_count"] == 1
+        assert [(p["a"], p["b"], p["verdict"]) for p in pairs["pairs"]] == [
+            (1, 2, "different functions"), (3, 4, "shared symbol")]
+        assert pairs["pairs"][1]["shared"] == ["espalier/cli.py::cmd_alpha"]
+
+    def test_a_pair_that_never_overlapped_in_time_is_not_counted(self, pairs):
+        """Dies to: every pair of CLI-module lanes counted, concurrent or not: #5 changes the
+        same function as #3 and #4 but opened after they merged, so it joins no pair."""
+        assert all(5 not in (p["a"], p["b"]) for p in pairs["pairs"])
+
+    def test_a_lane_with_no_open_time_is_named_not_paired(self, repo):
+        """Dies to: a pull request missing from the opened-at list paired on a default stamp, or
+        dropped without a word."""
+        _trunk(repo)
+        _lane(repo, "lane/p1", "    return 1\n", "    return 2\n")
+        _land(repo, 1, "lane/p1")
+        out = _CENSUS.concurrent_pairs(_ctx(repo, _pr_meta={}))
+        assert out["no_created_at"] == [1]
+        assert out["concurrent_pairs"] == 0
+
+
+class TestACatchUpCarriesACliChangeOrNot:
+    def test_only_a_catch_up_that_brings_a_cli_module_change_is_carrying(self, repo):
+        """Dies to: every catch-up in the window counted as carrying (the README-only one would
+        make it 2), or the diff read against the wrong parent (the lane's own change, not what
+        main brought)."""
+        _trunk(repo)
+        base = _head(repo)
+        _git(repo, "checkout", "-q", "-b", "lane/a", base)
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        _commit_all(repo, "lane a")
+        _git(repo, "checkout", "-q", "main")
+        _edit(repo, "    return 1\n", "    return 2\n")
+        _commit_all(repo, "main brings a cli change")
+        _git(repo, "checkout", "-q", "lane/a")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/a", "main")
+        _git(repo, "checkout", "-q", "-b", "lane/b", "main")
+        (repo / "b.txt").write_text("b\n", encoding="utf-8")
+        _commit_all(repo, "lane b")
+        _git(repo, "checkout", "-q", "main")
+        (repo / "README.md").write_text("readme\n", encoding="utf-8")
+        _commit_all(repo, "main brings a readme")
+        _git(repo, "checkout", "-q", "lane/b")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/b", "main")
+        _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'lane/a' into lane/b", "lane/a")
+        out = _CENSUS.catch_ups_carrying(_ctx(repo))
+        assert out == {"graded": False, "catch_ups_in_window": 2, "carrying_a_cli_module": 1}
+
+
+class TestTheHolds:
+    _MESSAGES = [
+        {"id": "m1", "at": "2020-01-01T03:04:05Z", "type": "assign",
+         "text": "Do the cli.py job. Waits for: nothing.", "re": {"paths": ["espalier/cli.py"]}},
+        {"id": "m2", "at": "2020-01-01T04:00:00Z", "type": "assign",
+         "text": "Lane one first; the other waits for it to merge.", "re": {"paths": ["espalier/cli.py"]}},
+        {"id": "m3", "at": "2020-01-01T05:00:00Z", "type": "note",
+         "text": "Hold it back until cli.py lands.", "re": {}},
+        {"id": "m4", "at": "2020-01-01T06:00:00Z", "type": "note",
+         "text": "Waits for the pack to merge.", "re": {"paths": ["docs/x.md"]}},
+    ]
+
+    @pytest.fixture
+    def ctx(self, repo):
+        (repo / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        _commit_all(repo, "toml")
+        return _ctx(repo, _mail_at={"air": self._MESSAGES, "other": [
+            {"id": "m5", "at": "2020-01-01T07:00:00Z", "text": "the other waits for it, cli.py", "re": {}}]})
+
+    def test_names_module_takes_a_path_or_a_bare_name_as_a_whole_token(self):
+        """Dies to: the left boundary dropped (`test_cli.py` accepted), the right boundary dropped
+        (`cli.pyc` accepted), or the bare name refused (a message saying `cli.py` unread)."""
+        names = _CENSUS.names_module
+        assert names("edits espalier/cli.py now", "espalier/cli.py")
+        assert names("edits cli.py now", "espalier/cli.py")
+        assert not names("edits test_cli.py now", "espalier/cli.py")
+        assert not names("edits cli.pyc now", "espalier/cli.py")
+
+    def test_a_waits_for_nothing_line_is_no_hold_and_a_real_wait_is(self, ctx):
+        """Dies to: `Waits for: nothing` left in the text (m1 declared, the 'lower bound' inflated),
+        the declared path ignored (m2 only text-named), or a message from a seat that is not the
+        dispatcher read (m5)."""
+        out = _CENSUS.holds(ctx)
+        assert out["dispatcher"] == "air"
+        assert out["declared"] == ["m2"]
+        assert out["named_in_text"] == ["m3"]
+        assert out["messages"] == 4
+
+    def test_the_record_starts_at_the_first_message(self, ctx):
+        """Dies to: the record's length read from the first message of any seat, or from the clock
+        (the fixture pin is in 2020)."""
+        out = _CENSUS.holds(ctx)
+        assert out["record_from"] == "2020-01-01T03:04:05Z"
+        assert out["record_days"] == 1.0
+
+    def test_no_dispatcher_at_the_pin_is_unread_not_empty(self, repo):
+        """Dies to: a pin with no espalier.toml reading as a dispatcher with no holds (a zero)."""
+        with pytest.raises(_CENSUS.Unread):
+            _CENSUS.holds(_ctx(repo, _mail_at={}))
+
+
+class TestTheClaimOverlap:
+    @staticmethod
+    def _claim(mid, who, at, lane, paths):
+        return {"id": mid, "type": "claim", "from": who, "at": at, "re": {"lane": lane, "paths": paths}}
+
+    @staticmethod
+    def _release(mid, who, at, lane):
+        return {"id": mid, "type": "release", "from": who, "at": at, "re": {"lane": lane}}
+
+    @pytest.fixture
+    def out(self, repo):
+        """Three merged CLI lanes. lane/l (seat A, 00:00 to 06:00): seat B's claim on cli.py
+        (03:00 to 05:00) falls inside it, seat C's (08:00 to 09:00) after it, seat D's overlaps
+        in time but names docs. lane/q (seat E, 20:00 to 22:00): nothing of another seat's, but
+        E's own second claim on lane/z names cli.py inside it. lane/n: no claim at all."""
+        _trunk(repo)
+        for number, branch, old, new in (
+                (1, "lane/l", "    return 1\n", "    return 2\n"),
+                (2, "lane/q", "    return _LATCH\n", "    return not _LATCH\n"),
+                (3, "lane/n", "    _LATCH = True\n", "    _LATCH = False\n")):
+            _lane(repo, branch, old, new, base="main")
+            _land(repo, number, branch)
+        cli = ["espalier/cli.py"]
+        d = "2020-01-01T"
+        mail = {
+            "seatA": [self._claim("a1", "seatA", d + "00:00:00Z", "lane/l", cli),
+                      self._release("a2", "seatA", d + "06:00:00Z", "lane/l")],
+            "seatB": [self._claim("b1", "seatB", d + "03:00:00Z", "lane/m", cli),
+                      self._release("b2", "seatB", d + "05:00:00Z", "lane/m")],
+            "seatC": [self._claim("c1", "seatC", d + "08:00:00Z", "lane/c", cli),
+                      self._release("c2", "seatC", d + "09:00:00Z", "lane/c")],
+            "seatD": [self._claim("d1", "seatD", d + "02:00:00Z", "lane/d", ["docs/x.md"]),
+                      self._release("d2", "seatD", d + "04:00:00Z", "lane/d")],
+            "seatE": [self._claim("e1", "seatE", d + "20:00:00Z", "lane/q", cli),
+                      self._claim("e2", "seatE", d + "21:00:00Z", "lane/z", cli),
+                      self._release("e3", "seatE", d + "22:00:00Z", "lane/q"),
+                      self._release("e4", "seatE", d + "22:30:00Z", "lane/z")]}
+        return _CENSUS.claim_overlaps(_ctx(repo, _mail_at=mail))
+
+    def test_a_lane_overlaps_another_seat_s_claim_on_the_module_in_time(self, out):
+        """Dies to: the interval test turned around (`start <= end` read as `>=`: B's window would
+        fall outside A's, C's inside), a claim on another path counted (D), or a window ended at
+        the wrong release."""
+        assert out["lanes"] == 3
+        assert out["with_claim_window"] == 2
+        assert out["overlapping"] == 1
+        assert out["share_graded"] == 0.5
+        assert out["share_over_all_lanes"] == round(1 / 3, 3)
+        assert out["no_claim"] == [3]
+        row = {r["lane"]: r for r in out["rows"]}
+        assert row["lane/l"]["overlaps"] == ["seatB:lane/m"]
+        assert row["lane/l"]["window"] == ["2020-01-01T00:00:00Z", "2020-01-01T06:00:00Z"]
+
+    def test_the_lane_s_own_seat_is_not_another_seat(self, out):
+        """Dies to: the seat's own claim on another lane (E's lane/z, naming cli.py inside lane/q's
+        window) counted as another seat's, which makes lane/q overlapping."""
+        row = {r["lane"]: r for r in out["rows"]}
+        assert row["lane/q"]["overlaps"] == []
+        assert row["lane/q"]["seat"] == "seatE"
+        assert out["cross_seat_lane_pairs"] == 1
+        assert out["strict_overlapping"] == 1
+
+
+class TestTheLaneRead:
+    _SHORT_THEN_LONG = ("def short():\n    a = 1\n    return a\n"
+                        "def long():\n" + "".join(f"    v{i} = {i}\n" for i in range(8)) + "    return 0\n"
+                        "# ---\n"
+                        "def tail():\n    return 0\n")
+
+    @pytest.fixture
+    def shaped(self, repo):
+        """`short` is lines 1 to 3, `long` 4 to 13 (ten lines) with no gap between, a comment on
+        14 and `tail` 15 to 16."""
+        _trunk(repo)
+        (repo / "espalier" / "cli.py").write_text(self._SHORT_THEN_LONG, encoding="utf-8")
+        _commit_all(repo, "shaped")
+        _CENSUS.source_at.cache_clear()
+        return repo, _head(repo)
+
+    def test_a_hunk_on_the_last_line_of_a_definition_reads_that_definition(self, shaped):
+        """Dies to: the hunk placed on the definition after the one it falls in (line + 1): the
+        edit on `short`'s last line would read `long`'s 10 lines, not `short`'s 3."""
+        repo, base = shaped
+        head = _lane(repo, "lane/s", "    return a\n", "    return a + 1\n", base=base)
+        out = _CENSUS.lane_read_of(repo, base, head, "espalier/cli.py")
+        assert out["lines"] == 3
+        assert out["definitions"] == ["short"]
+
+    def test_a_new_function_between_two_definitions_is_placed_on_neither(self, shaped):
+        """Dies to: a pure insertion placed on the definition holding the line after it (the
+        2,816 against 2,784 of #433): inserting `added` after the comment would read `tail`."""
+        repo, base = shaped
+        head = _lane(repo, "lane/i", "# ---\n", "# ---\ndef added():\n    return 1\n", base=base)
+        assert _CENSUS.hunk_points(_git(repo, "diff", "-U0", base, head)) == [(14, True)]
+        out = _CENSUS.lane_read_of(repo, base, head, "espalier/cli.py")
+        assert out == {"definitions": [], "lines": 0, "by_definition": {}}
+
+    def test_the_section_sums_each_definition_once_per_lane(self, shaped):
+        """Dies to: the lane's lines summed per hunk (two hunks in `long` read 20), or the lane
+        left out of the window."""
+        repo, base = shaped
+        _lane(repo, "lane/s", "    return a\n", "    return a + 1\n", base=base)
+        _edit(repo, "    v1 = 1\n", "    v1 = 9\n")
+        _edit(repo, "    v5 = 5\n", "    v5 = 9\n")
+        _commit_all(repo, "two hunks in long")
+        _land(repo, 7, "lane/s")
+        out = _CENSUS.section_lane_read(_ctx(repo))
+        assert out["lanes"] == 1
+        assert out["rows"] == [{"pr": 7, "lines": 13, "definitions": ["long", "short"]}]
+        assert out["summed"] == 13
+        assert out["top_share"][0] == {"name": "long", "lines": 10, "share": round(10 / 13, 3)}
+
+
+class TestAWaveIsPaidOnThePrimaryNotOnTheLength:
+    def test_a_fall_without_the_primary_paying_does_not_count(self):
+        """Dies to: the secondary graded alone: an arbitrary equal split of a function halves
+        lane_read (fell True) and a wave that moved nothing on the primary would read paid."""
+        out = _CENSUS.wave_payoff(100, 50, primary_paid=False)
+        assert out == {"lane_read_fell": True, "primary_paid": False, "paid": False, "lane_read_counts": False}
+
+    def test_a_fall_beside_a_primary_that_paid_counts(self):
+        """Dies to: `lane_read_counts` stuck False (a never-paying grade), or `paid` read from the
+        length rather than the primary."""
+        out = _CENSUS.wave_payoff(100, 50, primary_paid=True)
+        assert out["paid"] is True and out["lane_read_counts"] is True
+
+    def test_a_fall_under_the_threshold_is_no_fall(self):
+        """Dies to: the threshold read as any fall: 100 to 71 is 29 percent, under the 30 the pack
+        fixed; 100 to 70 is on it."""
+        assert _CENSUS.wave_payoff(100, 71, primary_paid=True)["lane_read_fell"] is False
+        assert _CENSUS.wave_payoff(100, 70, primary_paid=True)["lane_read_fell"] is True
+        assert _CENSUS.wave_payoff(0, 0, primary_paid=True)["lane_read_fell"] is False

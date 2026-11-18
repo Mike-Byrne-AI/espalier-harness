@@ -35,9 +35,14 @@ import argparse
 import ast
 import functools
 import importlib.util
+import itertools
 import json
 import os
+import re
+import shutil
+import statistics
 import sys
+import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -928,6 +933,970 @@ def section_patches(ctx: dict) -> dict:
             "unparsed": unparsed}
 
 
+# ---------------------------------------------------------------- the record at the pin: merges, PRs, mail
+
+@functools.lru_cache(maxsize=None)
+def _merge_cost():
+    """``scripts/merge_cost_census.py`` by path: the replay with GitHub's merge
+    rules (every driver off) and its catch-up rule."""
+    return _load("_ccc_merge_cost", "scripts/merge_cost_census.py")
+
+
+@functools.lru_cache(maxsize=None)
+def _overlap():
+    """``scripts/lane_overlap_census.py`` by path: the mirror fold the pair
+    census reads every path through."""
+    return _load("_ccc_lane_overlap", "scripts/lane_overlap_census.py")
+
+
+@functools.lru_cache(maxsize=None)
+def _mail():
+    """``tools/cc/mail.py`` by path: its decoder, its release rule, its claim
+    view and its lane-to-seat fold."""
+    return _load("_ccc_mail", "tools/cc/mail.py")
+
+
+#: A pull request's merge on the base: ``Merge pull request #N from owner/branch``.
+PR_SUBJECT = re.compile(r"^Merge pull request #(\d+) from [^/\s]+/(\S+)")
+
+
+def _stamp(text: str) -> str:
+    """An ISO time from git (``+00:00``) or GitHub (``Z``) in one spelling, so
+    the two sort and compare as text."""
+    return _iso_z(datetime.fromisoformat(text.replace("Z", "+00:00")))
+
+
+def merges_at(root: Path, at: str) -> list[dict]:
+    """Every merge commit reachable from the pin, newest first: its oid, its
+    parents, its committer date and its subject. One ``git log``."""
+    rc, out, err = git(root, "log", "--merges", "--format=%H%x1f%P%x1f%cI%x1f%s", at)
+    if rc != 0:
+        raise Unread(f"git log --merges {at[:12]} failed: {err.strip()}")
+    rows = []
+    for line in out.splitlines():
+        oid, parents, date, subject = (line.split("\x1f") + ["", "", ""])[:4]
+        rows.append({"oid": oid, "parents": parents.split(), "date": _stamp(date), "subject": subject})
+    return rows
+
+
+def pr_merges(root: Path, at: str) -> list[dict]:
+    """The pull requests merged at the pin, read from git alone: each first-
+    parent merge headed ``Merge pull request #N from owner/branch``, with its
+    number, its branch, its two parents (the base it landed on, its head) and
+    its date. A pull request is at the pin when its merge commit is an
+    ancestor of it, so no later merge can enter a pinned read."""
+    rc, out, err = git(root, "log", "--first-parent", "--merges", "--format=%H", at)
+    if rc != 0:
+        raise Unread(f"git log --first-parent {at[:12]} failed: {err.strip()}")
+    first = set(out.split())
+    rows = []
+    for m in merges_at(root, at):
+        hit = PR_SUBJECT.match(m["subject"])
+        if m["oid"] in first and hit and len(m["parents"]) == 2:
+            rows.append({"number": int(hit.group(1)), "branch": hit.group(2), "merge": m["oid"],
+                         "base": m["parents"][0], "head": m["parents"][1], "date": m["date"]})
+    return rows
+
+
+def lane_commits(root: Path, pr: dict) -> list[dict]:
+    """A pull request's own commits, ``base..head`` (what GitHub lists as its
+    commits), as ``merge_cost_census`` reads them: an oid and a headline."""
+    rc, out, _err = git(root, "log", "--format=%H%x1f%s", f"{pr['base']}..{pr['head']}")
+    if rc != 0:
+        raise Unread(f"git log {pr['base'][:12]}..{pr['head'][:12]} failed")
+    return [{"oid": a, "messageHeadline": b} for a, _sep, b in (l.partition("\x1f") for l in out.splitlines())]
+
+
+def lane_files(root: Path, pr: dict) -> tuple[str, list[str]]:
+    """``(merge-base, paths)``: what the lane changed against the base it
+    branched from, at its merge (``git diff --name-only <merge-base> <head>``)."""
+    rc, out, err = git(root, "merge-base", pr["base"], pr["head"])
+    if rc != 0 or not out.strip():
+        raise Unread(f"no merge-base for #{pr['number']}: {err.strip()}")
+    mb = out.strip()
+    rc, out, err = git(root, "diff", "--name-only", mb, pr["head"])
+    if rc != 0:
+        raise Unread(f"git diff {mb[:12]} {pr['head'][:12]} failed: {err.strip()}")
+    return mb, [p for p in out.splitlines() if p]
+
+
+def _in_window(when: str, window: dict) -> bool:
+    return window["since"] <= when <= window["until"]
+
+
+def _prs(ctx: dict) -> list[dict]:
+    """The pull requests at the pin, each with its merge-base and files,
+    read once a run."""
+    if "_prs" not in ctx:
+        rows = pr_merges(ctx["root"], ctx["pin"]["at"])
+        for pr in rows:
+            pr["merge_base"], pr["files"] = lane_files(ctx["root"], pr)
+        ctx["_prs"] = rows
+    return ctx["_prs"]
+
+
+def _touches_cli(paths, modules) -> list[str]:
+    return sorted({m for m in modules for p in paths if p == m})
+
+
+def pr_meta(ctx: dict) -> dict[int, dict]:
+    """``{number: {"created", "merged"}}``: when each pull request opened, the
+    one fact git does not hold. Read from ``--prs-json`` (a saved ``gh pr list
+    --json number,createdAt,mergedAt``) or from ``gh``, every number to #1."""
+    if "_pr_meta" in ctx:
+        return ctx["_pr_meta"]
+    path = ctx.get("prs_json")
+    if path:
+        listed = json.loads(Path(path).read_text(encoding="utf-8"))
+    else:
+        proc = run_bounded(["gh", "pr", "list", "--state", "merged", "--limit", "1000", "--json",
+                            "number,createdAt,mergedAt"], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=GIT_TIMEOUT, cwd=str(ctx["root"]))
+        if proc.returncode != 0:
+            raise Unread(f"gh pr list failed: {proc.stderr.strip()[:200]}")
+        listed = json.loads(proc.stdout or "[]")
+    ctx["_pr_meta"] = {int(p["number"]): {"created": _stamp(p["createdAt"]), "merged": _stamp(p["mergedAt"])}
+                       for p in listed if p.get("createdAt") and p.get("mergedAt")}
+    return ctx["_pr_meta"]
+
+
+def mail_refs(root: Path) -> dict[str, str]:
+    """``{machine: oid}`` of each remote-tracking mail ref: read once, at the
+    start of a run, and written into the pin, so a re-run names what it read."""
+    rc, out, _err = git(root, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin/mail/")
+    if rc != 0:
+        return {}
+    refs = {}
+    for line in out.splitlines():
+        oid, _sp, ref = line.partition(" ")
+        refs[ref.rsplit("/", 1)[-1]] = oid
+    return refs
+
+
+def mail_at(ctx: dict) -> dict[str, list[dict]]:
+    """Every machine's messages at the pinned mail oids, cut at the pin's
+    date by each message's own stamp: a message sent after P is not in a
+    read at P, whatever the ref holds now."""
+    if "_mail_at" in ctx:
+        return ctx["_mail_at"]
+    refs = ctx["pin"].get("mail_refs") or {}
+    if not refs:
+        raise Unread("no mail refs in this clone (refs/remotes/origin/mail/*)")
+    out: dict[str, list[dict]] = {}
+    for machine, oid in sorted(refs.items()):
+        rc, text, err = git(ctx["root"], "show", f"{oid}:mail.jsonl")
+        if rc != 0:
+            raise Unread(f"mail of {machine} at {oid[:12]} unreadable: {err.strip()}")
+        messages, _bad = _mail().decode_lines(text)
+        out[machine] = [m for m in messages if str(m.get("at") or "") <= ctx["pin"]["window"]["until"]]
+    ctx["_mail_at"] = out
+    return out
+
+
+def claim_intervals(by_machine: dict[str, list[dict]], until: str) -> list[dict]:
+    """Each claim with the stamp of the release that closed it (the mail
+    driver's own release rule), or the pin's date where none did by then."""
+    mail = _mail()
+    out = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            if m.get("type") != "claim":
+                continue
+            end = next((str(r.get("at") or "") for r in messages[i + 1:]
+                        if r.get("type") == "release" and mail._releases(r, m["id"], m)), None)
+            _syms, _more, whole, _unplaced = mail.claim_view(m.get("re") or {})
+            files = {s.split("::", 1)[0] for s in _syms}
+            out.append({"id": m["id"], "machine": str(m.get("from") or machine),
+                        "lane": str((m.get("re") or {}).get("lane") or ""), "start": str(m.get("at") or ""),
+                        "end": end or until, "closed": end is not None, "paths": sorted(whole | files)})
+    return out
+
+
+def _claim_names(claim: dict, module: str) -> bool:
+    return any(_mail()._touches(p, module) for p in claim["paths"])
+
+
+#: The words a dispatcher uses to hold one lane for another. ``Waits for:
+#: nothing`` (the assign's own line when nothing waits) is struck first.
+HOLD_WORDS = re.compile(r"(?i)\b(waits? for|the other waits|hold(s|ing)? (it|the|your|its|back)|held)\b")
+NO_WAIT = re.compile(r"(?i)waits for:\s*nothing[^.\n]*")
+#: The dispatcher's messages that can hold a lane. A claim or a release is a
+#: seat's own declaration of its files, even when the dispatcher seat sends
+#: it as a worker: air's claim 66aaa6 (2026-10-08) names cli.py and "waits
+#: for" in its own pack's sequencing, and is no hold.
+RULING_TYPES = ("note", "ack", "assign", "request")
+
+
+def names_module(text: str, module: str) -> bool:
+    """``text`` names ``module`` by its path or its bare file name, as a whole
+    token: ``espalier/cli.py`` and ``cli.py`` do, ``test_cli.py`` does not."""
+    name = re.escape(Path(module).name)
+    return re.search(rf"(?<![\w.-])(?:{re.escape(module)}|{name})(?![\w])", text) is not None
+
+
+def dispatcher_at(ctx: dict) -> str | None:
+    text = source_at(ctx["root"], ctx["pin"]["at"], "espalier.toml")
+    try:
+        value = tomllib.loads(text or "").get("dispatcher")
+    except tomllib.TOMLDecodeError:
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def replay_merges(clone: Path, oids: list[str], runner) -> dict[str, list[str]]:
+    """``{oid: conflicted paths}`` for each merge that does not replay clean
+    (``merge_cost_census.replay``: rc 1 is a conflict, any other rc raises)."""
+    out = {}
+    for oid in oids:
+        _tree, conflicted = _merge_cost().replay(clone, oid, runner)
+        if conflicted or _tree is not None:
+            out[oid] = conflicted
+    return out
+
+
+def _set_attributes(clone: Path, text: str) -> None:
+    (clone / ".git" / "info" / "attributes").write_text(text, encoding="utf-8")
+
+
+def conflicts(ctx: dict) -> dict:
+    """The replay, whole record, under two instruments named apart.
+
+    ``lane_side``: the authoring read, every merge reachable from the pin that
+    is not a pull request's merge (catch-ups and stacks), replayed twice: with
+    the pin's own ``.gitattributes`` (drivers on, as the authoring replay ran)
+    and with every driver off (GitHub's merge). ``catch_ups``:
+    ``merge_cost_census.replay_all`` over the pin's every pull request (its
+    list built from git, ``base..head`` as its commits: the ``--prs`` at the
+    list's length that reaches #1), drivers off, which replays only the
+    catch-up merges the list holds. A conflict on a CLI module is listed by
+    oid and date under each."""
+    root, at = ctx["root"], ctx["pin"]["at"]
+    mcc = _merge_cost()
+    runner = ctx.get("runner") or mcc._ship_runner()
+    side = [m for m in merges_at(root, at) if not PR_SUBJECT.match(m["subject"])]
+    dates = {m["oid"]: m["date"] for m in side}
+    prs = [{"number": pr["number"], "headRefName": pr["branch"], "commits": lane_commits(root, pr)}
+           for pr in _prs(ctx)]
+    attrs = source_at(root, at, ".gitattributes") or ""
+    clone = mcc.scratch_clone(root, runner)
+    try:
+        _set_attributes(clone, attrs)
+        on = replay_merges(clone, [m["oid"] for m in side], runner)
+        _set_attributes(clone, "".join(f"{o}\n" for o in mcc.driver_overrides(attrs)))
+        off = replay_merges(clone, [m["oid"] for m in side], runner)
+        caught = mcc.replay_all(prs, clone, runner)
+    finally:
+        shutil.rmtree(clone.parent, ignore_errors=True)
+    modules = ctx["modules"]
+
+    def on_cli(found: dict[str, list[str]]) -> list[dict]:
+        return [{"oid": o, "date": dates.get(o), "paths": _touches_cli(ps, modules)}
+                for o, ps in sorted(found.items(), key=lambda kv: dates.get(kv[0], "")) if _touches_cli(ps, modules)]
+
+    cu_cli = [{"oid": c["oid"], "pr": c["pr"], "paths": _touches_cli(c["files"], modules)}
+              for c in caught["per_catch_up"] if _touches_cli(c["files"], modules)]
+    return {"graded": False,
+            "lane_side": {"rule": "git log --merges <P>, subject not 'Merge pull request'; "
+                                  "git merge-tree --write-tree on ^1 ^2 in a --shared clone",
+                          "merges": len(side),
+                          "drivers_on": {"conflicted_any_file": len(on), "on_cli_modules": on_cli(on)},
+                          "drivers_off": {"conflicted_any_file": len(off), "on_cli_modules": on_cli(off)}},
+            "catch_ups": {"rule": "merge_cost_census.replay_all over every pull request at P (base..head "
+                                  "from git), drivers off",
+                          "prs": len(prs), "lowest_pr": min((p["number"] for p in prs), default=None),
+                          "catch_up_merges": caught["catch_up_merges"], "conflicted_any_file": caught["conflicted"],
+                          "on_cli_modules": cu_cli}}
+
+
+def _window_prs(ctx: dict) -> list[dict]:
+    return [pr for pr in _prs(ctx) if _in_window(pr["date"], ctx["pin"]["window"])]
+
+
+def concurrent_pairs(ctx: dict) -> dict:
+    """C1: the window's pull requests that change a CLI module, read pairwise.
+    Two were concurrent when each opened before the other merged
+    (``_symbols.concurrent``). Each concurrent pair gets
+    ``_symbols.pair_verdict`` over the CLI modules alone (each side's
+    placements from ``_symbols.symbols_between`` at its merge-base, through the
+    overlap census's mirror fold), so a pair that also shares another file is
+    graded on the CLI modules. Graded: ``shared symbol`` and ``unplaced``
+    (``different functions`` is certified)."""
+    meta = pr_meta(ctx)
+    modules = ctx["modules"]
+    sym = _symbols()
+    lanes = [pr for pr in _window_prs(ctx) if _touches_cli(pr["files"], modules)]
+    no_meta = sorted(pr["number"] for pr in lanes if pr["number"] not in meta)
+    info = {}
+    for pr in lanes:
+        if pr["number"] in no_meta:
+            continue
+        placements = sym.symbols_between(pr["merge_base"], pr["head"], root=ctx["root"], fold=_overlap().canonical)
+        info[pr["number"]] = {**meta[pr["number"]],
+                              "placements": {m: placements[m] for m in modules if m in placements}}
+    pairs = []
+    concurrent_count = 0
+    for a, b in itertools.combinations(sorted(info), 2):
+        if not sym.concurrent(info[a], info[b]):
+            continue
+        concurrent_count += 1
+        v = sym.pair_verdict(info[a]["placements"], info[b]["placements"])
+        pairs.append({"a": a, "b": b, "verdict": v["verdict"], "shared": v["shared"], "files": v["files"]})
+    by = {v: sum(1 for p in pairs if p["verdict"] == v) for v in sym.VERDICTS}
+    return {"prs": len(lanes), "numbers": sorted(pr["number"] for pr in lanes), "no_created_at": no_meta,
+            "concurrent_pairs": concurrent_count, "by_verdict": by,
+            "graded_count": by["shared symbol"] + by["unplaced"], "pairs": pairs}
+
+
+def claim_overlaps(ctx: dict) -> dict:
+    """C2: of the window's CLI-module lanes, the share whose claim window (its
+    seat's first claim on the lane to the last release of one) overlapped
+    another seat's claim naming the same CLI module the lane changed. A lane
+    whose seat sent no claim on it has no window: counted apart, and the share
+    is given both over the lanes with a window (graded) and over all. The
+    stricter reading (the lane's own claim names the module too) and the
+    cross-seat lane pairs are printed beside it."""
+    by_machine = mail_at(ctx)
+    seats = _mail().lane_seats(by_machine)
+    claims = claim_intervals(by_machine, ctx["pin"]["window"]["until"])
+    modules = ctx["modules"]
+    rows, pairs = [], set()
+    for pr in _window_prs(ctx):
+        touched = _touches_cli(pr["files"], modules)
+        if not touched:
+            continue
+        seat = seats.get(pr["branch"])
+        own = [c for c in claims if c["lane"] == pr["branch"] and c["machine"] == seat]
+        if not own:
+            rows.append({"pr": pr["number"], "lane": pr["branch"], "seat": seat, "window": None, "overlaps": []})
+            continue
+        start, end = min(c["start"] for c in own), max(c["end"] for c in own)
+        names_own = any(_claim_names(c, m) for c in own for m in touched)
+        hits = [c for c in claims if c["machine"] != seat and c["start"] <= end and start <= c["end"]
+                and any(_claim_names(c, m) for m in touched)]
+        for c in hits:
+            if c["lane"]:
+                pairs.add(tuple(sorted((pr["branch"], c["lane"]))))
+        rows.append({"pr": pr["number"], "lane": pr["branch"], "seat": seat, "window": [start, end],
+                     "own_claim_names_module": names_own,
+                     "overlaps": sorted({f"{c['machine']}:{c['lane'] or c['id']}" for c in hits})})
+    with_window = [r for r in rows if r["window"]]
+    hit = [r for r in with_window if r["overlaps"]]
+    strict = [r for r in hit if r["own_claim_names_module"]]
+    return {"lanes": len(rows), "with_claim_window": len(with_window),
+            "no_claim": sorted(r["pr"] for r in rows if not r["window"]),
+            "overlapping": len(hit),
+            "share_graded": round(len(hit) / len(with_window), 3) if with_window else None,
+            "share_over_all_lanes": round(len(hit) / len(rows), 3) if rows else None,
+            "strict_overlapping": len(strict),
+            "cross_seat_lane_pairs": len(pairs), "rows": rows}
+
+
+def holds(ctx: dict) -> dict:
+    """C3, whole record: the dispatcher's messages that hold a lane for
+    another over a CLI module. ``declared``: its ``re.paths`` name a CLI
+    module and its text, ``Waits for: nothing`` struck, holds one
+    (``HOLD_WORDS``): the authoring read's lower bound. ``named_in_text``: the
+    module named in the text alone, with the same words, listed by id for the
+    hand read that confirms each (a word match is a candidate, never a hold)."""
+    disp = dispatcher_at(ctx)
+    if disp is None:
+        raise Unread("espalier.toml at the pin names no usable dispatcher")
+    messages = mail_at(ctx).get(disp, [])
+    modules = ctx["modules"]
+    declared, in_text = [], []
+    for m in messages:
+        if m.get("type") not in RULING_TYPES:
+            continue
+        text = NO_WAIT.sub("", str(m.get("text") or ""))
+        if not HOLD_WORDS.search(text):
+            continue
+        paths = [str(p) for p in (m.get("re") or {}).get("paths") or []]
+        if any(_mail()._touches(p, mod) for p in paths for mod in modules):
+            declared.append(m["id"])
+        elif any(names_module(text, mod) for mod in modules):
+            in_text.append(m["id"])
+    first = messages[0]["at"] if messages else None
+    days = None
+    if first:
+        days = round((datetime.fromisoformat(ctx["pin"]["window"]["until"].replace("Z", "+00:00"))
+                      - datetime.fromisoformat(first.replace("Z", "+00:00"))).total_seconds() / 86400, 1)
+    return {"dispatcher": disp, "record_from": first, "record_days": days, "messages": len(messages),
+            "declared": declared, "named_in_text": in_text}
+
+
+def catch_ups_carrying(ctx: dict) -> dict:
+    """Context, never a cost (the up-to-date rule is off): the window's
+    catch-up merges whose base side brought a CLI module change into a lane
+    (``git diff --name-only <catch-up>^1 <catch-up>``)."""
+    root, at = ctx["root"], ctx["pin"]["at"]
+    catch = _merge_cost().CATCH_UP
+    count = carrying = 0
+    for m in merges_at(root, at):
+        if not catch.match(m["subject"]) or not _in_window(m["date"], ctx["pin"]["window"]):
+            continue
+        count += 1
+        rc, out, _err = git(root, "diff", "--name-only", m["parents"][0], m["oid"])
+        if rc == 0 and _touches_cli(out.splitlines(), ctx["modules"]):
+            carrying += 1
+    return {"graded": False, "catch_ups_in_window": count, "carrying_a_cli_module": carrying}
+
+
+def section_collision(ctx: dict) -> dict:
+    """Task 0 Item 2's oracle: the four components, each with its window and
+    its count of CLI-module pull requests. A component that cannot be read is
+    named under the section's own ``unread``, never a zero."""
+    window = ctx["pin"]["window"]
+    out: dict = {"window": window, "unread": {}}
+    out["cli_module_prs_in_window"] = sum(1 for pr in _window_prs(ctx) if _touches_cli(pr["files"], ctx["modules"]))
+    for key, reader in (("conflicts", conflicts), ("pairs", concurrent_pairs), ("claims", claim_overlaps),
+                        ("holds", holds), ("catch_ups", catch_ups_carrying)):
+        if key in ctx.get("skip_components", ()):
+            out[key] = None
+            out["unread"][key] = "skipped by the caller"
+            continue
+        try:
+            out[key] = reader(ctx)
+        except Unread as exc:
+            out[key] = None
+            out["unread"][key] = str(exc)
+    return out
+
+
+# ---------------------------------------------------------------- lane_read (the secondary, a length)
+
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def hunk_points(diff: str) -> list[tuple[int, bool]]:
+    """``(line, insertion)`` for the base-side lines a ``-U0`` diff's hunks
+    fall on: each changed or removed line, and for a pure insertion
+    (``-L,0``) the line it follows, flagged."""
+    points: list[tuple[int, bool]] = []
+    for hit in _HUNK.finditer(diff):
+        start, count = int(hit.group(1)), int(hit.group(2) if hit.group(2) is not None else 1)
+        points.extend([(ln, False) for ln in range(start, start + count)] if count else [(start, True)])
+    return points
+
+
+def definition_at(defs: list[dict], line: int) -> dict | None:
+    """The top-level function or class whose span holds ``line``. A pure
+    insertion after line L is placed by L alone, so nowhere when L is between
+    definitions: placing it on the one holding L + 1 charged a new function
+    inserted above a definition to that definition, and read 2,816 where the
+    authoring rule reads 2,784 at 17d83e0 (#433)."""
+    for d in defs:
+        if d["kind"] != NAME and d["start"] <= line <= d["end"]:
+            return d
+    return None
+
+
+def lane_read_of(root: Path, mb: str, head: str, module: str) -> dict:
+    """One lane's read of one module: the top-level definitions its hunks fall
+    in at the merge-base, and their lengths summed there."""
+    text = source_at(root, mb, module)
+    if text is None:
+        return {"definitions": [], "lines": 0}
+    defs = definitions(ast.parse(text))
+    rc, diff, err = git(root, "diff", "-U0", mb, head, "--", module)
+    if rc != 0:
+        raise Unread(f"git diff -U0 {mb[:12]} {head[:12]} -- {module} failed: {err.strip()}")
+    hit: dict[str, int] = {}
+    for ln, _insertion in hunk_points(diff):
+        d = definition_at(defs, ln)
+        if d is not None:
+            hit[d["name"]] = d["lines"]
+    return {"definitions": sorted(hit), "lines": sum(hit.values()), "by_definition": hit}
+
+
+def section_lane_read(ctx: dict) -> dict:
+    """The secondary, a LENGTH: per CLI-module lane merged in the window, the
+    summed lengths at its merge-base of the top-level definitions its hunks
+    fall in. A decomposition lowers it by construction, so it is graded only
+    beside the primary (``wave_payoff``)."""
+    root, modules = ctx["root"], ctx["modules"]
+    rows, share = [], {}
+    for pr in _window_prs(ctx):
+        touched = _touches_cli(pr["files"], modules)
+        if not touched:
+            continue
+        per = {m: lane_read_of(root, pr["merge_base"], pr["head"], m) for m in touched}
+        total = sum(p["lines"] for p in per.values())
+        for p in per.values():
+            for name, n in p["by_definition"].items():
+                share[name] = share.get(name, 0) + n
+        rows.append({"pr": pr["number"], "lines": total,
+                     "definitions": sorted(d for p in per.values() for d in p["definitions"])})
+    values = [r["lines"] for r in rows]
+    summed = sum(share.values())
+    top = sorted(share.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    return {"lanes": len(rows), "median": statistics.median(values) if values else None,
+            "max": max(values) if values else None, "summed": summed,
+            "top_share": [{"name": n, "lines": v, "share": round(v / summed, 3)} for n, v in top] if summed else [],
+            "rows": sorted(rows, key=lambda r: r["pr"])}
+
+
+# ---------------------------------------------------------------- transcripts (the primary)
+
+#: The committed rule for Item 3 (step 1, 6a91bc51b): real when all three hold.
+R_FLOOR_LINES = 1500
+R_OVER_E = 2.0
+ALPHA = 0.05
+#: Not real only where the read could have seen the effect: the realised
+#: minimum detectable ratio at most this, with at least this many lanes an arm.
+MDR_CEILING = 2.0
+MIN_ARM = 8
+#: The one-sided alpha 0.05, power 0.8 constant: z(0.95) + z(0.8).
+MDD_Z = 2.49
+#: A control lane's edited non-test .py files each stay under this at its merge-base.
+CONTROL_MAX_LINES = 3000
+#: The seats whose transcripts are on this box (2 of 4; the Windows seats' are on theirs).
+BOX_SEATS = ("air", "air-work")
+READ_PROGRAMS = {"sed", "cat", "head", "tail", "nl", "awk"}
+SEARCH_PROGRAMS = {"grep", "rg", "ugrep", "egrep", "fgrep"}
+#: Record types that repeat a request's content (the blob records): skipped, never counted twice.
+SKIP_RECORDS = {"api-request-blob", "api-request", "api-request-shape"}
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_SAVED = re.compile(r"(?:Full output|Output) saved to:?\s*(\S+/tool-results/\S+)")
+
+
+def project_folder(path: str) -> str:
+    """Claude Code's project folder name for a checkout path."""
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def checkouts(root: Path) -> list[dict]:
+    """Each checkout of this clone (``git worktree list``), its seat name
+    (``espalier.machine``, the per-worktree one first) and its project folder."""
+    rc, out, _err = git(root, "worktree", "list", "--porcelain")
+    paths = [line[len("worktree "):] for line in out.splitlines() if line.startswith("worktree ")] if rc == 0 else []
+    rows = []
+    for p in paths:
+        rc, name, _err = git(Path(p), "config", "--get", "espalier.machine") if Path(p).is_dir() else (1, "", "")
+        rows.append({"path": p, "seat": name.strip() or None, "folder": project_folder(p)})
+    return rows
+
+
+def strip_heredocs(command: str) -> str:
+    """The command with every here-document's body taken out: a path inside
+    one is the text of a message or a script, never a read."""
+    out, lines, i = [], command.split("\n"), 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        tags = [m.group(2) for m in _HEREDOC.finditer(line)]
+        i += 1
+        for tag in tags:
+            while i < len(lines) and lines[i].strip() != tag:
+                i += 1
+            i += 1
+    return "\n".join(out)
+
+
+def simple_commands(command: str) -> list[tuple[list[str], bool]]:
+    """``(argv, piped)`` for each simple command of a shell line, heredocs
+    stripped: split on ``;``, ``&&``, ``||``, ``|``, ``&`` and newlines.
+    ``piped`` marks one whose output goes into, or comes from, a pipe."""
+    import shlex
+    text = strip_heredocs(command).replace("\n", " ; ")
+    lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError:
+        return []
+    out, cur, seps = [], [], []
+    for tok in [*tokens, ";"]:
+        if tok and set(tok) <= set(";&|()"):
+            if cur:
+                out.append(cur)
+                seps.append(tok)
+            elif out:
+                seps[-1] = seps[-1] if "|" in seps[-1] else tok
+            cur = []
+        else:
+            cur.append(tok)
+    piped = []
+    for i, _argv in enumerate(out):
+        before = seps[i - 1] if i else ""
+        piped.append(before == "|" or seps[i] == "|")
+    return list(zip(out, piped))
+
+
+def _range(program: str, args: list[str]) -> int | None:
+    """The lines a read program's own options select, or ``None`` for a
+    whole file (or a range it cannot tell)."""
+    if program == "sed":
+        total, saw = 0, False
+        for a in args:
+            m = re.fullmatch(r"(\d+)(?:,(\d+))?p", a)
+            if m:
+                saw = True
+                total += (int(m.group(2)) - int(m.group(1)) + 1) if m.group(2) else 1
+        return total if saw else None
+    if program in ("head", "tail"):
+        for i, a in enumerate(args):
+            if a == "-n" and i + 1 < len(args) and args[i + 1].lstrip("-").isdigit():
+                return int(args[i + 1].lstrip("-"))
+            m = re.fullmatch(r"-n?(\d+)", a)
+            if m:
+                return int(m.group(1))
+            if a == "-n" or a.startswith("+") or a.startswith("-n+"):
+                return None
+        return 10
+    return None
+
+
+def read_operands(argv: list[str]) -> tuple[str, list[str], int | None] | None:
+    """``(kind, files, range)`` for a read or a search, else ``None``.
+    ``kind`` is ``read`` (the allowlist: ``sed`` without ``-i``, ``cat``,
+    ``head``, ``tail``, ``nl``, ``awk``, ``git show <rev>:<path>``) or
+    ``search``; the files are the whole operands the program reads."""
+    while argv and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argv[0]):
+        argv = argv[1:]
+    if not argv:
+        return None
+    prog, args = Path(argv[0]).name, argv[1:]
+    if prog == "git":
+        while args[:1] == ["-C"] and len(args) > 1 or (args and args[0].startswith("-c")):
+            args = args[2:] if args[0] in ("-C", "-c") else args[1:]
+        if args[:1] == ["show"]:
+            files = [a.split(":", 1)[1] for a in args[1:] if ":" in a and not a.startswith("-") and a.split(":", 1)[1]]
+            return ("read", files, None) if files else None
+        if args[:1] == ["grep"]:
+            return "search", [a for a in args[1:] if not a.startswith("-")][1:], None
+        return None
+    if prog in SEARCH_PROGRAMS:
+        rest = [a for a in args if not a.startswith("-")]
+        return "search", rest[1:], None
+    if prog not in READ_PROGRAMS:
+        return None
+    if prog == "sed" and any(a.startswith("-i") or a == "--in-place" for a in args):
+        return None
+    files: list[str] = []
+    skip_next, script_given = False, False
+    for i, a in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if a in ("-e", "-f") and prog in ("sed", "awk"):
+            skip_next, script_given = True, True
+            continue
+        if a == "-n" and prog in ("head", "tail"):
+            skip_next = True
+            continue
+        if a.startswith("-") or a.startswith("+"):
+            continue
+        files.append(a)
+    if prog in ("sed", "awk") and not script_given and files:
+        files = files[1:]
+    rng = _range(prog, args)
+    return "read", files, rng
+
+
+def _relative(path: str, cwd: str, roots: list[str]) -> str | None:
+    full = os.path.normpath(path if os.path.isabs(path) else os.path.join(cwd or "", path))
+    for r in sorted(roots, key=len, reverse=True):
+        if full == r or full.startswith(r.rstrip("/") + "/"):
+            return full[len(r.rstrip("/")) + 1:]
+    return None
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return ""
+
+
+def _line_count(text: str) -> int:
+    return len(text.splitlines())
+
+
+def calls_of(records: list[dict], roots: list[str], until: str, length) -> list[dict]:
+    """One session's file reads and searches, by the ruled rules: each
+    ``tool_use`` once (deduped by id), the blob records skipped, cut at the
+    pin's date by each record's own stamp. Each call carries its stamp, its
+    branch, and ``reads``: ``[(repo path, lines)]``. ``length(path)`` is a
+    file's length at the pin (a piped or multi-file whole read's range)."""
+    uses: dict[str, dict] = {}
+    results: dict[str, dict] = {}
+    for r in records:
+        if r.get("type") in SKIP_RECORDS or str(r.get("timestamp") or "")[:19] > until[:19]:
+            continue
+        content = (r.get("message") or {}).get("content") or []
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            if r.get("type") == "assistant" and c.get("type") == "tool_use" and c.get("id") not in uses:
+                uses[c["id"]] = {"id": c["id"], "name": c.get("name"), "input": c.get("input") or {},
+                                 "at": str(r.get("timestamp") or ""), "branch": r.get("gitBranch") or "",
+                                 "cwd": r.get("cwd") or ""}
+            elif r.get("type") == "user" and c.get("type") == "tool_result":
+                results.setdefault(c.get("tool_use_id"), {"text": _result_text(c.get("content")),
+                                                           "meta": r.get("toolUseResult")})
+    saved: dict[str, list[str]] = {}   # a saved output's path -> the files whose read it holds
+    calls = []
+    for u in sorted(uses.values(), key=lambda u: (u["at"], u["id"])):
+        res = results.get(u["id"]) or {"text": "", "meta": None}
+        meta = res["meta"] if isinstance(res["meta"], dict) else {}
+        call = {"id": u["id"], "at": u["at"], "branch": u["branch"], "reads": [], "searches": []}
+        if u["name"] == "Read":
+            fp = str(u["input"].get("file_path") or "")
+            n = int((meta.get("file") or {}).get("numLines") or _line_count(res["text"]))
+            if "/tool-results/" in fp:
+                call["reads"] = [(src, n) for src in saved.get(fp, [])]
+            else:
+                rel = _relative(fp, u["cwd"], roots)
+                if rel:
+                    call["reads"] = [(rel, n)]
+        elif u["name"] == "Grep":
+            rel = _relative(str(u["input"].get("path") or ""), u["cwd"], roots)
+            if rel:
+                call["searches"] = [(rel, _line_count(res["text"]))]
+        elif u["name"] == "Bash":
+            out = str(meta.get("stdout") if meta.get("stdout") is not None else res["text"])
+            hit = _SAVED.search(out)
+            parts = simple_commands(str(u["input"].get("command") or ""))
+            cwd = u["cwd"]
+            reads, searches = [], []
+            for argv, piped in parts:
+                if argv[:1] == ["cd"] and len(argv) > 1:
+                    cwd = os.path.normpath(os.path.join(cwd, argv[1]))
+                    continue
+                got = read_operands(argv)
+                if got is None:
+                    continue
+                kind, files, rng = got
+                rels = [r for r in (_relative(f, cwd, roots) for f in files) if r]
+                if kind == "search":
+                    searches += [(r, 0) for r in rels]
+                    continue
+                for r in rels:
+                    reads.append((r, rng, piped or len(files) > 1))
+            lone = len(reads) == 1 and len([p for p in parts if read_operands(p[0])]) == 1 and not reads[0][2]
+            stdout_lines = _line_count(out)
+            if hit:
+                saved[hit.group(1)] = [r for r, _rng, _p in reads]
+            if lone:
+                call["reads"] = [(reads[0][0], stdout_lines if not hit else _line_count(out.split("Preview", 1)[-1]))]
+            elif reads:
+                wanted = [(r, rng if rng is not None else (length(r) or stdout_lines)) for r, rng, _p in reads]
+                total = sum(n for _r, n in wanted)
+                scale = min(1.0, stdout_lines / total) if total else 0.0
+                call["reads"] = [(r, round(n * scale)) for r, n in wanted]
+            call["searches"] = [(r, stdout_lines) for r, _z in searches]
+        if call["reads"] or call["searches"]:
+            calls.append(call)
+    return calls
+
+
+def mann_whitney_greater(xs: list[float], ys: list[float]) -> float | None:
+    """One-sided p that ``xs`` sit above ``ys`` (normal approximation with the
+    tie correction and a continuity correction); ``None`` on an empty arm."""
+    n1, n2 = len(xs), len(ys)
+    if not n1 or not n2:
+        return None
+    pooled = sorted([(v, 0) for v in xs] + [(v, 1) for v in ys])
+    ranks, i, ties = [0.0] * len(pooled), 0, 0.0
+    while i < len(pooled):
+        j = i
+        while j + 1 < len(pooled) and pooled[j + 1][0] == pooled[i][0]:
+            j += 1
+        for k in range(i, j + 1):
+            ranks[k] = (i + j) / 2 + 1
+        t = j - i + 1
+        ties += t ** 3 - t
+        i = j + 1
+    u = sum(r for r, (_v, arm) in zip(ranks, pooled) if arm == 0) - n1 * (n1 + 1) / 2
+    n = n1 + n2
+    var = n1 * n2 / 12 * ((n + 1) - ties / (n * (n - 1))) if n > 1 else 0
+    if var <= 0:
+        return None
+    z = (u - n1 * n2 / 2 - 0.5) / var ** 0.5
+    return 1 - statistics.NormalDist().cdf(z)
+
+
+def item3_verdict(r: list[int], e: list[int]) -> dict:
+    """Task 0 Item 3 on the committed rule: real when (a) median R is at least
+    ``R_FLOOR_LINES``, (b) at least ``R_OVER_E`` times median E, and (c) the
+    one-sided Mann-Whitney p is under ``ALPHA``; not real only when one fails
+    and the read could have seen the effect (realised minimum detectable
+    ratio at most ``MDR_CEILING``, each arm at least ``MIN_ARM``); else
+    unmeasured."""
+    import math
+    nt, nc = len(r), len(e)
+    if nt < 2 or nc < 2:
+        return {"verdict": "unmeasured", "why": f"arms of {nt} and {nc} lanes", "n_t": nt, "n_c": nc}
+    lt, lc = [math.log1p(v) for v in r], [math.log1p(v) for v in e]
+    s = (((nt - 1) * statistics.variance(lt) + (nc - 1) * statistics.variance(lc)) / (nt + nc - 2)) ** 0.5
+    mdr = math.exp(MDD_Z * s * (1 / nt + 1 / nc) ** 0.5)
+    med_r, med_e = statistics.median(r), statistics.median(e)
+    p = mann_whitney_greater([float(v) for v in r], [float(v) for v in e])
+    a, b, c = med_r >= R_FLOOR_LINES, med_r >= R_OVER_E * med_e, p is not None and p < ALPHA
+    if a and b and c:
+        verdict = "real"
+    elif mdr <= MDR_CEILING and nt >= MIN_ARM and nc >= MIN_ARM:
+        verdict = "not real"
+    else:
+        verdict = "unmeasured"
+    return {"verdict": verdict, "n_t": nt, "n_c": nc, "median_r": med_r, "median_e": med_e,
+            "p_one_sided": None if p is None else round(p, 4), "a": a, "b": b, "c": c,
+            "pooled_sd_ln": round(s, 3), "realised_mdr": round(mdr, 2)}
+
+
+def _records(path: Path) -> tuple[int, list[dict]]:
+    """``(record count, the records a call can be read from)`` of one
+    transcript, streamed: a line holding neither a ``tool_use`` nor a
+    ``tool_result`` is counted and never parsed (the folders run to gigabytes
+    on an 8 GB box)."""
+    count, keep = 0, []
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            count += 1
+            if '"tool_use"' not in line and '"tool_result"' not in line:
+                continue
+            try:
+                keep.append(json.loads(line))
+            except ValueError:
+                continue
+    return count, keep
+
+
+def section_transcripts(ctx: dict) -> dict:
+    """Task 0 Item 3's oracle: the lines of the CLI modules the seats' own
+    reads returned, per merged lane of the seats on this box, against the
+    lines a control lane's reads returned on the files it edited. Every
+    population figure is in the output: the folders (matched case-
+    insensitively), each file's record count up to the pin, and the calls
+    no lane took. Subagents are counted apart, through their parent's
+    ``Agent`` call. Two of the four seats, said on the section."""
+    root, at = ctx["root"], ctx["pin"]["at"]
+    until = ctx["pin"]["window"]["until"]
+    base = Path(ctx.get("projects_dir") or Path.home() / ".claude" / "projects")
+    if not base.is_dir():
+        raise Unread(f"no transcript folder at {base}")
+    outs = ctx.get("checkouts") or checkouts(root)
+    by_lower = {p.name.lower(): p for p in base.iterdir() if p.is_dir()}
+    folders = [(c, by_lower.get(c["folder"].lower())) for c in outs if c["seat"] in BOX_SEATS]
+    missing = [c["folder"] for c, f in folders if f is None]
+    if missing:
+        raise Unread(f"transcript folder(s) missing: {missing}")
+    roots = [c["path"] for c in outs]
+    by_machine = mail_at(ctx)
+    seats = _mail().lane_seats(by_machine)
+    claims = claim_intervals(by_machine, until)
+    lanes = {pr["branch"]: pr for pr in _window_prs(ctx) if seats.get(pr["branch"]) in BOX_SEATS}
+    windows: dict[str, list[tuple[str, str, str]]] = {}
+    for c in claims:
+        if c["lane"] in lanes and c["machine"] == seats.get(c["lane"]):
+            windows.setdefault(c["machine"], []).append((c["start"], c["end"], c["lane"]))
+
+    @functools.lru_cache(maxsize=None)
+    def length(path: str) -> int:
+        return len((source_at(root, at, path) or "").splitlines())
+
+    def lane_of(seat: str, branch: str, when: str) -> str:
+        """The record's own branch where it names a unit; a branch naming any
+        other lane is no unit (never re-placed by the clock); only the default
+        branch or none falls back to the seat's claim windows."""
+        if branch in lanes and seats.get(branch) == seat:
+            return branch
+        if branch and branch not in ("main", "master", "HEAD"):
+            return "other branch"
+        held = {lane for s, e, lane in windows.get(seat, []) if s <= when <= e}
+        return held.pop() if len(held) == 1 else ("ambiguous" if held else "unattributed")
+
+    population, own, subs = [], [], []
+    for c, folder in folders:
+        agent_calls: dict[str, tuple[str, str]] = {}
+        files = sorted(folder.glob("*.jsonl"))
+        counts = {}
+        for f in files:
+            counts[f.name], recs = _records(f)
+            for call in calls_of(recs, roots, until, length):
+                call.update(seat=c["seat"], session=f.stem, lane=lane_of(c["seat"], call["branch"], call["at"]))
+                own.append(call)
+            for r in recs:
+                for item in ((r.get("message") or {}).get("content") or []) if r.get("type") == "assistant" else []:
+                    if isinstance(item, dict) and item.get("type") == "tool_use" and item.get("name") in ("Agent", "Task"):
+                        agent_calls[item["id"]] = (str(r.get("gitBranch") or ""), str(r.get("timestamp") or ""))
+            del recs
+        population.append({"seat": c["seat"], "folder": folder.name, "files": len(files),
+                           "records": sum(counts.values()), "per_file": counts})
+        for meta in sorted(folder.glob("*/subagents/*.meta.json")):
+            try:
+                parent = json.loads(meta.read_text(encoding="utf-8")).get("toolUseId")
+            except (OSError, ValueError):
+                continue
+            branch, when = agent_calls.get(parent, ("", ""))
+            if not when or when[:19] > until[:19]:
+                continue
+            log = meta.with_name(meta.name[: -len(".meta.json")] + ".jsonl")
+            _n, recs = _records(log) if log.is_file() else (0, [])
+            for call in calls_of(recs, roots, until, length):
+                call.update(seat=c["seat"], session=log.stem, lane=lane_of(c["seat"], branch, when))
+                subs.append(call)
+    modules = set(ctx["modules"])
+
+    def per_lane(calls: list[dict]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for call in calls:
+            row = out.setdefault(call["lane"], {"r": 0, "e": 0, "total": 0, "search_calls": 0, "calls": 0})
+            edited = set(lanes[call["lane"]]["files"]) if call["lane"] in lanes else set()
+            row["calls"] += 1
+            for path, n in call["reads"]:
+                row["total"] += n
+                row["r"] += n if path in modules else 0
+                row["e"] += n if path in edited else 0
+            row["search_calls"] += sum(1 for path, _n in call["searches"] if path in modules)
+        return out
+
+    mine, theirs = per_lane(own), per_lane(subs)
+    treatment, control = [], []
+    for lane, pr in sorted(lanes.items(), key=lambda kv: kv[1]["number"]):
+        row = mine.get(lane, {"r": 0, "e": 0, "total": 0, "search_calls": 0, "calls": 0})
+        if _touches_cli(pr["files"], modules):
+            treatment.append({"pr": pr["number"], "lane": lane, **row, "subagent_r": theirs.get(lane, {}).get("r", 0)})
+        else:
+            py = [p for p in pr["files"] if p.endswith(".py") and not p.startswith("tests/")]
+            sizes = [len((source_at(root, pr["merge_base"], p) or "").splitlines()) for p in py]
+            if all(n < CONTROL_MAX_LINES for n in sizes):
+                control.append({"pr": pr["number"], "lane": lane, **row, "has_py": bool(py)})
+    verdict = item3_verdict([t["r"] for t in treatment], [c["e"] for c in control])
+    unplaced = {k: v["calls"] for k, v in mine.items() if k in ("ambiguous", "unattributed")}
+    step = max(1, len(treatment) // 3)
+    sample = [t["pr"] for t in treatment[::step][:3]] + [c["pr"] for c in control[:: max(1, len(control) // 2)][:2]]
+    return {"seats": list(BOX_SEATS), "of_seats": 4, "population": population,
+            "cutoff": until, "lanes": len(lanes), "treatment": treatment, "control": control,
+            "item3": verdict,
+            "beside": {"r_share_of_total": [round(t["r"] / t["total"], 3) if t["total"] else None for t in treatment],
+                       "search_calls_on_cli": sum(t["search_calls"] for t in treatment),
+                       "subagent_r": sum(t["subagent_r"] for t in treatment),
+                       "control_with_py_only": item3_verdict([t["r"] for t in treatment],
+                                                             [c["e"] for c in control if c["has_py"]])},
+            "calls": {"own": len(own), "subagents": len(subs), "not_on_a_lane": unplaced},
+            "hand_sample": sample}
+
+
+#: A wave is paid on a component only when it falls by this share from its
+#: baseline at P (committed at step 1, 6a91bc51b).
+PAYOFF_FALL = 0.30
+
+
+def wave_payoff(lane_read_before: float, lane_read_after: float, primary_paid: bool) -> dict:
+    """Task 7's grade of a wave on the secondary. ``primary_paid`` is the
+    primary's own grade at the wave's pin (the post-wave R against the
+    baseline R under rule (a) to (c)). ``lane_read`` is never a payoff alone:
+    any decomposition lowers it by construction, an arbitrary equal split of a
+    function included, so its fall counts only beside a primary that paid."""
+    fell = bool(lane_read_before) and (lane_read_before - lane_read_after) / lane_read_before >= PAYOFF_FALL
+    return {"lane_read_fell": fell, "primary_paid": bool(primary_paid), "paid": bool(primary_paid),
+            "lane_read_counts": fell and bool(primary_paid)}
+
+
 SECTION_READERS = {
     "pin": section_pin,
     "functions": section_functions,
@@ -935,6 +1904,9 @@ SECTION_READERS = {
     "clusters": section_clusters,
     "importers": section_importers,
     "patches": section_patches,
+    "collision": section_collision,
+    "lane_read": section_lane_read,
+    "transcripts": section_transcripts,
 }
 
 
@@ -943,6 +1915,7 @@ def census(root: Path, at: str, sections: list[str], *, modules: tuple[str, ...]
     """Every named section read at ``at``. A section that raises ``Unread``,
     or has no reader yet, is ``None`` under its key and named under ``unread``."""
     ctx = {"root": root, "pin": resolve_pin(root, at), "modules": modules, **(extra or {})}
+    ctx["pin"].setdefault("mail_refs", (extra or {}).get("mail_refs") or mail_refs(root))
     result: dict = {"unread": {}}
     for name in sections:
         reader = SECTION_READERS.get(name)
@@ -970,13 +1943,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="a module that receives a definition moved out of cli.py (repeatable)")
     ap.add_argument("--root", default=str(ROOT), help="the repository (default: this checkout)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--prs-json", metavar="FILE",
+                    help="the pull requests' open times from FILE (a saved gh pr list --json "
+                         "number,createdAt,mergedAt) instead of gh")
+    ap.add_argument("--skip", action="append", default=[], metavar="COMPONENT",
+                    help="a collision component left unread by name (conflicts, pairs, claims, holds, catch_ups)")
     args = ap.parse_args(argv)
     unknown = [s for s in args.sections if s not in SECTIONS]
     if unknown:
         ap.error(f"unknown section(s) {unknown}; choose from {', '.join(SECTIONS)}")
     sections = list(args.sections) or list(SECTIONS)
     modules = (CLI, *[m for m in args.module if m != CLI])
-    result = census(Path(args.root).resolve(), args.at, sections, modules=modules)
+    extra = {"prs_json": args.prs_json, "skip_components": tuple(args.skip)}
+    result = census(Path(args.root).resolve(), args.at, sections, modules=modules, extra=extra)
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True, default=sorted))
         return 0
