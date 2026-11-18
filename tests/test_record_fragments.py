@@ -480,6 +480,9 @@ _ONE_DIRECTORY_SITES = {
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
     "scripts/symbol_census.py": ("a subset on purpose: the two dated records are records, while the "
                                  "ledger's row files are live text with a struck row's line a record"),
+    "scripts/cli_cost_census.py": ("a subset on purpose, read at a pinned commit from git's objects: the "
+                                   "ledger's rows and probes and the swept changelog entries, named as "
+                                   "they were at the pin, never by the live loader"),
     "tools/cc/hooks/_reinject.py": ("the ledger-parser hint's trigger and text, in a hook that loads "
                                     "no sibling beyond its own"),
 }
