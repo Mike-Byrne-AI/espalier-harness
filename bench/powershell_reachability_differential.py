@@ -724,7 +724,27 @@ def _delete_operands(cmd: str) -> list[str]:
     safe in direction, at the cost of a row the population pin would name.
     Find's `{}` (quoted in the rows, and the lexer strips the quotes) and an
     empty scriptblock bind no path, so that whole word is no operand.
+
+    Every word after ``--`` is an operand, a dash or not: PowerShell's
+    binder ends its parameters there (driven 2026-11-17 on 5.1:
+    ``Write-Output -- -x`` printed ``-x``).
     """
+    return _operand_walk(cmd, moved=False)
+
+
+def _moved_operands(cmd: str) -> list[str]:
+    """The operands condition (10) judges: `_delete_operands`', with a ``.``
+    for each delete or enumerator head that names none. Such a head reads
+    the working directory or takes its items from a pipe (``git ls-files |
+    Remove-Item``), so where the row stands is what it removes under, and a
+    move climbing out took it there (DEF-2099's failure-mode review: those
+    rows were judged by nothing)."""
+    return _operand_walk(cmd, moved=True)
+
+
+def _operand_walk(cmd: str, *, moved: bool) -> list[str]:
+    """The one walk both readers take (`_delete_operands`, `_moved_operands`),
+    so a head or a stop one learns, the other learns too."""
     cmd = _LINE_CONTINUATION_RE.sub(" ", cmd)
     lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
@@ -742,6 +762,8 @@ def _delete_operands(cmd: str) -> list[str]:
             i += 1
             continue
         i += 1
+        before = len(operands)
+        switches = True
         while i < len(tokens):
             tok = tokens[i]
             if tok in _PS_OPERAND_STOP:
@@ -752,17 +774,29 @@ def _delete_operands(cmd: str) -> list[str]:
                 i += 1
                 continue
             low = tok.lower()
-            if low in _ENUM_PATTERN_FLAGS:
+            if switches and tok == "--":
+                switches = False
+                i += 1
+                continue
+            if switches and low in _ENUM_PATTERN_FLAGS:
                 i += 2                    # the flag and its pattern value
                 continue
-            bound = _COLON_BOUND_RE.match(tok)
+            bound = _COLON_BOUND_RE.match(tok) if switches else None
             if bound:
                 if low.split(":", 1)[0] not in _ENUM_PATTERN_FLAGS:
                     operands.extend(part for part in bound.group(1).split(",") if part)
-            elif not tok.startswith("-"):
+            elif not (switches and tok.startswith("-") and tok != "-"):
                 operands.extend(part for part in tok.split(",") if part)
             i += 1
+        if moved and len(operands) == before:
+            operands.append(".")
     return operands
+
+
+#: The words that make a link (condition 10's `makes_links`): New-Item's
+#: link item types, .NET's Create*Link, mklink and ln, in any case.
+_LINK_MAKERS = re.compile(r"symboliclink|junction|hardlink"
+                          r"|(?<![\w.$-])(?:mklink|ln)(?=[\s;&|(){}'\"<>]|$)", re.IGNORECASE)
 
 
 #: How this leg's rows meet the one condition set
@@ -771,6 +805,11 @@ def _delete_operands(cmd: str) -> list[str]:
 POWERSHELL = _confinement.Shell(
     name="PowerShell",
     delete_operands=_delete_operands,
+    # the whole command's operands, and `.` for a head that names none:
+    # condition (10) costs no row of this leg's population read that way (the
+    # census of 2026-11-17: 0 of 1568 rows, both platforms, both nested
+    # interpreters; the 80 that move, move into the target)
+    moved_operands=_moved_operands,
     # ⚠ The rows deliberately use RELATIVE operands (the guard's operand parser
     # tiers on exactly that), so the Bash leg's spelling -- the victim's
     # absolute path -- would reject every row. What replaces it must not
@@ -804,6 +843,32 @@ POWERSHELL = _confinement.Shell(
     # wildcards enumerate a directory's children, never `..` (driven: `.?`
     # and `.*` resolved nothing in an empty directory, PowerShell 5.1)
     expansions=frozenset({"mapped-drive"}),
+    # condition (10): Set-Location and its aliases cd, sl and chdir,
+    # Push-Location and pushd, module-qualified too, in any case, a redirect
+    # glued to the head too; Pop-Location and popd return to a place the
+    # stack holds (`stack`), and the `cd..` and `cd\` functions to the parent
+    # and the drive root (`fixed`). Driven 2026-11-17, echo-only, on
+    # PowerShell 5.1: each moved where a bare name resolved (a bare `cd` did
+    # not). Read as unplaceable: a dot-sourced script, whose text is not in
+    # the row (`script`); a link the row makes is `makes_links`' below. Not
+    # read: a command word with an escape in it
+    # (`S`et-Location`), a computed invocation (`& ('Set-'+'Location')`,
+    # `.(...)`, Invoke-Expression of a string the row builds), an alias or a
+    # function the row defines, a script it calls by path or with `&`, and a
+    # launcher's own working directory (pwsh's -WorkingDirectory,
+    # Start-Process's), whose program is one quoted word to the operand
+    # reader.
+    directory_changes=re.compile(
+        r"(?P<stack>(?<![\w.$-])(?:pop-location|popd)(?=[\s;&|(){}'\"<>]|$))"
+        r"|(?P<fixed>(?<![\w.$-])(?:cd\.\.|cd\\)(?=[\s;&|(){}'\"<>]|$))"
+        r"|(?P<script>(?:^|(?<=[;&|({\n]))[ \t]*\.(?=[ \t]+[^\s{;&|)}]))"
+        r"|(?<![\w.$-])(?:set-location|sl|cd|chdir|push-location|pushd)(?=[\s;&|(){}'\"<>]|$)",
+        re.IGNORECASE),
+    move_switches=frozenset({"-path", "-literalpath", "-passthru"}),
+    # a row that makes a link has no delete vouched for, absolute or not:
+    # 0 of this leg's 1568 rows make one (in memory on Windows, both
+    # platforms' rows, 2026-11-18)
+    makes_links=lambda cmd: (m.group(0) if (m := _LINK_MAKERS.search(cmd)) else None),
 )
 
 

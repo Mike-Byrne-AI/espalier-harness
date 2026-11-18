@@ -387,6 +387,171 @@ class TestRefusesToExecuteAnythingUnconfined:
             prd.assert_safe_to_execute(
                 "Remove-Item -Recurse -Force ./victim victim/../../outside", victim, tmp_path)
 
+    # Condition (10), DEF-2099: each spelling of a move PowerShell 5.1 was
+    # driven through, echo-only, on 2026-11-17, every one moving where a bare
+    # name resolved; the move goes out of the sandbox, or to a place the set
+    # does not read. This leg's rows spell the victim relative.
+    @pytest.mark.parametrize("move", [
+        "Set-Location {out};", "cd {out};", "sl {out};", "chdir {out};", "Push-Location {out};",
+        "pushd {out};", "CD {out};", "Set-Location -Path {out};",
+        "Microsoft.PowerShell.Management{bs}Set-Location {out};", "Pop-Location;", "popd;",
+        "cd..;", "cd{bs};", "Set-Location;", "Set-Location ~;", "Set-Location (Get-Location);",
+        "Set-Location {out}/p*;", "cd sub{bs}..;",
+        "Set-Location > $null {out};", "cd>$null {out};", "Set-Location <# x #> ~\n",
+        "Set-Location # x\n", "Set-Location sub(x);", "Set-Location -Path:{out};",
+        "Set-Location -Pa {out};", ". ./moves.ps1;",
+        "Set-Location ./victim\nSet-Location ../..\n",
+    ], ids=["Set-Location", "cd", "sl", "chdir", "Push-Location", "pushd", "upper-case",
+            "path-parameter", "module-qualified", "Pop-Location", "popd", "parent-function",
+            "root-function", "bare", "home", "argument-expression", "wildcard",
+            "climbing-destination", "redirect-before-destination", "redirect-glued-to-head",
+            "block-comment-before-destination", "comment-after-bare", "glued-opener",
+            "colon-bound-path", "abbreviated-parameter", "dot-sourced-script",
+            "earlier-lines"])
+    def test_refuses_a_relative_operand_where_the_row_moves_away(self, prd, tmp_path, move):
+        """Condition (7) resolves a relative operand against the sandbox,
+        where the drive starts a row, and the provider resolves it where the
+        row moved to: ACCEPTED before (10) (DEF-2099; the Bash leg's probe).
+        The second block was accepted by (10)'s first reading of a move (both
+        reviews): a redirect or a comment where the destination would be, a
+        word glued to an opener, a script whose landing the text does not
+        hold."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        rendered = move.format(out=tmp_path.parent.as_posix(), bs=chr(92))
+        with pytest.raises(prd.UnsafeToExecute, match="in a row that moves its directory"):
+            prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim", victim, tmp_path)
+
+    @pytest.mark.parametrize("move", [
+        "Set-Location ./victim;", "Set-Location {sb}/sub;", "cd sub;", "Push-Location .{bs}sub;",
+        "Set-Location -LiteralPath sub;", "Set-Location -PassThru sub;",
+    ], ids=["into-the-target", "absolute", "relative", "backslash", "literal-path", "switch"])
+    def test_keeps_a_relative_operand_where_every_move_stays_inside(self, prd, tmp_path, move):
+        """The sweep rows move into the target before their delete: condition
+        (10) reads where a move goes, so a move that stays inside costs no
+        row (the census of 2026-11-17: 0 of this leg's rows on either
+        platform)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        rendered = move.format(sb=tmp_path.as_posix(), bs=chr(92))
+        prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim", victim, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "Set-Location ./victim; Set-Location ../..; Get-ChildItem | {ri} -Recurse",
+        "Set-Location ./victim/../..; git ls-files | {ri}",
+    ], ids=["listing-after-a-climb", "version-control-listing-after-a-climb"])
+    def test_refuses_a_delete_fed_from_a_listing_where_the_row_moved_out(self, prd, tmp_path, cmd):
+        """A delete or enumerator head that names no operand reads where the
+        row stands, so it is judged as `.`: before, a carrier that climbed out
+        first was judged by nothing (DEF-2099's failure-mode review)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match="in a row that moves its directory"):
+            prd.assert_safe_to_execute(cmd.format(ri=prd._RI), victim, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "Set-Location ./victim; git init -q; git add -A; git ls-files | {ri}",
+        "Set-Location ./victim; Get-ChildItem | {ri} -Recurse",
+    ], ids=["version-control-carrier", "listing-carrier"])
+    def test_keeps_a_delete_fed_from_a_listing_inside_the_target(self, prd, tmp_path, cmd):
+        """The calibration twins: the sweep rows move into the target and
+        delete what it lists."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        prd.assert_safe_to_execute(cmd.format(ri=prd._RI), victim, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "Set-Location ./victim; {ri} ./../../{parent}/{name}/x",
+        "Set-Location ./victim/..; {ri} ./victim", "Set-Location {sb}/victim/../..; {ri} ./victim",
+    ], ids=["operand-climbs-back-in", "destination-climbs", "absolute-destination-climbs-out"])
+    def test_refuses_a_climb_where_the_row_moves(self, prd, tmp_path, cmd):
+        """With a move, which directory the row stands in depends on the
+        order the moves run in and on what a subshell undoes; a step that only
+        descends lands inside from any of them, and a `..` step need not. The
+        first operand climbs out and back in by the sandbox's own names (led
+        by `./`, since (6) refuses a leading `..`): from the sandbox it lands
+        inside it, which is all (7) reads, and from the target it lands inside
+        the sandbox's parent, under a folder named after that parent."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        rendered = cmd.format(ri=prd._RI, sb=tmp_path.as_posix(),
+                              parent=tmp_path.resolve().parent.name, name=tmp_path.resolve().name)
+        with pytest.raises(prd.UnsafeToExecute, match="moves its directory"):
+            prd.assert_safe_to_execute(rendered, victim, tmp_path)
+
+    @pytest.mark.parametrize(("move", "says"), [
+        ("Set-Location ./vic*;", "a substitution or a wildcard"),
+        ("Set-Location 'vic'tim;", "quoted in part"), ("Set-Location HKCU:{bs};", "an expansion"),
+        ("Set-Location $d;", "an unbound variable"), ("Set-Location X:;", "names a drive"),
+        ("Set-Location X:sub;", "names a drive"),
+    ], ids=["wildcard", "quoted-in-part", "mapped-drive", "unbound-variable", "drive",
+            "drive-relative"])
+    def test_each_unread_destination_refuses_by_its_own_reason(self, prd, tmp_path, move, says):
+        """Each branch of `_move_destination` that cannot place a word, on a
+        destination that would lie inside the sandbox read as a plain name,
+        so the reason, not the landing, is what refuses (code review of
+        DEF-2099: five branches were unpinned, and the wildcard one was
+        driven only with a destination outside anyway). A drive is read with
+        neither host's rules: on POSIX `X:` and `X:sub` are plain names
+        inside the sandbox, and on Windows they move to drive X (failure-mode
+        review)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        with pytest.raises(prd.UnsafeToExecute, match=says):
+            prd.assert_safe_to_execute(
+                f"{move.format(bs=chr(92))} {prd._RI} ./victim", victim, tmp_path)
+
+    def test_an_absolute_drive_is_placed_only_by_a_windows_host(self, prd, tmp_path, monkeypatch):
+        """`C:/x` is absolute to Windows and a relative name to POSIX, where
+        it read as inside the sandbox; on a POSIX host it is refused, on a
+        Windows one resolved (the keep test's `absolute` case is one there).
+        The host is set by the module's `os`, the one name it reads."""
+        import types
+
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        monkeypatch.setattr(prd._confinement, "os", types.SimpleNamespace(name="posix"))
+        with pytest.raises(prd.UnsafeToExecute, match="names a drive"):
+            prd.assert_safe_to_execute(f"Set-Location C:/x; {prd._RI} ./victim", victim, tmp_path)
+
+    @pytest.mark.parametrize("link", [
+        "New-Item -ItemType SymbolicLink -Path ./victim/l -Target {out};",
+        "New-Item -ItemType Junction -Path ./victim/l -Target {out};",
+        "[IO.File]::CreateHardLink('./victim/l', '{out}/f');",
+        "cmd /c mklink /d victim{bs}l {out};", "ln -s {out} ./victim/l;",
+    ], ids=["symbolic-link", "junction", "dotnet-hard-link", "mklink", "ln"])
+    def test_refuses_every_delete_in_a_row_that_makes_a_link(self, prd, tmp_path, link):
+        """The link is made when the row runs, after (7) resolved the operand
+        on a disk that did not hold it, so a delete through it reads as inside
+        the sandbox (`makes_links`, the dispatcher's note on DEF-2099). On
+        this leg an operand spelled absolute is the escaping form's already
+        (5), so the relative one is driven: ACCEPTED at main before the lane,
+        and read by the lane's first reading as an unplaceable move, which
+        the one link reading of both legs replaces."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        rendered = link.format(out=tmp_path.parent.as_posix(), bs=chr(92))
+        with pytest.raises(prd.UnsafeToExecute, match="in a row that makes a link"):
+            prd.assert_safe_to_execute(f"{rendered} {prd._RI} ./victim/l/x", victim, tmp_path)
+
+    def test_a_word_after_a_double_dash_is_an_operand(self, prd, tmp_path):
+        """PowerShell's binder ends the parameters at `--` (driven on 5.1:
+        `Write-Output -- -x` printed `-x`), so the word after it binds as a
+        path; both readers skipped it as a switch (both reviews)."""
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        assert prd._delete_operands(f"{prd._RI} -- -x") == ["-x"]
+        with pytest.raises(prd.UnsafeToExecute, match="resolves outside sandbox"):
+            prd.assert_safe_to_execute(f"{prd._RI} ./victim -- -victim/../..", victim, tmp_path)
+
+    def test_the_moved_reading_judges_a_head_that_names_no_operand_as_here(self, prd):
+        """`_moved_operands`: the whole command's operands, and `.` for each
+        delete or enumerator head that names none; `_delete_operands` reads
+        those heads as naming nothing."""
+        assert prd._moved_operands(f"Get-ChildItem | {prd._RI} -Recurse") == [".", "."]
+        assert prd._moved_operands(f"{prd._RI} ./victim") == ["./victim"]
+        assert prd._delete_operands(f"Get-ChildItem | {prd._RI} -Recurse") == []
+
     @pytest.mark.parametrize("trailing", ["$(Resolve-Path ~)", '"$(Get-Location)/.."'],
                              ids=["subexpression", "quoted-subexpression"])
     def test_refuses_a_subexpression_behind_the_declared_operand(self, prd, tmp_path, trailing):

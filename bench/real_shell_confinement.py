@@ -27,9 +27,10 @@ Stdlib only, and it imports nothing from the hook tree or the rest of
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 #: Substituted with the throwaway victim before anything is executed.
@@ -92,6 +93,15 @@ EXPANSIONS: dict[str, re.Pattern[str]] = {
     "mapped-drive": re.compile(r"^[A-Za-z][\w./\\-]*::|^[A-Za-z][\w.-]+:"),
 }
 
+#: The steps condition (10) cannot place, by the group a profile's
+#: `directory_changes` names each with, and why each is not read. A step
+#: matched by one of these refuses every relative delete operand in the row.
+UNREAD_MOVES: dict[str, str] = {
+    "stack": "it returns to a place the row's directory stack holds",
+    "fixed": "it moves to a place its own name fixes (the parent, the drive root)",
+    "script": "it runs a script whose text this set does not read",
+}
+
 
 @dataclass(frozen=True)
 class Shell:
@@ -104,6 +114,13 @@ class Shell:
     #: own lexer and head roster. Raises :class:`UnsafeToExecute` on a string
     #: it cannot lex.
     delete_operands: Callable[[str], list[str]]
+    #: The delete operands condition (10) judges where the row moves its
+    #: directory. A reader's over-read that (7) passes, since it resolves
+    #: against the sandbox, reads as a relative name behind a move; a profile
+    #: whose reader does that names a narrower reading here and says why.
+    #: None from it: that reading cannot read this command, and (10) judges
+    #: `delete_operands`' instead.
+    moved_operands: Callable[[str], "list[str] | None"]
     #: The texts a row of this shell names the victim by, given its path.
     victim_spellings: Callable[[Path], tuple[str, ...]]
     #: True where a spelling must open a word (a blank before it): a relative
@@ -121,6 +138,26 @@ class Shell:
     #: The characters that open a substitution in an operand, or that the
     #: reader hands over for an argument the interpreter computes (condition 9).
     substitution_marks: str
+    #: Each step of the row that changes where a relative operand lands
+    #: (condition 10), over the whole string: a match is one move, and its
+    #: destination is the first word after the match that is not one of
+    #: `move_switches`. A match in which one of :data:`UNREAD_MOVES`' groups
+    #: took part is a step whose landing is not in its words (a pop, a script
+    #: the row runs), refused under that group's reason; a link the row makes
+    #: is `makes_links`', which refuses every delete operand, not only a
+    #: relative one.
+    #: None: this leg does not read its moves, so condition (10) refuses
+    #: every relative delete operand, move or no move; the profile says why.
+    directory_changes: "re.Pattern[str] | None"
+    #: The words after a move that are not its destination, lowercased: its
+    #: switches, and the parameter names a destination follows.
+    move_switches: frozenset[str]
+    #: The word of the row that makes a link, or None (condition 10): a link
+    #: is made when the row runs, after condition (7) resolved each operand
+    #: on a disk that does not hold it yet, so a delete through it, spelled
+    #: absolute or not, lands where no condition read. The profile says which
+    #: spellings it reads and which it does not.
+    makes_links: Callable[[str], "str | None"]
     #: Names the interpreter binds itself to no path (condition 8).
     self_bound: frozenset[str] = frozenset()
     #: The characters this shell separates path components with; condition
@@ -136,6 +173,126 @@ class Shell:
             raise ValueError(
                 f"{self.name}: no expansion form {sorted(unknown)} in the set, "
                 f"which holds {sorted(EXPANSIONS)}")
+        groups = set(self.directory_changes.groupindex) if self.directory_changes else set()
+        if groups - UNREAD_MOVES.keys():
+            raise ValueError(
+                f"{self.name}: no unread move {sorted(groups - UNREAD_MOVES.keys())} in the "
+                f"set, which holds {sorted(UNREAD_MOVES)}")
+
+
+def _path_text(word: str, shell: Shell, env: "dict[str, str] | None") -> str:
+    """`word` with each whole parameter expansion `env` binds put in, read
+    with `shell`'s separators. A name `env` does not bind is left as written,
+    so it reads as a relative name."""
+    def bound(match: "re.Match[str]") -> str:
+        return (env or {}).get(match.group(0).lstrip("$").strip("{}"), match.group(0))
+    text = _WHOLE_EXPANSION_RE.sub(bound, word)
+    for separator in shell.separators:
+        text = text.replace(separator, "/")
+    return text
+
+
+#: The pieces of the text after a move, in order: a run of blanks (a newline
+#: among them ends the command), a separator, a word (quoted pieces and plain
+#: characters glued together), or a quote no piece closes.
+_MOVE_PIECE_RE = re.compile(
+    r"""(?P<blank>\s+)|(?P<end>[;&|(){}])"""
+    r"""|(?P<word>(?:'[^']*'|"[^"]*"|[^\s;&|(){}'"])+)|(?P<open>['"])""")
+
+
+def _move_destination(
+    cmd: str, move: "re.Match[str]", shell: Shell, env: "dict[str, str] | None",
+    root: Path,
+) -> "Path | str":
+    """Where `move` takes the row, resolved, or why that cannot be read.
+
+    Read the way condition (7) reads an operand: one bare word, quoted whole
+    or not at all, bound expansions put in, the shell's separators read.
+    Anything else is a destination this set does not read: a step one of
+    :data:`UNREAD_MOVES` names; no word; a comment or a redirect where the
+    word would be (the destination is then a later word, or none); a word
+    glued to a character the piece reading ends at, which the shell may read
+    on with (a brace, an opener, a quote); an option it does not know, ``-``
+    or ``+N`` (a place the row's history or stack holds); a substitution, an
+    expansion or a wildcard (PowerShell's location cmdlets expand one); and a
+    drive, read with neither host's rules (below).
+
+    ⚠ WRITTEN FOR POWERSHELL'S GRAMMAR, the one leg that reads its moves (its
+    test file pins that the Bash profile reads none). A leg that starts
+    reading them brings what its shell adds here: bash's ``CDPATH`` search and
+    its backslash escape were dropped as dead code (code review of DEF-2099).
+    """
+    for group, reason in UNREAD_MOVES.items():
+        if move.groupdict().get(group) is not None:
+            return reason
+    found = None
+    for piece in _MOVE_PIECE_RE.finditer(cmd, move.end()):
+        if piece.lastgroup == "blank":
+            if "\n" in piece.group(0):
+                break
+            continue
+        if piece.lastgroup != "word":
+            break
+        if piece.group(0).lower() in shell.move_switches:
+            continue
+        found = piece
+        break
+    if found is None:
+        return "it names no destination"
+    word, after = found.group(0), cmd[found.end():found.end() + 1]
+    if word[0] == "#":
+        return f"{word!r} opens a comment, so the move names no destination on its line"
+    if set("<>") & set(word):
+        return f"{word!r} is or holds a redirect, not the destination"
+    if after and not after.isspace() and after not in ";&|)}":
+        return f"{word!r} is glued to {after!r}, which the shell may read as part of it"
+    if word[0] in "-+":
+        return f"{word!r} is an option or a place its history holds"
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"" and word[0] not in word[1:-1]:
+        word = word[1:-1]
+    if "'" in word or '"' in word:
+        return f"{word!r} is quoted in part"
+    stripped = _WHOLE_EXPANSION_RE.sub("", word)
+    if set(shell.substitution_marks) & set(stripped) or set("*?[") & set(stripped):
+        return f"{word!r} holds a substitution or a wildcard"
+    if any(EXPANSIONS[form].search(stripped) for form in shell.expansions):
+        return f"{word!r} holds an expansion"
+    if any(name not in (env or {}) for name in PARAMETER_EXPANSION_RE.findall(word)):
+        return f"{word!r} names an unbound variable"
+    text = _path_text(word, shell, env)
+    # `X:` moves to drive X's current directory and `X:/a` under its root:
+    # Windows' path rules place the second, and the host's would read both as
+    # a relative name on POSIX, inside the sandbox (failure-mode review of
+    # DEF-2099), so on a leg that reads a backslash as a separator a drive
+    # is placed only where it is absolute on a Windows host
+    drive = PureWindowsPath(text)
+    if "\\" in shell.separators and drive.drive and not (os.name == "nt" and drive.is_absolute()):
+        return f"{word!r} names a drive, which this host's path rules do not place"
+    try:
+        path = Path(text).expanduser()
+    except RuntimeError:
+        return f"{word!r} names an unknown home directory"
+    if not path.is_absolute():
+        if ".." in Path(text).parts:
+            return f"{word!r} climbs out of the directory it starts in"
+        path = root / path
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return f"{word!r} does not resolve"
+
+
+def _is_relative(operand: str, shell: Shell, env: "dict[str, str] | None", cmd: str) -> bool:
+    """Whether condition (10) reads `operand` as relative: not the
+    interpreter's own name, and not absolute once `env`'s names are put in.
+    A home this host cannot name is refused here, as (7) refuses it: an
+    operand only the moved reading sees reaches this first."""
+    if any(operand in (f"${n}", f"${{{n}}}") for n in shell.self_bound):
+        return False
+    try:
+        return not Path(_path_text(operand, shell, env)).expanduser().is_absolute()
+    except (OSError, RuntimeError):
+        raise UnsafeToExecute(f"unresolvable delete operand {operand!r}: {cmd!r}") from None
 
 
 def assert_confined(
@@ -143,7 +300,7 @@ def assert_confined(
     env: "dict[str, str] | None" = None,
 ) -> None:
     """Refuse to hand `cmd` to `shell`'s interpreter unless it is confined to
-    `sandbox`. Nine independent conditions, each fatal, each run for every
+    `sandbox`. Ten independent conditions, each fatal, each run for every
     shell:
 
     1. the placeholder is gone (substitution happened at all)
@@ -173,17 +330,28 @@ def assert_confined(
        has read its names: the shell's substitution marks, and the forms of
        `EXPANSIONS` it performs. Its value is unknown until the shell runs
        it, so the row is classifier-only (the incident's rules 1 and 2)
+    10. a relative delete operand (the profile's `moved_operands`) is
+       vouched for only where the leg reads its moves (the profile's
+       `directory_changes`, None on a leg that does not, which refuses
+       every one) and, where the row moves, every move's destination is
+       read, inside the sandbox and, spelled relative, climbs no `..`, and
+       the relative operand climbs none either -- (7) resolves against the
+       sandbox, where a row starts, and a real shell resolves against
+       wherever the row moved to (DEF-2099); and a row that makes a link (the
+       profile's `makes_links`) has no delete vouched for, since (7) resolved
+       its operands before the link existed
 
     (5) and (6) are the belt to (1)-(3)'s braces: they do not care HOW a
     catastrophic operand got there, only that one is present, and they read
     the raw string, so they also see a delete inside a quoted span the operand
     reader lexes as one word (PowerShell runs a `$(...)` inside double quotes).
 
-    ⚠ (7) to (9) read the delete as a bare shell word. Inside an interpreter
+    ⚠ (7) to (10) read the delete as a bare shell word. Inside an interpreter
     program (`python3 -c '... os.system("<delete>")'`) it is ONE quoted token
     to the lexer, so none of them sees an operand there: those rows are
     confined by (1)-(6) alone ((1)-(5) on a shell with no escaping form), which
-    is why a Bash body carries exactly one operand (its test file pins it).
+    is why a Bash body, read bare, names no operand but the victim (its test
+    file pins it, and that no wrapper names one of its own).
     What an operand reader keeps as a harmless name though the interpreter
     computes it is (7)'s separators and (9)'s marks and expansions since
     DEF-2100. A delete head the reader does not read as a literal word (the
@@ -238,8 +406,9 @@ def assert_confined(
     # their rows with cwd set to the sandbox, so a bare relative operand IS
     # confined; judging it against the caller's cwd would refuse well-formed
     # rows (a heredoc terminator lexes as a trailing bare word) while proving
-    # nothing. A row that moves first leaves that premise (a ledger row of its
-    # own); a glob it expands where it moved to is the lone re-ask's.
+    # nothing. A row that moves first leaves that premise: condition (10)
+    # reads where it moves, or refuses the operand on a leg that does not
+    # read its moves; a glob it expands there is the lone re-ask's.
     #
     # Each operand is then re-asked ALONE with this shell's own patterns, by
     # synthesising a one-operand delete around it: one definition of
@@ -318,3 +487,65 @@ def assert_confined(
                     f"an expansion ({form}, {hit.group(0)!r}) in delete operand {operand!r}: "
                     f"the {shell.name} interpreter makes it into other words or another path, "
                     f"unknown until it runs: {cmd!r}")
+    # (10) A relative operand in a row that moves its directory (DEF-2099).
+    # (7) resolves a relative operand against the sandbox, where both drives
+    # start a row, and a row that moves first leaves that premise: a real
+    # shell removes the name under the directory moved to. A leg that does
+    # not read its moves (`directory_changes` None) cannot tell a row that
+    # stays from one that moves, so it vouches for no relative operand. On a
+    # leg that reads them, where the row moves and a delete operand is
+    # relative, every move is read: its destination must be read, lie inside
+    # the sandbox and, spelled relative, climb no `..`; and the relative
+    # operand climbs no `..` either. Every directory the row can then stand
+    # in is the sandbox or a place under it, for every move the profile
+    # reads, whatever order the moves run in and whichever a subshell undoes,
+    # and an operand that only descends from one stays inside. A move
+    # anywhere in the row counts, one after the delete too: an over-read,
+    # priced by the population pins. The operands are the profile's
+    # `moved_operands` (a delete that names none, reading its names from a
+    # pipe, is judged by whether the listing that feeds it is relative; where
+    # an absolute listing starts is no condition's, `DEF-2101`), or the ones
+    # (7) read where that reading cannot read the command.
+    #
+    # A row that makes a link has no delete vouched for, absolute or relative
+    # (the profile's `makes_links`; the dispatcher's note on DEF-2099): (7)
+    # resolved each operand before the link existed, so `ln -s / <victim>/l`
+    # then a delete of `<victim>/l/` read as inside the sandbox.
+    reads_moves = shell.directory_changes is not None
+    moves = list(shell.directory_changes.finditer(cmd)) if shell.directory_changes else []
+    judged = shell.moved_operands(cmd)
+    deletes = operands if judged is None else judged
+    link = shell.makes_links(cmd) if deletes else None
+    if link is not None:
+        raise UnsafeToExecute(
+            f"delete operand {deletes[0]!r} in a row that makes a link ({link!r}): the link "
+            f"is made after this set resolved the operand, so where a delete through it "
+            f"lands is not read: {cmd!r}")
+    relative = [operand for operand in deletes if _is_relative(operand, shell, env, cmd)
+                ] if moves or not reads_moves else []
+    if relative and not reads_moves:
+        raise UnsafeToExecute(
+            f"relative delete operand {relative[0]!r}: the {shell.name} leg does not read "
+            f"where a row moves its directory, so it vouches for no relative operand; spell "
+            f"the operand, or the listing a delete reads its names from, from the "
+            f"placeholder, the victim's absolute path: {cmd!r}")
+    if moves and relative:
+        for move in moves:
+            where = _move_destination(cmd, move, shell, env, root)
+            if isinstance(where, str):
+                raise UnsafeToExecute(
+                    f"relative delete operand {relative[0]!r} in a row that moves its "
+                    f"directory ({move.group(0).strip()!r}) to a place this set does not "
+                    f"read: {where}: {cmd!r}")
+            try:
+                where.relative_to(root)
+            except ValueError:
+                raise UnsafeToExecute(
+                    f"relative delete operand {relative[0]!r} in a row that moves its "
+                    f"directory ({move.group(0).strip()!r}) to {where}, outside sandbox "
+                    f"{sandbox}: {cmd!r}") from None
+        for operand in relative:
+            if ".." in Path(_path_text(operand, shell, env)).parts:
+                raise UnsafeToExecute(
+                    f"relative delete operand {operand!r} climbs with `..` in a row that "
+                    f"moves its directory ({moves[0].group(0).strip()!r}): {cmd!r}")

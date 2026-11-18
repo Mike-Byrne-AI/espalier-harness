@@ -254,10 +254,21 @@ is left in one (a `$`; on Bash a backtick; on PowerShell an `@`, an argument
 expression, a scriptblock or an escape left in a quoted span) nor an expansion
 the shell performs (on Bash a brace expansion or a dot glob, which every bash
 before 5.2 matches against `..`; on PowerShell a drive its provider maps, such
-as `HKCU:`). The function's docstring is the whole list; what the operand
-readers cannot see yet is `DEF-2099` (a relative operand after a `cd` away)
-and `DEF-2100` (a delete head not read as a literal word: Bash reads `rm`
-alone, and a head spelled by path or computed is read on neither shell).
+as `HKCU:`). A relative delete operand is vouched for only where the row's
+moves are read (`DEF-2099`): the Bash leg reads none, since bash spells a move
+more ways than a list holds, so it refuses every relative operand (its rows
+spell the victim absolute, and no row carries one); on PowerShell, whose rows
+are relative by design, every move it reads (a `Set-Location`, its aliases and
+kin) must land under the throwaway, with no relative destination or operand
+climbing `..`, and a move it cannot place (a pop, a dot-sourced script, a link
+the row makes) refuses. A delete that names no operand, reading its names from
+a pipe, is judged by where they come from: the listing's start paths, or the
+directory the row stands in. The function's docstring is the whole list; what
+the operand readers cannot see yet is `DEF-2100` (a delete head not read as a
+literal word: Bash reads `rm` alone, and a head spelled by path or computed is
+read on neither shell) and `DEF-2101` (a reader that stops where the shell
+reads on: a redirect, a quoted separator, a `#` that shlex takes for a
+comment).
 Every refusal path is driven by
 `tests/test_reachability_differential.py` and
 `tests/test_powershell_reachability_differential.py`, in memory.

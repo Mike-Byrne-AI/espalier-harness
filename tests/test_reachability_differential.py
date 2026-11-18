@@ -15,7 +15,7 @@ see, because both produced a REASSURING result rather than an error:
   and returns 0, so a return-code check reports every deny as an allow.
 
 ⚠ If you are tempted to simplify a refusal into a comment, read
-`bench/real_shell_confinement.py::assert_confined`'s docstring first: its nine
+`bench/real_shell_confinement.py::assert_confined`'s docstring first: its ten
 conditions, the ones both legs run, are deliberately redundant.
 """
 
@@ -96,7 +96,7 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_accepts_a_properly_confined_command(self, rd, sandbox):
         victim = sandbox / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))}", victim, sandbox)
+        rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())}", victim, sandbox)
 
     def test_refuses_an_unsubstituted_placeholder(self, rd, sandbox):
         """The catastrophic case: substitution silently did not happen."""
@@ -115,7 +115,7 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_refuses_a_victim_outside_the_sandbox(self, rd, sandbox):
         outside = sandbox.parent / "not_in_sandbox"
         with pytest.raises(rd.UnsafeToExecute, match="outside sandbox"):
-            rd.assert_safe_to_execute(f"rm -rf {outside}", outside, sandbox)
+            rd.assert_safe_to_execute(f"rm -rf {outside.as_posix()}", outside, sandbox)
 
     @pytest.mark.parametrize("operand", ["/", "~", "*"])
     def test_refuses_a_catastrophic_operand_however_it_arrived(self, rd, sandbox,
@@ -128,7 +128,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         """
         victim = sandbox / "victim"
         victim.mkdir()
-        cmd = f"rm -rf {quoted(str(victim))}; rm -rf {operand}"
+        cmd = f"rm -rf {quoted(victim.as_posix())}; rm -rf {operand}"
         with pytest.raises(rd.UnsafeToExecute, match="catastrophic operand"):
             rd.assert_safe_to_execute(cmd, victim, sandbox)
 
@@ -146,7 +146,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         template = dict(rd.BODIES)[body]
         sandbox = tmp_path / f"axis{char}tmp" / "sb"
         victim = sandbox / "victim"
-        cmd = template.replace(rd._TARGET, f'"{victim}"')
+        cmd = template.replace(rd._TARGET, f'"{victim.as_posix()}"')
         with pytest.raises(rd.UnsafeToExecute, match="more than one shell word"):
             rd.assert_safe_to_execute(cmd, victim, sandbox,
                                       env={rd._ITEM: str(sandbox / "unbound-item")})
@@ -176,7 +176,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="operand"):
             rd.assert_safe_to_execute(
-                f"rm -rf {quoted(str(victim))} {trailing}", victim, sandbox)
+                f"rm -rf {quoted(victim.as_posix())} {trailing}", victim, sandbox)
 
     def test_an_inert_quoted_delete_is_still_accepted(self, rd, sandbox):
         """The calibration twin. A quoted delete lexes to ONE token, so it is not
@@ -188,7 +188,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"echo 'rm -rf /x' ; rm -rf {quoted(str(victim))}", victim, sandbox)
+            f"echo 'rm -rf /x' ; rm -rf {quoted(victim.as_posix())}", victim, sandbox)
 
     def test_a_heredoc_terminator_is_not_read_as_an_operand(self, rd, sandbox):
         """The other calibration twin: a bare trailing word resolves against the
@@ -196,7 +196,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"cat <<'EOF' | bash\nrm -rf {quoted(str(victim))}\nEOF", victim, sandbox)
+            f"cat <<'EOF' | bash\nrm -rf {quoted(victim.as_posix())}\nEOF", victim, sandbox)
 
     def test_every_body_template_carries_the_placeholder(self, rd):
         """A body without the placeholder would be executed verbatim; a body
@@ -230,7 +230,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         assert Path(env[rd._ITEM]).resolve().relative_to(sandbox.resolve())
         victim = sandbox / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f'rm -rf {quoted(str(victim))} "${rd._ITEM}"', victim, sandbox, env=env)
+        rd.assert_safe_to_execute(f'rm -rf {quoted(victim.as_posix())} "${rd._ITEM}"', victim, sandbox, env=env)
 
     def test_refuses_an_expansion_the_environment_does_not_bind(self, rd, sandbox):
         """The must-trip twin of condition (8): the binding absent, empty, or
@@ -240,19 +240,19 @@ class TestRefusesToExecuteAnythingUnconfined:
         missing."""
         victim = sandbox / "victim"
         victim.mkdir()
-        cmd = f'rm -rf {quoted(str(victim))} "${rd._ITEM}"'
+        cmd = f'rm -rf {quoted(victim.as_posix())} "${rd._ITEM}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(cmd, victim, sandbox)
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(cmd, victim, sandbox, env={})
         with pytest.raises(rd.UnsafeToExecute, match="bound outside sandbox"):
             rd.assert_safe_to_execute(cmd, victim, sandbox, env={rd._ITEM: "/"})
-        braced = f'rm -rf {quoted(str(victim))} "${{{rd._ITEM}}}"'
+        braced = f'rm -rf {quoted(victim.as_posix())} "${{{rd._ITEM}}}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(braced, victim, sandbox, env={})
         # the calibration twin: an expansion that is no delete's operand (the
         # git rows probe their environment so) is the shell's, not this check's
-        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(str(victim))}', victim, sandbox, env={})
+        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(victim.as_posix())}', victim, sandbox, env={})
 
     def test_a_command_it_cannot_lex_is_refused_not_waved_through(self, rd, sandbox):
         """The PowerShell leg's twin: unreadable is not the same as harmless.
@@ -261,7 +261,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="cannot lex"):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} 'unclosed", victim, sandbox)
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} 'unclosed", victim, sandbox)
 
     def test_an_operand_whose_landing_cannot_be_read_is_refused(self, rd, sandbox, monkeypatch):
         """A resolve that raises (a symlink loop, a name this host cannot
@@ -279,7 +279,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         monkeypatch.setattr(Path, "resolve", resolve)
         with pytest.raises(rd.UnsafeToExecute, match="unresolvable delete operand"):
             rd.assert_safe_to_execute(
-                f"rm -rf {quoted(str(victim))} unreadable-landing", victim, sandbox)
+                f"rm -rf {quoted(victim.as_posix())} unreadable-landing", victim, sandbox)
 
     def test_refuses_a_glob_behind_the_victim_after_a_cd_away(self, rd, sandbox):
         """The PowerShell leg's lone re-ask of each operand, this leg's too
@@ -292,7 +292,228 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="catastrophic delete operand"):
             rd.assert_safe_to_execute(
-                f"cd /tmp; rm -rf {quoted(str(victim))} *", victim, sandbox)
+                f"cd /tmp; rm -rf {quoted(victim.as_posix())} *", victim, sandbox)
+
+    # Condition (10), DEF-2099, on this leg: it does not read its moves, so it
+    # vouches for no relative delete operand (each prefix is formatted with the
+    # sandbox, so a literal brace is doubled). Each prefix is a move WSL's bash
+    # 5.2 made (driven echo-only on 2026-11-17, by the lane or by one of its
+    # two reviews), one that stays inside, or none at all: the relative
+    # operand is refused wherever the row stands. Every one moving away was
+    # ACCEPTED before (10), and the second block was accepted by the move
+    # roster (10) first had.
+    @pytest.mark.parametrize("move,close", [
+        ("cd /tmp;", ""), ("pushd /tmp >/dev/null;", ""), ("builtin cd /tmp;", ""),
+        ("command cd /tmp;", ""), ("\\cd /tmp;", ""), ("(cd /tmp;", ")"),
+        ("cd /tmp &&", ""), ("cd /tmp\n", ""), ("bash <<'EOF'\ncd /tmp\n", "\nEOF"),
+        ("cd ~;", ""), ("cd;", ""), ("cd -;", ""), ("popd;", ""), ("env -C /tmp", ""),
+        ("env --chdir=/tmp", ""), ("cd $(mktemp -d);", ""), ("cd sub; cd /tmp;", ""),
+        ("c''d /tmp;", ""), ("c\\d /tmp;", ""), ("cd${{IFS}}/tmp;", ""), ("env --ch=/tmp", ""),
+        ("cd 2>/dev/null /tmp;", ""), ("cd>/dev/null /tmp;", ""), ("cd # x\n", ""),
+        ("cd sub{{}}/../..;", ""), ("sudo -D /tmp", ""), ("CDPATH=/ cd usr;", ""),
+        ("cd sub;", ""), ("cd {sb}/sub;", ""), ("", ""),
+    ], ids=["cd", "pushd", "builtin", "command", "escaped", "subshell", "and-chained",
+            "earlier-line", "earlier-line-heredoc", "home", "bare", "previous", "popd",
+            "env-C", "env-chdir", "substitution", "second-move",
+            "quote-split-head", "escaped-head", "ifs-glued-head", "env-abbreviated",
+            "redirect-before-destination", "redirect-glued-to-head", "comment-after-bare",
+            "brace-in-destination", "sudo-D", "cdpath", "stays-inside", "absolute-inside",
+            "no-move"])
+    def test_refuses_a_relative_operand_wherever_the_row_stands(self, rd, sandbox, move, close):
+        """A relative operand is resolved against the sandbox, where both
+        drives start a row (condition 7), and a real shell resolves it where
+        the row moved to, a move this leg cannot read in every spelling bash
+        takes. Its rows spell the victim absolute, so refusing every relative
+        operand costs no row (the population pin below)."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="vouches for no relative operand"):
+            rd.assert_safe_to_execute(
+                f"{move.format(sb=sandbox.as_posix())} {rd._RM} {quoted(victim.as_posix())} victim{close}",
+                victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    @pytest.mark.parametrize("cmd", [
+        "cd /tmp; ls | xargs {rm}; {rm} {v}", "find . -print0 | xargs -0 {rm}; {rm} {v}",
+        "find -L -print0 | xargs -0 {rm}; {rm} {v}", "ls | xargs -I{{}} {rm} {{}}; {rm} {v}",
+        "find {v} -execdir {rm} victim \\;",
+        "cd /tmp && find {v} -maxdepth 0 && ls | xargs {rm}",
+        "find {v} -maxdepth 0; echo /etc/passwd | xargs {rm}",
+        "find {v}; cd /tmp; ls | xargs {rm}", "find {v} | ls | xargs {rm}",
+        "cd /tmp; echo 'a\nb'; ls | xargs {rm}; echo {v}",
+    ], ids=["listing-behind-a-move", "find-from-here", "find-names-no-start",
+            "xargs-replace", "execdir", "decoy-find-chained", "decoy-find-before-an-echo",
+            "decoy-find-before-a-move", "decoy-stage-between", "after-a-quote-across-lines"])
+    def test_refuses_a_delete_fed_from_a_listing_of_a_relative_place(self, rd, sandbox, cmd):
+        """A delete that names no operand reads its names from a pipe, and
+        they lie under the listing's start paths, `.` for a listing that names
+        none: judged by nothing before (DEF-2099's failure-mode review). The
+        decoys put a find of the victim in another command or behind a stage
+        that ignores it: ACCEPTED by the lane's second reading, which credited
+        any find on the line (the BLOCK of both second reviews), and so was a
+        listing on a line after a quote across lines."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        with pytest.raises(rd.UnsafeToExecute, match="vouches for no relative operand"):
+            rd.assert_safe_to_execute(cmd.format(rm=rd._RM, v=quoted(victim.as_posix())),
+                                      victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    @pytest.mark.parametrize("cmd", [
+        "cd /tmp; {rm} {v}", "cd /tmp; {rm} {v} 2>&1", "cd /tmp; find {v} -print0 | xargs -0 {rm}",
+        "find {v} -exec {rm} {{}} +", 'cd /tmp; for {item} in {v}; do {rm} "${item}"; done',
+        "{{ find {v} -print0 | xargs -0 {rm} ; }}", "cd /tmp; cp -r {v} {v}.copy; {rm} {v}",
+    ], ids=["absolute", "stderr-dup", "find-carrier", "find-exec", "bound-loop-name",
+            "find-carrier-in-a-group", "copy-that-makes-no-link"])
+    def test_keeps_an_absolute_operand_wherever_the_row_stands(self, rd, sandbox, cmd):
+        """The calibration twins: the `cd /tmp` rows spell the victim
+        absolute, a descriptor dup is no operand, a delete fed by a find
+        starting at the victim removes under it (behind a group's brace too:
+        the `brace_group` wrapper's carrier rows), the loop carriers' name is
+        the one the row's environment binds inside the sandbox (8), and a
+        copy that makes no link is no link."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        rd.assert_safe_to_execute(
+            cmd.format(rm=rd._RM, v=quoted(victim.as_posix()), item=rd._ITEM),
+            victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    @pytest.mark.parametrize("make", [
+        "ln -s / {v}/l;", "ln -sf /etc {v}/l &&", "l''n -s / {v}/l;", "\\ln -s / {v}/l;",
+        "/bin/ln -s / {v}/l;", "command ln -s / {v}/l;", "link /etc/passwd {v}/l;",
+        "cp -rs / {v}/l;", "cp --sym / {v}/l;", "cp -l /etc/passwd {v}/l;",
+    ], ids=["ln", "ln-chained", "quote-split-ln", "escaped-ln", "ln-by-path", "ln-behind-command",
+            "link", "cp-symbolic-cluster", "cp-abbreviated-long", "cp-hard-link"])
+    def test_refuses_every_delete_in_a_row_that_makes_a_link(self, rd, sandbox, make):
+        """The link is made when the row runs, after (7) resolved the operand
+        on a disk that did not hold it, so a delete through it, spelled
+        absolute, read as inside the sandbox: ACCEPTED before (the
+        dispatcher's note on DEF-2099; `makes_links`, 0 of the pin's rows)."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        v = quoted(victim.as_posix())
+        with pytest.raises(rd.UnsafeToExecute, match="in a row that makes a link"):
+            rd.assert_safe_to_execute(f"{make.format(v=v)} {rd._RM} {v}/l/",
+                                      victim, sandbox, env=rd._sandbox_env(sandbox))
+
+    def test_an_operand_only_the_moved_reading_sees_is_refused_when_its_home_cannot_be_read(
+            self, rd, sandbox, monkeypatch):
+        """Behind a redirect (7)'s reading stops and (10)'s reads on, so the
+        home this host cannot name reached (10) first and raised out of the
+        assertion, which `main` reads as a crash, not a refusal (both reviews).
+        Driven by making `Path.expanduser` raise for that one operand."""
+        victim = sandbox / "victim"
+        victim.mkdir()
+        real = Path.expanduser
+
+        def expanduser(self):
+            if str(self) == "~no-such-user-here":
+                raise RuntimeError("driven: could not determine home directory")
+            return real(self)
+
+        monkeypatch.setattr(Path, "expanduser", expanduser)
+        with pytest.raises(rd.UnsafeToExecute, match="unresolvable delete operand"):
+            rd.assert_safe_to_execute(
+                f"cd /tmp; {rd._RM} {quoted(victim.as_posix())} < f ~no-such-user-here",
+                victim, sandbox)
+
+    def test_the_rows_shell_inherits_no_bash_env_or_cdpath(self, rd, sandbox, monkeypatch):
+        """A non-interactive bash runs `BASH_ENV`'s file before the row, and
+        `CDPATH` sends a relative `cd` where no condition reads: the
+        operator's own values never reach a row (the dispatcher's ruling)."""
+        monkeypatch.setenv("BASH_ENV", str(sandbox / "env.sh"))
+        monkeypatch.setenv("CDPATH", "/")
+        env = rd._sandbox_env(sandbox)
+        assert "BASH_ENV" not in env and "CDPATH" not in env
+
+    def test_bash_run_renders_through_the_one_render_the_pin_reads(self, rd, monkeypatch):
+        """The pin below renders each row through `_render`, and so does
+        `bash_run`: a second rendering could spell the victim differently
+        from the one the pin vouched for (a native Windows spelling loses its
+        backslashes to bash's quote removal). Nothing runs: the render, the
+        assertion and the shell are stubbed."""
+        from pathlib import PureWindowsPath
+
+        assert rd._render(f"x {rd._TARGET}", PureWindowsPath("C:\\a\\victim")) == "x C:/a/victim"
+        seen = []
+        monkeypatch.setattr(rd, "_render", lambda template, victim: "rendered-by-the-one-render")
+        monkeypatch.setattr(rd, "assert_safe_to_execute", lambda cmd, *a, **kw: seen.append(cmd))
+        monkeypatch.setattr(rd, "run_bash_group",
+                            lambda argv, **kw: (seen.append(argv[-1]), (0, False))[1])
+        rd.bash_run(f"true; {rd._RM} {rd._TARGET}")
+        assert seen == ["rendered-by-the-one-render"] * 2, seen
+
+    @pytest.mark.parametrize("tail,expected", [
+        ("{rm} a\nEOF", ["a"]), ("{rm} 2>&1 a", ["a"]), ("{rm} a < f b", ["a", "b"]),
+        ("{rm} a >& f b", ["a", "b"]), ("{rm} a \\\n b", ["a", "b"]),
+        ("cat <<'EOF'\n{rm} a\nEOF", ["a"]), ("echo 'x\n{rm} a' b", []),
+        ("echo 'x\ny'; {rm} a < f b\nEOF", ["a", "b"]),
+        ("echo 'x\ny'; ls | xargs {rm}; echo /a", ["."]),
+        ("{rm} -- -a", ["-a"]), ("{rm} - a", ["-", "a"]), ("ls | xargs {rm}", ["."]),
+        ("find /a | xargs {rm}", ["/a"]), ("find | xargs {rm}", ["."]),
+        ("find /a -name x; find | xargs {rm}", ["."]),
+        ("find -L /a /b -name x -exec {rm} {{}} +", ["/a", "/b"]),
+        ("find /a -maxdepth 0; cd /b; ls | xargs {rm}", ["."]),
+        ("find /a | ls | xargs {rm}", ["."]), ("find /a | sort | xargs {rm}", ["."]),
+        ("{{ find /a -print0 | xargs -0 {rm} ; }}", ["/a"]), ("! find /a | xargs {rm}", ["/a"]),
+        ("ls | find /a -exec {rm} {{}} +", ["/a"]),
+    ], ids=["terminator-line", "descriptor-dup", "input-redirect", "dup-redirect",
+            "continuation", "heredoc-body", "quoted-across-lines",
+            "after-a-quote-across-lines", "listing-after-a-quote-across-lines",
+            "end-of-switches", "lone-dash", "piped-from-a-listing", "piped-from-find",
+            "find-names-no-start", "a-find-in-another-command", "find-exec-placeholder",
+            "decoy-find-before-a-move", "decoy-stage-between", "a-stage-between",
+            "find-in-a-group", "negated-find", "find-exec-after-a-pipe"])
+    def test_the_moved_reading_holds_each_deletes_own_words(self, rd, tail, expected):
+        """`_moved_operands`, the Bash profile's reading for condition (10):
+        `_delete_operands` reads on past a newline and through a redirect's
+        pieces, which (7) passes against the sandbox and (10) would refuse as
+        relative names (59 calibrated rows on WSL's bash). bash hands the
+        delete the words after a redirect too (driven: `printf` behind `< f`
+        and `2>&1` printed both words), and a word after `--` even with a dash.
+        A line that does not lex alone is read with the lines up to where its
+        quote closes, as bash reads them; before, the whole command fell back
+        to (7)'s reading (both second reviews).
+
+        A delete fed from a pipe is judged by the find heading its own stage
+        or the stage piped straight into it, `.` otherwise: before, any find
+        on its line was credited, so a find naming the victim vouched for a
+        listing of wherever the row moved to (the BLOCK of both second
+        reviews), or of a stage that ignores its input (`ls`)."""
+        assert rd._moved_operands(tail.format(rm=rd._RM)) == expected
+
+    def test_both_readers_end_the_switches_at_a_double_dash(self, rd):
+        """One walk serves both readers, so a word after `--` is an operand
+        to (7) as well: before, both skipped it as a switch, and `rm -- -x`
+        removes `-x` (both reviews)."""
+        assert rd._delete_operands(f"{rd._RM} -- -x") == ["-x"]
+
+    def test_every_body_read_bare_names_no_operand_but_the_victim(self, rd, sandbox):
+        """A body inside a quoting wrapper is one word to the readers, so an
+        operand it carries is invisible there (code review): read bare, every
+        body names the victim or the loop carriers' bound name and nothing
+        else. The raw text says the same where a reader cannot look: no
+        wrapper holds a delete of its own (0 of 156; reading the wrapper
+        around `true` was blind inside its quotes, the failure-mode review),
+        and every delete in a body names the placeholder or the bound name
+        first, past its switches and a descriptor dup, or names none and is
+        fed by a find of the placeholder (the three carrier and dup bodies)."""
+        fix = "spell the operand, or the listing a delete reads its names from, from the placeholder"
+        victim = sandbox / "victim"
+        allowed = {victim.as_posix(), f"${rd._ITEM}", f"${{{rd._ITEM}}}"}
+        for name, template in rd.BODIES:
+            rendered = rd._render(template, victim)
+            moved = rd._moved_operands(rendered)
+            read = moved if moved is not None else rd._delete_operands(rendered)
+            assert set(read) <= allowed, (name, read, fix)
+        verb = re.compile(r"(?<![\w/.-])rm(?![\w-])")
+        first = re.compile(r"(?<![\w/.-])rm(?![\w-])(?:\s+-\S+)*(?:\s+\d*>&\d+)?(?:\s+(\S+))?")
+        for name, template in rd.BODIES:
+            for delete in first.finditer(template):
+                word = (delete.group(1) or "").lstrip("'\"")
+                named = word.startswith((rd._TARGET, f"${rd._ITEM}", f"${{{rd._ITEM}}}"))
+                fed = delete.group(1) is None and f"find {rd._TARGET}" in template
+                assert named or fed, (name, delete.group(0), fix)
+        for name, template in rd.WRAPPERS:
+            assert not verb.search(template % ""), (name, fix)
 
     @pytest.mark.parametrize("trailing", [
         '"$(pwd)/.."', "$(echo ~)", '"`pwd`/.."', f'"${{{_ITEM_NAME}:+/}}"', '"$1"',
@@ -309,7 +530,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {trailing}",
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} {trailing}",
                                       victim, sandbox, env=rd._sandbox_env(sandbox))
 
     def test_a_whole_bound_name_is_still_no_substitution(self, rd, sandbox):
@@ -319,7 +540,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         env = rd._sandbox_env(sandbox)
         for spelling in (f'"${rd._ITEM}"', f'"${{{rd._ITEM}}}"'):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {spelling}",
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} {spelling}",
                                       victim, sandbox, env=env)
 
     @pytest.mark.parametrize("trailing", ["{~,x}", "{x,/}", "{a..b}", "{{x},/}", "{{},~}",
@@ -337,7 +558,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="an expansion"):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} {trailing}",
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} {trailing}",
                                       victim, sandbox, env=rd._sandbox_env(sandbox))
 
     @pytest.mark.parametrize("wrapper", ['eval "rm -rf ~/x; %s"', "bash -c 'rm -rf /; %s'",
@@ -353,7 +574,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="catastrophic operand"):
-            rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(str(victim))}",
+            rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(victim.as_posix())}",
                                       victim, sandbox, env=rd._sandbox_env(sandbox))
 
     def test_finds_braces_and_a_glob_inside_the_victim_are_no_expansion(self, rd, sandbox):
@@ -362,8 +583,8 @@ class TestRefusesToExecuteAnythingUnconfined:
         dot, cannot match `..`. Both stay accepted."""
         victim = sandbox / "victim"
         victim.mkdir()
-        for cmd in (f"find {quoted(str(victim))} -exec rm -rf {{}} +",
-                    f"rm -rf {quoted(str(victim))}/a.b*"):
+        for cmd in (f"find {quoted(victim.as_posix())} -exec rm -rf {{}} +",
+                    f"rm -rf {quoted(victim.as_posix())}/a.b*"):
             rd.assert_safe_to_execute(cmd, victim, sandbox, env=rd._sandbox_env(sandbox))
 
     def test_a_backtick_that_ends_the_string_closes_and_is_no_operand(self, rd, sandbox):
@@ -374,12 +595,12 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = sandbox / "victim"
         victim.mkdir()
         wrapper = dict(rd.WRAPPERS)["backtick_heredoc_cut_by_separator_evaled"]
-        rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(str(victim))}", victim, sandbox)
+        rd.assert_safe_to_execute(wrapper % f"rm -rf {quoted(victim.as_posix())}", victim, sandbox)
         with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} ` pwd `", victim, sandbox)
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} ` pwd `", victim, sandbox)
         # glued, the closer ends the string inside a word the reader keeps
         with pytest.raises(rd.UnsafeToExecute, match="a substitution"):
-            rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))} `pwd`", victim, sandbox)
+            rd.assert_safe_to_execute(f"rm -rf {quoted(victim.as_posix())} `pwd`", victim, sandbox)
 
     def test_an_operand_whose_home_cannot_be_read_is_refused(self, rd, sandbox, monkeypatch):
         """`~user` for a user this host cannot name raises in `expanduser`
@@ -399,7 +620,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         monkeypatch.setattr(Path, "expanduser", expanduser)
         with pytest.raises(rd.UnsafeToExecute, match="unresolvable delete operand"):
             rd.assert_safe_to_execute(
-                f"rm -rf {quoted(str(victim))} ~no-such-user-here", victim, sandbox)
+                f"rm -rf {quoted(victim.as_posix())} ~no-such-user-here", victim, sandbox)
 
     def test_a_refused_row_is_no_verdict_never_a_fail_open(self, rd, monkeypatch, capsys):
         """A row the set refuses stops the run before bash sees it: exit 3,
@@ -429,8 +650,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         rows += metamorphic
         for name, template in rows:
             try:
-                rd.assert_safe_to_execute(
-                    template.replace(rd._TARGET, str(victim)), victim, sandbox, env=env)
+                rd.assert_safe_to_execute(rd._render(template, victim), victim, sandbox, env=env)
             except rd.UnsafeToExecute as exc:
                 pytest.fail(f"{name}: {exc}")
 
@@ -509,6 +729,75 @@ class TestRefusesToExecuteAnythingUnconfined:
         assert count() == before, "the row committed into the repository above the sandbox"
 
 
+#: The profile fields that hold a leg's own readers.
+_READER_FIELDS = ("delete_operands", "moved_operands", "makes_links")
+
+
+def _load_powershell_leg():
+    """The PowerShell leg, under a name of its own."""
+    spec = importlib.util.spec_from_file_location(
+        "_prd_for_the_bash_tests", REPO_ROOT / "bench" / "powershell_reachability_differential.py")
+    prd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prd)
+    return prd
+
+
+def _one_set_violations(source: str) -> list[str]:
+    """What in a leg's `source` breaks the one-set contract
+    (`TestOneConditionSetServesBothLegs`): its assertion is one call to the
+    set, and the only functions that read operands or lex are the readers its
+    profile names and the helpers they call."""
+    import ast
+
+    tree = ast.parse(source)
+    problems = []
+    [fn] = [n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "assert_safe_to_execute"]
+    body = [s for s in fn.body
+            if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+    if not (len(body) == 1 and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call)
+            and ast.unparse(body[0].value.func) == "_confinement.assert_confined"):
+        problems.append(f"the assertion is not one call to the set: {ast.unparse(fn)}")
+    functions = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    modules = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+               for a in n.names if a.name == "shlex"}
+    imported = {a.asname or a.name for n in ast.walk(tree)
+                if isinstance(n, ast.ImportFrom) and n.module == "shlex" for a in n.names}
+
+    def calls(node):
+        return [c.func for c in ast.walk(node) if isinstance(c, ast.Call)]
+
+    def lexes(node):
+        return any((isinstance(f, ast.Name) and f.id in imported)
+                   or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                       and f.value.id in modules) for f in calls(node))
+
+    [profile] = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and ast.unparse(n.func) == "_confinement.Shell"]
+    named = {k.arg: k.value for k in profile.keywords if k.arg in _READER_FIELDS}
+    readers = {v.id for v in named.values() if isinstance(v, ast.Name)}
+    if not (all(isinstance(named.get(f), ast.Name) for f in _READER_FIELDS[:2])
+            and readers <= functions.keys()):
+        problems.append(f"the profile's readers are not functions of the leg: {sorted(named)}")
+    allowed = readers & functions.keys()
+    frontier = list(allowed)
+    while frontier:
+        for name in {ast.unparse(f) for f in calls(functions[frontier.pop()])} & (
+                functions.keys() - allowed):
+            allowed.add(name)
+            frontier.append(name)
+    outside = sorted(
+        name for name, node in functions.items() if name not in allowed and any(
+            ast.unparse(f) in allowed or (isinstance(f, ast.Attribute) and f.attr in _READER_FIELDS)
+            for f in calls(node)))
+    if outside:
+        problems.append(f"{outside} read the delete operands outside the one set")
+    lexers = sorted(name for name, node in functions.items() if lexes(node) and name not in allowed)
+    if lexers:
+        problems.append(f"{lexers} lex outside the profile's readers")
+    return problems
+
+
 class TestOneConditionSetServesBothLegs:
     """DEF-5085: the confinement conditions were two hand-written copies, one
     per shell, so a condition added on one leg's drive was not on the other's
@@ -516,29 +805,52 @@ class TestOneConditionSetServesBothLegs:
     copy refused its twin). They are one set in
     `bench/real_shell_confinement.py`; each leg declares a profile."""
 
-    LEGS = ("bench/reachability_differential.py",
-            "bench/powershell_reachability_differential.py")
+    #: Every bench file that builds a profile, read from the tree, so a third
+    #: leg is held to the contract below without being listed here
+    #: (DEF-2099's failure-mode review).
+    LEGS = tuple(sorted(
+        path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "bench").glob("*.py")
+        if "_confinement.Shell(" in path.read_text(encoding="utf-8")))
+
+    def test_the_legs_are_read_from_the_tree(self):
+        assert set(self.LEGS) >= {"bench/reachability_differential.py",
+                                  "bench/powershell_reachability_differential.py"}, self.LEGS
 
     @pytest.mark.parametrize("leg", LEGS)
     def test_each_legs_assertion_only_hands_its_profile_to_the_one_set(self, leg):
         """A leg whose assertion grows a condition of its own is a second
-        copy again, so its body is one call and no function in the leg reads
-        the operands itself."""
-        import ast
+        copy again, so its body is one call, and the only functions in the leg
+        that read operands are the readers its profile names and the helpers
+        they call: none other calls one of them, by name or through a
+        profile's attribute, and none other lexes, by the module or by a name
+        imported from it, so a planted third reader reds here whether or not
+        it names a reader (DEF-2099's failure-mode reviews)."""
+        assert _one_set_violations((REPO_ROOT / leg).read_text(encoding="utf-8")) == [], leg
 
-        tree = ast.parse((REPO_ROOT / leg).read_text(encoding="utf-8"))
-        [fn] = [n for n in tree.body
-                if isinstance(n, ast.FunctionDef) and n.name == "assert_safe_to_execute"]
-        body = [s for s in fn.body
-                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
-        assert len(body) == 1 and isinstance(body[0], ast.Expr), ast.unparse(fn)
-        assert isinstance(body[0].value, ast.Call), ast.unparse(fn)
-        assert ast.unparse(body[0].value.func) == "_confinement.assert_confined", ast.unparse(fn)
-        readers = sorted(
-            n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
-            and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
-                    and c.func.id == "_delete_operands" for c in ast.walk(n)))
-        assert readers == [], f"{leg}: {readers} read the delete operands outside the one set"
+    @pytest.mark.parametrize("planted", [
+        "def planted(cmd):\n    return BASH.delete_operands(cmd)\n",
+        "def planted(cmd):\n    return POWERSHELL.moved_operands(cmd)\n",
+        "from shlex import split\n\ndef planted(cmd):\n    return split(cmd)\n",
+        "import shlex as lexing\n\ndef planted(cmd):\n    return lexing.split(cmd)\n",
+        "def planted(cmd):\n    return shlex.split(cmd)\n",
+    ], ids=["through-the-profile", "the-moved-reader-through-the-profile",
+            "an-imported-lexer", "an-aliased-module", "the-module"])
+    def test_a_third_reader_planted_in_a_leg_is_named(self, planted):
+        """The contract's own red: the first three shapes passed the check
+        before (the failure-mode review read it so), and each is named now."""
+        source = (REPO_ROOT / self.LEGS[0]).read_text(encoding="utf-8")
+        assert _one_set_violations(f"{source}\n\n{planted}") != [], planted
+
+    def test_only_the_powershell_leg_reads_its_moves(self, rd):
+        """`_move_destination` is written for PowerShell's grammar: bash's
+        `CDPATH` search and its escape were dropped from it as dead code, so a
+        Bash profile that starts reading moves reds here and brings them back
+        (DEF-2099's code review). Each group a profile names is one of the
+        set's unread moves, and each unread move is one a profile names."""
+        prd = _load_powershell_leg()
+        assert rd.BASH.directory_changes is None
+        assert prd.POWERSHELL.directory_changes is not None
+        assert set(prd.POWERSHELL.directory_changes.groupindex) == rd._confinement.UNREAD_MOVES.keys()
 
     def test_every_expansion_form_is_one_a_leg_performs(self, rd):
         """A form added to the set's table that no profile names is a
@@ -546,12 +858,8 @@ class TestOneConditionSetServesBothLegs:
         leg's profile passes its separators and expansions by name, so a
         third leg copying a profile cannot take the defaults in silence."""
         import ast
-        import importlib.util
 
-        spec = importlib.util.spec_from_file_location(
-            "_prd_for_the_bash_tests", REPO_ROOT / "bench" / "powershell_reachability_differential.py")
-        prd = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(prd)
+        prd = _load_powershell_leg()
         assert rd._confinement.EXPANSIONS.keys() == rd.BASH.expansions | prd.POWERSHELL.expansions
         for leg in self.LEGS:
             tree = ast.parse((REPO_ROOT / leg).read_text(encoding="utf-8"))
@@ -569,11 +877,30 @@ class TestOneConditionSetServesBothLegs:
         with pytest.raises(ValueError, match="no expansion form"):
             rd._confinement.Shell(
                 name="misspelt", delete_operands=shell.delete_operands,
+                moved_operands=shell.moved_operands,
                 victim_spellings=shell.victim_spellings,
                 spelling_opens_a_word=shell.spelling_opens_a_word,
                 catastrophic=shell.catastrophic, escaping=shell.escaping,
                 lone_delete=shell.lone_delete, substitution_marks=shell.substitution_marks,
-                expansions=frozenset({"brace-expansion"}))
+                directory_changes=shell.directory_changes, move_switches=shell.move_switches,
+                makes_links=shell.makes_links, expansions=frozenset({"brace-expansion"}))
+
+    def test_a_profile_naming_an_unread_move_the_set_lacks_is_refused(self, rd):
+        """The same for condition (10)'s unplaceable steps: a group the set
+        has no reason for would match and refuse under no message, or, read
+        as a move to place, be placed (DEF-2099)."""
+        shell = rd.BASH
+        with pytest.raises(ValueError, match="no unread move"):
+            rd._confinement.Shell(
+                name="misspelt", delete_operands=shell.delete_operands,
+                moved_operands=shell.moved_operands,
+                victim_spellings=shell.victim_spellings,
+                spelling_opens_a_word=shell.spelling_opens_a_word,
+                catastrophic=shell.catastrophic, escaping=shell.escaping,
+                lone_delete=shell.lone_delete, substitution_marks=shell.substitution_marks,
+                directory_changes=re.compile(r"(?P<pop>popd)|cd"), move_switches=frozenset(),
+                makes_links=shell.makes_links, separators=shell.separators,
+                expansions=shell.expansions)
 
 
 # The guard below mirrors the product stand-down in
