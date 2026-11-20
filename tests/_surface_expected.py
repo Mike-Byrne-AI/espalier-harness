@@ -217,6 +217,11 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # gridlock: and stopped: markers a text opens with, the rulings named by id), read off the
     # mail refs and gh; the closing rules come from tools/cc/mail.py's fold, by path.
     "seat_day_census.py",
+    # 2026-11-17 (TP-708a): what espalier/cli.py costs a maintainer, read at one
+    # pinned commit -- the concern map and layers, the move cost, the collision and
+    # reading components the cli.py audit's Gate A rules on. Loads tools/cc/_symbols.py,
+    # tools/cc/mail.py and the merge-cost and lane-overlap censuses by path.
+    "cli_cost_census.py",
     "proof_tier.py",
     # 2026-10-26: where a session's tokens go by context size, from its
     # transcripts; the threshold handoff's pre-registered instrument.

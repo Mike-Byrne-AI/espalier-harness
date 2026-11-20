@@ -93,12 +93,14 @@ def _run(tree: Path, script: str, payload: dict, *, hooks_dir: Path = HOOKS_DIR,
 
 
 def _post(tree: Path, tool: str, tool_input: dict, sid: str = "s-1", *,
-          duration_ms: int | None = None, **kw) -> dict:
+          duration_ms: int | None = None, agent_id: str | None = None, **kw) -> dict:
     """post_write_check on one payload; its JSON object ({} for a quiet run)."""
     payload = {"hook_event_name": "PostToolUse", "tool_name": tool, "tool_input": tool_input,
                "session_id": sid, "cwd": str(tree)}
     if duration_ms is not None:
         payload["duration_ms"] = duration_ms
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
     result = _run(tree, "post_write_check.py", payload, **kw)
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr, result.stderr
@@ -2935,17 +2937,62 @@ class TestTheOperatorLine:
         assert capsys.readouterr().out.strip() == '{"systemMessage": "for the operator"}'
 
 
-def test_a_deploy_without_the_helper_says_so_once_and_keeps_the_hook(tmp_path: Path) -> None:
-    """A post_write_check beside a tree that predates _zone_watch.py keeps
-    its other checks and says the zone check is off once, never every call."""
+def _deploy_with_helper(tmp_path: Path, body: "bytes | None") -> "tuple[Path, Path]":
+    """A deployed tools/cc whose _zone_watch.py holds ``body`` (absent where
+    None), and a work tree beside it; the deployed hooks dir and the tree."""
     cc = tmp_path / "deployed" / "tools" / "cc"
     copy_checkout(ROOT / "tools" / "cc", cc, ignore=shutil.ignore_patterns("__pycache__"))
-    (cc / "hooks" / "_zone_watch.py").unlink()
+    helper = cc / "hooks" / "_zone_watch.py"
+    if body is None:
+        helper.unlink()
+    else:
+        helper.write_bytes(body)
     tree = tmp_path / "work"
     (tree / "tools" / "cc" / "hooks").mkdir(parents=True)
-    for _ in range(2):
-        _post(tree, "Bash", _NO_OP, hooks_dir=cc / "hooks")
+    return cc / "hooks", tree
+
+
+_ZONE_IMPORT_SAID = "_zone_watch.py could not be imported"
+
+
+@pytest.mark.parametrize("fault", ["missing", "broken", "raises"],
+                         ids=["helper-missing", "helper-broken-syntax", "helper-raises-at-import"])
+def test_a_helper_that_will_not_import_is_told_to_claude_once_a_session(tmp_path: Path, fault: str) -> None:
+    """A post_write_check whose _zone_watch.py is gone (a deploy that predates
+    it, or a session that deleted it), will not compile, or raises at its top
+    level keeps its other checks and tells Claude the zone check is off: in
+    the JSON object it reads, once a session, never every call (DEF-3101). The
+    record alone reached no one, since an exit-0 hook's stderr goes to the
+    debug log, and a syntax error escaped the import arm into the every-call
+    failure line. A file that is there gets its error and no redeploy advice."""
+    # The raise uses a class whose name holds a character outside the flag-safe
+    # set, so the once-flag is read under the spelling say_once writes it with.
+    raises = "class \u00c4Fault(RuntimeError):\n    pass\nraise \u00c4Fault('x')\n".encode("utf-8")
+    body = {"missing": None, "broken": b"def watched_prefixes(:\n", "raises": raises}[fault]
+    hooks, tree = _deploy_with_helper(tmp_path, body)
+    said = _ZONE_IMPORT_SAID
+    first, second = (_context(_post(tree, "Bash", _NO_OP, hooks_dir=hooks)) for _ in range(2))
+    assert said in first, first
+    assert ("upgrade --execute" in first) == (fault == "missing"), first
+    if fault == "broken":
+        assert "line 1" in first, first
+    assert said not in second and "zone check failed" not in second, second
     assert _audit_types(tree).count("posttooluse_failed_open_zone_import") == 1
+    # Keyed by session: a sibling session's notice does not silence this one's.
+    assert said in _context(_post(tree, "Bash", _NO_OP, sid="s-2", hooks_dir=hooks))
+    # And by agent: a subagent told first (its context thrown away at its end)
+    # does not silence its parent, which shares its session id.
+    assert said in _context(_post(tree, "Bash", _NO_OP, sid="s-3", agent_id="a-1", hooks_dir=hooks))
+    assert said in _context(_post(tree, "Bash", _NO_OP, sid="s-3", hooks_dir=hooks))
+
+
+def test_a_second_fault_class_in_one_session_is_told_again(tmp_path: Path) -> None:
+    """The fault's class is in the key (DEF-3101): a helper deleted and then
+    restored broken tells Claude twice, the second time with what broke it."""
+    hooks, tree = _deploy_with_helper(tmp_path, None)
+    assert "ModuleNotFoundError" in _context(_post(tree, "Bash", _NO_OP, hooks_dir=hooks))
+    (hooks / "_zone_watch.py").write_bytes(b"def watched_prefixes(:\n")
+    assert "SyntaxError" in _context(_post(tree, "Bash", _NO_OP, hooks_dir=hooks))
 
 
 def test_the_helper_imports_standalone_under_both_spellings() -> None:

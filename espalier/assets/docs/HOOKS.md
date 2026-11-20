@@ -3027,7 +3027,14 @@ new state as the next one to compare with.
   (`posttooluse_failed_open_zone_unchecked`). A watched set too large to walk
   inside the budget (20,000 files or 3 s) turns the check off for the session
   and says so once (`posttooluse_failed_open_zone_off`): narrow
-  `protected_paths`, or name the large directories in `dependency_dirs`.
+  `protected_paths`, or name the large directories in `dependency_dirs`. A
+  helper the check cannot import (`tools/cc/hooks/_zone_watch.py` absent from
+  an older deploy, deleted, unable to compile, or raising as it loads) turns
+  it off until it imports again, and says so to Claude once a session
+  (`posttooluse_failed_open_zone_import`), with the error of a file that is
+  there: restore a missing one, which `espalier upgrade --execute` redeploys,
+  and repair a broken one. Each of these three records is counted again on
+  the next session's banner.
 - **Limits.**
   - It reports and never stops the session, by ruling (2026-11-14): an
     unattended run (a `/loop`, a scheduled or headless agent) whose reports
@@ -3100,7 +3107,10 @@ archive is gitignored, so this line is the only place they are named. The
 action-justification nudge is the one finding that stays on stderr: it fires
 on every unjustified mutation by design, and its audit record
 (`action_justification_missing`) is its copy in the raw audit log; `/status --log`
-does not count that type.
+does not count that type. A blueprint the nudge cannot read
+(`cc/blueprints/latest.json` not UTF-8, not JSON, or not a JSON object) turns
+it off while that lasts, and Claude is told once a session
+(`posttooluse_failed_open_blueprint_read`).
 
 **Configuration:** None needed. Advisory only, low overhead.
 

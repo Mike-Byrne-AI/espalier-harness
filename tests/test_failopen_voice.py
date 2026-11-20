@@ -95,7 +95,11 @@ RECORDED = frozenset({
 #: ``_late_load_failed`` is session_start's face of ``advise_exc`` for the blocks
 #: after its catch-up: the WARN, or (after a helper move no fresh start took
 #: over) the same failure named on the banner's Checkout line (DEF-2003).
-COLLECTED = frozenset({"advise", "advise_warn", "advise_exc", "_late_load_failed"})
+#: ``_say_once_to_claude`` is post_write_check's once-a-session notice: an
+#: ``advise_warn`` the first time a session (and agent) meets it, and the
+#: ``say_once`` record beside it; named here since DEF-3101 routed two of the
+#: hook's fail-opens through it.
+COLLECTED = frozenset({"advise", "advise_warn", "advise_exc", "_late_load_failed", "_say_once_to_claude"})
 SEEN = RECORDED | COLLECTED
 #: The seen speakers a stderr LINE may pair with: every SEEN speaker but the
 #: one that speaks only on a condition of its own -- ``say_bad_stdin`` is
@@ -733,6 +737,31 @@ class TestCollectedAdvisoriesAreRendered:
             f"{unrendered} call _hook_utils.advise but never render the collector "
             "(a take_advisories whose result reaches the banner, or emit_advisories into the "
             "one JSON object; a bare take_advisories() is the start-of-run clear, not a render)"
+        )
+
+    def test_no_rendering_hook_voices_a_fail_open_with_a_record_alone(self):
+        """DEF-3101's class. In a hook that renders its collector, Claude reads
+        the one JSON object, so a fail-open said through ``say_once`` alone (a
+        record the next session's banner counts, and a stderr line the debug
+        log takes) is told to no one in the session it happens in. Such a
+        handler calls a COLLECTED speaker too; ``say_crash`` is apart, the
+        crash guards running where the hook has failed and no object follows.
+        Earned red on 3b4596a: post_write_check's _zone_watch import arm and
+        its unreadable-blueprint arm."""
+        offenders = []
+        for f in checkout_glob(HOOKS_DIR, "*.py"):
+            if f.name.startswith("_") or not _renders(f):
+                continue
+            for handler in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+                if not isinstance(handler, ast.ExceptHandler):
+                    continue
+                calls = {_callee_name(n) for n in _body_nodes(handler) if isinstance(n, ast.Call)}
+                if "say_once" in calls and not calls & COLLECTED:
+                    offenders.append(f"{f.name}:{handler.lineno}")
+        assert not offenders, (
+            f"{offenders}: an except handler in a hook that renders its JSON object speaks "
+            "through say_once alone, so Claude is not told in this session; pair it with "
+            "_hook_utils.advise (or post_write_check's _say_once_to_claude)"
         )
 
     def test_the_render_predicate_sees_a_bare_clear(self, tmp_path):

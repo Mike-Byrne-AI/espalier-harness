@@ -592,6 +592,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         " canon; a new entry enrols itself and reds until the guard can name what it"
         " keeps).",
     ),
+    "tests/test_cli_cost_census.py": (
+        1, "81ca44a4c42ffdba0efd9662462e27bd40a6ba2cfc6ea932bb19979214aaf1f0",
+        "CORRECT_BY_SHAPE",
+        "the citation section's projection (2026-11-18): `_occ` builds a dict over "
+        "`_CENSUS.CITATION_SPELLINGS` from a section part. Three of its six callers compare it by "
+        "equality against a hand-written literal naming all four spellings (the other three "
+        "index `path_symbol`), so a spelling dropped from or added to the tuple changes the "
+        "keys and reds those three. An "
+        "index read against literals, not a population asserted member by member; the census "
+        "itself asserts the per-spelling sums over the same tuple.",
+    ),
     "tests/test_cli_commands.py": (
         6, "8418abbcdb26f463fcf6fccb8dd9ab422b13dc63eee6a3cc953a2d75422dfd91",
         "CORRECT_BY_REMEDY",
