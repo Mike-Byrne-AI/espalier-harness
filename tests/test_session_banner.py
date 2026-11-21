@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -3344,8 +3345,9 @@ class TestOrdersLine:
     @pytest.fixture(autouse=True)
     def _under_the_box_lock(self, monkeypatch):
         """The exact lines below are a seat launched by the tool, which runs
-        under the box lock; the off-note's own polarities are pinned apart."""
-        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        under the box's lock (the launcher's default path: any other path
+        earns a note, DEF-2106); the notes' own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(Path.home() / ".espalier" / "espalier-box.lock"))
 
     def test_a_worker_without_the_box_lock_is_told_on_its_orders_line(self, tmp_path, monkeypatch):
         """A seat relaunched by hand after a reap (``claude --continue``) runs
@@ -3368,8 +3370,39 @@ class TestOrdersLine:
         assert line.endswith(f"; box lock: off (relaunch through seat.py launch, or export "
                              f"ESPALIER_BOX_LOCK={default} before claude)"), line
         assert line.isascii()
-        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", default)
         assert "box lock" not in mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+
+    def test_a_seat_on_a_lock_other_than_the_box_s_is_told_which_it_locks(self, tmp_path, monkeypatch):
+        """DEF-2106: a set ``ESPALIER_BOX_LOCK`` silenced the note whatever it
+        named, so a seat still on a private lock path (air's interim ruling,
+        8318e9) took no slot from the box's file and never heard so. Where the
+        variable names a path other than ``seat.box_lock_default()``, compared
+        as the suite's plugin compares (``normcase`` of ``abspath``), the note
+        names both, on the `Orders:` line too; the default spelled another
+        way, and the launcher's old temp-directory default (which the plugin
+        reads as the box's, ``current_path``), get none. Mutation: the set
+        variable silencing the note again, a raw string compare, or the old
+        default flagged."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
+        default = mod._load_seat().box_lock_default()
+        private = str(tmp_path / "private.lock")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", private)
+        note = f"box lock: this seat locks {private}, not the box's {default}"
+        assert mod._box_lock_note(tmp_path, "w") == note
+        assert mod._box_lock_note(tmp_path, None) == "", "no name read, no note"
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0}
+        assert mod._orders_line(tmp_path, read, mail=mail, python="py -3").endswith(f"; {note}")
+        spelled = os.path.join(os.path.dirname(default), ".", os.path.basename(default))
+        if os.name == "nt":
+            spelled = spelled.swapcase().replace("\\", "/")
+        legacy = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        for same in (default, spelled, legacy):
+            monkeypatch.setenv("ESPALIER_BOX_LOCK", same)
+            assert mod._box_lock_note(tmp_path, "w") == "", same
 
     def test_a_named_clone_neither_line_told_gets_the_off_note_once_as_a_note(self, tmp_path, monkeypatch):
         """DEF-4054: the two folds reach the dispatcher and a worker holding
@@ -3397,7 +3430,7 @@ class TestOrdersLine:
         mod._box_lock_info(tmp_path, busy, ("", orders))
         assert orders.endswith(f"; {note}") and mod._hook_utils.take_advisories() == []
         mod._box_lock_info(tmp_path, {}, ("", ""))
-        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", default)
         mod._box_lock_info(tmp_path, idle, ("", ""))
         assert mod._hook_utils.take_advisories() == []
 
@@ -3813,8 +3846,9 @@ class TestMailLine:
     @pytest.fixture(autouse=True)
     def _under_the_box_lock(self, monkeypatch):
         """The exact lines below are a seat launched by the tool, which runs
-        under the box lock; the off-note's own polarities are pinned apart."""
-        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        under the box's lock (the launcher's default path: any other path
+        earns a note, DEF-2106); the notes' own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(Path.home() / ".espalier" / "espalier-box.lock"))
 
     def test_the_line_is_omitted_where_no_machine_is_named_and_no_ref_is_held(self, tmp_path):
         mod = _load()
@@ -3840,7 +3874,7 @@ class TestMailLine:
         worker = _mail_stub(dispatcher_setting=lambda root: ("hub", "espalier.toml names hub"),
                             live_requests=lambda by: [])
         assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=worker) == ""
-        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", default)
         assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == ""
 
     def test_a_nameless_clone_that_holds_another_machines_ref_is_told_how_to_opt_in(self, tmp_path):

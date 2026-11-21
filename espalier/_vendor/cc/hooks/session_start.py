@@ -1378,16 +1378,24 @@ def _is_dispatcher_seat(root: Path, mail: Any, machine: str) -> bool:
 
 
 def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
-    """The box lock's off-note: on a named clone (``machine``) whose session
-    has no ``ESPALIER_BOX_LOCK``, how to run under the lock, paste-ready with
-    the host's default path from the seat driver (``<path>`` where it does not
-    load); '' where the variable is set or the clone has no name. A seat
-    launched by ``seat.py launch`` always has it; a session relaunched by hand
-    after a reap (``claude --continue``) is the one this is for, since its
-    tier would run unlocked beside a sibling's. Folded onto an existing line
-    (`Orders:` on a worker, the `Mail:` line's dispatcher clause on the
-    dispatcher). Reporter only, no spawn."""
-    if not machine or os.environ.get("ESPALIER_BOX_LOCK"):
+    """The box lock's note, on a named clone (``machine``) whose tree carries
+    the suite's plugin. With no ``ESPALIER_BOX_LOCK``, the off-note: how to
+    run under the lock, paste-ready with the host's default path from the seat
+    driver (``<path>`` where it does not load). With one naming a path other
+    than the driver's default, which file this seat locks beside the box's
+    (DEF-2106): the launcher keeps a path the shell already set, so a seat
+    still on a private path took no slot from the box's file and was never
+    told. The two are compared as the plugin compares them (``_same_lock``).
+    '' on the box's path, with no name, without the plugin, or where the
+    variable is set and the driver's default cannot be read (nothing to
+    compare it with). A seat launched by ``seat.py launch`` from a clean shell
+    is on the box's path; a session relaunched by hand after a reap (``claude
+    --continue``) is the off-note's, since its tier would run unlocked beside
+    a sibling's. Folded onto an existing line (`Orders:` on a worker, the
+    `Mail:` line's dispatcher clause on the dispatcher). Reporter only, no
+    spawn: where nothing else loaded the driver, its load is a module read
+    (about 85 ms on the Windows box, which writes no bytecode)."""
+    if not machine:
         return ""
     # Only where the suite carries the plugin: this hook is deployed to
     # adopters, whose trees have no tests/_box_lock.py and nothing to relaunch
@@ -1401,12 +1409,40 @@ def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
             _hook_utils.advise_exc("session_start: seat driver load failed", e)
             seat = None
     default = getattr(seat, "box_lock_default", None)
+    held = os.environ.get("ESPALIER_BOX_LOCK")
+    if held:
+        try:
+            box = default() if callable(default) else None
+            same = box is None or _same_lock(held, box)
+        except Exception as e:  # noqa: BLE001 -- an unreadable default costs this note, never the line it rides
+            _hook_utils.advise_exc("session_start: box lock default read failed", e)
+            return ""
+        return "" if same else _ascii(f"box lock: this seat locks {held}, not the box's {box}")
     path = default() if callable(default) else "<path>"
     return _ascii(f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={path} before claude)")
 
 
+def _same_lock(held: str, box: str) -> bool:
+    """Whether the lock path ``held`` names the box's file ``box`` as the
+    suite's plugin reads it (``tests/_box_lock.py``): ``normcase`` of
+    ``abspath`` on both sides, no ``~`` expansion, so a default spelled with
+    other case or separators on Windows is the box's; and the launcher's old
+    default, the lock's name under the temp directory, is the box's too,
+    since the plugin's ``current_path`` locks the home default in its place.
+    The temp directory is asked only for a path bearing the lock's name, as
+    ``tempfile.gettempdir`` probes the disk on its first call."""
+    mine = os.path.normcase(os.path.abspath(held))
+    if mine == os.path.normcase(os.path.abspath(box)):
+        return True
+    name = os.path.basename(box)
+    if os.path.basename(mine) != os.path.normcase(name):
+        return False
+    return mine == os.path.normcase(os.path.abspath(os.path.join(tempfile.gettempdir(), name)))
+
+
 def _box_lock_info(root: Path, read: dict, carried: tuple[str, ...]) -> None:
-    """The off-note for a named clone whose `Mail:` and `Orders:` lines did
+    """The box lock's note (``_box_lock_note``: off, or a path other than the
+    box's) for a named clone whose `Mail:` and `Orders:` lines did
     not carry it, as one ``[INFO]`` line, which reads under the Warnings
     block's NOTES header and moves no ruled banner line: the folds reach the
     dispatcher and a worker holding an assign, so a worker between assigns,
