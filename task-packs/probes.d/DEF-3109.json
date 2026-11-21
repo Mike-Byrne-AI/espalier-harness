@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3109",
+ "subject": "tests/test_write_guard_time_budget.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a timing red under load: no one-liner prints it deterministically",
+ "row_sha": "18665f4f7179",
+ "text_sha": "c0b451da128f",
+ "verified_2026_11_21": "OPEN (filed 2026-11-21; probe driven at filing)"
+}
