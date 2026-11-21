@@ -827,7 +827,7 @@ class TestQuotedVerbTailIsUniform:
             "pwsh", "pwsh -Command \"Set-Content tools/cc/hooks/x.py x\""),
         "_INTERP_STDIN_RE": (
             "python3", "python3 - <<'EOF'\nopen('tools/cc/hooks/x.py','w')\nEOF"),
-        "_SHELL_HERESTRING_RE": ("bash", "bash <<< 'echo x > tools/cc/hooks/x.py'"),
+        "_SHELL_STDIN_RE": ("bash", "bash <<< 'echo x > tools/cc/hooks/x.py'"),
         "_AWK_HEAD_RE": ("awk", "awk 'BEGIN{system(\"echo x > tools/cc/hooks/x.py\")}'"),
         "_SED_HEAD_RE": ("sed", "sed -n 'e echo x > tools/cc/hooks/x.py' /tmp/in"),
         "_GIT_HEAD_RE": (
@@ -8061,6 +8061,182 @@ class TestAStdinOpenerReadsItsOperatorAsBashSplitsIt:
         assert b._redirects_blanked(scan, powershell=False) is scan
         view = b._heredoc_opener_view(scan)
         assert view.startswith("python3 -u  <<'PY'") and len(view) == len(scan)
+
+
+#: DEF-3103's openers, each up to its heredoc delimiter: the POSIX shell
+#: heads, the switches and the `-` or `--` before stdin (bash 5.2 and dash
+#: ran the program behind each, through WSL), the wrappers and paths the
+#: command position reads, and DEF-5125's opener-view operators on a shell
+#: head (an fd-0 operator, a flag or a redirect glued to it, a redirect
+#: before it).
+_POSIX_SHELL_HEREDOC_HEADS = [
+    ("bash <<", "bash"),
+    ("sh <<", "sh"),
+    ("zsh <<", "zsh"),
+    ("dash <<", "dash"),
+    ("ksh <<", "ksh"),
+    ("bash<<", "glued-head"),
+    ("/bin/bash <<", "a-path"),
+    ("bash.exe <<", "exe-suffix"),
+    ("sudo bash <<", "behind-sudo"),
+    ("env bash <<", "behind-env"),
+    ("cd x && bash <<", "after-a-statement"),
+    ("bash -s <<", "dash-s"),
+    ("sh -s arg <<", "dash-s-one-operand"),
+    ("bash --norc -x <<", "switches"),
+    # noclobber, no command: the `-c` refusal reads the lower-case letter
+    ("bash -C <<", "upper-case-c-switch"),
+    ("bash - <<", "dash-operand"),
+    ("bash -- <<", "end-of-options"),
+    ("bash 0<<", "fd-zero"),
+    ("bash -x<<", "flag-glued-to-the-operator"),
+    ("bash 2>/dev/null <<", "redirect-before"),
+    ("bash >o<<", "redirect-glued-to-the-operator"),
+    # a spaced redirect's target is no switch, though it reads like a cluster
+    ("bash > -cache <<", "redirect-target-like-a-cluster"),
+]
+
+
+class TestAPosixShellHeredocProgramIsReadBySecretLeg:
+    """DEF-3103: a program handed to a POSIX shell on stdin as a heredoc is
+    read by the secret leg, as its plain, `-c` and here-string spellings
+    are. The leg takes every heredoc body out as data (DEF-4109), and the
+    stdin opener named no POSIX shell, so `bash <<'SH'` over `cat .env`
+    allowed where `cat .env`, `bash -c 'cat .env'` and `bash <<< 'cat .env'`
+    denied (driven at 2c1dcde7 and again at 2056558, every head below). The
+    zone leg and the speed bump read the body already, from the raw text a
+    shell head leaves (driven: a zone write and four bumps fire on the
+    heredoc as on the plain spelling), so the reader is the secret leg's
+    alone. The opener is the here-string's, widened to end at the `<<`
+    (`_bash_patterns._SHELL_STDIN_RE`), and it matches on the heredoc
+    opener view too, so DEF-5125's operators open it. Only a body the
+    heredoc walk recorded is read: an opener inside another heredoc's body
+    is data (the code review: a pull request body quoting the shape was a
+    false deny, and reading each such opener to the end fanned out)."""
+
+    _BODY = "cat .env"
+
+    @staticmethod
+    def _heredoc(head: str, body: str, delim: str = "SH") -> str:
+        return head + "'" + delim + "'\n" + body + "\n" + delim
+
+    @pytest.mark.parametrize("head", [h for h, _ in _POSIX_SHELL_HEREDOC_HEADS],
+                             ids=[i for _, i in _POSIX_SHELL_HEREDOC_HEADS])
+    def test_the_heredoc_program_reads_the_secret(self, tmp_path, head):
+        cmd = self._heredoc(head, self._BODY)
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<SH\ncat .env\nSH",
+        "bash <<-'SH'\n\tcat .env\n\tSH",
+        "bash <<'SH' > out.log\necho start\ncat .env\nSH",
+        "cat > n.md <<'MD'\nx\nMD\nbash <<'SH'\ncat .env\nSH",
+        # bash ends a body at its delimiter alone: an indented one is a line
+        # of the program, and the read after it runs (DEF-4109's exact rule)
+        "bash <<'SH'\n  SH\ncat .env\nSH",
+        # two operators on one line: the second body is the shell's
+        "cat > n.md <<'MD' && bash <<'SH'\nx\nMD\ncat .env\nSH",
+        # a shell's heredoc inside another shell's: read one level down
+        "bash <<'B'\nbash <<'A'\ncat .env\nA\nB",
+    ], ids=["unquoted-delimiter", "tab-strip", "redirect-after-the-operator",
+            "after-another-heredoc", "indented-delimiter-is-a-line", "second-on-one-line",
+            "nested-in-another-shells"])
+    def test_the_body_bash_runs_is_the_one_read(self, tmp_path, cmd):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<'SH'\necho hi\nSH",
+        "bash <<'SH'\ngrep -rn '[.]env' docs\nSH",
+        # a `-c` program reads the heredoc as its stdin, its data
+        "bash -c cat <<'SH'\ncat .env\nSH",
+        "bash -xc cat <<'SH'\ncat .env\nSH",
+        "bash +c cat <<'SH'\ncat .env\nSH",
+        "bash -c 'cat' <<'SH'\ncat .env\nSH",
+        # a script operand is the program, the heredoc its input
+        "bash run.sh <<'SH'\ncat .env\nSH",
+        # another fd is not stdin
+        "bash 3<<'SH'\ncat .env\nSH",
+        # no invocation: an argument, prose (behind a comment the `<<` opens
+        # no heredoc, so its "body" runs as commands and is read as such)
+        "echo bash <<'SH'\ncat .env\nSH",
+        "echo \"bash <<'SH'\"",
+        # a document or a commit message that quotes the shape
+        "cat > notes.md <<'MD'\nbash <<'SH'\ncat .env\nSH\nMD",
+        "git commit -m \"$(cat <<'EOF'\nbash <<'SH'\ncat .env\nSH\nEOF\n)\"",
+        # two operators on one line: the first body is data, the shell's is
+        # the second
+        "cat > n.md <<'MD' && bash <<'SH'\ncat .env\nMD\necho hi\nSH",
+        # an opener inside another heredoc's body, under a head whose body
+        # the masker keeps: data, the walk records no such heredoc
+        "gh pr create --title t --body \"$(cat <<'EOF'\nexample:\nbash <<'SH'\ncat .env\nSH\nEOF\n)\"",
+        "patch -p1 <<'EOF'\nbash <<X\ncat .env\nEOF",
+        # many of them: each was read to the end, one level down, again
+        "patch -p1 <<'EOF'\n" + "\n".join(f"bash <<X{i}" for i in range(300)) + "\nEOF",
+    ], ids=["benign", "a-pattern-names-it", "bare-c-program", "c-in-a-cluster", "plus-c",
+            "quoted-c-program", "script-operand", "fd-three", "an-argument", "prose", "a-document",
+            "a-commit-message", "data-body-first-on-one-line", "a-pull-request-body",
+            "an-opener-in-a-data-body", "many-openers-in-a-data-body"])
+    def test_a_body_no_shell_runs_as_its_program_allows(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    def test_the_declared_limits_are_pinned(self, tmp_path):
+        """A second operand after `-s`, or a quoted switch value or operand,
+        ends the opener's switch run (a switch takes one bare value), so its
+        program is not read; nor is a second heredoc on the shell's stdin,
+        whose body bash runs while the opener ends at the first, a `-c`
+        program that itself reads stdin, or a shell's heredoc nested three
+        deep (the readers' `_PS_STDIN_MAX_DEPTH`): each an allow, pinned so a
+        reading of it is seen. The run's own over-read reads a script after
+        a switch as the switch's value, so the script's input is read as the
+        program, and the here-string reader reads a word behind a `-c`
+        cluster as a program: each a deny, pinned the same way (toward
+        friction)."""
+        h = self._heredoc
+        for cmd in (h("bash -s a1 a2 <<", self._BODY), h("bash -s -- a1 <<", self._BODY),
+                    h("bash -s 'a b' <<", self._BODY), h("bash -c 'bash -s' <<", self._BODY),
+                    "bash <<A <<B\necho a\nA\ncat .env\nB",
+                    h("bash <<", h("bash <<", h("bash <<", self._BODY, "A"), "B"), "C")):
+            assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+        for cmd in (h("bash -x run.sh <<", self._BODY), "bash -c cat <<< 'cat .env'"):
+            assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    def test_a_call_holding_no_heredoc_never_asks_the_reader(self, monkeypatch):
+        """The reader sits behind the heredoc walk's finds, so a call holding
+        no heredoc pays nothing for it: the reader is never asked, while the
+        leg still reads the `-c` program and the here-string."""
+        wg = _load_write_guard()
+
+        def _asked(*_args, **_kwargs):
+            raise AssertionError("the heredoc reader was asked on a call holding no heredoc")
+
+        monkeypatch.setattr(wg._bash_patterns, "_posix_shell_heredoc_ops", _asked)
+        for cmd, read in (("bash -c 'cat .env'", True), ("bash <<< 'cat .env'", True), ("ls -la", False)):
+            got = [t for t in wg._secret_read_targets(cmd) if wg._secret_pattern_for(t)]
+            assert bool(got) is read, (cmd, got)
+
+    @pytest.mark.parametrize("head", [h for h, _ in _POSIX_SHELL_HEREDOC_HEADS],
+                             ids=[i for _, i in _POSIX_SHELL_HEREDOC_HEADS])
+    def test_the_reader_yields_the_operator(self, head):
+        """The reader itself, below the verdict: one offset, the `<<`'s."""
+        b = _bash_patterns_module()
+        cmd = self._heredoc(head, self._BODY)
+        ops = list(b._posix_shell_heredoc_ops(cmd, b.mask_inert_syntax(cmd)))
+        assert ops == [cmd.index("<<")], (cmd, ops)
+
+    def test_the_here_string_reader_skips_a_heredoc_and_reads_after_end_of_options(self):
+        """The opener is shared: its here-string consumer reads no heredoc,
+        and a `-` or `--` before the here-string, which bash also reads as
+        the end of its options, now opens it as well."""
+        b = _bash_patterns_module()
+        for cmd, want in ((self._heredoc("bash <<", self._BODY), []),
+                          ("bash <<< 'cat .env'", ["cat .env"]),
+                          ("bash -- <<< 'cat .env'", ["cat .env"]),
+                          ("sh - <<<'cat .env'", ["cat .env"])):
+            scan = b.mask_inert_syntax(cmd)
+            assert list(b._shell_out_program_bodies(cmd, scan)) == want, cmd
+            # and the heredoc reader reads no here-string
+            if want:
+                assert list(b._posix_shell_heredoc_ops(cmd, scan)) == [], cmd
 
 
 class TestBashOperandSpansStopAtNewline:
@@ -18547,7 +18723,7 @@ class TestQuotedTargetSurvivesTheRoot:
         "_RUBY_DASH_E_RE": ("Bash", f"ruby -e \"File.write('{_TARGET}','x')\""),
         "_PERL_DASH_E_RE": ("Bash", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_INTERP_STDIN_RE": ("Bash", f"python3 - <<'EOF'\nopen('{_TARGET}','w')\nEOF"),
-        "_SHELL_HERESTRING_RE": ("Bash", f"bash <<< 'echo x > \"{_TARGET}\"'"),
+        "_SHELL_STDIN_RE": ("Bash", f"bash <<< 'echo x > \"{_TARGET}\"'"),
         "_POWERSHELL_DASH_COMMAND_RE": (
             "Bash", f"pwsh -Command \"Set-Content -Path '{_TARGET}' -Value x\""),
         "_AWK_HEAD_RE": ("Bash", f"awk 'BEGIN{{print \"x\" > \"{_TARGET}\"}}' /dev/null"),
