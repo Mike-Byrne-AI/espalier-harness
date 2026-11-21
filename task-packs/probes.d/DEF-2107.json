@@ -1,0 +1,15 @@
+{
+ "id": "DEF-2107",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import ast;S=[('tests/_box_lock.py','current_path'),('scripts/guard_cost_census.py','current_path'),('tools/cc/hooks/_speedbump.py','_box_lock_paths'),('tools/cc/hooks/session_start.py','_same_lock')];D=[[x for x in ast.walk(ast.parse(open(p,encoding='utf-8').read())) if isinstance(x,ast.FunctionDef) and x.name==f] for p,f in S];assert all(len(d)==1 for d in D),[len(d) for d in D];print(any(any((isinstance(y,ast.Attribute) and y.attr=='gettempdir') or (isinstance(y,ast.Constant) and y.value=='.espalier') for y in ast.walk(d[0])) for d in D))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/_box_lock.py",
+  "scripts/guard_cost_census.py",
+  "tools/cc/hooks/session_start.py"
+ ],
+ "row_sha": "cfe273f24f6f",
+ "text_sha": "d32cf4e183d4",
+ "verified_2026_11_21": "OPEN (filed 2026-11-21; probe driven at filing here and in the export of HEAD 0ec974496f83)"
+}
