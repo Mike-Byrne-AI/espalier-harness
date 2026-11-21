@@ -887,8 +887,13 @@ class TestTheFileToolKinds:
         """The timed commands keep their old bytes on a plain root, and a
         root holding a space (the perturbed cell's) stays one operand in each
         shell. Dies to: the operand always quoted (every census figure's
-        command moves), or never (the perturbed cell's census row reds)."""
-        assert census.shell_operand("/a/b/notes.txt") == "/a/b/notes.txt"
-        assert census.shell_operand("/a/b/notes.txt", powershell=True) == "/a/b/notes.txt"
+        command moves, a Windows drive path's included), or never (the
+        perturbed cell's census row reds), or a PowerShell quote left single
+        (a comma or a typographic quote splits or ends the operand)."""
+        for plain in ("/a/b/notes.txt", r"C:\Users\x\notes.txt", "/v/f-1_2/T/p.3/notes.txt"):
+            assert census.shell_operand(plain) == plain
+            assert census.shell_operand(plain, powershell=True) == plain
         assert shlex.split(census.shell_operand("/a b/it's.txt")) == ["/a b/it's.txt"]
         assert census.shell_operand("/a b/it's.txt", powershell=True) == "'/a b/it''s.txt'"
+        assert census.shell_operand("/a,b/n.txt", powershell=True) == "'/a,b/n.txt'"
+        assert census.shell_operand("/a/\u2019n.txt", powershell=True) == "'/a/\u2019\u2019n.txt'"
