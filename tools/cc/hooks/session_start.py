@@ -1868,7 +1868,9 @@ def _post_merge_verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[
     apart hid the older one's red). Inside one pull request
     `_latest_run_per_check` keeps one row per name, so a cancelled latest run
     has already displaced that pull request's own older red -- the helper's
-    contract, and `no verdict` is the loud substitute."""
+    contract, and `no verdict` is the loud substitute. A check named for the
+    proof tier it ran is one check, and a newer green supersedes an older red
+    only where it ran that red's tier or a fuller one (DEF-4117)."""
     post_merge = _load_post_merge()
     if post_merge is None:  # fail-open: ok deliberate -- no rule to own with; nothing is named red, and the block's gate voices the absence
         return {}

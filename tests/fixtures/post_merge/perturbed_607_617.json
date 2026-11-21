@@ -1,0 +1,194 @@
+{
+ "read": "2026-11-21, gh pr view <n> --json number,mergedAt,statusCheckRollup for #607 to #617, trimmed to the perturbed row; tiers from each perturbed job's log line 'proof tier: <tier> (parallel leg, perturbed host, spaced root)'",
+ "tiers": {
+  "607": "full",
+  "608": "full",
+  "609": "full",
+  "610": "full",
+  "611": "full",
+  "612": "full",
+  "613": "full",
+  "614": "full",
+  "615": "recall",
+  "616": "full",
+  "617": "recall"
+ },
+ "prs": [
+  {
+   "mergedAt": "2026-11-12T18:17:01Z",
+   "number": 607,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-12T17:53:05Z",
+     "conclusion": "SUCCESS",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43266747796/job/131352749195",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T17:12:15Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-12T19:18:37Z",
+   "number": 608,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-12T19:01:13Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43277272490/job/131389578094",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T18:12:50Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-12T21:04:32Z",
+   "number": 609,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-12T21:06:47Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43295746523/job/131454272086",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T20:00:45Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-12T22:29:56Z",
+   "number": 610,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-12T22:10:38Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43309411831/job/131502076984",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T21:22:44Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-12T22:35:17Z",
+   "number": 611,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-12T22:23:52Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43310667620/job/131505756512",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T21:29:17Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T00:46:46Z",
+   "number": 612,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T00:48:11Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43331207653/job/131576194492",
+     "name": "perturbed",
+     "startedAt": "2026-11-12T23:43:32Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T02:26:23Z",
+   "number": 613,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T02:28:34Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43345687867/job/131624502343",
+     "name": "perturbed",
+     "startedAt": "2026-11-13T01:32:51Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T04:27:10Z",
+   "number": 614,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T04:08:53Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43358277590/job/131665546719",
+     "name": "perturbed",
+     "startedAt": "2026-11-13T03:20:38Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T05:13:22Z",
+   "number": 615,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T05:13:33Z",
+     "conclusion": "SUCCESS",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43368017377/job/131697033042",
+     "name": "perturbed",
+     "startedAt": "2026-11-13T04:50:06Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T06:52:27Z",
+   "number": 616,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T06:52:40Z",
+     "conclusion": "FAILURE",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43374095677/job/131716514458",
+     "name": "perturbed",
+     "startedAt": "2026-11-13T05:45:49Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  },
+  {
+   "mergedAt": "2026-11-13T06:23:18Z",
+   "number": 617,
+   "statusCheckRollup": [
+    {
+     "__typename": "CheckRun",
+     "completedAt": "2026-11-13T06:13:43Z",
+     "conclusion": "SUCCESS",
+     "detailsUrl": "https://github.com/Mike-Byrne-AI/espalier-harness/actions/runs/43374694275/job/131718462568",
+     "name": "perturbed",
+     "startedAt": "2026-11-13T05:51:28Z",
+     "status": "COMPLETED",
+     "workflowName": "CI"
+    }
+   ]
+  }
+ ]
+}

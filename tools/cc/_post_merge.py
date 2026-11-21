@@ -10,18 +10,25 @@ and its own words (a Windows red sat in GitHub's record for six hours on
 
 * ``check_outcome`` reads one ``statusCheckRollup`` row as green, running or
   red; a shape this reader does not know reads as running, never as a pass.
-* ``latest_run_per_check`` keeps one row per check name, its latest run,
-  since a push or a title edit re-runs a workflow and the rollup lists the
+* ``latest_run_per_check`` keeps one row per check, its latest run, since a
+  push or a title edit re-runs a workflow and the rollup lists the
   superseded run beside the new one.
+* ``tier_of`` reads a check named for the proof tier it ran (``perturbed
+  (recall tier)``) as its cell and tier; every reader keys a check by its
+  cell, and ``covers`` says whether a green ran at least a red's tier
+  (contract, then recall, then full). A name with no tier marker is its own
+  cell and keeps the rule below unchanged (DEF-4117).
 * ``verdicts`` is the banner's per-pull-request rule: a check name is owned
   by the newest merged pull request whose latest run of it reached a
   verdict, green or red; a leg still running, cancelled or stale on a newer
-  merge supersedes nothing.
+  merge supersedes nothing, and a newer green that ran a cheaper tier than
+  an older red leaves that red named.
 * ``transitions`` is the board's and the preflight's per-check rule: the
   merges walked in merge order, the owned verdict after each, and the merge
   at which it changed; a newer merge's green run takes the name from an
   older merge's red only when it STARTED after that red merge landed (the
-  run contained the red change), else the green is carried beside the red.
+  run contained the red change) and ran at least the tier of every red
+  standing since the last green, else the green is carried beside the red.
   Replayed at an instant (``at``), a run that started after it is dropped
   and one that finished after it reads as still running.
 * ``lines`` and ``board_lines`` are the words, 7-bit ASCII.
@@ -106,6 +113,22 @@ TAG_FILTERS = ("tags", "tags-ignore")
 #: a group of its own, and reads as cancelling nothing.
 SHARED_GROUP_CONTEXTS = frozenset({"github.workflow", "github.ref", "github.ref_name", "github.event_name",
                                    "github.repository", "github.base_ref", "github.head_ref"})
+#: The proof tiers a check's name can carry, in containment order: a run of a
+#: later tier ran every test an earlier one runs (Espalier's own
+#: ``scripts/proof_tier.py``: recall is the contract tier plus the recall
+#: engine's tests, and full holds both). A cell that runs the tier its pull
+#: request earned is named for it, ``<cell> (<tier> tier)`` -- test.yml's
+#: ``perturbed`` is the one such cell that is not a required check -- so a
+#: green on a cheaper tier never clears a red its run did not test (DEF-4117:
+#: two recall-tier greens cleared a full-tier red on 2026-11-13, and the red's
+#: return was dated to the merge after them).
+TIERS = ("contract", "recall", "full")
+_TIER_SUFFIX_RE = re.compile(r"^(?P<cell>.+) \((?P<tier>" + "|".join(TIERS) + r") tier\)$")
+#: The same name before GitHub evaluated it: a job cancelled or skipped before
+#: it ran can be listed under its template, ``perturbed (${{ ... }} tier)``.
+#: It is the cell with no tier, so its no-verdict lands on the cell, never on
+#: a cell of its own that no run can ever judge.
+_TIER_TEMPLATE_RE = re.compile(r"^(?P<cell>.+) \(\$\{\{.*\}\} tier\)$")
 
 Gh = Callable[[list[str]], object]
 
@@ -134,13 +157,54 @@ def _name(row: object) -> str:
     return str(row.get("name") or row.get("context") or "") if isinstance(row, dict) else ""
 
 
+def tier_of(name: str) -> tuple[str, int | None]:
+    """A check name's cell and the rank in ``TIERS`` of the tier its run
+    tested: ``perturbed (recall tier)`` is ``("perturbed", 1)``. A name with
+    no tier marker is its own cell with rank None, the rule every check had
+    before the marker and every adopter's check keeps."""
+    m = _TIER_SUFFIX_RE.match(name)
+    if m is not None:
+        return m.group("cell"), TIERS.index(m.group("tier"))
+    m = _TIER_TEMPLATE_RE.match(name)
+    return (m.group("cell"), None) if m is not None else (name, None)
+
+
+def covers(green: int | None, red: int | None) -> bool:
+    """Whether a green run of tier rank ``green`` tested at least what a red
+    of rank ``red`` did, so it may clear it. Two untiered runs: yes, the name
+    was the whole rule. Two tiered runs: when the green's tier is the red's or
+    above. An untiered green never says what it ran, so it clears no tiered
+    red; an untiered red may have run the full tier, so only a full green
+    clears it (the cell's old name beside its new one, until it ages out)."""
+    if green is None:
+        return red is None
+    if red is None:
+        return green == len(TIERS) - 1
+    return green >= red
+
+
+def harder(a: int | None, b: int | None) -> int | None:
+    """The tier a green must reach to clear two reds that both stand: the
+    higher of two tiers; where one is untiered, only a full green clears both.
+    A red after a red keeps the harder one standing, so a cheaper red owning
+    the cell never lets a cheaper green clear the fuller red under it."""
+    if a == b:
+        return a
+    if a is None or b is None:
+        return len(TIERS) - 1
+    return max(a, b)
+
+
 def latest_run_per_check(rows: list) -> list:
-    """One row per check name, its latest run. A later ``startedAt`` wins;
-    with none, the later row in the rollup wins. Rows with no name pass through."""
+    """One row per check, its latest run. A check is its cell (``tier_of``):
+    a pull request whose tier changed between pushes holds two names for one
+    cell, and only the latest run says what its merged head tested. A later
+    ``startedAt`` wins; with none, the later row in the rollup wins. Rows with
+    no name pass through."""
     keep: dict[str, tuple[str, int, object]] = {}
     order: list[tuple[str | None, object]] = []
     for i, r in enumerate(rows):
-        name = _name(r)
+        name = tier_of(_name(r))[0]
         if not name:
             order.append((None, r))
             continue
@@ -385,8 +449,12 @@ def verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[str]]]:
     request whose latest run of it reached a VERDICT, green or red: ledger-only
     chores that never ran a leg cannot push a red code merge out of view, a
     later merge whose leg ran green supersedes an older red, and a leg still
-    running, cancelled or stale on the newer merge supersedes nothing."""
-    owned: set[str] = set()
+    running, cancelled or stale on the newer merge supersedes nothing. A check
+    is its cell (``tier_of``), and a newer green supersedes an older red only
+    where its run tested at least the red's tier (``covers``): a recall-tier
+    green leaves a full-tier red under it named."""
+    owned: set[str] = set()   # cells a newer red owns: nothing older is named
+    greens: dict[str, list[int | None]] = {}   # cells' newer greens, by tier rank
     out: dict[int, tuple[list[str], list[str]]] = {}
     for pr in merged:
         rollup = pr.get("statusCheckRollup")
@@ -394,18 +462,27 @@ def verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[str]]]:
         no_verdict: list[str] = []
         for row in latest_run_per_check(rollup if isinstance(rollup, list) else []):
             name = _name(row)
-            if not name or name in owned:
+            cell, rank = tier_of(name)
+            if not name or cell in owned:
                 continue
             outcome = check_outcome(row)
             if outcome == "running":
                 continue  # not a verdict yet: it supersedes nothing
             conclusion = str(row.get("conclusion") or "").upper()
+            # A newer green tested what this run did (or would have): nothing
+            # older under it is named, a cancelled run no more than a red.
+            covered = any(covers(g, rank) for g in greens.get(cell, []))
             if conclusion in NO_VERDICT:
-                no_verdict.append(f"{ascii_(name)} ({conclusion.lower()})")
+                if not covered:
+                    no_verdict.append(f"{ascii_(name)} ({conclusion.lower()})")
                 continue
-            owned.add(name)
-            if outcome == "red":
-                reds.append(ascii_(name))
+            if outcome == "green":
+                greens.setdefault(cell, []).append(rank)
+                continue
+            if covered:
+                continue
+            owned.add(cell)
+            reds.append(ascii_(name))
         if reds or no_verdict:
             out[pr["number"]] = (reds, no_verdict)
     return out
@@ -436,10 +513,18 @@ def replay(merged: list[dict], at: str) -> list[dict]:
     return out
 
 
-def _owner(pr: dict, row: dict, verdict: str) -> dict:
+def _owner(pr: dict, row: dict, verdict: str, rank: int | None = None) -> dict:
     return {"pr": pr.get("number"), "merged_at": str(pr.get("mergedAt") or ""),
             "started_at": str(row.get("startedAt") or ""), "completed_at": str(row.get("completedAt") or ""),
-            "verdict": verdict}
+            "verdict": verdict, "tier": TIERS[rank] if rank is not None else None}
+
+
+def label(c: dict) -> str:
+    """A check's name in the words: its cell, and while it is red on a tiered
+    cell the tier a green must reach to clear it (``perturbed (full tier)``),
+    which is the check's own name on the run that set it."""
+    rank = c.get("standing")
+    return c["name"] if rank is None else f"{c['name']} ({TIERS[rank]} tier)"
 
 
 def transitions(merged: list[dict], *, at: str | None = None) -> dict[str, dict]:
@@ -455,10 +540,20 @@ def transitions(merged: list[dict], *, at: str | None = None) -> dict[str, dict]
     opened on this verdict;
     ``green_beside``: newer merges whose green run started before the owning
     red merge landed, carried beside the red, never over it;
+    ``green_below``: newer merges whose green run tested a cheaper tier than
+    the red standing (``covers``), carried beside it the same way;
+    ``standing``: while the verdict is red on a tiered cell, the rank of the
+    tier a green must reach to clear it, the harder of every red since the
+    last green (``harder``), so a cheaper red owning the cell never lets a
+    cheaper green clear the fuller red under it; None otherwise;
     ``no_verdict``: merges whose latest run reached no verdict (cancelled or
     stale), named beside the owner;
     ``running``: merges whose latest run is still going;
     ``changes``: every change in order, for the transitions log.
+
+    A check is its cell (``tier_of``): ``perturbed (recall tier)`` and
+    ``perturbed (full tier)`` are one check, keyed and named ``perturbed``,
+    so the line and the log keep one name whatever tier ran.
     """
     rows = replay(merged, at) if at is not None else list(merged)
     # Oldest first; two rows with one stamp keep the listing's newest-first
@@ -468,12 +563,13 @@ def transitions(merged: list[dict], *, at: str | None = None) -> dict[str, dict]
     for pr in rows:
         rollup = pr.get("statusCheckRollup")
         for row in latest_run_per_check(rollup if isinstance(rollup, list) else []):
-            name = _name(row)
+            name, rank = tier_of(_name(row))
             if not name:
                 continue
             c = checks.setdefault(name, {
                 "name": ascii_(name), "verdict": None, "owner": None, "since": None, "previous": None,
-                "green_beside": [], "no_verdict": [], "running": [], "changes": [],
+                "green_beside": [], "green_below": [], "standing": None, "no_verdict": [], "running": [],
+                "changes": [],
             })
             outcome = check_outcome(row)
             if outcome == "running":
@@ -491,7 +587,16 @@ def transitions(merged: list[dict], *, at: str | None = None) -> dict[str, dict]
             if owner and owner["verdict"] == "red" and outcome == "green" and started <= owner["merged_at"]:
                 c["green_beside"].append({"pr": pr.get("number"), "started_at": started})
                 continue
-            new = _owner(pr, row, outcome)
+            if owner and owner["verdict"] == "red" and outcome == "green" and not covers(rank, c["standing"]):
+                c["green_below"].append({"pr": pr.get("number"), "tier": TIERS[rank] if rank is not None else None})
+                continue
+            new = _owner(pr, row, outcome, rank)
+            if outcome == "red":
+                # A red after a red keeps the harder tier standing; a red after
+                # a green (or first) stands at its own.
+                c["standing"] = harder(c["standing"], rank) if owner and owner["verdict"] == "red" else rank
+            else:
+                c["standing"] = None
             if owner is None or owner["verdict"] != outcome:
                 c["changes"].append({**new, "from_pr": owner["pr"] if owner else None,
                                      "from_verdict": owner["verdict"] if owner else None})
@@ -500,6 +605,7 @@ def transitions(merged: list[dict], *, at: str | None = None) -> dict[str, dict]
             # What stood beside the previous owner was read against that merge;
             # a new owner, of either verdict, starts its own beside lists.
             c["green_beside"] = []
+            c["green_below"] = []
             c["no_verdict"] = []
             c["owner"] = new
             c["verdict"] = outcome
@@ -546,6 +652,9 @@ def _beside(c: dict) -> list[str]:
         parts.append(f"#{n['pr']} no verdict ({n['conclusion']})")
     for g in c["green_beside"]:
         parts.append(f"#{g['pr']} green on a run that started before #{c['owner']['pr']} merged")
+    for g in c.get("green_below", []):
+        ran = f"a {g['tier']}-tier run" if g.get("tier") else "a run that names no tier"
+        parts.append(f"#{g['pr']} green on {ran}")
     return parts
 
 
@@ -578,7 +687,7 @@ def lines(checks: dict[str, dict], *, oldest: int | None = None) -> list[str]:
     check that reached no verdict on every merge read."""
     out: list[str] = []
     for c in reds(checks):
-        text = f"red after merge: #{c['owner']['pr']} {c['name']}{_since_clause(c, oldest)}"
+        text = f"red after merge: #{c['owner']['pr']} {label(c)}{_since_clause(c, oldest)}"
         beside = _beside(c)
         if beside:
             text += ", " + "; ".join(beside)
@@ -614,7 +723,7 @@ def board_lines(checks: dict[str, dict], *, window: int, oldest: int | None = No
             where += f", the leg finished {finish})" if finish else ")"
         else:
             where = f"red on #{c['owner']['pr']}"
-        text = f"{'new: ' if c['name'] in new else ''}{c['name']}: {where}"
+        text = f"{'new: ' if c['name'] in new else ''}{label(c)}: {where}"
         beside = _beside(c)
         if beside:
             text += ", " + "; ".join(beside)

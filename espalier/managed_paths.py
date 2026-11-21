@@ -114,7 +114,8 @@ STANDARD_MANAGED_TOOLS = [
     # The post-merge check verdicts: one home for the rule the ship preflight,
     # the SessionStart banner's Merged: line and the board's checks: line read
     # (ownership newest-merge-first, a green run clearing an older red only
-    # when it started after that merge). Imported by ship.py and board.py as a
+    # when it started after that merge and ran that red's proof tier or a
+    # fuller one). Imported by ship.py and board.py as a
     # sibling, loaded BY PATH by hooks/session_start.py (a load the
     # import-closure test cannot see); without it the banner's pull-request
     # block says it is unread and the driver's preflight prints no reds.
