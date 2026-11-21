@@ -2508,18 +2508,35 @@ class TestAFixtureIsTheSameBytesOnEveryPlatform:
 
         monkeypatch.setattr(pathlib.Path, "write_text", windows_write_text)
         _add(repo, {"docs/a.md": "alpha\n"})
+        assert (repo / "docs" / "a.md").read_bytes() == b"alpha\n"
         blob = subprocess.run(["git", "cat-file", "blob", "HEAD:docs/a.md"], cwd=repo, capture_output=True,
                               env=_git_env(), check=True, timeout=45).stdout
         assert blob == b"alpha\n"
 
     def test_no_fixture_in_this_file_is_written_in_text_mode(self):
-        """Dies to: a fixture written with ``write_text`` and no ``newline``, whose blob holds CRLF
-        on Windows alone, so a test asking its exact text reds on windows-latest and nowhere a
-        required check runs. Each fixture goes through ``_write``."""
+        """Dies to: a fixture written in text mode with no ``newline`` (``write_text``, or an
+        ``open`` whose mode writes, appends or creates without ``b``), whose file holds CRLF on
+        Windows alone, so a test asking its exact bytes reds on windows-latest and nowhere a
+        required check runs. Each fixture goes through ``_write``, or opens in binary."""
+        def translates(call):
+            newline = next((k.value for k in call.keywords if k.arg == "newline"), None)
+            return newline is None or (isinstance(newline, ast.Constant) and newline.value is None)
+
+        def mode(call):
+            pos = 0 if isinstance(call.func, ast.Attribute) else 1
+            given = call.args[pos] if len(call.args) > pos else next(
+                (k.value for k in call.keywords if k.arg == "mode"), None)
+            return given.value if isinstance(given, ast.Constant) and isinstance(given.value, str) else "r"
+
         tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
-        text_mode = [n.lineno for n in ast.walk(tree)
-                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "write_text"
-                     and not any(k.arg == "newline" for k in n.keywords)]
+        text_mode = []
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            name = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", None)
+            if name == "write_text" or (name == "open" and set(mode(n)) & set("wax") and "b" not in mode(n)):
+                if translates(n):
+                    text_mode.append(n.lineno)
         assert text_mode == []
 
 
@@ -3236,8 +3253,8 @@ class TestTheCheckoutsOfAClone:
         _git(repo, "worktree", "add", "-q", "-b", "bad", str(bad))
         _git(bad, "config", "--worktree", "espalier.machine", "air-work")
         gitdir = pathlib.Path(_git(bad, "rev-parse", "--absolute-git-dir").strip())
-        with (gitdir / "config.worktree").open("a", encoding="utf-8") as fh:
-            fh.write('[espalier\n\tmachine = "unterminated\n')
+        with (gitdir / "config.worktree").open("ab") as fh:
+            fh.write('[espalier\n\tmachine = "unterminated\n'.encode("utf-8"))
         rows = {pathlib.Path(r["path"]).name: r for r in _CENSUS.checkouts(repo)}
         assert (rows["bad.wt"]["seat"], rows["bad.wt"]["own_name"]) == (None, None)
         assert rows["bad.wt"]["seat_error"].startswith("git config failed (exit 128): ")
