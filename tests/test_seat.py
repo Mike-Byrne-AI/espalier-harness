@@ -604,9 +604,12 @@ class TestASeatNameTwoCheckoutsAnswer:
     def test_retire_releases_nothing_and_never_calls_the_worktree_gone(self, seat, clone, registry):
         """Dies to: retire's recovery from a plain refusal (the gone-worktree
         recipe) taking this one, which told the operator to add a third
-        checkout under the name and release the live seat's claims."""
-        a, b = self._twins(clone)
+        checkout under the name and release the live seat's claims. The claim
+        goes out before the twin exists: from a twin the writer refuses it
+        (DEF-3100)."""
+        a = _worktree(clone, "a", name="box-x")
         _send(seat, a, "box-x", "claim", "live", lane="lane/x")
+        b = _worktree(clone, "b", name="box-x")
         with pytest.raises(seat.Undecided) as caught:
             seat.cmd_retire(clone, "box-x", dry_run=False, fetch=True)
         said = str(caught.value)

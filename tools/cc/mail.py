@@ -1644,8 +1644,9 @@ def checkout_names(root: Path, *, run: Runner = run, timeout: float = 10.0) -> l
     "detached", "prunable", "name", "how", "unread"}``.
 
     The one reader of which checkouts answer a seat name (DEF-3098), for the
-    board's ``seats:`` line, ``seat.py``'s resolver and listing, and
-    :func:`name_this_worktree`'s sibling check. ``name`` is what
+    board's ``seats:`` line, ``seat.py``'s resolver and listing,
+    :func:`name_this_worktree`'s sibling check and :func:`twin_refusal`, the
+    writer's (DEF-3100). ``name`` is what
     :func:`machine_setting` reads in that checkout at git's effective scope,
     the read :func:`send` makes before it writes, so the name is the mail ref
     the checkout's sessions write to: a linked worktree's own ``--worktree``
@@ -1889,6 +1890,246 @@ def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None
         return (f"this linked worktree answers the clone's shared name {machine!r}, so an assign from it would "
                 f"read as {machine}'s; name it first: {naming_steps(root, run=run)}")
     return None
+
+
+#: How :func:`twin_refusal` opens a refusal, and how a reader tells it from
+#: the writer's other stops (DEF-3100).
+TWIN_REFUSED = "this checkout writes a mail ref another checkout of this clone writes"
+
+#: How :func:`twin_refusal` opens where it could not tell whether another
+#: checkout answers the name: refused too, never read as "no twin".
+TWIN_UNTOLD = "whether another checkout of this clone answers this seat name could not be told"
+
+
+#: The folder seat worktrees live in, under the main checkout: the value of
+#: ``checkout_sync.WORKTREES_REL`` (a test pins the two equal; this module
+#: cannot import that one, which imports it).
+WORKTREES_REL = (".claude", "worktrees")
+
+
+def _place_key(path: Path | str) -> str:
+    """One spelling of a folder for comparing two, as ``checkout_sync._norm``
+    spells it: real (symlinks and a Windows 8.3 name resolved), absolute,
+    forward slashes, case folded (``normcase`` folds nothing on macOS, whose
+    default volume is case-insensitive). git lists a Windows path with forward
+    slashes; a caller may hand backslashes, a ``..``, a link or another case."""
+    try:
+        real = os.path.realpath(str(path))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- an unresolvable path compares by its own spelling
+        real = os.path.abspath(str(path))
+    return os.path.normcase(real).replace("\\", "/").rstrip("/").casefold()
+
+
+def _main_repository(checkout: Path) -> tuple[Path | None, str]:
+    """``(the repository, '')`` where ``checkout`` is a clone's main checkout:
+    its ``.git`` folder, or the git directory a separate-git-dir clone's
+    ``.git`` file names (one with no ``commondir``, which a linked worktree's
+    always holds: git's own layout); ``(None, '')`` for a linked worktree or a
+    folder with no ``.git``; ``(None, why)`` where its ``.git`` file could not
+    be read. No spawn."""
+    dot = Path(checkout) / ".git"
+    if dot.is_dir():
+        return dot, ""
+    if not dot.is_file():
+        return None, ""
+    try:
+        first = dot.read_text(encoding="utf-8", errors="replace").strip().partition("\n")[0]
+    except OSError as exc:
+        return None, f"{dot.as_posix()} could not be read: {os_error_text(exc)}"
+    if first.startswith("gitdir:"):
+        gitdir = Path(first[len("gitdir:"):].strip())
+        gitdir = gitdir if gitdir.is_absolute() else Path(checkout) / gitdir
+        if gitdir.is_dir() and not (gitdir / "commondir").exists():
+            return gitdir, ""
+    return None, ""
+
+
+def _is_main_checkout(folder: Path, listed_main: str) -> bool:
+    """Whether ``folder`` is the main checkout git lists as ``listed_main``:
+    the folder itself, or for a separate-git-dir clone (whose repository git
+    lists, keeping no record of the checkout's folder) the folder whose
+    ``.git`` file names that repository."""
+    if _place_key(folder) == _place_key(listed_main):
+        return True
+    repo, _why = _main_repository(folder)
+    return repo is not None and _place_key(repo) == _place_key(listed_main)
+
+
+def seat_by_place(path: Path, name: str, *, listed_main: str | None, clone: str | None) -> str:
+    """Why the LINKED worktree at ``path`` owns the seat name ``name`` by its
+    place, or '': it sits at ``<main>/.claude/worktrees/<dir>`` (``main`` the
+    clone's main checkout, git's main entry ``listed_main``) and ``name`` is
+    ``<clone>-<dir>``, the name :func:`worktree_seat_name` derives and
+    :func:`name_this_worktree` gives it at its first session; a copy elsewhere
+    sharing the folder name never holds it, as that function's docstring
+    says. The main checkout's own claim, by construction, is
+    :func:`twin_refusal`'s to read (it needs a git read). ``listed_main`` is
+    None for a bare clone, which has no main checkout, so there no worktree
+    owns a name by its place. ``seat.py``'s resolver picks among twins
+    holding a name of their own by who holds a session, where this picks by
+    place, so on a dormant seat beside a live copy the two remedies differ:
+    each names the facts of every checkout."""
+    if listed_main is None or not clone:
+        return ""
+    real = Path(os.path.realpath(str(path)))
+    if tuple(real.parent.parts[-len(WORKTREES_REL):]) != WORKTREES_REL:
+        return ""
+    if not _is_main_checkout(real.parent.parent.parent, listed_main):
+        return ""
+    if worktree_seat_name(clone, real.name) != name:
+        return ""
+    return f"its folder under {'/'.join(WORKTREES_REL)}/ derives the name from {clone!r}"
+
+
+def twin_refusal(root: Path, machine: str, *, run: Runner = run, timeout: float = 10.0) -> str | None:
+    """Why a write under ``machine`` from the checkout at ``root`` is refused
+    because another checkout of this clone answers the same name, or None
+    (DEF-3100): two checkouts answering one name write one mail ref (and one
+    records ref), so a session in either reads as the seat, and the dispatcher's
+    folds count the two as one seat. Called by :func:`_push_ref`, the one writer
+    of both refs, and by ``send --dry-run``.
+
+    The checkout that owns the name by its place is never refused: a twin that
+    writes nothing, a reviewer's or a probe's copy left behind, must not stop
+    the seat's mail, the dispatcher's assigns and acks included. Measured on
+    the PC on 2026-11-21 (UTC): nine checkouts answered ``win``, the main
+    checkout and eight dormant scratch copies; a refusal of every twin would
+    have stopped that seat's every send until all eight were renamed. The
+    owners: the main checkout, for any name that is not a ``--worktree``
+    setting of its own (the clone's, by construction: renaming the clone moves
+    every seat name derived from it; one set there by a slip owns nothing, so
+    a worktree seat it copies keeps the name), read with one or two local git
+    reads and no listing; and a worktree seat (:func:`seat_by_place`), read
+    with git's listing up to the main checkout's row and the clone's name (the
+    one the main checkout answers where the clone's own config sets none, as
+    :func:`name_this_worktree` reads it). The other checkouts' names are read,
+    through :func:`iter_checkout_names` (the one reader of which checkouts
+    answer a name, DEF-3098), only for a checkout owning no name by its place:
+    a copy, an agent worktree (no key of its own, so the clone's name, or a
+    copied one, so the seat's it was made from), a seat worktree its first
+    session has not named yet, a seat moved with ``git worktree move`` or named
+    outside ``.claude/worktrees/``, or one named by hand. That one is refused
+    while any other checkout answers its name, dormant or live, naming each
+    and the rename of this one alone (the name SessionStart would derive where
+    it is free), after seat.py's words that a session in it releases its
+    claims first; where a seat owns the name, the refusal also says to send
+    from the seat's checkout if this session is the seat's own, working in a
+    copy. A read that failed refuses too, opening with :data:`TWIN_UNTOLD`, a
+    failed read of who owns the name included: a twin read as none, or a seat
+    read as a copy, is the defect. A bare clone has no main checkout, so there
+    every twin is refused and which one is the seat is the operator's call, as
+    it is for a name no checkout owns by its place."""
+    # The checkout the write is from: the nearest folder at or above ``root``
+    # holding a ``.git``, as git finds it, read with no spawn. None holds one:
+    # no clone, so no other checkout of it, and the write itself fails on its
+    # own git reads.
+    start = Path(os.path.abspath(str(root)))
+    here = next((p for p in (start, *start.parents) if (p / ".git").exists()), None)
+    if here is None:
+        return None
+    repo, why = _main_repository(here)
+    if why:
+        return f"{TWIN_UNTOLD} ({why}), so nothing is sent; {RETRY_HINT}"
+    untold: list[str] = []      # reads that failed, said where they decide the answer
+    if repo is not None:
+        # The main checkout: the seat by construction for any name that is not
+        # a --worktree setting of its own.
+        own, how = machine_setting(here, run=run, timeout=timeout, scope="worktree")
+        if own is None and not how.startswith(MACHINE_UNREAD):
+            return None
+        untold.append(f"whether {here.as_posix()} answers {machine!r} by a --worktree setting of its own ({how})"
+                      if own is None else "")
+    listed_main: str | None = None
+    main_row: dict | None = None
+    clone: str | None = None
+    rows: list[dict] = []
+    try:
+        for row in iter_checkout_names(here, run=run, timeout=timeout):
+            rows.append(row)
+            if not row["main"] or row["bare"]:
+                continue
+            main_row, listed_main = row, row["path"]
+            named, clone_how = clone_machine(here, run=run, timeout=timeout)
+            if named:
+                clone = named
+            elif clone_how.startswith(MACHINE_UNREAD):
+                untold.append(f"the clone's name ({clone_how})")
+            elif row["name"] and not row["unread"]:
+                clone = row["name"]    # set outside the clone's own config (a global one): what the main answers
+            if repo is None and seat_by_place(here, machine, listed_main=listed_main, clone=clone):
+                return None            # a worktree seat: no other checkout's name is read
+    except Unresolvable as exc:
+        return f"{TWIN_UNTOLD} ({exc}), so nothing is sent; {RETRY_HINT}"
+    mine = _place_key(here)
+    # This checkout's own row is left out: a main checkout's by the row itself
+    # (a separate-git-dir clone's is listed by its repository, not its folder).
+    others = [r for r in rows if not (r["gone"] or r["bare"]) and _place_key(r["path"]) != mine
+              and not (repo is not None and r is main_row)]
+    twins = [r for r in others if r["name"] == machine]
+    unread = [r for r in others if r["unread"]]
+    if not twins:
+        if not unread:
+            return None
+        said = "; ".join(f"{Path(r['path']).as_posix()} ({r['unread']})" for r in unread)
+        return (f"{TWIN_UNTOLD}: the name of {said} could not be read, so whether it is {machine!r} is unknown and "
+                f"nothing is sent; {RETRY_HINT}")
+    # The seat among the twins: the main checkout where the name is not a
+    # --worktree setting of its own, else a worktree seat by its place.
+    seat: dict | None = None
+    seat_why = ""
+    if main_row is not None and main_row in twins:
+        own, how = machine_setting(Path(main_row["path"]), run=run, timeout=timeout, scope="worktree")
+        if own is None and not how.startswith(MACHINE_UNREAD):
+            seat, seat_why = main_row, "the main checkout, the seat by construction"
+        elif own is None:
+            untold.append(f"whether the main checkout answers {machine!r} by a --worktree setting of its own ({how})")
+    if seat is None:
+        for r in twins:
+            if r is not main_row and (why := seat_by_place(Path(r["path"]), machine, listed_main=listed_main,
+                                                           clone=clone)):
+                seat, seat_why = r, why
+                break
+    facts = "; ".join(f"{Path(r['path']).as_posix()} on {r['branch'] or 'a detached HEAD'}"
+                      + (f" (the seat: {seat_why})" if r is seat else "") for r in twins)
+    head = (f"this checkout ({here.as_posix()}) answers {machine!r}, and so {'does' if len(twins) == 1 else 'do'} "
+            f"{len(twins)} other checkout{'' if len(twins) == 1 else 's'} of this clone ({facts})")
+    failed = [u for u in untold if u]
+    if seat is None and failed:
+        return (f"{TWIN_UNTOLD}: {head}, and which one owns the name by its place could not be told "
+                f"({'; '.join(failed)}), so nothing is sent; {RETRY_HINT}")
+    # The rename is this checkout's alone: renaming another twin clears no
+    # refusal here, and may rename a checkout a session holds. The name
+    # suggested is the one SessionStart would derive, where no checkout
+    # answers it.
+    derived = worktree_seat_name(clone, Path(os.path.realpath(str(here))).name) if clone else None
+    taken = {r["name"] for r in rows}
+    name = derived if derived and derived != machine and derived not in taken else "<name>"
+    on, _on_why = _worktree_config(here, run=run, timeout=timeout)
+    if on:
+        steps = f'git -C "{here.as_posix()}" config --worktree {MACHINE_KEY} {name}'
+    else:
+        # Per-worktree config off or unread: naming_steps owns what naming
+        # takes then (a bare clone's one change included).
+        steps = naming_steps(here, run=run, timeout=timeout, at=here.as_posix())
+        if name != "<name>":
+            steps += f"\n(the name SessionStart would give it: {name})"
+    first = (f"a session in this checkout writes under {machine!r} now: release its claims from it first "
+             f"(`mail.py claims` lists them; a job given {machine!r} stays {machine}'s), or end that session; "
+             "then name it, one command a line:\n")
+    if seat is not None:
+        where = Path(seat["path"])
+        # A separate-git-dir clone: git lists its repository as the main
+        # entry and keeps no record of the checkout's folder.
+        spelled = (where.as_posix() if (where / ".git").exists()
+                   else f"the clone's main checkout, whose repository git lists as {where.as_posix()}")
+        remedy = (f"If this session is the seat's own, working in a copy, send from the seat's checkout ({spelled}) "
+                  f"instead. Otherwise {first}")
+    else:
+        remedy = (f"Which checkout is the seat is the operator's call: none owns {machine!r} by its place. If it is "
+                  f"not this one, {first}")
+    return (f"{TWIN_REFUSED}: {head}, so a message from here would read as {machine}'s and the dispatcher would "
+            f"count the two as one seat; nothing is sent (what was sent from here before stays on "
+            f"{ref_for(machine)}). {remedy}{steps}")
 
 
 def current_branch(root: Path, *, run: Runner = run) -> str:
@@ -2322,8 +2563,13 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
     the push's fate as read, and the next write from this checkout settles it
     (landed after all: that write is refused once, naming it; never: the
     record is dropped). ``verb`` names the write in a refusal
-    (``("send", "sent")``)."""
+    (``("send", "sent")``). A checkout whose name another checkout of this
+    clone answers is refused first, unless it owns the name by its place
+    (:func:`twin_refusal`, DEF-3100): this is the one writer of both refs."""
     noun, past = verb
+    refusal = twin_refusal(root, machine, run=run, timeout=min(timeout, 10.0))
+    if refusal:
+        raise Unresolvable(refusal)
     out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
     remote_tip = out.split()[0] if out else None
     local_tip = _tip(root, ref, run=run)
@@ -2465,7 +2711,9 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
          timeout: float = DEFAULT_TIMEOUT) -> str:
     """Append ``message`` to this machine's ref and push it. The machine is
     the ``espalier.toml`` setting (refused without one); the message must be
-    from it; a secret-path hit refuses; origin's tip for the ref is read
+    from it; a secret-path hit refuses; a checkout whose name another checkout
+    of this clone answers refuses, unless it owns the name by its place
+    (:func:`twin_refusal`, DEF-3100); origin's tip for the ref is read
     fresh and must be what this checkout last saw (a local ref behind it is
     adopted, one ahead of or diverged from it refuses: one writer per
     machine); the ref moves by compare-and-swap and the push carries no
@@ -2830,6 +3078,10 @@ def main(argv: list[str] | None = None) -> int:
                 hits = secret_hits(message)
                 if hits:
                     raise Unresolvable("would not send, the guard reads a secret path in it: " + "; ".join(hits[:5]))
+                # The real send refuses here in _push_ref; the dry run says it too (DEF-3100).
+                refusal = twin_refusal(root, machine)
+                if refusal:
+                    raise Unresolvable(f"would not send: {refusal}")
                 sys.stdout.write(encode(message))
                 print(f"body: {len(message['text'])} of {MAX_TEXT} characters", file=sys.stderr)
                 return 0

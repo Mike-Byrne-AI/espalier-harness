@@ -2807,6 +2807,313 @@ class TestCheckoutNames:
             assert str(caught.value).startswith(mail.LISTING_UNREAD), caught.value
 
 
+@pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
+class TestATwinCheckoutSendsNoMail:
+    """DEF-3100: the writer refuses a checkout whose seat name another
+    checkout of the clone answers, unless it owns the name by its place
+    (``mail.twin_refusal``): the main checkout, or a worktree at
+    ``.claude/worktrees/<dir>`` named ``<clone>-<dir>``, so a dormant twin
+    never stops the seat. Driven on real git, since git's config scoping is
+    the thing under test, and through ``send --dry-run``, the row probe's
+    path, so each twin row reds at the base by its own assertion."""
+
+    _git = TestNameThisWorktree._git
+    _clone = TestNameThisWorktree._clone
+
+    def _add(self, repo: Path, path: Path, name: str | None = None) -> Path:
+        self._git("worktree", "add", "-q", "--detach", str(path), cwd=repo)
+        if name:
+            self._on(repo)
+            self._git("config", "--worktree", "espalier.machine", name, cwd=path)
+        return path
+
+    def _on(self, repo: Path) -> None:
+        self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
+
+    def _dry_run(self, mail, path: Path, capsys) -> tuple[int, str]:
+        code = mail.main(["--root", str(path), "send", "--type", "note", "--text", "probe", "--dry-run"])
+        return code, capsys.readouterr().err
+
+    # Each scene: (the checkouts refused, the checkouts that send, the seat by place or None).
+    def _hand_named_twins_the_row_probe(self, tmp_path):
+        repo = self._clone(tmp_path, name="box")
+        a, b = self._add(repo, tmp_path / "a", "box-x"), self._add(repo, tmp_path / "b", "box-x")
+        return [a, b], [repo], None
+
+    def _a_dormant_copy_never_stops_the_main_checkout(self, tmp_path):
+        repo = self._clone(tmp_path)
+        return [self._add(repo, tmp_path / "wt")], [repo], repo
+
+    def _a_copy_of_a_worktree_seat(self, tmp_path):
+        # The copy's key stands for the one `git worktree add` copies from the
+        # seat's own checkout (driven on git 2.52.0, docs/SHARP_EDGES.md).
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        return [self._add(repo, tmp_path / "copy", "win-2")], [seat, repo], seat
+
+    def _an_agent_worktree_with_no_key_of_its_own(self, tmp_path):
+        # air's 1aff62: an Agent dispatch with isolation worktree runs no
+        # SessionStart, so nothing names it and it answers the clone's name.
+        repo = self._clone(tmp_path)
+        self._on(repo)
+        return [self._add(repo, repo / ".claude" / "worktrees" / "agent-a1b2")], [repo], repo
+
+    def _an_agent_worktree_with_a_copied_key(self, tmp_path):
+        # air's 1aff62, the other half: made from a named seat's checkout, it
+        # carries that seat's key.
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        agent = self._add(repo, repo / ".claude" / "worktrees" / "agent-c3d4", "win-2")
+        return [agent], [seat, repo], seat
+
+    def _a_seat_worktree_its_session_has_not_named(self, tmp_path):
+        repo = self._clone(tmp_path)
+        self._on(repo)
+        return [self._add(repo, repo / ".claude" / "worktrees" / "3")], [repo], repo
+
+    def _a_lone_name_of_its_own_sends(self, tmp_path):
+        repo = self._clone(tmp_path)
+        return [], [self._add(repo, tmp_path / "scratch", "win-scratch"), repo], None
+
+    def _a_copy_sharing_the_seat_folder_name_holds_nothing(self, tmp_path):
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        (tmp_path / "elsewhere").mkdir()
+        return [self._add(repo, tmp_path / "elsewhere" / "2", "win-2")], [seat, repo], seat
+
+    def _a_separate_git_dir_main_checkout(self, tmp_path):
+        repo = tmp_path / "repo"
+        self._git("init", "-q", f"--separate-git-dir={tmp_path / 'repo.git'}", str(repo), cwd=tmp_path)
+        self._git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        self._git("config", "espalier.machine", "win", cwd=repo)
+        assert (repo / ".git").is_file()
+        # git lists the repository, not the checkout, as the main entry (it
+        # keeps no record of the checkout's folder), so the seat is named by it.
+        return [self._add(repo, tmp_path / "wt")], [repo], tmp_path / "repo.git"
+
+    def _a_bare_clone_has_no_seat_by_place(self, tmp_path):
+        work = self._clone(tmp_path, name=None)
+        bare = tmp_path / "bare.git"
+        self._git("clone", "-q", "--bare", str(work), str(bare), cwd=tmp_path)
+        self._git("config", "espalier.machine", "box", cwd=bare)
+        return [self._add(bare, tmp_path / "w1"), self._add(bare, tmp_path / "w2")], [], None
+
+    def _a_seat_worktree_of_a_separate_git_dir_clone(self, tmp_path):
+        # git lists the repository as the main entry; the seat's folder is
+        # still under the main checkout's .claude/worktrees/ (the code review).
+        repo = tmp_path / "repo"
+        self._git("init", "-q", f"--separate-git-dir={tmp_path / 'repo.git'}", str(repo), cwd=tmp_path)
+        self._git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        self._git("config", "espalier.machine", "win", cwd=repo)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        return [self._add(repo, tmp_path / "copy", "win-2")], [seat, repo], seat
+
+    def _a_clone_named_outside_its_own_config(self, tmp_path):
+        # The name in an included file, as a global one is: `git config
+        # --local` reads none, the effective read does, and SessionStart
+        # derives the seat's name from that (the failure-mode review's S6).
+        repo = self._clone(tmp_path, name=None)
+        (tmp_path / "shared.gitconfig").write_bytes(b"[espalier]\n\tmachine = win\n")
+        self._git("config", "include.path", str(tmp_path / "shared.gitconfig").replace("\\", "/"), cwd=repo)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        return [self._add(repo, tmp_path / "copy", "win-2")], [seat, repo], seat
+
+    def _a_main_checkout_given_a_seat_name_by_a_slip(self, tmp_path):
+        # A `--worktree` name run in the main checkout by mistake: the main
+        # owns the clone's name by construction, never one set there, so the
+        # worktree seat keeps it (the failure-mode review's CHANGE 4).
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        self._git("config", "--worktree", "espalier.machine", "win-2", cwd=repo)
+        return [repo], [seat], seat
+
+    SCENES = ("hand_named_twins_the_row_probe", "a_dormant_copy_never_stops_the_main_checkout",
+              "a_copy_of_a_worktree_seat", "an_agent_worktree_with_no_key_of_its_own",
+              "an_agent_worktree_with_a_copied_key", "a_seat_worktree_its_session_has_not_named",
+              "a_lone_name_of_its_own_sends", "a_copy_sharing_the_seat_folder_name_holds_nothing",
+              "a_separate_git_dir_main_checkout", "a_bare_clone_has_no_seat_by_place",
+              "a_seat_worktree_of_a_separate_git_dir_clone", "a_clone_named_outside_its_own_config",
+              "a_main_checkout_given_a_seat_name_by_a_slip")
+
+    @pytest.mark.parametrize("scene", SCENES, ids=[s.replace("_", "-") for s in SCENES])
+    def test_each_scene_refuses_the_twin_and_sends_from_the_seat(self, mail, tmp_path, capsys, scene):
+        """Dies to: no writer check (every twin sends, the row's defect), a
+        refusal of every twin (a dormant copy stops the seat: the main
+        checkout's and the worktree seat's rows), a place rule that takes a
+        folder name alone (the copy elsewhere sharing the seat's folder), and
+        a refusal that names no seat or gives the seat a rename."""
+        refused, allowed, seat = getattr(self, f"_{scene}")(tmp_path)
+        for path in allowed:
+            code, err = self._dry_run(mail, path, capsys)
+            assert code == 0, (path, err)
+        for path in refused:
+            code, err = self._dry_run(mail, path, capsys)
+            assert code == 1 and mail.TWIN_REFUSED in err, (path, err)
+            assert f"this checkout ({path.as_posix()})" in err, err
+            assert f'git -C "{path.as_posix()}" config --worktree' in err or "core.bare" in err, err
+            assert "release its claims from it first" in err, err
+            for other in refused:
+                if other != path:
+                    assert other.as_posix() in err, (other, err)
+                    assert f'git -C "{other.as_posix()}"' not in err, "only this checkout is told to rename"
+            if seat is not None:
+                spelled = (seat.as_posix() if (seat / ".git").exists()
+                           else f"the clone's main checkout, whose repository git lists as {seat.as_posix()}")
+                assert f"If this session is the seat's own, working in a copy, send from the seat's checkout " \
+                       f"({spelled}) instead" in err, err
+                assert f'git -C "{seat.as_posix()}"' not in err, "the seat is never told to rename"
+            else:
+                assert "the operator's call" in err, err
+            assert err.isascii(), err
+
+    def test_a_send_and_a_park_from_a_twin_reach_no_ref_and_the_seat_still_sends(self, mail, machines):
+        """The refusal sits in the one writer of both refs, ahead of any push.
+        Dies to: the check at the CLI alone (``send`` as ship.py and seat.py
+        call it, and ``park``, write past it)."""
+        win, origin = machines["win"], machines["origin"]
+        copy = win.parent / "win-copy"
+        _git(win, "worktree", "add", "-q", "--detach", str(copy))
+        with pytest.raises(mail.Unresolvable) as caught:
+            mail.send(copy, _msg(mail, "win", "note", "from the copy"), say=lambda _s: None)
+        assert str(caught.value).startswith(mail.TWIN_REFUSED), caught.value
+        with pytest.raises(mail.Unresolvable) as caught:
+            mail.park(copy, "memory/session-log.d/row.md", b"row\n", "origin/main", say=lambda _s: None)
+        assert str(caught.value).startswith(mail.TWIN_REFUSED), caught.value
+        assert _git(origin, "for-each-ref", "refs/heads/mail", "refs/heads/records").stdout == ""
+        mail.send(win, _msg(mail, "win", "note", "from the seat"), say=lambda _s: None)
+        assert "from the seat" in _origin_file(origin, "win")
+
+    def test_the_seat_by_place_reads_no_other_checkout_name(self, mail, tmp_path):
+        """The price (DEF-3100): the main checkout reads only its own config,
+        no listing; a worktree seat reads git's listing up to the main
+        checkout's row and the clone's name, never another checkout's; only a
+        checkout owning no name by its place reads every name. Dies to: every
+        send reading the whole listing (0.24 s a send on the PC's 28 listed
+        checkouts, 2026-11-21 UTC)."""
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        others = [self._add(repo, tmp_path / f"wt{n}") for n in range(3)]
+        spawns: list[tuple[list[str], str]] = []
+
+        def run(argv, **kw):
+            spawns.append((list(argv), str(kw.get("cwd"))))
+            return mail.run(argv, **kw)
+
+        assert mail.twin_refusal(repo, "win", run=run) is None
+        assert spawns and all(argv[1:2] == ["config"] and Path(cwd).resolve() == repo.resolve()
+                              for argv, cwd in spawns), spawns
+        spawns.clear()
+        assert mail.twin_refusal(seat, "win-2", run=run) is None
+        read_in = {Path(cwd).resolve() for argv, cwd in spawns if argv[1:2] == ["config"]}
+        assert read_in <= {seat.resolve(), repo.resolve()}, spawns
+        spawns.clear()
+        assert mail.twin_refusal(others[0], "win", run=run)
+        read_in = {Path(cwd).resolve() for argv, cwd in spawns if argv[1:2] == ["config"]}
+        assert {o.resolve() for o in others[1:]} <= read_in, spawns
+
+    def test_a_name_that_does_not_read_refuses_by_name(self, mail, tmp_path, capsys):
+        """A twin read as none is the defect. Dies to: an unread sibling
+        skipped, or the listing's failure read as no checkouts."""
+        repo = self._clone(tmp_path)
+        scratch = self._add(repo, tmp_path / "scratch", "win-scratch")
+        broken = self._add(repo, tmp_path / "broken", "win-broken")
+        (repo / ".git" / "worktrees" / "broken" / "config.worktree").write_bytes(b"[espalier\n")
+        code, err = self._dry_run(mail, scratch, capsys)
+        assert code == 1 and mail.TWIN_UNTOLD in err and broken.as_posix() in err, err
+        wt = tmp_path / "fake"
+        wt.mkdir()
+        (wt / ".git").write_bytes(b"gitdir: elsewhere\n")
+        for answer in ((128, "", "fatal: not a git repository"), mail.Unresolvable("git took longer than 10s")):
+            def failing(argv, answer=answer, **kw):
+                if isinstance(answer, BaseException):
+                    raise answer
+                return answer
+            said = mail.twin_refusal(wt, "win", run=failing) or ""
+            assert said.startswith(mail.TWIN_UNTOLD) and mail.LISTING_UNREAD in said, said
+
+    def test_a_failed_read_of_who_owns_the_name_is_untold_never_a_copy(self, mail, tmp_path):
+        """A seat whose clone name did not read must not be told it is a copy
+        and handed a rename of itself (the failure-mode review's CHANGE 1).
+        Dies to: the failed read thrown away, the seat refused as a twin."""
+        repo = self._clone(tmp_path)
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        self._add(repo, tmp_path / "copy", "win-2")
+
+        def run(argv, **kw):
+            if "--local" in argv and mail.MACHINE_KEY in argv:
+                return 128, "", "fatal: bad config line 1"
+            return mail.run(argv, **kw)
+
+        said = mail.twin_refusal(seat, "win-2", run=run) or ""
+        assert said.startswith(mail.TWIN_UNTOLD) and "bad config line 1" in said and mail.RETRY_HINT in said, said
+        assert f'git -C "{seat.as_posix()}"' not in said, said
+
+    def test_a_root_inside_a_checkout_or_spelled_another_way_is_read_as_that_checkout(self, mail, tmp_path, capsys):
+        """The code review's two unpinned behaviours: a root that is a folder
+        inside a twin is that twin, and a root spelled with ``..`` is the
+        checkout it names. Dies to: no walk up to the ``.git`` (the subfolder
+        skips the check), and a folder compare by spelling (a lone name of
+        its own reads its own row as a twin)."""
+        repo = self._clone(tmp_path)
+        copy = self._add(repo, tmp_path / "copy")
+        (copy / "sub").mkdir()
+        code, err = self._dry_run(mail, copy / "sub", capsys)
+        assert code == 1 and mail.TWIN_REFUSED in err, err
+        scratch = self._add(repo, tmp_path / "scratch", "win-scratch")
+        assert mail.twin_refusal(scratch.parent / "copy" / ".." / "scratch", "win-scratch") is None
+        seat = self._add(repo, repo / ".claude" / "worktrees" / "2", "win-2")
+        assert mail.twin_refusal(seat.parent / ".." / "worktrees" / "2", "win-2") is None
+
+    def test_a_root_through_a_link_is_read_as_the_checkout_it_names(self, mail, tmp_path):
+        """git lists a checkout by its real path, and a root can reach it
+        through a link (a macOS temp folder is one; a Windows junction needs
+        no privilege). Dies to: folders compared by their spelling, which read
+        a lone name's own row as a twin and refuse it."""
+        repo = self._clone(tmp_path)
+        scratch = self._add(repo, tmp_path / "scratch", "win-scratch")
+        link = tmp_path / "link"
+        try:
+            if sys.platform == "win32":
+                import _winapi
+                _winapi.CreateJunction(str(scratch), str(link))
+            else:
+                os.symlink(scratch, link, target_is_directory=True)
+        except (OSError, AttributeError, ImportError) as exc:
+            pytest.skip(f"no link to a folder could be made here: {exc}")
+        assert mail.twin_refusal(link, "win-scratch") is None
+
+    def test_the_rename_offered_is_the_name_sessionstart_would_derive(self, mail, tmp_path, capsys):
+        """The remedy names this checkout alone, with the name SessionStart
+        gives a worktree (``<clone>-<folder>``) where no checkout answers it,
+        so the operator need not invent one (the failure-mode review's
+        CHANGE 2d). Dies to: ``<name>`` printed where the name is known."""
+        repo = self._clone(tmp_path)
+        self._on(repo)
+        agent = self._add(repo, repo / ".claude" / "worktrees" / "agent-a1b2")
+        code, err = self._dry_run(mail, agent, capsys)
+        assert code == 1 and f'git -C "{agent.as_posix()}" config --worktree espalier.machine win-agent-a1b2' in err, err
+
+    def test_the_seat_folder_is_checkout_syncs(self, mail):
+        """``mail.WORKTREES_REL`` is ``checkout_sync.WORKTREES_REL``'s value,
+        kept apart only because that module imports this one. Dies to: the
+        folder the seat driver makes seats in moved in one module alone."""
+        import ast
+        tree = ast.parse((REPO_ROOT / "tools" / "cc" / "checkout_sync.py").read_text(encoding="utf-8"))
+        values = [ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "WORKTREES_REL" for t in node.targets)]
+        assert values == [mail.WORKTREES_REL], values
+
+    def test_with_per_worktree_config_off_the_naming_steps_are_given(self, mail, tmp_path, capsys):
+        """No worktree can hold a name of its own yet, so the one-line rename
+        would fail: ``naming_steps`` says what naming takes. Dies to: the
+        ``--worktree`` command given where git refuses it."""
+        repo = self._clone(tmp_path)
+        copy = self._add(repo, tmp_path / "copy")
+        code, err = self._dry_run(mail, copy, capsys)
+        assert code == 1 and mail.TWIN_REFUSED in err, err
+        assert f'git -C "{copy.as_posix()}" config extensions.worktreeConfig true' in err, err
+
+
 class TestCursor:
     def test_the_cursor_round_trips_and_is_lf_json(self, mail, tmp_path):
         mail.write_cursor(tmp_path, {"win": "id-1"})
