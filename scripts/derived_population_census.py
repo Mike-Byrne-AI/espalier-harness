@@ -1761,7 +1761,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "exact-set assertion at the git-regex axis.",
     ),
     "tests/test_speedbump_kill.py": (
-        4, "2ad4460fd80065e57c89900bb46baa6f3cf2e421c2e9cc849ee8b8b6e1f8b034",
+        5, "494c141022a3b87a8666c72c299b51074b4117d950658d975b0514189ab94466",
         "CORRECT_BY_PROPERTY",
         "ADDED 2026-11-02 (DEF-4078, CP-KILL): both rows read `_speedbump.SPEEDBUMPS` to find "
         "CP-KILL by its id, its position in the registry and its own fields (cap exempt, the "
@@ -1773,7 +1773,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "over slot files the test plants itself, and compare the pids to an exact literal "
         "list at each count (2, 3, and a count file that holds no count): the reader's "
         "output against a fixture it built, not a population the test derives, so a reader "
-        "that reads fewer slots, or one slot per record, reds on the exact list.",
+        "that reads fewer slots, or one slot per record, reds on the exact list. REVISED "
+        "2026-11-21 (DEF-2106, the box lock's paths): one more row reads "
+        "`_speedbump._box_lock_paths()` inside the test's own loop over spellings and homes it "
+        "plants, and asserts the variable's file comes first, the file the plugin's "
+        "`current_path` locks is among them and no path repeats: the reader's output against "
+        "the plugin's own reading of fixtures the test built, not a population derived from the "
+        "code, so a reader that drops either file reds on the membership.",
     ),
     "tests/test_speedbump_metacognitive.py": (
         5, "5d718547ff74de90543b152f8f1091c53dbf58bd37869e5e2438bab178a704b0",

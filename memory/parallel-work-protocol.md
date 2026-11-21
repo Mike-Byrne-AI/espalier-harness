@@ -138,7 +138,8 @@ launcher did not start the handoff arms nothing and says the window needs a
    dispatcher's absence does not stall you. Two seats on one box run one
    xdist run of the suite at a time by construction: such a run takes a lock
    on the box's lock file (`ESPALIER_BOX_LOCK`, set by `seat.py launch`, one
-   path per host), waits while another run holds it and prints the holder and
+   path per host, though it keeps a path the shell already set, which the
+   banner then names), waits while another run holds it and prints the holder and
    its age (a box whose `<lock>.slots` file names more slots runs that many
    parallel lines at once, and any run at one worker still takes every slot,
    once every checkout on the box carries the slots: `DEF-2105`); every tier line is an xdist run, the contract slice included, and

@@ -508,6 +508,59 @@ class TestTheBoxLocksHolder:
         (tmp_path / "box.lock.slots").write_text("many", encoding="utf-8")
         assert [h["pid"] for h in _speedbump._box_lock_holders()] == [4242]
 
+    def test_the_launchers_old_default_is_read_where_the_plugin_locks_it(self, tmp_path, monkeypatch):
+        """DEF-2106 (air 016cf1): a seat whose shell still exports the
+        launcher's old default (the lock's name under the temp directory)
+        holds the home file, since the plugin's ``current_path`` moves it
+        there, but the reading read the variable raw and found no holder, so
+        on Windows, where the box lock is the only arm, a kill of a sibling's
+        tier got no nudge. A victim whose plugin did not move it (one older
+        than the move, or a temp folder spelled otherwise) locks the raw file,
+        which the raw read found, so both are read: the variable's file and,
+        for the lock's own name, the home file, a pid counted once. Pinned:
+        the file ``current_path`` locks and the raw file are always among
+        those read, over spellings and homes. Mutation: the variable read
+        raw; the home file read in its place; a pid counted twice."""
+        import tests._box_lock as box
+        monkeypatch.setattr(box.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+        monkeypatch.setattr(box.Path, "home", staticmethod(lambda: tmp_path / "home"))
+        home_lock = tmp_path / "home" / ".espalier" / "espalier-box.lock"
+        home_lock.parent.mkdir(parents=True)
+        old = str(tmp_path / "temp" / "espalier-box.lock")
+        (tmp_path / "temp").mkdir()
+        moved, raw = {"seat": "s", "lane": "l", "pid": 4242}, {"seat": "t", "lane": "m", "pid": 5151}
+        home_lock.write_text(json.dumps(moved), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", old)
+        assert _speedbump._box_lock_holders() == [moved], "the moved holder, read in the home file"
+        Path(old).write_text(json.dumps(raw), encoding="utf-8")
+        assert _speedbump._box_lock_holders() == [raw, moved], "an unmoved victim's raw file is read too"
+        home_lock.write_text(json.dumps(raw), encoding="utf-8")
+        assert _speedbump._box_lock_holders() == [raw], "one pid in both files is one holder"
+        sink = types.SimpleNamespace(write=lambda _s: None, flush=lambda: None)
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+        spellings = [old, os.path.join(os.path.dirname(old), ".", "espalier-box.lock"), os.path.join(old, ""), old + "\r",
+                     str(home_lock), str(tmp_path / "shared" / "espalier-box.lock"), str(tmp_path / "other.lock"),
+                     "~/.espalier/espalier-box.lock", "espalier-box.lock"]
+        if os.name == "nt":
+            spellings.append(old.swapcase().replace("\\", "/"))
+
+        def no_home() -> Path:
+            raise RuntimeError("no home")
+
+        homes = [staticmethod(lambda: tmp_path / "home"), staticmethod(no_home),
+                 staticmethod(lambda: Path("relative-home")), staticmethod(lambda: Path(tmp_path.anchor))]
+        for home in homes:
+            monkeypatch.setattr(box.Path, "home", home)
+            for held in spellings:
+                monkeypatch.setenv("ESPALIER_BOX_LOCK", held)
+                read = [key(p) for p in _speedbump._box_lock_paths()]
+                assert read[0] == key(held) and key(box.current_path(held, stream=sink)) in read, (home, held, read)
+                assert len(read) == len(set(read)), (home, held, read)
+        monkeypatch.delenv("ESPALIER_BOX_LOCK")
+        assert _speedbump._box_lock_paths() == [], "no variable, no default path read"
+
 
 class TestTheKillWords:
     @pytest.mark.parametrize("command,pids", [
