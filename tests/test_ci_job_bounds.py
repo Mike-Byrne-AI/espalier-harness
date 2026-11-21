@@ -134,11 +134,11 @@ def _worst_serial_mark() -> float:
 #: reason for the floor: a test that hangs must be cut by its own timeout, naming
 #: it, before the job's bound cuts the job with none named. A test at its mark adds
 #: at most the mark to such a run, so the bound holds the worst mark plus this
-#: worst (one test at its mark; a shallow checkout skips tests/test_verify_pins.py's
-#: controls, but its other tests run there under the same 1800 s module mark, so
-#: the floor has no spare margin on that leg either). The margin this replaced was a flat
-#: 600 s on a 7.0-minute leg of 2026-10-16, which had grown to 23.5 by the read of
-#: the date below. The census prints the floor at every re-measure, so growth
+#: worst (one test at its mark; a shallow checkout skips
+#: tests/test_verify_pins.py's controls, but its other tests run there under the
+#: same 1800 s module mark, so the floor has no spare margin on that leg either).
+#: The margin this replaced was a flat 600 s on a 7.0-minute leg of 2026-10-16,
+#: which had grown to 23.5 by the read of the date below. The census prints the floor at every re-measure, so growth
 #: inside the files reads RAISE there; a serial file added reds the roster test
 #: below until these figures cover it. Each figure is what its bound was last set
 #: from, by the census's needed (the larger of its floor and its rule) plus any

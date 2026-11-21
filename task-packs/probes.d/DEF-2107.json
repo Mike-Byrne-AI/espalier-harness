@@ -1,7 +1,7 @@
 {
  "id": "DEF-2107",
  "subject": "tools/cc/hooks/_speedbump.py",
- "cmd": "python3 -c \"import ast;S=[('tests/_box_lock.py','current_path'),('scripts/guard_cost_census.py','current_path'),('tools/cc/hooks/_speedbump.py','_box_lock_paths'),('tools/cc/hooks/session_start.py','_same_lock')];D=[[x for x in ast.walk(ast.parse(open(p,encoding='utf-8').read())) if isinstance(x,ast.FunctionDef) and x.name==f] for p,f in S];assert all(len(d)==1 for d in D),[len(d) for d in D];print(any(any((isinstance(y,ast.Attribute) and y.attr=='gettempdir') or (isinstance(y,ast.Constant) and y.value=='.espalier') for y in ast.walk(d[0])) for d in D))\"",
+ "cmd": "python3 -c \"import ast,os;P=['tests/_box_lock.py','scripts/guard_cost_census.py','tools/cc/hooks/_speedbump.py','tools/cc/hooks/session_start.py'];h=lambda y:(isinstance(y,ast.Attribute) and y.attr=='gettempdir') or (isinstance(y,ast.Name) and y.id=='gettempdir') or (isinstance(y,ast.alias) and y.name=='gettempdir') or (isinstance(y,ast.Constant) and y.value in ('.espalier','espalier-box.lock'));print(any((not os.path.exists(p)) or any(h(y) for y in ast.walk(ast.parse(open(p,encoding='utf-8').read()))) for p in P))\"",
  "open_value": "True",
  "why_not": null,
  "inputs": [
@@ -9,7 +9,7 @@
   "scripts/guard_cost_census.py",
   "tools/cc/hooks/session_start.py"
  ],
- "row_sha": "cfe273f24f6f",
- "text_sha": "d32cf4e183d4",
- "verified_2026_11_21": "OPEN (filed 2026-11-21; probe driven at filing here and in the export of HEAD 0ec974496f83)"
+ "row_sha": "31117a67ac79",
+ "text_sha": "d62dfc758b09",
+ "verified_2026_11_21": "STILL_OPEN (re-pinned value unchanged on 2026-11-21: review batch at filing: the probe reads the four readers' modules whole, not four named functions, so a helper or constant in the same module no longer reads as fixed; it matches a bare gettempdir and reads a missing module as open, so a rename is re-pinned, never struck unread; the text names the home_default copies and the census pin) [changed: probe, text]"
 }
