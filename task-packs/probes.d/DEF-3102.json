@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3102",
+ "subject": ".github/workflows/post-merge-windows.yml",
+ "cmd": "python3 -c \"import re; t = open('.github/workflows/post-merge-windows.yml', encoding='utf-8').read(); t = chr(10).join(x for x in t.splitlines() if not x.lstrip().startswith(chr(35))); s = t[t.index('  serial-leg:'):]; print(int(re.search('timeout-minutes: *([0-9]+)', s).group(1)) < 50)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "e867810c916a",
+ "text_sha": "f94c606d0e43",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing here and in the export of HEAD 2c1dcde7ddc9)"
+}

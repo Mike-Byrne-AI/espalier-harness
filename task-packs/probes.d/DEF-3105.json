@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3105",
+ "subject": "tools/cc/hooks/post_write_check.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the stale baseline is an accounting the broken helper could not make; a repro takes the path a genuinely unaccounted change takes, so no probe separates them without keying on the marker the fix would choose",
+ "row_sha": "3e99a3d350e1",
+ "text_sha": "a66983e23491",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing)"
+}

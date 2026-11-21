@@ -8,8 +8,9 @@
   "tools/cc/hooks/post_write_check.py",
   "tools/cc/hooks/_reinject.py"
  ],
- "row_sha": "8ffdbb74701f",
- "text_sha": "52414757ba88",
+ "row_sha": "0153a37f06d0",
+ "text_sha": "53ac6b885e92",
  "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD c7ca1eae1087)",
- "verified_2026_11_15": "STILL_OPEN (re-pinned value unchanged on 2026-11-15: Re-keyed: the pack it cited by id landed and moved to task-packs/Done/ (ruling B of 95db13, ack d94677); the text names it by title, per the dangling-id gate.) [changed: text]"
+ "verified_2026_11_15": "STILL_OPEN (re-pinned value unchanged on 2026-11-15: Re-keyed: the pack it cited by id landed and moved to task-packs/Done/ (ruling B of 95db13, ack d94677); the text names it by title, per the dangling-id gate.) [changed: text]",
+ "verified_2026_11_20": "STILL_OPEN (re-pinned value unchanged on 2026-11-20: DEF-3101 (#724) added two keys that ride _say_once_to_claude (zone-watch-import-<class>, blueprint-unreadable); seven now, the probe's value unchanged (air's aea88d (d))) [changed: text]"
 }
