@@ -1123,6 +1123,45 @@ class TestTheLaunchersOldDefaultIsReadAsItsNewOne:
         spec.loader.exec_module(seat)
         assert _box_lock().home_default() == seat.box_lock_default()
 
+    def test_the_banner_reads_a_lock_path_as_the_plugin_opens_it(self, tmp_path, monkeypatch):
+        """DEF-2106's failure-mode review: the banner's
+        ``session_start._same_lock`` says a set path is the box's file
+        exactly where the plugin, after ``current_path``, opens the box's
+        file, so a change to either rule (the old default's alias dropped,
+        ``~`` expanded) reds here rather than as a seat's silence or a false
+        note. Dies to: either rule edited alone."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_session_start_for_box_lock", REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py")
+        banner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(banner)
+        bl = _box_lock()
+        monkeypatch.setattr(bl.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+        monkeypatch.setattr(bl.Path, "home", staticmethod(lambda: tmp_path / "home"))
+        # `expanduser` reads the variables, not `Path.home`: point them at the
+        # same home, so the `~` row tells an expanding rule from one that does not.
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+        box = bl.home_default()
+        assert box == str(tmp_path / "home" / ".espalier" / "espalier-box.lock")
+        assert os.path.normcase(os.path.abspath(os.path.expanduser("~/.espalier/espalier-box.lock"))) == (
+            os.path.normcase(box)), "the `~` row would not tell the two rules apart"
+        spellings = [box, os.path.join(os.path.dirname(box), ".", os.path.basename(box)),
+                     str(tmp_path / "temp" / "espalier-box.lock"), str(tmp_path / "shared" / "espalier-box.lock"),
+                     str(tmp_path / "home" / ".espalier" / "other.lock"), "~/.espalier/espalier-box.lock",
+                     "espalier-box.lock", box + "\r"]
+        if os.name == "nt":
+            spellings.append(box.swapcase().replace("\\", "/"))
+        sink = types.SimpleNamespace(write=lambda _s: None, flush=lambda: None)
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+
+        for held in spellings:
+            opens_the_box = key(bl.current_path(held, stream=sink)) == key(box)
+            assert banner._same_lock(held, box) == opens_the_box, held
+        assert banner._same_lock(spellings[2], box), "the old temp default is the box's, as the plugin reads it"
+
 
 class TestTheSummaryHooksHonourNoSummary:
     def test_neither_the_locks_line_nor_the_unguarded_line_is_written_where_none_was_asked_for(self, tmp_path):

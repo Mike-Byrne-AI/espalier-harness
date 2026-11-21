@@ -1385,7 +1385,9 @@ def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
     than the driver's default, which file this seat locks beside the box's
     (DEF-2106): the launcher keeps a path the shell already set, so a seat
     still on a private path took no slot from the box's file and was never
-    told. The two are compared as the plugin compares them (``_same_lock``).
+    told. The two are compared as the plugin compares them (``_same_lock``),
+    and the note shows the path made absolute, as the plugin would open it
+    (``repr``-quoted where it holds a control character).
     '' on the box's path, with no name, without the plugin, or where the
     variable is set and the driver's default cannot be read (nothing to
     compare it with). A seat launched by ``seat.py launch`` from a clean shell
@@ -1413,24 +1415,37 @@ def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
     if held:
         try:
             box = default() if callable(default) else None
-            same = box is None or _same_lock(held, box)
-        except Exception as e:  # noqa: BLE001 -- an unreadable default costs this note, never the line it rides
-            _hook_utils.advise_exc("session_start: box lock default read failed", e)
+            if box is None or _same_lock(held, box):
+                return ""
+            # The file the plugin would open, never the raw value: `~/...`
+            # (no shell expands it in a quoted export or a PowerShell string)
+            # and a relative path read as the box's to a reader otherwise, and
+            # a CR or newline would hide in the line or split it.
+            shown = os.path.abspath(held)
+            if any(ord(c) < 32 or ord(c) == 127 for c in shown):
+                shown = repr(shown)
+        except Exception as e:  # noqa: BLE001 -- an unreadable path costs this note, never the line it rides
+            _hook_utils.advise_exc("session_start: box lock path read failed", e)
             return ""
-        return "" if same else _ascii(f"box lock: this seat locks {held}, not the box's {box}")
+        return _ascii(f"box lock: this seat locks {shown}, not the box's {box}")
     path = default() if callable(default) else "<path>"
     return _ascii(f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={path} before claude)")
 
 
 def _same_lock(held: str, box: str) -> bool:
     """Whether the lock path ``held`` names the box's file ``box`` as the
-    suite's plugin reads it (``tests/_box_lock.py``): ``normcase`` of
-    ``abspath`` on both sides, no ``~`` expansion, so a default spelled with
-    other case or separators on Windows is the box's; and the launcher's old
-    default, the lock's name under the temp directory, is the box's too,
-    since the plugin's ``current_path`` locks the home default in its place.
-    The temp directory is asked only for a path bearing the lock's name, as
-    ``tempfile.gettempdir`` probes the disk on its first call."""
+    suite's plugin reads it (``tests/_box_lock.py``, which opens the path as
+    given after ``current_path``; ``tests/test_box_lock.py`` pins the two
+    rules together): ``normcase`` of ``abspath`` on both sides, no ``~``
+    expansion, so a default spelled with other case or separators on Windows
+    is the box's (``normcase`` folds nothing on macOS, where a path spelled
+    in other case reads as another: a false note, never a silence); and the
+    launcher's old default, the lock's name under the temp directory, is the
+    box's too, since ``current_path`` locks the home default in its place.
+    The temp directory is this process's, as the plugin's is its own, so a
+    tier run under another ``TMPDIR`` is not seen. It is asked only for a
+    path bearing the lock's name, as ``tempfile.gettempdir`` probes the disk
+    on its first call."""
     mine = os.path.normcase(os.path.abspath(held))
     if mine == os.path.normcase(os.path.abspath(box)):
         return True

@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -3403,6 +3404,39 @@ class TestOrdersLine:
         for same in (default, spelled, legacy):
             monkeypatch.setenv("ESPALIER_BOX_LOCK", same)
             assert mod._box_lock_note(tmp_path, "w") == "", same
+
+    def test_the_other_path_note_shows_the_file_opened_and_costs_nothing_else(self, tmp_path, monkeypatch):
+        """DEF-2106's two reviews: the note shows the path made absolute, as
+        the plugin would open it, so `~/...` (no shell expands it in a quoted
+        export or a PowerShell string) cannot read as the box's file, and a
+        control character is quoted rather than splitting or hiding in the
+        line. A default that cannot be read, a driver with no default, and an
+        adopter's tree with no plugin each give '', the first advised.
+        Mutation: the raw value shown, a CR printed bare, the new branch above
+        the plugin guard, or a raising default costing the line."""
+        mod = _load()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
+        default = mod._load_seat().box_lock_default()
+        tilde = "~/.espalier/espalier-box.lock"
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", tilde)
+        assert mod._box_lock_note(tmp_path, "w") == (
+            f"box lock: this seat locks {os.path.abspath(tilde)}, not the box's {default}")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(tmp_path / "private.lock") + "\r")
+        note = mod._box_lock_note(tmp_path, "w")
+        assert note.startswith("box lock: this seat locks '") and "\\r'" in note and "\r" not in note, note
+        adopter = tmp_path / "adopter"
+        adopter.mkdir()
+        assert mod._box_lock_note(adopter, "w") == "", "an adopter's tree carries no plugin"
+
+        def unreadable() -> str:
+            raise RuntimeError("no home")
+
+        mod._hook_utils.take_advisories()
+        assert mod._box_lock_note(tmp_path, "w", seat=types.SimpleNamespace(box_lock_default=unreadable)) == ""
+        said = mod._hook_utils.take_advisories()
+        assert len(said) == 1 and "box lock path read failed" in said[0], said
+        assert mod._box_lock_note(tmp_path, "w", seat=types.SimpleNamespace()) == ""
 
     def test_a_named_clone_neither_line_told_gets_the_off_note_once_as_a_note(self, tmp_path, monkeypatch):
         """DEF-4054: the two folds reach the dispatcher and a worker holding
