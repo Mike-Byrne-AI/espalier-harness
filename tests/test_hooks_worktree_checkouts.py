@@ -570,6 +570,7 @@ _SIBLING_READERS = {
     ("tools/cc/hooks/_speedbump.py", "<module>"): "binds the reader with a degrade, places nothing",
     ("tools/cc/hooks/_speedbump.py", "_kill_reading"): "handed to checkout_sync.cwd_checkout",
     ("tools/cc/hooks/_speedbump.py", "_checkout_label"): "the main checkout picked by its .git folder, never by position",
+    ("tools/cc/hooks/_speedbump.py", "_shell_reading"): "spellings the gate searches the text for; each path placed by containing_checkout",
     ("tools/cc/hooks/session_start.py", "_loose_processes_line"): "handed to checkout_sync.pid_checkout",
 }
 
@@ -906,3 +907,339 @@ class TestTheOtherCheckoutRegistryRow:
         body = speedbump._other_checkout_body("Edit", _edit_payload(root / "src" / "app.py", live)["tool_input"], live, live)
         assert body != speedbump.CP_OTHER_CHECKOUT.body
         assert body.startswith("this Edit writes into ") and "the main checkout" not in body
+
+
+# -- DEF-5135: a shell write into another checkout of this clone --------------
+
+
+def _shell_payload(command: str, cwd: Path | None, *, tool: str = "Bash") -> dict:
+    payload: dict = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}}
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    return payload
+
+
+def _in(path: Path, shell: str = "sh") -> str:
+    """A path as a shell row spells it, quoted where it holds a space."""
+    return quoted(str(path), PS) if shell == PS else quoted(str(path))
+
+
+class TestAShellWriteIntoAnotherCheckoutIsBumped:
+    """CP-OTHER-CHECKOUT's shell arm (DEF-5135), through the real hook on real
+    worktree layouts: a Bash or PowerShell call that writes, removes or moves
+    a file in a checkout of this clone other than the session's is refused
+    once per file, naming both checkouts and the session's own copy, and passes
+    on its re-issue. Read by the readers write_guard's zone twins take, over
+    the directories the command runs in, with the session's checkout taken at
+    each of them by DEF-3106's rule."""
+
+    def test_a_redirect_into_the_main_checkout_from_a_worktree_seat_is_bumped_once(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        slip = _shell_payload(f"echo z >> {_in(root / 'src' / 'app.py')}", live)
+        reason = _bumped(run_hook("write_guard.py", slip, _seat_env(live)))
+        assert "this Bash writes into the main checkout" in reason
+        assert "not .claude/worktrees/live where this session works" in reason
+        own = _posix((live / "src" / "app.py").resolve())
+        assert f"this session's copy is {own}: use that one unless the other tree is meant" in reason
+        assert_hook_allowed(run_hook("write_guard.py", slip, _seat_env(live)))   # the re-issue passes
+
+    @pytest.mark.parametrize("form", ["sed", "cp", "tee", "heredoc"])
+    def test_each_write_form_the_extractor_reads_is_bumped(self, tmp_path, form):
+        root, live = _repo_with_worktree(tmp_path)
+        there = _in(root / "src" / "app.py")
+        command = {"sed": f"sed -i 's/1/2/' {there}", "cp": f"cp src/app.py {there}",
+                   "tee": f"echo z | tee -a {there}", "heredoc": f"cat > {there} <<'EOF'\nx = 2\nEOF"}[form]
+        assert "this Bash writes into the main checkout" in _bumped(
+            run_hook("write_guard.py", _shell_payload(command, live), _seat_env(live)))
+
+    @pytest.mark.parametrize("form", ["rm", "mv"])
+    def test_a_remove_or_a_move_of_the_other_checkouts_file_is_bumped(self, tmp_path, form):
+        root, live = _repo_with_worktree(tmp_path)
+        there = _in(root / "src" / "app.py")
+        command = f"rm {there}" if form == "rm" else f"mv {there} {_in(tmp_path / 'app.py')}"
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(command, live), _seat_env(live)))
+        assert "this Bash removes or moves a file in the main checkout" in reason
+
+    def test_the_sessions_own_tree_and_ordinary_calls_are_silent(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        for command in (f"echo z >> {_in(live / 'src' / 'app.py')}", "echo z >> src/app.py",
+                        "git log origin/main..HEAD > /dev/null", f"echo z > {_in(tmp_path / 'notes.md')}",
+                        f"git -C {_in(root)} status", f"ls {_in(root / 'src')}"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, live), env))
+        # the main seat's own tree, too
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload("echo z >> src/app.py", root), _seat_env(root)))
+
+    def test_a_cd_into_main_then_a_relative_write_is_bumped(self, tmp_path):
+        # `cd X && write` reads as a cd call, then the write: the worktree seat
+        # whose shell moved into main keeps its own tree (air's 16ab70 (1)).
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        _bumped(run_hook("write_guard.py", _shell_payload(f"cd {_in(root)} && echo z > src/app.py", live), env))
+        _bumped(run_hook("write_guard.py", _shell_payload("cd ../../.. && echo z > tests/test_app.py", live), env))
+
+    def test_a_shell_standing_in_main_writing_a_relative_path_is_bumped(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        _bumped(run_hook("write_guard.py", _shell_payload("echo z >> src/app.py", root), env))
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f"echo z >> {_in(live / 'tests' / 'test_app.py')}", root), env))
+
+    def test_a_cd_into_a_sibling_reads_it_as_the_sessions_own(self, tmp_path):
+        # Declared limit, the file arm's: a shell moved into another seat's
+        # worktree reads that tree as its own, and the seat's own tree as another.
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(f"cd {_in(other)} && echo z > src/app.py", live), env))
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            f"cd {_in(other)} && echo z > {_in(live / 'src' / 'app.py')}", live), env))
+        assert "writes into .claude/worktrees/live" in reason and "not .claude/worktrees/other" in reason
+
+    def test_a_home_step_into_the_other_checkout_is_bumped(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = {**_seat_env(live), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
+        _bumped(run_hook("write_guard.py", _shell_payload("echo z > ~/repo/src/app.py", live), env))
+
+    def test_a_write_under_git_and_into_a_nested_clone_is_silent(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f"echo z >> {_in(root / '.git' / 'info' / 'exclude')}", live), env))
+        foreign = _foreign_clone(root)
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(f"echo z > {_in(foreign / 'x.py')}", live), env))
+        shutil.rmtree(foreign / ".git")   # control: no repository of its own, the main checkout's tree
+        _bumped(run_hook("write_guard.py", _shell_payload(f"echo z > {_in(foreign / 'x.py')}", live), env))
+
+    def test_the_main_seat_writing_a_worktree_is_bumped(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            f"echo z >> {_in(live / 'src' / 'app.py')}", root), _seat_env(root)))
+        assert "this Bash writes into .claude/worktrees/live" in reason and "not the main checkout" in reason
+
+    def test_a_duplicated_descriptor_or_a_null_device_names_no_file(self, tmp_path):
+        # The readers return `1` for `2>&1`: four of Task 0's 107 placed calls
+        # were that, from a shell standing in main (the failure-mode review).
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        for command in ("git status 2>&1 | head -3", "ls >&2", "make 2>&- && echo ok", "cmd 2> /dev/null"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, root), env))
+        for command in ("Get-Item x > $null", "Get-Item x 2>$null", "dir > NUL"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, root, tool="PowerShell"), env))
+        # control: a file really named 1 is a file
+        _bumped(run_hook("write_guard.py", _shell_payload("echo z > 1", root), env))
+
+    def test_every_file_a_call_writes_there_keys_the_fire(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))
+        # a told file and a new one in one call: told again, the count named
+        both = f"sed -i 's/1/2/' {_in(root / 'src' / 'app.py')} {_in(root / 'tests' / 'test_app.py')}"
+        assert "this Bash writes 2 files into the main checkout" in _bumped(
+            run_hook("write_guard.py", _shell_payload(both, live), env))
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(both, live), env))   # its re-issue passes
+
+    def test_a_link_in_the_sessions_tree_is_removed_not_what_it_points_at(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        (live / "venvlink").symlink_to(root / "src", target_is_directory=True)
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f"rm -f venvlink && ln -s {_in(root / 'src')} venvlink", live), env))
+        # control: a file in the folder it points at, named, is main's
+        assert "removes or moves a file in the main checkout" in _bumped(run_hook(
+            "write_guard.py", _shell_payload(f"rm -f {_in(root / 'src' / 'app.py')}", live), env))
+
+    def test_the_project_dir_variable_is_read_from_the_project_dir(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        # a worktree seat whose shell moved into main writes its own tree through it
+        seat = _seat_env(live)
+        for command in (f"cd {_in(root)} && echo z > $CLAUDE_PROJECT_DIR/src/app.py",
+                        f"cd {_in(root)} && echo z > ${{CLAUDE_PROJECT_DIR}}/src/app.py"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, live), seat))
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f'Set-Location {_in(root, PS)}; Set-Content -Path "$($env:CLAUDE_PROJECT_DIR)/src/app.py" -Value z',
+            live, tool="PowerShell"), seat))
+        # a session that entered a worktree (project dir main, cwd the worktree) writes main through it
+        assert "writes into the main checkout" in _bumped(run_hook(
+            "write_guard.py", _shell_payload("echo z > $CLAUDE_PROJECT_DIR/src/app.py", live), _seat_env(root)))
+
+    def test_a_folder_in_the_worktrees_folder_that_no_checkout_holds_is_silent(self, tmp_path):
+        # 9632e9 (A): Claude Code's worktree folder holds a reviewer's snapshot
+        # clone or a subagent's scratch (102 of Task 0's 107 placed calls), no
+        # seat's tree; a registered worktree there is still its own checkout.
+        root, live = _repo_with_worktree(tmp_path)
+        (root / ".claude" / "worktrees" / "scratch").mkdir()
+        (root / "scratch").mkdir()
+        env = _seat_env(live)
+        for command in ("echo z > ../scratch/out.txt", f"echo z > {_in(root / '.claude' / 'worktrees' / 'scratch' / 'o.txt')}",
+                        "mkdir -p ../gone/x && echo z > ../gone/x/out.txt"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, live), env))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(
+            root / ".claude" / "worktrees" / "scratch" / "notes.md", live, tool="Write"), env))
+        # controls: the same folder name in main's own tree, and a registered sibling, are bumped
+        _bumped(run_hook("write_guard.py", _shell_payload(f"echo z > {_in(root / 'scratch' / 'out.txt')}", live), env))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "scratch" / "notes.md", live, tool="Write"), env))
+        other = _add_worktree(root, "other")
+        assert "writes into .claude/worktrees/other" in _bumped(run_hook(
+            "write_guard.py", _shell_payload("echo z > ../other/src/app.py", live), env))
+        # the main checkout's folder alone: a linked worktree's own is that seat's tree
+        (other / ".claude" / "worktrees" / "scratch").mkdir(parents=True)
+        assert "writes into .claude/worktrees/other" in _bumped(run_hook(
+            "write_guard.py", _shell_payload("echo z > ../other/.claude/worktrees/scratch/o.txt", live), env))
+
+    def test_the_main_seat_writing_a_nested_worktree_by_its_relative_path_is_bumped(self, tmp_path):
+        # air's 32b8d3 (2): the path from main's root names no other checkout's
+        # root, so the gate opens on the nested checkout's relative spelling.
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(root)
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            "echo z >> .claude/worktrees/live/src/app.py", root), env))
+        assert "this Bash writes into .claude/worktrees/live" in reason and "not the main checkout" in reason
+        # from a folder inside main, by a tail of two parts or more
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            "echo z >> worktrees/live/tests/test_app.py", root / ".claude"), env))
+        assert "this Bash writes into .claude/worktrees/live" in reason
+
+    def test_the_main_seat_cd_into_a_nested_worktree_reads_it_as_its_own(self, tmp_path):
+        # Declared limits. A cd into the worktree reads as a cd call, then the
+        # write, and a shell moved into a worktree reads that tree as its own
+        # (the file arm's limit); a cd that leaves only the worktree's last
+        # part to name never opens the gate (its docstring's, since a one-part
+        # tail would open it on every `2>&1` where a worktree is named `2`).
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(root)
+        for command in ("cd .claude/worktrees/live && echo z >> src/app.py",
+                        "cd .claude/worktrees && echo z >> live/src/app.py"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, root), env))
+        # control: the same cd, then a write into main's own tree, is a write into main
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            f"cd .claude/worktrees/live && echo z >> {_in(root / 'src' / 'app.py')}", root), env))
+        assert "writes into the main checkout" in reason and "not .claude/worktrees/live" in reason
+
+    def test_it_keys_per_file_and_shares_the_key_with_the_file_tools(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))
+        # the shell write of a file the session was already told about passes
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(f"echo z >> {_in(root / 'src' / 'app.py')}", live), env))
+        _bumped(run_hook("write_guard.py", _shell_payload(f"echo z >> {_in(root / 'tests' / 'test_app.py')}", live), env))
+
+    def test_it_fires_under_maintenance_mode(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        _bumped(run_hook("write_guard.py", _shell_payload(f"echo z >> {_in(root / 'src' / 'app.py')}", live),
+                         _seat_env(live, maintenance=True)))
+
+    def test_the_powershell_carrier_is_read_the_same_way(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            f"Set-Content -Path {_in(root / 'src' / 'app.py', PS)} -Value z", live, tool="PowerShell"), env))
+        assert "this PowerShell writes into the main checkout" in reason
+        reason = _bumped(run_hook("write_guard.py", _shell_payload(
+            f"Remove-Item {_in(root / 'tests' / 'test_app.py', PS)}", live, tool="PowerShell"), env))
+        assert "this PowerShell removes or moves a file in the main checkout" in reason
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f"Set-Content -Path {_in(live / 'src' / 'app.py', PS)} -Value z", live, tool="PowerShell"), env))
+
+
+class TestTheShellArmsGate:
+    """The string gate ahead of the shell readers is a superset of what they
+    reach, and an ordinary call never pays for the readers: maintenance mode
+    skips the zone check, so on a seat that runs it no Bash call read the
+    extractor before this arm."""
+
+    WT, MAIN = "/r/.claude/worktrees/live", "/r"
+
+    def _gate(self, command: str, *, ours: str = WT, others: tuple = (MAIN,), elsewhere: bool = False) -> bool:
+        speedbump = _hook_module("_speedbump")
+        return speedbump._shell_may_reach_another_checkout(command, list(others), ours, elsewhere)
+
+    @pytest.mark.parametrize("command", [
+        "echo z > /r/.claude/worktrees/live/src/a", "git log origin/main..HEAD", "git show HEAD~1 > /tmp/x",
+        "echo z > /r-2/src/a", "ls -la", "echo z > src/a"])
+    def test_it_stays_shut_on_the_sessions_own_tree_and_ordinary_text(self, command):
+        assert self._gate(command) is False
+
+    @pytest.mark.parametrize("command", [
+        "echo z > /r/src/a", "echo z > /R/SRC/a", "echo z > /r//src/a", "cd .. && echo z > a", "echo z > ../a",
+        "cat a/../b > c", "echo z > ~/r/a", "echo z > ~other/a", "echo z > $CLAUDE_PROJECT_DIR/a",
+        "echo z > /r/.claude/worktrees/other/a", "cd /r && echo z > a"])
+    def test_it_opens_on_every_text_that_can_reach_another_checkout(self, command):
+        assert self._gate(command) is True
+
+    def test_it_opens_for_a_shell_standing_in_another_checkout(self):
+        assert self._gate("echo z > a", elsewhere=True) is True
+
+    def test_from_the_main_seat_it_opens_on_a_nested_checkouts_relative_path(self):
+        # air's 32b8d3 (2): the relative path from the session's root, and its
+        # tails of two parts or more; a one-part tail stays shut.
+        main = {"ours": self.MAIN, "others": (self.WT,)}
+        for command in ("echo z > .claude/worktrees/live/a", "echo z > worktrees/live/a",
+                        "echo z > ./.CLAUDE/Worktrees/live/a", "cd .claude/worktrees/live && echo z > a"):
+            assert self._gate(command, **main) is True, command
+        for command in ("echo z > live/a", "echo z > .claude/worktrees/livery/a", "echo z > a/worktrees/lives"):
+            assert self._gate(command, **main) is False, command
+        # a worktree named 2 never opens it on a redirect of stderr
+        assert self._gate("make 2>&1 | tee log", ours=self.MAIN, others=("/r/.claude/worktrees/2",)) is False
+
+    def test_from_a_folder_inside_main_it_reads_the_nested_path_from_there(self):
+        speedbump = _hook_module("_speedbump")
+        gate = speedbump._shell_may_reach_another_checkout
+        assert gate("echo z > worktrees/live/a", [self.WT], self.MAIN, False, "/r/.claude") is True
+        assert gate("echo z > live/a", [self.WT], self.MAIN, False, "/r/.claude/worktrees") is False
+
+    def test_it_reads_the_spellings_a_checkout_has_on_each_host(self):
+        win_ours, win_main = "C:/r/.claude/worktrees/live", "C:/r"
+        assert self._gate(r"echo z > C:\r\src\a", ours=win_ours, others=(win_main,)) is True
+        assert self._gate("echo z > /c/r/src/a", ours=win_ours, others=(win_main,)) is True     # Git Bash
+        assert self._gate(r"echo z > C:\r\.claude\worktrees\live\a", ours=win_ours, others=(win_main,)) is False
+        mac_ours, mac_main = "/private/var/r/.claude/worktrees/live", "/private/var/r"
+        assert self._gate("echo z > /var/r/src/a", ours=mac_ours, others=(mac_main,)) is True    # the firmlink
+        assert self._gate("echo z > /var/r/.claude/worktrees/live/a", ours=mac_ours, others=(mac_main,)) is False
+
+    def test_an_ordinary_call_reads_no_extractor(self, tmp_path, monkeypatch):
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+        read: list[str] = []
+        for name in ("_candidate_paths_from_bash", "iter_removed_or_relocated_operands", "bash_bases"):
+            real = getattr(speedbump._bash_patterns, name)
+            monkeypatch.setattr(speedbump._bash_patterns, name,
+                                lambda *a, _real=real, _name=name, **k: read.append(_name) or _real(*a, **k))
+        bump = (speedbump.CP_OTHER_CHECKOUT,)
+        for command in ("ls -la", "git status", f"echo z >> {_in(live / 'src' / 'app.py')}", "pytest -q > out.txt"):
+            assert speedbump.check_fired("Bash", {"command": command}, live, bumps=bump, cwd=live) is None
+        assert read == []
+        # control: a slip reads them and fires
+        fired = speedbump.check_fired("Bash", {"command": f"echo z >> {_in(root / 'src' / 'app.py')}"}, live,
+                                      bumps=bump, cwd=live)
+        assert fired is not None and fired[0] == "CP-OTHER-CHECKOUT" and read
+
+    def test_a_clone_of_one_checkout_reads_nothing(self, tmp_path, monkeypatch):
+        speedbump = _hook_module("_speedbump")
+        root = _repo(tmp_path)
+        monkeypatch.setattr(speedbump._bash_patterns, "_candidate_paths_from_bash",
+                            lambda *a, **k: pytest.fail("a clone with no other checkout read the extractor"))
+        assert speedbump.check_fired("Bash", {"command": "echo z > ../x"}, root,
+                                     bumps=(speedbump.CP_OTHER_CHECKOUT,), cwd=root) is None
+
+    def test_the_effects_are_write_guards_zone_effects(self):
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        zone = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "_ZONE_EFFECTS" for t in node.targets))
+        assert isinstance(zone, ast.Call) and zone.func.id == "frozenset"
+        assert _hook_module("_speedbump")._OTHER_CHECKOUT_EFFECTS == frozenset(ast.literal_eval(zone.args[0]))
+
+    def test_the_reason_stays_within_512_bytes_with_the_longer_verb(self):
+        speedbump = _hook_module("_speedbump")
+        verb = speedbump._counted_verb(speedbump._REMOVES, 1000)
+        body = speedbump._other_checkout_text("PowerShell", "n" * 300, "o" * 300, "/" + "p" * 400, verb)
+        reason = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=body)
+        assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
+        assert "this PowerShell removes or moves 1000 files in " in reason
+        assert speedbump._counted_verb(speedbump._WRITES, 1) == "writes into"
+
+    def test_the_project_dir_spellings_hold_the_helpers_own(self):
+        # a hand copy (this module reads no new helper name), held to the canon
+        canon = _hook_module("_hook_utils")._PS_ENV_PROJECT_DIR_PREFIXES
+        assert canon and {s.rstrip("/") for s in canon} <= set(_hook_module("_speedbump")._PROJECT_DIR_SPELLINGS)

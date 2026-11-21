@@ -16,11 +16,11 @@ Usage::
 
 ``--calls N`` spawns the guard N times for each call kind (a Read, a Bash ``ls
 -la``, an MCP read, an MCP write, a PowerShell ``Get-ChildItem``, and the three
-calls that pay a first-use accessor's compile, ``COMMANDS``, and a Write and an
-Edit of a file in the session's own checkout, each also with maintenance mode
-on, ``REPO_KINDS``) beside a bare interpreter start as the control,
+calls that pay a first-use accessor's compile, ``COMMANDS``, and a Write, an
+Edit, a Bash ``ls`` and a PowerShell ``Get-ChildItem`` of a file in the
+session's own checkout, each also with maintenance mode on, ``REPO_KINDS``) beside a bare interpreter start as the control,
 which is always timed, shuffled, each spawn in an empty temp project of its own
-(for the file-tool kinds, a linked worktree of a fresh repository, a seat's layout)
+(for ``REPO_KINDS``, a linked worktree of a fresh repository, a seat's layout)
 (no settings file, no ``espalier.toml``), the way the wiring starts it
 (``<python> <tools/cc/hooks/write_guard.py>``, the payload on stdin) with
 ``-B`` added, and
@@ -138,15 +138,26 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 KINDS = ("control", "read", "bash", "mcp_read", "mcp_write",
          "powershell", "powershell_pipe", "bash_xargs", "bash_powershell",
          "bash_redirect", "powershell_redirect",
-         "write", "edit", "write_maintenance", "edit_maintenance")
+         "write", "edit", "write_maintenance", "edit_maintenance",
+         "bash_seat", "bash_seat_maintenance",
+         "powershell_seat", "powershell_seat_maintenance")
 #: The file-tool kinds (DEF-3106): a Write and an Edit of a file in the
 #: session's own checkout, spawned in a repository whose project dir is a
 #: linked worktree, as a worker seat's is, so the worktree registry the
 #: file-tool readers walk (``_hook_utils.sibling_checkouts``) is there to read.
 #: Each has a twin with ``ESPALIER_MAINTENANCE_MODE`` set, which every seat on
 #: the Air runs and which skips the zone check ahead of the speed bumps.
-REPO_KINDS = frozenset({"write", "edit", "write_maintenance", "edit_maintenance"})
-MAINTENANCE_KINDS = frozenset({"write_maintenance", "edit_maintenance"})
+#: ``bash_seat`` and ``powershell_seat`` (DEF-5135) are a Bash and a
+#: PowerShell call in the same layout naming the session's own tree through
+#: the main checkout's path, the costliest call CP-OTHER-CHECKOUT's shell gate
+#: reads and stays shut on; the plain ``bash`` and ``powershell`` kinds spawn
+#: in a folder that is no repository, where the shell arm stops at the empty
+#: worktree registry and never reaches its gate.
+REPO_KINDS = frozenset({"write", "edit", "write_maintenance", "edit_maintenance",
+                        "bash_seat", "bash_seat_maintenance",
+                        "powershell_seat", "powershell_seat_maintenance"})
+MAINTENANCE_KINDS = frozenset({"write_maintenance", "edit_maintenance", "bash_seat_maintenance",
+                               "powershell_seat_maintenance"})
 #: The commands of the Bash and PowerShell kinds. ``bash`` and ``powershell``
 #: are the ordinary call of each tool; ``powershell_pipe``, ``bash_xargs``
 #: and ``bash_powershell`` are the calls each of `_bash_patterns`' first-use
@@ -400,6 +411,11 @@ def payload(kind: str, project: Path) -> dict:
         base.update(tool_name="Write", tool_input={"file_path": notes, "content": "y\n"})
     elif kind in ("edit", "edit_maintenance"):
         base.update(tool_name="Edit", tool_input={"file_path": notes, "old_string": "x", "new_string": "y"})
+    elif kind in ("bash_seat", "bash_seat_maintenance"):
+        base.update(tool_name="Bash", tool_input={"command": f"ls -la {notes}", "description": "List files"})
+    elif kind in ("powershell_seat", "powershell_seat_maintenance"):
+        base.update(tool_name="PowerShell",
+                    tool_input={"command": f"Get-ChildItem {notes}", "description": "List files"})
     else:
         raise ValueError(f"no payload for kind {kind!r}")
     return base
@@ -1144,7 +1160,7 @@ def render(result: dict) -> str:
         width = max([15, *map(len, result["kinds"])])
         project = "project: an empty temp folder a spawn (no settings file, no espalier.toml)"
         if REPO_KINDS & set(result["kinds"]):
-            project += "; for the file-tool kinds, a linked worktree of a fresh repository"
+            project += "; for the seat kinds, a linked worktree of a fresh repository"
         lines += [project,
                   "cache:   " + (", ".join(f"{n} {s}" for s, n in counts.items()) or "no module read")
                   + " (the modules a spawn imports)",

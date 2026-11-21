@@ -208,9 +208,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "templates, so a renamed member of the pair reds rather than joining. Graded by reading; the "
         "rows were red on the base, where the readers knew the budget's refusal alone.",
     ),
-    # 3 row(s), shapes: comprehension
+    # 6 row(s), shapes: comprehension, for-assert, parametrize
     "tests/test_guard_cost_census.py": (
-        5, "b8866d7c1303d70611df7c56c5b5654fad6612c94b98144d20fa9b91b9f9a6a3",
+        6, "0593f301a132022b30c4d490bb4ac2d5de4e50def8e640de62db62f0969b765b",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
         "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
@@ -225,8 +225,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there. Kept "
         "2026-11-21 (DEF-3106): the fifth row loops census.REPO_KINDS in "
         "test_only_the_maintenance_twins_set_the_switch, each kind's payload a Write or Edit of the "
-        "project's file; the same test holds REPO_KINDS equal to a hand literal of its four kinds, so a "
-        "shrink reds there.",
+        "project's file; the same test holds REPO_KINDS equal to a hand literal of its kinds, so a "
+        "shrink reds there. Kept 2026-11-21 (DEF-5135): the sixth row derives MAINTENANCE_KINDS's "
+        "expected set from REPO_KINDS (each kind named _maintenance), on the line under that hand "
+        "literal, so the side it is derived from cannot narrow unseen and a maintenance twin left out "
+        "of MAINTENANCE_KINDS reds; the seat shell kinds' payloads are the loop's Bash and PowerShell "
+        "rows.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_audit_dead_rules.py": (
