@@ -190,8 +190,19 @@ _BUILD_THE_REFUSAL_AT_S = 2.0
 #: judging spent the time (DEF-2091), and from a child that answered it takes
 #: the line out of what it relays. ``time.monotonic`` is one clock across the
 #: two processes on the hosts measured (Windows 3.10, 3.11 and 3.13, 20 spawns
-#: each, 2026-11-16); a reading outside the parent's own is not used.
+#: each, 2026-11-16); a reading before the hook's first line or past its exit
+#: bound (``EXIT_BY_S``) is not used, and one past the deadline, or within a
+#: step of the clock before it, is start-up's whole share (DEF-3108): "not
+#: begun" then means not begun by the deadline.
 _BEGUN_MARK = b"write_guard: judging began at "
+#: The coarsest step the begun mark's clock was measured to take (DEF-3108):
+#: ``time.monotonic`` on Windows before Python 3.13 reads ``GetTickCount64``,
+#: 15.625 ms a step, and the deadline is a whole number of steps after the
+#: hook's first line, so a mark written in the first step past the deadline
+#: reads as the deadline itself, or one unit under it. A mark within this of
+#: the deadline left judging less than one step of the clock, so it reads as
+#: start-up's whole share, as one past the deadline does.
+_CLOCK_GRAIN_S = 0.016
 #: What the judging child writes on stderr as a speed-bump checkpoint is about
 #: to spend its one-shot state, or as the pattern load finds a kept, older
 #: ``_speedbump`` it cannot watch, so before its begun mark or after it
@@ -240,23 +251,40 @@ def _spent_a_one_shot(heard: list[bytes]) -> bool | None:
     return _SPENT_MARK in heard[0]
 
 
+def _parent_deadline() -> float:
+    """The parent's deadline on the hook's clock: the one figure the judging
+    child's runner is handed and its begun mark is read against (DEF-3108)."""
+    return _HOOK_STARTED + HARD_DEADLINE_S
+
+
 def _how_the_child_spent_it(heard: list[bytes]) -> tuple[bool | None, float | None, float | None]:
     """At the parent's deadline, from the stderr drained from the killed child:
     whether it had begun judging (``None`` where nothing was read), then the
     seconds of the deadline that start-up and judging took (``None`` where the
-    child's clock reads outside the parent's, so it is not used)."""
+    child's clock reads before the hook's own start or past its exit bound, or
+    is no number, so it is not used: no mark this parent drains can be later
+    than its own exit).
+
+    A mark later than the deadline, or within a step of the clock before it
+    (``_CLOCK_GRAIN_S``), is start-up's whole share (DEF-3108): the child was
+    still starting up when the deadline came and wrote its mark before the
+    kill landed, so judging had not begun by the deadline. It read as begun at
+    a time not read, which asked a short call for the split and kept the
+    suite's start-up retry (DEF-2093) off it."""
     if not heard:
         return None, None, None
     at = heard[0].find(_BEGUN_MARK)
     if at < 0:
         return False, HARD_DEADLINE_S, 0.0
-    deadline = _HOOK_STARTED + HARD_DEADLINE_S
+    deadline = _parent_deadline()
     try:
         began_at = float(heard[0][at + len(_BEGUN_MARK):].split(b"\n", 1)[0])
     except (ValueError, TypeError):  # fail-open: ok deliberate -- a mark the kill cut short: the child had begun, when is unread
         return True, None, None
-    if not _HOOK_STARTED <= began_at <= deadline:
+    if not _HOOK_STARTED <= began_at <= _HOOK_STARTED + EXIT_BY_S:
         return True, None, None
+    if began_at >= deadline - _CLOCK_GRAIN_S:
+        return False, HARD_DEADLINE_S, 0.0
     return True, began_at - _HOOK_STARTED, deadline - began_at
 
 
@@ -329,8 +357,9 @@ def _deadline_details(size: int, began: bool | None, spent: bool | None, short: 
 def _start_up_spent_it(began: bool | None, spent: bool | None = None, start_up: float | None = None,
                        judged: float | None = None, short: bool | None = None) -> bool:
     """Whether the refusal asks for the re-issue rather than the split
-    (DEF-2091, DEF-2097): the judging child had not begun judging, so no
-    judgment ran and nothing it keeps was spent; or it had begun, no
+    (DEF-2091, DEF-2097): the judging child had not begun judging by the
+    deadline (a mark past it reads so, DEF-3108), so no judgment ran before it
+    and, unless a spend was read, nothing it keeps was spent; or it had begun, no
     checkpoint spent its one-shot state (``spent`` False), start-up took at
     least judging's share of the bound, and the call is short
     (`_short_enough`), where a shorter command would pay the same start-up and
@@ -490,7 +519,7 @@ def _runner_fault_reason(refusal: _DeadlineRefusal, named: tuple[dict, dict] | N
     guard's texts, which say a read-only call may still pass: every call goes
     through this runner (the failure-mode review's F3)."""
     reasons: Any = refusal.reasons
-    if reasons is None and time.monotonic() < _HOOK_STARTED + HARD_DEADLINE_S:
+    if reasons is None and time.monotonic() < _parent_deadline():
         try:
             import _denial_reasons as imported  # type: ignore[import-not-found]
             reasons = imported
@@ -616,7 +645,7 @@ def _answer_from_a_judging_child() -> None:
     try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
             [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG, *kept],
-            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload, **readings,
+            deadline=_parent_deadline(), input=payload, **readings,
         )
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
         _judge_in_this_process(payload, type(exc.__cause__ or exc).__name__)
@@ -5686,10 +5715,13 @@ def _how_the_judgment_spent_it(
     on every interpreter; a planted slow ``find_spec`` hid it, since it holds
     the global import lock and stalled this refusal's first imports up to 3.13.
     Anywhere else (the hook process judging in place, an importer) judging
-    began as `main` started its worker (``begun``)."""
+    began as `main` started its worker (``begun``). A mark later than the
+    budget's deadline, or within a step of the clock before it, reads as none,
+    as at the parent's deadline (DEF-3108): the worker wrote it after the
+    budget ran out and before this reading, so judging had not begun by then."""
     if _MARK_THE_JUDGING:
         mark = _JUDGING_BEGAN_AT
-        if mark is None:
+        if mark is None or mark >= deadline - _CLOCK_GRAIN_S:
             return False, (deadline - clock if clock is not None else None), 0.0
         begun = mark
     start_up = begun - clock if begun is not None and clock is not None else None
