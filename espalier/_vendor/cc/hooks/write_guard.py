@@ -2016,7 +2016,8 @@ _resolve_project_root = _hook_utils.resolve_project_root
 #: ⚠ FRICTION LAYER, NOT A SECURITY BOUNDARY (STANDING_PRINCIPLES §2). The Bash
 #: arm matches literal path tokens. It catches `cat .env` and `cp -r
 #: secrets/ x`, and a literal target that is an existing link is judged by what
-#: it leads to as well (`_linked_secret`, DEF-3099); it does NOT catch a token
+#: it leads to as well (`_linked_secret`, DEF-3099), an existing folder by its
+#: name with a slash after it (DEF-5131); it does NOT catch a token
 #: assembled at runtime, one read through a command substitution, a link in a
 #: folder part of the path, a hard link, or a link the same command makes
 #: (the creation side's link arms judge that one). Motivated bypass was never
@@ -2078,7 +2079,9 @@ def _secret_pattern_for(raw: str) -> str | None:
     # to the folder resolves to (`_linked_secret`). The slash was stripped
     # before this test, so a folder was read bare alone and a link to it
     # read clean (DEF-3099's lane). A name with no slash after it may be a
-    # file, and stays out. `tools/cc/mail.py::secret_hits` shares this rule.
+    # file, and stays out here: `_linked_secret` reads the disk and judges
+    # an existing folder with the slash (DEF-5131), so this rule never reads
+    # it. `tools/cc/mail.py::secret_hits` shares this rule.
     if "/secrets/" in "/" + tok:
         return _SECRET_PATH_LABEL["secrets"]
     return None
@@ -3486,13 +3489,22 @@ def _linked_secret(raw: str, cwd: Path, *, bash: bool) -> "tuple[str, str] | Non
     last target; a folder is judged with a slash after it, so a link to the
     secrets folder reads as the folder.
 
+    The same lstat judges a target that is no link (DEF-5131): a folder is
+    judged by the name typed with a slash after it, so ``<project>/secrets``,
+    ``./secrets`` and ``cp -r secrets x`` read as ``secrets/`` does, and so
+    is the typed name of a link whose last target is a folder. The label
+    comes back with an empty second item where the target itself matched
+    (no link to name). A name no folder answers to stays a name.
+
     What it leaves (docs/HOOKS.md): a link in a folder part of the path
     (the last name is read, as ``O_NOFOLLOW`` reads it); a hard link, which
     has no other name; a link the same command makes, which does not exist
     yet (the creation side's link arms judge it); a `cd` earlier in the same
     command; a name computed when the command runs; and a network-share
     spelling (``//host/...``, ``\\\\host\\...``), judged by its name alone,
-    since its lookup can wait on the network."""
+    since its lookup can wait on the network, as is a local device spelling
+    (``\\\\?\\...``, ``\\\\.\\...``), which the same leading double
+    backslash takes, though its lookup waits on nothing."""
     tok = raw.strip().strip("'\"").rstrip(",;:)]}\"'")
     bare = tok.rstrip("/\\")
     if not bare or bare.startswith(("-", "//", "\\\\")) or bare.endswith(":"):
@@ -3501,6 +3513,13 @@ def _linked_secret(raw: str, cwd: Path, *, bash: bool) -> "tuple[str, str] | Non
         path = str(_hook_utils.join_directory(cwd, bare, bash=bash))
         info = os.lstat(path)
         if not (stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == _JUNCTION_TAG):
+            # A folder named with no slash after it is the folder (DEF-5131):
+            # the Grep tool sends `<project>/secrets` bare, as `cp -r` and
+            # `tar` take it, and the rule read only `secrets/`. The lstat in
+            # hand says it is a folder, so no further read.
+            if stat.S_ISDIR(info.st_mode):
+                label = _secret_pattern_for(bare + "/")
+                return (label, "") if label else None
             return None
         names, hop = [], path
         for _ in range(_LINK_HOPS):
@@ -3511,6 +3530,10 @@ def _linked_secret(raw: str, cwd: Path, *, bash: bool) -> "tuple[str, str] | Non
             names.append(hop)
         names.append(os.path.realpath(path))
         spelled = [(n.replace("\\", "/").rstrip("/") + ("/" if os.path.isdir(n) else ""), n) for n in names]
+        # The typed name of a link that opens as a folder is that folder too
+        # (DEF-5131): a `secrets` link to a vault folder of another name.
+        if spelled[-1][0].endswith("/"):
+            spelled.append((bare + "/", spelled[-1][1]))
     except (OSError, ValueError):  # fail-open: ok deliberate -- a name no file answers to (or no path can spell) is no link: judged by its name alone, as before
         return None
     for name, shown in spelled:
@@ -3530,8 +3553,9 @@ def check_secret_path_access(tool_name: str, tool_input: dict, root: Path, cwd: 
     which is the whole point: this replaces a Read()-tool deny rule.
 
     Each candidate is judged by its name, and where no name matches, an
-    existing link among them by what it leads to (`_linked_secret`), a
-    relative one from ``cwd`` (the payload's; the project root where none is
+    existing link among them by what it leads to and an existing folder by
+    its name with a slash after it (`_linked_secret`), a relative one from
+    ``cwd`` (the payload's; the project root where none is
     given). The names go first, so a call a name refuses pays no disk read
     and its refusal reads as it did.
     """
@@ -3562,7 +3586,8 @@ def check_secret_path_access(tool_name: str, tool_input: dict, root: Path, cwd: 
         if linked:
             pattern, resolved = linked
             shown = raw.strip().strip("'\"") or raw
-            return _deny_secret_read(root, tool_name, f"{shown} (a link to {resolved})", pattern)
+            target = f"{shown} (a link to {resolved})" if resolved else shown
+            return _deny_secret_read(root, tool_name, target, pattern)
     return 0
 
 
