@@ -540,7 +540,7 @@ class TestTheBoxLocksHolder:
 
         def key(path: str) -> str:
             return os.path.normcase(os.path.abspath(path))
-        spellings = [old, os.path.join(os.path.dirname(old), ".", "espalier-box.lock"), old + os.sep, old + "\r",
+        spellings = [old, os.path.join(os.path.dirname(old), ".", "espalier-box.lock"), os.path.join(old, ""), old + "\r",
                      str(home_lock), str(tmp_path / "shared" / "espalier-box.lock"), str(tmp_path / "other.lock"),
                      "~/.espalier/espalier-box.lock", "espalier-box.lock"]
         if os.name == "nt":
