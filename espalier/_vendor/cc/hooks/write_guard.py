@@ -3091,6 +3091,21 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         # statement's verb and nothing past it; the read sits in the program.
         for program in _bash_patterns._posix_shell_c_bodies(command, scan):
             out.extend(_secret_read_targets(program, _depth + 1))
+        # A POSIX shell's program on stdin as a heredoc (DEF-3103): `bash
+        # <<'SH'` runs the body the walk above took out as data, and behind
+        # `sh` the roster sees no read verb. Each body is the walk's own
+        # (bash's delimiter line; several operators on one line, one body
+        # after another), and one the walk did not record is read to its
+        # terminator; the whole leg reads it one level down. Behind the
+        # walk's heredocs, so a call holding none pays nothing.
+        if heredocs:
+            walked = {found.op: found for found, _nested in heredocs}
+            for op in _bash_patterns._posix_shell_heredoc_ops(command, scan):
+                found = walked.get(op)
+                body = (command[found.start:found.end] if found is not None
+                        else _bash_patterns._heredoc_body_after(command, op))
+                if body:
+                    out.extend(_secret_read_targets(body, _depth + 1))
         # A carrier's program (DEF-1131): `eval`, `script -c`, `watch` and
         # `su -c` run their operand as a program the roster sees as one word.
         for program in _bash_patterns._carrier_program_bodies(command, scan):
