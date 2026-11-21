@@ -63,12 +63,16 @@ def _workflows() -> dict[str, dict]:
 
 
 def _serial_files() -> tuple[str, ...]:
+    return tuple(_proof_tier().SERIAL_FILES)
+
+
+def _proof_tier():
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     try:
         import proof_tier  # type: ignore[import-not-found]
     finally:
         sys.path.remove(str(REPO_ROOT / "scripts"))
-    return tuple(proof_tier.SERIAL_FILES)
+    return proof_tier
 
 
 def _suite_jobs() -> dict[tuple[str, str], dict]:
@@ -190,6 +194,13 @@ _SERIAL_FILES_MEASURED = (
     "tests/test_powershell_reachability_differential.py", "tests/test_wheel_payload.py",
     "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
 )
+#: The tiered serial files (scripts/proof_tier.py::TIERED_SERIAL_FILES) the
+#: perturbed entry's projection above was priced over, 2026-11-21: 2.2 min and
+#: under 0.2 min on that host. A file added to them runs whole on every
+#: full-tier perturbed run, so it is priced there first.
+_TIERED_SERIAL_FILES_MEASURED = (
+    "tests/test_guard_metamorphic.py", "tests/test_powershell_reachability_differential.py",
+)
 
 
 class TestEveryJobThatRunsTheSuiteIsBounded:
@@ -246,6 +257,18 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
             "serial-leg time to the figures of the jobs that run it now, raise any bound the floor then "
             "asks for, add the files here, and re-measure with python3 scripts/ci_job_bounds_census.py "
             "once the jobs have 20 runs (its floor column judges them from then on).")
+
+    def test_the_perturbed_projection_covers_every_tiered_serial_file(self):
+        """DEF-5136's tiered leg runs the tiered serial files whole on the full
+        tier's perturbed run, so each one adds its time to that job. Dies to: a
+        file added to them with no price on that host, which would move the
+        job toward its bound with every test green (amended review, F1)."""
+        added = sorted(set(_proof_tier().TIERED_SERIAL_FILES) - set(_TIERED_SERIAL_FILES_MEASURED))
+        assert not added, (
+            f"tiered serial files added since the perturbed projection was priced: {added}. Price each "
+            "one at one worker on the perturbed host, move test.yml's perturbed comment and the "
+            "projection beside its entry above, raise the bound if the census then asks, and add the "
+            "files here.")
 
     @pytest.mark.parametrize("key", sorted(_SERIAL_JOBS_MEASURED_WORST), ids="/".join)
     def test_its_bound_holds_the_worst_mark_plus_its_measured_run(self, key):

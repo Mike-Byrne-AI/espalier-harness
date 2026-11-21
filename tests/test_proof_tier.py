@@ -3075,12 +3075,14 @@ class TestTheTieredLeg:
     def test_the_tiered_serial_files_are_serial_and_outside_the_contract_ones(self, pt):
         """Dies to: a tiered file that is not serial (it would run twice on
         the full tier, at one worker and in the pool), or a serial contract
-        file listed (its contract rows would run twice on every tier), or the
-        file whose red set the list's floor dropped (air's ruling d36425)."""
+        file listed (its contract rows would run twice on every tier), or
+        either file that went red on that cell alone dropped: a full-tier green
+        from a later merge would then clear a cheaper red in it unrun (air's
+        ruling d36425; the amended failure-mode review, F3)."""
         tiered = pt.TIERED_SERIAL_FILES
         assert len(set(tiered)) == len(tiered) and set(tiered) <= set(pt.SERIAL_FILES), tiered
         assert not set(tiered) & set(pt.SERIAL_CONTRACT_FILES), tiered
-        assert "tests/test_guard_metamorphic.py" in tiered
+        assert {"tests/test_guard_metamorphic.py", "tests/test_powershell_reachability_differential.py"} <= set(tiered)
 
     def test_the_full_tiers_run_holds_every_serial_file_line_a_cheaper_run_has(self, pt):
         """A line naming a serial file (bare, not an ``--ignore=``) runs that

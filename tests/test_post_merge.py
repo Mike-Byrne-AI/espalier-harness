@@ -983,10 +983,11 @@ class TestACellNamedForTheTierItRan:
         arm = next(line.strip() for line in workflow.splitlines() if line.strip().endswith(") ;;") and "|" in line)
         assert set(arm[: -len(") ;;")].split("|")) == set(pm.TIERS)
         yaml = pytest.importorskip("yaml")
-        steps = {job_id: job["steps"] for wf in checkout_glob(REPO_ROOT / ".github" / "workflows", "*.yml")
+        found = [(job_id, job["steps"]) for wf in checkout_glob(REPO_ROOT / ".github" / "workflows", "*.yml")
                  for job_id, job in (yaml.safe_load(wf.read_text(encoding="utf-8")).get("jobs") or {}).items()
-                 if job_id in pm.TIERED_CELLS}
-        assert set(steps) == set(pm.TIERED_CELLS), sorted(steps)
+                 if job_id in pm.TIERED_CELLS]
+        steps = dict(found)
+        assert len(found) == len(steps) and set(steps) == set(pm.TIERED_CELLS), sorted(job_id for job_id, _ in found)
         serial = set(tier_mod.SERIAL_FILES)
         changes = ((), ("tests/test_hooks.py",), (tier_mod.SERIAL_CONTRACT_FILES[0],),
                    ("bench/guard_metamorphic.py",), tuple(tier_mod.TIERED_SERIAL_FILES[-1:]))

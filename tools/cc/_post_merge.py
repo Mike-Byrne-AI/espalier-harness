@@ -201,7 +201,9 @@ def covers(green: int | None, red: int | None) -> bool:
     test supersets of each other on the cell (``TIERS``): a cheaper green,
     even of the red's own tier, may not have run the red's rows, and the full
     tier's run there holds every node id a cheaper one runs (proof_tier's
-    tiered leg, DEF-5136). An untiered green never says what
+    tiered leg, DEF-5136), within one tree: a later merge's full green still
+    clears an earlier red in a file the leg dropped between the two. An
+    untiered green never says what
     it ran, so it clears no tiered red; an untiered red (the cell's old name,
     until it ages out of the window) clears on a full green as well."""
     if green is None:

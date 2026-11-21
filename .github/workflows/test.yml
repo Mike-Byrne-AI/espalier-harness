@@ -339,8 +339,12 @@ jobs:
     # projected worst of 74.3 against the 67.3 the census read on 2026-11-21:
     # 1.5x is 111.5 (115) and the floor 104.3 (105), inside 120, which the
     # census holds until the worst passes 80.0 (tests/test_ci_job_bounds.py
-    # enrols this job). Each pytest line after the first clears the step's
-    # --basetemp before it starts, unmeasured on the full tier's long first line.
+    # enrols this job; its entry moves only at a raise, to needed plus 15). Over
+    # a wider window the worst was 75.5 (93 green full-tier runs to 2026-11-21,
+    # run 43769431092) and the contract line's 4.95, about 83 projected: past
+    # 80 the census asks a raise, while the floor (113) still cuts a hung test
+    # by its own timeout first. Each pytest line after the first clears the
+    # step's --basetemp before it starts, unmeasured on the long first line.
     timeout-minutes: 120
 
     steps:
