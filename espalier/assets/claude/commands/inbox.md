@@ -236,11 +236,10 @@ is read on its own, and one that cannot be read says so on its own line:
   run of it reached a verdict; a newer green run clears an older red only
   when it started after that merge landed, else it is printed beside the
   red, never over it. A check named for the proof tier it ran (`perturbed
-  (recall tier)`) is one check whatever tier ran, and its green clears a red
-  only where it ran the red's tier or a fuller one (contract, then recall,
-  then full), else it too is printed beside the red (`green on a recall-tier
-  run`), so a cheaper tier's green never clears a red it did not test; a
-  cancelled or stale latest run is `no verdict`, never
+  (recall tier)`) is one check whatever tier ran, and only a green of it that
+  ran the full tier clears a red, since the cheaper tiers each run tests of
+  their own there; any other green is printed beside the red (`green on a
+  recall-tier run`); a cancelled or stale latest run is `no verdict`, never
   green; a red older than the window says `or earlier (the oldest merge
   read)`. Pull-request runs only, so a red the merge combination itself makes
   is the base line's above. These legs are not required checks: the board

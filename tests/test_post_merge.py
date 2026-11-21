@@ -894,6 +894,11 @@ class TestTheBaseRunWords:
 # ran the recall tier green after #614 merged. Under the cell's old fixed name
 # the line read "none red" from 05:13Z to 06:52Z and then dated the red to
 # #616; named for the tier it ran, the red stands from #608 throughout.
+#
+# The tiers are not test supersets on the cell (a cheaper tier adds the pull
+# request's own changed tests; the full tier's run there skips the serial
+# files), so only a full-tier green clears a tiered red; DEF-5136 is the
+# residual a full green still clears without running.
 
 def _record() -> dict:
     return json.loads((FIXTURES / "perturbed_607_617.json").read_text(encoding="utf-8"))
@@ -912,56 +917,87 @@ def _merge(n: int, merged: str, *rows: dict) -> dict:
     return {"number": n, "mergedAt": merged, "statusCheckRollup": list(rows)}
 
 
+def _p(tier: str | None) -> str:
+    return "perturbed" if tier is None else f"perturbed ({tier} tier)"
+
+
+def _seq(*runs: tuple[str | None, str]) -> list[dict]:
+    """One merge per (tier, conclusion), two hours apart, each run started an
+    hour after the merge before it landed."""
+    out = []
+    for i, (tier, conclusion) in enumerate(runs, start=1):
+        out.append(_merge(i, f"2026-11-01T{2 * i:02d}:00:00Z", _row(_p(tier), f"2026-11-01T{2 * i - 1:02d}:00:00Z", "x", conclusion)))
+    return out
+
+
 TEMPLATE = "perturbed (${{ needs.tier.outputs.tier || 'full' }} tier)"
 
 
 class TestACellNamedForTheTierItRan:
-    def test_tier_of_reads_the_marker_and_leaves_every_other_name_whole(self, pm):
-        """Dies to: a matrix value or a differently cased word read as a tier
-        (an adopter's cells would merge), or the template name left as a cell
-        of its own that no run can ever judge."""
+    def test_tier_of_reads_the_marker_on_a_declared_cell_alone(self, pm):
+        """Dies to: a matrix value, a differently cased word or an undeclared
+        cell read as a tier (an adopter's own ``e2e (full tier)`` beside an
+        ``e2e`` would merge into one check), or the template name left as a
+        cell of its own that no run can ever judge."""
+        assert pm.TIERED_CELLS == frozenset({"perturbed"})
         assert pm.tier_of("perturbed (contract tier)") == ("perturbed", 0)
         assert pm.tier_of("perturbed (recall tier)") == ("perturbed", 1)
         assert pm.tier_of("perturbed (full tier)") == ("perturbed", 2)
-        for name in ("perturbed", "test (3.12)", WIN, "x (full)", "x (Full tier)", "x (slow tier)", "(full tier)"):
+        for name in ("perturbed", "test (3.12)", WIN, "perturbed (Full tier)", "perturbed (slow tier)",
+                     "e2e (full tier)", "e2e (${{ x }} tier)", "(full tier)"):
             assert pm.tier_of(name) == (name, None), name
         assert pm.tier_of(TEMPLATE) == ("perturbed", None)
+        assert pm.shown(TEMPLATE) == "perturbed (tier not evaluated)" and pm.shown("e2e (full tier)") == "e2e (full tier)"
 
-    def test_covers_and_harder_each_clause(self, pm):
-        """Each clause of the two rules on its own. Dies to: any clause
-        dropped or reversed (an untiered pair no longer clearing is every
-        adopter's line frozen red; a cheaper green covering a fuller red is
-        the row; an untiered green clearing a tiered red hides it)."""
+    def test_covers_each_clause(self, pm):
+        """Dies to: an untiered pair no longer clearing (every adopter's line
+        frozen red), a cheaper green clearing a tiered red even of its own
+        tier (the row, and its same-tier sibling), or an untiered green
+        clearing a tiered red."""
         assert pm.covers(None, None) is True
-        assert pm.covers(0, 0) is True and pm.covers(2, 1) is True and pm.covers(2, 0) is True
-        assert pm.covers(0, 1) is False and pm.covers(1, 2) is False
-        assert pm.covers(None, 0) is False and pm.covers(None, 2) is False
-        assert pm.covers(2, None) is True and pm.covers(1, None) is False and pm.covers(0, None) is False
-        assert pm.harder(None, None) is None and pm.harder(1, 1) == 1
-        assert pm.harder(0, 2) == 2 and pm.harder(2, 0) == 2
-        assert pm.harder(None, 0) == 2 and pm.harder(1, None) == 2
+        for red in (None, 0, 1, 2):
+            assert pm.covers(2, red) is True, red
+            assert pm.covers(0, red) is False and pm.covers(1, red) is False, red
+        for red in (0, 1, 2):
+            assert pm.covers(None, red) is False, red
 
-    def test_the_tiers_are_proof_tiers_in_containment_order(self, pm):
+    def test_the_tiers_are_the_proof_tiers_and_the_cheaper_ones_run_what_full_skips_here(self, pm):
         """``TIERS`` is cheapest first, the reverse of scripts/proof_tier.py's
         fullest-first ``TIERS``, and the tier job's case arm admits exactly
-        these; each cheaper tier's lines are among the next one's. Dies to: a
-        tier added, dropped or reordered on one side (a new tier would read
-        as no tier, and the order is the whole rule)."""
+        these. On the perturbed cell's leg the full tier runs none of the
+        serial files and the cheaper tiers run some (why only a full green
+        clears, and the residual DEF-5136 names). Dies to: a tier added,
+        dropped or reordered on one side, or the full tier's leg taking the
+        serial files in (the residual then closes: revisit DEF-5136)."""
         tier_mod = _load(REPO_ROOT / "scripts" / "proof_tier.py", "proof_tier_for_post_merge")
         assert pm.TIERS == tuple(reversed(tier_mod.TIERS))
-        argvs = tier_mod._TIER_ARGVS
-        assert set(argvs["contract"]) <= set(argvs["recall"])
         workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
         arm = next(line.strip() for line in workflow.splitlines() if line.strip().endswith(") ;;") and "|" in line)
         assert set(arm[: -len(") ;;")].split("|")) == set(pm.TIERS)
+        serial = set(tier_mod.SERIAL_FILES)
 
-    def test_the_workflow_names_the_perturbed_cell_for_its_tier(self, pm):
-        """test.yml's perturbed job is named so that ``tier_of`` reads its cell
-        and tier for every tier the job can run, with the tier step's own
-        ``full`` fallback, and the bounds census still maps it to its job.
-        Dies to: the name reverted to plain ``perturbed`` (the row returns),
-        a marker spelled apart from ``tier_of``'s, or a fallback that differs
-        from the step's."""
+        def ran(tier: str) -> set[str]:
+            return {a for argv in tier_mod.tier_argvs(tier, leg="parallel") for a in argv if a in serial}
+
+        assert ran("full") == set()
+        assert ran("contract") and ran("recall")
+
+    def test_the_workflows_name_exactly_the_declared_cells_for_their_tier(self, pm):
+        """Every job in .github/workflows/ named with a ``(... tier)`` template
+        is a declared cell, test.yml's perturbed reads back through
+        ``tier_of`` for every tier with the tier step's own ``full`` fallback,
+        and the bounds census still maps it to its job. Dies to: the name
+        reverted to plain ``perturbed`` (the row returns), a second tiered
+        cell named in a workflow but not declared, a marker spelled apart from
+        ``tier_of``'s, or a fallback that differs from the step's."""
+        named = set()
+        for wf in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+            lines = wf.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith("    name: ") and line.rstrip().endswith(" tier)") and "${{" in line:
+                    job = next(lines[j] for j in range(i - 1, -1, -1) if lines[j].startswith("  ") and not lines[j].startswith("   "))
+                    named.add(job.strip().rstrip(":"))
+        assert named == set(pm.TIERED_CELLS)
         workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
         lines = workflow.splitlines()
         at = lines.index("  perturbed:")
@@ -984,7 +1020,7 @@ class TestACellNamedForTheTierItRan:
         assert mid["verdict"] == "red" and mid["since"]["pr"] == 608 and mid["owner"]["pr"] == 614
         assert [(g["pr"], g["tier"]) for g in mid["green_below"]] == [(615, "recall"), (617, "recall")]
         assert pm.board_lines(pm.transitions(prs, at="2026-11-13T06:30:00Z"), window=11, oldest=607) == [
-            "perturbed (full tier): red since #608 (merged 2026-11-12 19:18Z, the leg finished 19:01Z), "
+            "perturbed: red since #608 (full tier, merged 2026-11-12 19:18Z, the leg finished 19:01Z), "
             "green on #607; #615 green on a recall-tier run; #617 green on a recall-tier run"]
         end = pm.transitions(prs)["perturbed"]
         assert end["verdict"] == "red" and end["since"]["pr"] == 608 and end["owner"]["pr"] == 616
@@ -992,15 +1028,17 @@ class TestACellNamedForTheTierItRan:
             "red after merge: #616 perturbed (full tier) since 2026-11-12 19:18Z (the leg finished 19:01Z), "
             "green on #607"]
 
-    def test_the_untiered_record_still_reads_as_the_row_measured_it(self, pm):
-        """The same record under the cell's old fixed name keeps today's rule
-        byte for byte: the name is the whole rule for a check with no tier,
-        which is every adopter's. Dies to: the untiered rule moved."""
+    def test_the_untiered_record_keeps_the_old_rule(self, pm):
+        """The same record under the cell's old fixed name reads as it did
+        before the marker: the name is the whole rule for a check with no
+        tier, which is every adopter's. Dies to: the untiered rule moved."""
         prs = _record()["prs"]
         assert pm.board_lines(pm.transitions(prs, at="2026-11-13T06:30:00Z"), window=11, oldest=607) == [
             "none red among the last 11 merges"]
         end = pm.transitions(prs)["perturbed"]
         assert end["since"]["pr"] == 616 and end["green_below"] == [] and end["standing"] is None
+        assert pm.board_lines(pm.transitions(prs), window=11, oldest=607) == [
+            "perturbed: red since #616 (merged 2026-11-13 06:52Z, the leg finished 06:52Z), green on #617"]
 
     def test_the_banner_names_a_full_red_under_a_recall_green(self, pm):
         """Dies to: ``verdicts`` letting any newer green own the cell."""
@@ -1009,85 +1047,116 @@ class TestACellNamedForTheTierItRan:
         assert pm.verdicts(pm.by_merge_desc(pm.replay(_named(record), at))) == {614: (["perturbed (full tier)"], [])}
         assert pm.verdicts(pm.by_merge_desc(pm.replay(record["prs"], at))) == {}
 
-    def test_a_green_at_or_above_the_red_tier_clears_it(self, pm):
-        """Dies to: the cell keyed by its whole name (a full green never
-        clears a recall red), or ``covers`` reversed."""
-        red = _merge(1, "2026-11-01T10:00:00Z", _row("perturbed (recall tier)", "2026-11-01T09:00:00Z", "x", "FAILURE"))
-        for tier in ("recall", "full"):
-            green = _merge(2, "2026-11-01T12:00:00Z", _row(f"perturbed ({tier} tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS"))
-            c = pm.transitions([red, green])
-            assert list(c) == ["perturbed"] and c["perturbed"]["verdict"] == "green", tier
-            assert pm.verdicts(pm.by_merge_desc([red, green])) == {}
-        cheap = _merge(2, "2026-11-01T12:00:00Z", _row("perturbed (contract tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS"))
-        assert pm.transitions([red, cheap])["perturbed"]["verdict"] == "red"
-        assert pm.verdicts(pm.by_merge_desc([red, cheap])) == {1: (["perturbed (recall tier)"], [])}
+    def test_only_a_full_green_clears_a_tiered_red(self, pm):
+        """A cheaper green, even of the red's own tier, may not have run the
+        red's rows (its own changed tests differ), so it stands beside; a full
+        green clears every tier's red. Dies to: the cell keyed by its whole
+        name (a full green never clears a recall red), or ``covers`` letting a
+        same-tier green clear."""
+        for red in ("contract", "recall", "full"):
+            c = pm.transitions(_seq((red, "FAILURE"), ("full", "SUCCESS")))
+            assert list(c) == ["perturbed"] and c["perturbed"]["verdict"] == "green", red
+            assert pm.verdicts(pm.by_merge_desc(_seq((red, "FAILURE"), ("full", "SUCCESS")))) == {}, red
+            for green in ("contract", "recall"):
+                c = pm.transitions(_seq((red, "FAILURE"), (green, "SUCCESS")))["perturbed"]
+                assert c["verdict"] == "red" and [g["tier"] for g in c["green_below"]] == [green], (red, green)
+                assert pm.verdicts(pm.by_merge_desc(_seq((red, "FAILURE"), (green, "SUCCESS")))) == {
+                    1: ([_p(red)], [])}, (red, green)
 
-    def test_a_cheaper_red_over_a_fuller_red_keeps_the_fuller_one_standing(self, pm):
+    def test_a_cheaper_red_over_a_fuller_red_keeps_the_full_tier_standing(self, pm):
         """The fix's own relocation: a recall red owning the cell after a full
-        red must not let a recall green clear the full red under it. Dies to:
-        the standing tier taken from the newest red alone."""
-        full = _merge(1, "2026-11-01T10:00:00Z", _row("perturbed (full tier)", "2026-11-01T09:00:00Z", "x", "FAILURE"))
-        recall_red = _merge(2, "2026-11-01T12:00:00Z", _row("perturbed (recall tier)", "2026-11-01T11:00:00Z", "x", "FAILURE"))
-        recall_green = _merge(3, "2026-11-01T14:00:00Z", _row("perturbed (recall tier)", "2026-11-01T13:00:00Z", "x", "SUCCESS"))
-        c = pm.transitions([full, recall_red, recall_green])["perturbed"]
+        red must not let a cheaper green clear the full red under it, and the
+        words name each run's own tier. Dies to: the standing tier taken from
+        the newest red alone, or the words naming a tier the owning run did
+        not run."""
+        prs = _seq(("full", "FAILURE"), ("recall", "FAILURE"), ("recall", "SUCCESS"))
+        c = pm.transitions(prs)["perturbed"]
         assert c["verdict"] == "red" and c["since"]["pr"] == 1 and c["owner"]["pr"] == 2 and c["standing"] == 2
-        assert pm.board_lines({"perturbed": c}, window=3, oldest=1)[0].startswith("perturbed (full tier): red since #1")
-        assert pm.verdicts(pm.by_merge_desc([full, recall_red, recall_green])) == {1: (["perturbed (full tier)"], [])}
-        full_green = _merge(4, "2026-11-01T16:00:00Z", _row("perturbed (full tier)", "2026-11-01T15:00:00Z", "x", "SUCCESS"))
-        c = pm.transitions([full, recall_red, recall_green, full_green])["perturbed"]
-        assert c["verdict"] == "green" and c["standing"] is None
+        assert pm.lines({"perturbed": c}, oldest=1)[0].startswith("red after merge: #2 perturbed (recall tier) since")
+        assert pm.board_lines({"perturbed": c}, window=3, oldest=None)[0].startswith(
+            "perturbed: red since #1 (full tier, merged")
+        assert pm.verdicts(pm.by_merge_desc(prs)) == {2: (["perturbed (recall tier)"], [])}
+        flip =_seq(("recall", "FAILURE"), ("full", "FAILURE"))
+        assert pm.board_lines(pm.transitions(flip), window=2, oldest=None)[0].startswith(
+            "perturbed: red since #1 (recall tier, merged")
+        c = pm.transitions(prs + _seq(("full", "SUCCESS"), ("full", "SUCCESS"), ("full", "SUCCESS"), ("full", "SUCCESS"))[3:])
+        assert c["perturbed"]["verdict"] == "green" and c["perturbed"]["standing"] is None
+
+    def test_an_early_green_below_the_full_tier_is_beside_as_early(self, pm):
+        """A green both started before the red merged and below the full tier
+        is carried once, as the early green. Dies to: the two beside gates
+        swapped (it is named as a cheaper-tier run) or both applied."""
+        red = _merge(1, "2026-11-01T10:00:00Z", _row(_p("full"), "2026-11-01T09:00:00Z", "x", "FAILURE"))
+        early = _merge(2, "2026-11-01T12:00:00Z", _row(_p("recall"), "2026-11-01T09:30:00Z", "x", "SUCCESS"))
+        c = pm.transitions([red, early])["perturbed"]
+        assert [g["pr"] for g in c["green_beside"]] == [2] and c["green_below"] == []
+
+    def test_the_banner_keeps_any_covering_green(self, pm):
+        """Newest first: a recall green, then a full green, then a full red.
+        The full green clears the red although the newest green does not.
+        Dies to: ``any`` read as ``all`` (a false red on the banner)."""
+        prs = _seq(("full", "FAILURE"), ("full", "SUCCESS"), ("recall", "SUCCESS"))
+        assert pm.verdicts(pm.by_merge_desc(prs)) == {}
+        assert pm.transitions(prs)["perturbed"]["verdict"] == "green"
 
     def test_the_latest_run_of_a_cell_wins_when_a_pull_request_changed_tier(self, pm):
         """A catch-up can move a pull request's tier, so its rollup holds the
         cell under two names; only the latest run says what its merged head
         tested. Dies to: ``latest_run_per_check`` keyed by the whole name."""
-        rows = [_row("perturbed (contract tier)", "2026-11-01T09:00:00Z", "x", "FAILURE"),
-                _row("perturbed (full tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS")]
-        assert [r["name"] for r in pm.latest_run_per_check(rows)] == ["perturbed (full tier)"]
+        rows = [_row(_p("contract"), "2026-11-01T09:00:00Z", "x", "FAILURE"),
+                _row(_p("full"), "2026-11-01T11:00:00Z", "x", "SUCCESS")]
+        assert [r["name"] for r in pm.latest_run_per_check(rows)] == [_p("full")]
         assert pm.transitions([_merge(1, "2026-11-01T12:00:00Z", *rows)])["perturbed"]["verdict"] == "green"
+        theirs = [_row("e2e", "2026-11-01T09:00:00Z", "x", "FAILURE"), _row("e2e (full tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS")]
+        assert len(pm.latest_run_per_check(theirs)) == 2
 
-    def test_a_template_name_lands_its_no_verdict_on_the_cell(self, pm):
+    def test_a_template_name_lands_on_the_cell_and_never_reaches_the_words(self, pm):
         """Dies to: the unevaluated name read as a cell of its own (a line no
-        run can ever clear: 'no verdict on every merge read')."""
-        red = _merge(1, "2026-11-01T10:00:00Z", _row("perturbed (full tier)", "2026-11-01T09:00:00Z", "x", "FAILURE"))
+        run can ever clear), or its raw expression printed on the banner."""
+        red = _merge(1, "2026-11-01T10:00:00Z", _row(_p("full"), "2026-11-01T09:00:00Z", "x", "FAILURE"))
         gone = _merge(2, "2026-11-01T12:00:00Z", _row(TEMPLATE, "2026-11-01T11:00:00Z", "x", "CANCELLED"))
         c = pm.transitions([red, gone])
         assert list(c) == ["perturbed"] and c["perturbed"]["verdict"] == "red"
         assert [n["pr"] for n in c["perturbed"]["no_verdict"]] == [2] and pm.never_judged(c) == []
+        newer = _merge(3, "2026-11-01T14:00:00Z", _row(_p("recall"), "2026-11-01T13:00:00Z", "x", "SUCCESS"))
+        out = pm.verdicts(pm.by_merge_desc([gone, newer]))
+        assert out == {2: ([], ["perturbed (tier not evaluated) (cancelled)"])}
+        assert "${{" not in json.dumps(out)
 
     def test_the_old_name_beside_the_new_one(self, pm):
         """The cell's old untiered name stays in the window for 20 merges: its
         red may have run the full tier, so only a full green clears it, and
-        an untiered green clears no tiered red. Dies to: an untiered red
-        cleared by a cheaper green, or an untiered green clearing a tiered red."""
-        old_red = _merge(1, "2026-11-01T10:00:00Z", _row("perturbed", "2026-11-01T09:00:00Z", "x", "FAILURE"))
-        recall = _merge(2, "2026-11-01T12:00:00Z", _row("perturbed (recall tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS"))
-        full = _merge(3, "2026-11-01T14:00:00Z", _row("perturbed (full tier)", "2026-11-01T13:00:00Z", "x", "SUCCESS"))
-        assert pm.transitions([old_red, recall])["perturbed"]["verdict"] == "red"
-        assert pm.board_lines(pm.transitions([old_red, recall]), window=2, oldest=1)[0].startswith("perturbed: red since #1")
-        assert pm.transitions([old_red, recall, full])["perturbed"]["verdict"] == "green"
-        new_red = _merge(4, "2026-11-01T16:00:00Z", _row("perturbed (contract tier)", "2026-11-01T15:00:00Z", "x", "FAILURE"))
-        old_green = _merge(5, "2026-11-01T18:00:00Z", _row("perturbed", "2026-11-01T17:00:00Z", "x", "SUCCESS"))
-        c = pm.transitions([new_red, old_green])["perturbed"]
+        an untiered green clears no tiered red (also the shape a promotion to
+        a required check under a fixed name leaves while a tiered red stands).
+        Dies to: an untiered red cleared by a cheaper green, or an untiered
+        green clearing a tiered red."""
+        assert pm.transitions(_seq((None, "FAILURE"), ("recall", "SUCCESS")))["perturbed"]["verdict"] == "red"
+        assert pm.board_lines(pm.transitions(_seq((None, "FAILURE"), ("recall", "SUCCESS"))), window=2,
+                              oldest=None)[0].startswith("perturbed: red since #1 (merged")
+        assert pm.transitions(_seq((None, "FAILURE"), ("full", "SUCCESS")))["perturbed"]["verdict"] == "green"
+        c = pm.transitions(_seq(("contract", "FAILURE"), (None, "SUCCESS")))["perturbed"]
         assert c["verdict"] == "red" and [g["tier"] for g in c["green_below"]] == [None]
-        assert "#5 green on a run that names no tier" in pm.board_lines({"perturbed": c}, window=2, oldest=4)[0]
-
-    def test_the_tier_words_are_ascii(self, pm):
-        prs = _named(_record())
-        assert all(line.isascii() for line in pm.board_lines(pm.transitions(prs, at="2026-11-13T06:30:00Z"),
-                                                             window=11, oldest=607))
+        assert "#2 green on a run that names no tier" in pm.board_lines({"perturbed": c}, window=2, oldest=None)[0]
+        held = pm.transitions(_seq(("contract", "FAILURE"), (None, "FAILURE"), (None, "SUCCESS")))["perturbed"]
+        assert held["verdict"] == "red" and held["standing"] == 2
 
     def test_the_banner_silences_an_older_no_verdict_only_under_a_green_that_covers_it(self, pm):
         """A newer green silences an older merge's cancelled run in the
         ``Merged:`` line as it silences an older red: an untiered pair as
-        before (every adopter's), a tiered run only under a green at its tier
-        or above. Dies to: the silence dropped (every cancelled run under a
-        green named again), or any newer green silencing a fuller run's."""
+        before (every adopter's), a tiered run only under a full-tier green.
+        Dies to: the silence dropped (every cancelled run under a green named
+        again), or any newer green silencing a tiered run's."""
         old = _merge(1, "2026-11-01T10:00:00Z", _row(WIN, "2026-11-01T09:00:00Z", "x", "CANCELLED"))
         new = _merge(2, "2026-11-01T12:00:00Z", _row(WIN, "2026-11-01T11:00:00Z", "x", "SUCCESS"))
         assert pm.verdicts(pm.by_merge_desc([old, new])) == {}
-        full = _merge(1, "2026-11-01T10:00:00Z", _row("perturbed (full tier)", "2026-11-01T09:00:00Z", "x", "CANCELLED"))
-        recall = _merge(2, "2026-11-01T12:00:00Z", _row("perturbed (recall tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS"))
-        assert pm.verdicts(pm.by_merge_desc([full, recall])) == {1: ([], ["perturbed (full tier) (cancelled)"])}
-        green = _merge(2, "2026-11-01T12:00:00Z", _row("perturbed (full tier)", "2026-11-01T11:00:00Z", "x", "SUCCESS"))
-        assert pm.verdicts(pm.by_merge_desc([full, green])) == {}
+        assert pm.verdicts(pm.by_merge_desc(_seq(("full", "CANCELLED"), ("recall", "SUCCESS")))) == {
+            1: ([], ["perturbed (full tier) (cancelled)"])}
+        assert pm.verdicts(pm.by_merge_desc(_seq(("full", "CANCELLED"), ("full", "SUCCESS")))) == {}
+
+    def test_the_tier_words_are_ascii(self, pm):
+        """Dies to: a non-ASCII character in the tier words (the board and the
+        banner reach a Windows console)."""
+        prs = _named(_record())
+        assert all(line.isascii() for line in pm.board_lines(pm.transitions(prs, at="2026-11-13T06:30:00Z"),
+                                                             window=11, oldest=607))
+        assert pm.shown(TEMPLATE).isascii()
