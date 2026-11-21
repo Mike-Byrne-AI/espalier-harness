@@ -1017,6 +1017,53 @@ class TestAShellWriteIntoAnotherCheckoutIsBumped:
             f"echo z >> {_in(live / 'src' / 'app.py')}", root), _seat_env(root)))
         assert "this Bash writes into .claude/worktrees/live" in reason and "not the main checkout" in reason
 
+    def test_a_duplicated_descriptor_or_a_null_device_names_no_file(self, tmp_path):
+        # The readers return `1` for `2>&1`: four of Task 0's 107 placed calls
+        # were that, from a shell standing in main (the failure-mode review).
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        for command in ("git status 2>&1 | head -3", "ls >&2", "make 2>&- && echo ok", "cmd 2> /dev/null"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, root), env))
+        for command in ("Get-Item x > $null", "Get-Item x 2>$null", "dir > NUL"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, root, tool="PowerShell"), env))
+        # control: a file really named 1 is a file
+        _bumped(run_hook("write_guard.py", _shell_payload("echo z > 1", root), env))
+
+    def test_every_file_a_call_writes_there_keys_the_fire(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))
+        # a told file and a new one in one call: told again, the count named
+        both = f"sed -i 's/1/2/' {_in(root / 'src' / 'app.py')} {_in(root / 'tests' / 'test_app.py')}"
+        assert "this Bash writes 2 files into the main checkout" in _bumped(
+            run_hook("write_guard.py", _shell_payload(both, live), env))
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(both, live), env))   # its re-issue passes
+
+    def test_a_link_in_the_sessions_tree_is_removed_not_what_it_points_at(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        (live / "venvlink").symlink_to(root / "src", target_is_directory=True)
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f"rm -f venvlink && ln -s {_in(root / 'src')} venvlink", live), env))
+        # control: a file in the folder it points at, named, is main's
+        assert "removes or moves a file in the main checkout" in _bumped(run_hook(
+            "write_guard.py", _shell_payload(f"rm -f {_in(root / 'src' / 'app.py')}", live), env))
+
+    def test_the_project_dir_variable_is_read_from_the_project_dir(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        # a worktree seat whose shell moved into main writes its own tree through it
+        seat = _seat_env(live)
+        for command in (f"cd {_in(root)} && echo z > $CLAUDE_PROJECT_DIR/src/app.py",
+                        f"cd {_in(root)} && echo z > ${{CLAUDE_PROJECT_DIR}}/src/app.py"):
+            assert_hook_allowed(run_hook("write_guard.py", _shell_payload(command, live), seat))
+        assert_hook_allowed(run_hook("write_guard.py", _shell_payload(
+            f'Set-Location {_in(root, PS)}; Set-Content -Path "$($env:CLAUDE_PROJECT_DIR)/src/app.py" -Value z',
+            live, tool="PowerShell"), seat))
+        # a session that entered a worktree (project dir main, cwd the worktree) writes main through it
+        assert "writes into the main checkout" in _bumped(run_hook(
+            "write_guard.py", _shell_payload("echo z > $CLAUDE_PROJECT_DIR/src/app.py", live), _seat_env(root)))
+
     def test_a_folder_in_the_worktrees_folder_that_no_checkout_holds_is_silent(self, tmp_path):
         # 9632e9 (A): Claude Code's worktree folder holds a reviewer's snapshot
         # clone or a subagent's scratch (102 of Task 0's 107 placed calls), no
@@ -1185,8 +1232,14 @@ class TestTheShellArmsGate:
 
     def test_the_reason_stays_within_512_bytes_with_the_longer_verb(self):
         speedbump = _hook_module("_speedbump")
-        body = speedbump._other_checkout_text("PowerShell", "n" * 300, "o" * 300, "/" + "p" * 400,
-                                              "removes or moves a file in")
+        verb = speedbump._counted_verb(speedbump._REMOVES, 1000)
+        body = speedbump._other_checkout_text("PowerShell", "n" * 300, "o" * 300, "/" + "p" * 400, verb)
         reason = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=body)
         assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
-        assert "this PowerShell removes or moves a file in " in reason
+        assert "this PowerShell removes or moves 1000 files in " in reason
+        assert speedbump._counted_verb(speedbump._WRITES, 1) == "writes into"
+
+    def test_the_project_dir_spellings_hold_the_helpers_own(self):
+        # a hand copy (this module reads no new helper name), held to the canon
+        canon = _hook_module("_hook_utils")._PS_ENV_PROJECT_DIR_PREFIXES
+        assert canon and {s.rstrip("/") for s in canon} <= set(_hook_module("_speedbump")._PROJECT_DIR_SPELLINGS)

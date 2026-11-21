@@ -2883,7 +2883,10 @@ def _other_checkout_hit(tool_name: str, tool_input: dict, root: Path,
 # seat's cd into main is bumped writing there, and a cd into a sibling seat's
 # worktree is the declared limit above. A form those readers do not read (a
 # write through a program they do not parse, a path held in a variable they do
-# not inline) stays unread, as it is for the zone check.
+# not inline) stays unread, as it is for the zone check; a glob is read as its
+# own spelling, not as the checkouts it would match; and a main-checkout
+# session removing or moving a folder that holds a worktree (`rm -rf .claude`)
+# reads as its own tree, since the folder is main's.
 _OTHER_CHECKOUT_SHELLS = frozenset({"Bash", "PowerShell"})
 # The effects whose operand leaves its tree changed: write_guard's
 # `_ZONE_EFFECTS` (this module cannot import that hook; tests pin the two equal).
@@ -2893,7 +2896,30 @@ _PATH_WORD_EDGE = frozenset(" \t\r\n/'\";&|()<>=:`,{}[]")
 # `$CLAUDE_PROJECT_DIR/` and its spellings, which `_clean_path_prefixes`
 # strips to a relative path: the project dir's, never the base's.
 _PROJECT_DIR_SPELLINGS = ("$claude_project_dir", "${claude_project_dir}",
-                          "$env:claude_project_dir", "${env:claude_project_dir}")
+                          "$env:claude_project_dir", "${env:claude_project_dir}",
+                          "$($env:claude_project_dir)", "$(${env:claude_project_dir})")
+# The shell arm's two verbs, and their counted forms for a call naming several files.
+_WRITES = "writes into"
+_REMOVES = "removes or moves a file in"
+
+
+def _counted_verb(verb: str, files: int) -> str:
+    if files < 2:
+        return verb
+    return f"writes {files} files into" if verb == _WRITES else f"removes or moves {files} files in"
+
+
+def _names_no_file(raw: str, squeezed: str) -> bool:
+    """A target the readers return that names no file: a descriptor a redirect
+    duplicates (`2>&1`, `>&2`, `>&-` read as `1`, `2`, `-`; ``squeezed`` is the
+    command without blanks), or a null device (`$null`, `NUL`). Four of Task
+    0's 107 placed calls were `2>&1` from a shell standing in main, read as a
+    file named `1` there. A file really named by digits (`echo z > 1`) is
+    still read."""
+    word = raw.strip().strip("\"'")
+    if word.casefold() in ("$null", "nul"):
+        return True
+    return (word.isdigit() or word == "-") and (">&" + word) in squeezed
 
 
 def _spellings(base: str) -> tuple[str, ...]:
@@ -2999,12 +3025,17 @@ def _shell_readers(tool_name: str) -> tuple[Callable[[str], Any], Callable[[str]
             _bash_patterns.iter_removed_or_relocated_operands, _bash_patterns.bash_bases)
 
 
-def _shell_reading(tool_name: str, command: str, root: Path,
-                   cwd: Path | None) -> tuple[str, str, str, str, str] | None:
-    """``(the target's checkout, the session's there, the path under it, the
-    verb, the target resolved)`` for the first path the command writes,
-    removes or moves in a checkout of this clone other than the session's;
-    None otherwise. Gated first, so an ordinary call reads no extractor."""
+#: A shell call's reading: the first hit's ``(target's checkout, the session's
+#: there, the path under it, the verb, the target resolved)``, then every
+#: target the call places in another checkout, and how many of them lie in
+#: the first one's checkout.
+_ShellHit = tuple[str, str, str, str, str, tuple[str, ...], int]
+
+
+def _shell_reading(tool_name: str, command: str, root: Path, cwd: Path | None) -> _ShellHit | None:
+    """The reading of every path the command writes, removes or moves in a
+    checkout of this clone other than the session's (``_ShellHit``); None
+    where it names none. Gated first, so an ordinary call reads no extractor."""
     if containing_checkout is None or not isinstance(root, Path) or not command.strip():
         return None
     checkouts = sibling_checkouts(root)
@@ -3030,18 +3061,25 @@ def _shell_reading(tool_name: str, command: str, root: Path,
         return None
     targets, removed, bases_for = _shell_readers(tool_name)
     bases = bases_for(command, root, cwd)
-    raws = [("writes into", raw) for raw in targets(command)]
-    raws += [("removes or moves a file in", raw) for effect, raw in removed(command)
+    raws = [(_WRITES, raw) for raw in targets(command)]
+    raws += [(_REMOVES, raw) for effect, raw in removed(command)
              if effect in _OTHER_CHECKOUT_EFFECTS]
+    squeezed = "".join(command.split())
     session_at: dict[str, str | None] = {}
+    first: tuple[str, str, str, str, str] | None = None
+    hits: dict[str, str] = {}   # each target placed in another checkout -> that checkout
     for verb, raw in raws:
-        if not isinstance(raw, str) or not raw.strip():
+        if not isinstance(raw, str) or not raw.strip() or _names_no_file(raw, squeezed):
             continue
         for at in bases(raw):
             try:
                 cleaned = Path(_hook_utils._clean_path_prefixes(raw))
                 start = root if raw.lstrip("\"'").casefold().startswith(_PROJECT_DIR_SPELLINGS) else at
-                target = (cleaned if cleaned.is_absolute() else start / cleaned).resolve()
+                joined = cleaned if cleaned.is_absolute() else start / cleaned
+                # a removed or moved operand is the entry itself: a link in this
+                # session's tree pointing into main is not main's file
+                target = (joined.resolve() if verb == _WRITES or joined.name in ("", "..")
+                          else joined.parent.resolve() / joined.name)
             except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- a path that cannot be resolved names no checkout, and CP-OTHER-CHECKOUT stays silent on it
                 continue
             hit = containing_checkout(str(target).replace("\\", "/"), root)
@@ -3056,18 +3094,25 @@ def _shell_reading(tool_name: str, command: str, root: Path,
             mine = session_at[key]
             if mine is None or theirs.casefold() == mine.casefold() or _inside_a_nested_repo(target, theirs):
                 continue
-            return theirs, mine, rel, verb, str(target)
-    return None
+            if first is None:
+                first = (theirs, mine, rel, verb, str(target))
+            hits.setdefault(str(target), theirs)
+    if first is None:
+        return None
+    # every file the call writes there keys the fire (CP_KILL's every-pid key),
+    # so a call naming a told file and a new one is told again; the count is
+    # the first checkout's
+    return (*first, tuple(hits), sum(1 for base in hits.values() if base == first[0]))
 
 
 #: The last shell call's reading (CP_KILL's memo): the predicate, the body and
 #: the flag key each ask, and the flag key is handed no root, so the reading
 #: is made once. Keyed by DEF-2073's reading too, as the text caches are.
-_last_shell: tuple[tuple[str, str, str, str, bool], tuple[str, str, str, str, str] | None] | None = None
+_last_shell: tuple[tuple[str, str, str, str, bool], _ShellHit | None] | None = None
 
 
 def _shell_checkout_hit(tool_name: str, tool_input: dict, root: Path | None,
-                        cwd: Path | None = None) -> tuple[str, str, str, str, str] | None:
+                        cwd: Path | None = None) -> _ShellHit | None:
     global _last_shell
     command = tool_input.get("command", "")
     if tool_name not in _OTHER_CHECKOUT_SHELLS or not isinstance(command, str):
@@ -3113,7 +3158,7 @@ def _other_checkout_body(tool_name: str, tool_input: dict, root: Path, cwd: Path
         shell = _shell_checkout_hit(tool_name, tool_input, root, cwd)
         hit = None if shell is None else shell[:3]
         if shell is not None:
-            verb = shell[3]
+            verb = _counted_verb(shell[3], shell[6])
     else:
         hit = _other_checkout_hit(tool_name, tool_input, root, cwd)
     if hit is None:
@@ -3151,13 +3196,15 @@ def _other_checkout_key(tool_name: str, tool_input: dict) -> str:
     # compare folds (NFKC, then casefold: a bare `.lower()` misses what APFS
     # folds), hashed, since CP-GATEWEAKEN's bare-name key would make two
     # `__init__.py` files one; a case variant of the same file shares the key.
-    # A shell fire keys on the target its reading resolved, so a file the file
-    # tools were bumped on passes a later shell write too, and the reverse.
+    # A shell fire keys on the targets its reading resolved: one file keys as
+    # the file tools key it, so a file they were bumped on passes a later
+    # shell write too, and the reverse; several key together, so a call naming
+    # a told file and a new one is told again.
     if tool_name in _OTHER_CHECKOUT_SHELLS:
         shell = _shell_checkout_hit(tool_name, tool_input, None)
         if shell is None:
             return _discard_key(tool_name, tool_input)
-        spelled = shell[4]
+        spelled = shell[4] if len(shell[5]) < 2 else "\n".join(sorted(shell[5]))
     else:
         raw = _file_tool_path(tool_name, tool_input) or ""
         try:

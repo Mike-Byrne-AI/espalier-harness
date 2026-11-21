@@ -876,4 +876,4 @@ class TestTheFileToolKinds:
         worktree = census._new_repo_project(tmp_path)
         command = census.payload(kind, worktree)["tool_input"]["command"]
         main = str(worktree.parent.parent.parent)
-        assert command.startswith(head) and main in command and str(worktree) in command
+        assert command == head + str(worktree / "notes.txt") and str(worktree).startswith(main + "/")
