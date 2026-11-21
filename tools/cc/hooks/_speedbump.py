@@ -2671,19 +2671,22 @@ CP_KILL = SpeedBump(
 )
 
 
-# ── Another checkout's tree (DEF-3106) ──────────────────────────────────────
+# ── Another checkout's tree (DEF-3106, DEF-5135) ────────────────────────────
 # A Write, Edit or NotebookEdit whose path lies in a checkout of this clone
-# other than the one the session works in. Claude Code's worktree isolation
-# fences compound shell, not the file tools, and a worktree sits inside the
-# main checkout's folder, so a path that drops `.claude/worktrees/<name>`
-# still names a real file: in another seat's live tree, whose tier or diff
-# then carries the edit (win-2's Edit of win's espalier/cli.py during win's
-# tier, 2026-11-18; five on the Air from 2026-10-18 to 2026-11-16, each one a
-# slip). A bump, not a deny: the zone check it would sit beside is skipped
-# under maintenance mode, which every seat on the Air runs, and a deliberate
-# write there (the operator's own, a hand fix in the dispatcher's catch-up
-# copy) passes on its re-issue. Pure path work over the memoised worktree
-# registry (`_hook_utils.sibling_checkouts`): no git call per Write or Edit.
+# other than the one the session works in, and a Bash or PowerShell call that
+# writes, removes or moves a file there (DEF-5135, the shell arm below).
+# Nothing in Claude Code fences either from another checkout (a shell write
+# into the main checkout landed from a worktree under bypassPermissions,
+# driven 2026-11-21), and a worktree sits inside the main checkout's folder,
+# so a path that drops `.claude/worktrees/<name>` still names a real file: in
+# another seat's live tree, whose tier or diff then carries the edit (win-2's
+# Edit of win's espalier/cli.py during win's tier, 2026-11-18; five on the Air
+# from 2026-10-18 to 2026-11-16, each one a slip). A bump, not a deny: the
+# zone check it would sit beside is skipped under maintenance mode, which
+# every seat on the Air runs, and a deliberate write there (the operator's
+# own, a hand fix in the dispatcher's catch-up copy) passes on its re-issue.
+# Pure path work over the memoised worktree registry
+# (`_hook_utils.sibling_checkouts`): no git call per call.
 #
 # Declared limit: the session's checkout is read from the payload's cwd, so a
 # session whose shell moved into another seat's worktree (the dispatcher's
@@ -2694,7 +2697,9 @@ CP_KILL = SpeedBump(
 # main checkout but which works in a worktree (one it entered, or a main
 # seat's `isolation: worktree` agent) and whose shell moved back into main
 # sends what the main seat itself sends, so it reads main as its own. A
-# write under a checkout's `.git` is git's, never a seat's tree, and passes.
+# write under a checkout's `.git` is git's, never a seat's tree, and passes,
+# as does one into a folder of the main checkout's `.claude/worktrees/` that
+# no registered checkout holds (`_no_seats_tree`).
 _OTHER_CHECKOUT_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
 # The reason is held to 512 bytes like every reason here, and the session's
 # own copy of the file is the part the agent acts on, so it is given whole
@@ -2705,7 +2710,7 @@ _OTHER_CHECKOUT_REASON_CAP = 512
 _OTHER_CHECKOUT_NAME_CAP = 60    # each checkout's name, before the own copy needs the room
 _OTHER_CHECKOUT_NAME_FLOOR = 24  # each checkout's name, when the own copy still needs it
 _OTHER_CHECKOUT_BODY = (
-    "this file tool writes into another checkout of this clone than the one this session "
+    "this call writes into another checkout of this clone than the one this session "
     "works in (a path that dropped .claude/worktrees/<name>); a write there lands in another "
     "seat's live tree unseen"
 )
@@ -2750,6 +2755,23 @@ def _is_main_checkout(base: str) -> bool:
         return False
 
 
+def _no_seats_tree(theirs: str, rel: str) -> bool:
+    """Is ``rel`` (a path under the checkout ``theirs``) in no seat's tree?
+    Git's own files under a checkout's ``.git`` (the common dir every
+    checkout shares, a worktree's link), and a folder of the main checkout's
+    ``.claude/worktrees/`` that no registered checkout holds (air's 25d3a4, on
+    9632e9's option A): Claude Code's worktree folder (gitignored in
+    Espalier's own repository), where a reviewer's snapshot clone or a
+    subagent's scratch goes (102 of Task 0's 107 placed calls on the Air). A
+    registered worktree there is the checkout ``containing_checkout`` names,
+    so a seat's tree never reads as this; a linked worktree's own
+    ``.claude/worktrees/`` is that seat's tree and stays bumped."""
+    folded = rel.casefold()
+    if folded == ".git" or folded.startswith(".git/"):
+        return True
+    return folded.startswith(".claude/worktrees/") and _is_main_checkout(theirs)
+
+
 def _session_checkout(root: Path, cwd: Path | None) -> str | None:
     """The checkout this session works in (air's 16ab70 (1)): the one holding
     the payload's cwd; the project dir's where cwd is in none; and the
@@ -2759,8 +2781,13 @@ def _session_checkout(root: Path, cwd: Path | None) -> str | None:
     a session enters a worktree (Claude Code's worktree docs; an agent
     worktree's write was driven with it so, 2026-11-21), so it alone
     would read an agent's own worktree as another seat's."""
-    project = _checkout_holding(root, root)
-    here = _checkout_holding(cwd, root) if cwd is not None else None
+    return _session_checkout_of(_checkout_holding(root, root),
+                                _checkout_holding(cwd, root) if cwd is not None else None)
+
+
+def _session_checkout_of(project: str | None, here: str | None) -> str | None:
+    """`_session_checkout`'s rule over the project dir's checkout and cwd's,
+    already read."""
     if here is None:
         return project
     if (project is not None and here.casefold() != project.casefold()
@@ -2804,15 +2831,226 @@ def _other_checkout_hit(tool_name: str, tool_input: dict, root: Path,
     if hit is None:
         return None
     theirs, rel = hit
-    if rel.casefold() == ".git" or rel.casefold().startswith(".git/"):
-        return None   # git's own files (the common dir every checkout shares, a worktree's link), no seat's tree
+    if _no_seats_tree(theirs, rel):
+        return None
     ours = _session_checkout(root, cwd)
     if ours is None or theirs.casefold() == ours.casefold() or _inside_a_nested_repo(target, theirs):
         return None
     return theirs, ours, rel
 
 
+# The shell arm (DEF-5135). A Bash or PowerShell call is read by the readers
+# write_guard's zone twins take (`check_bash_for_protected_mutations`,
+# `check_powershell_for_protected_mutations`): the write targets, and the
+# operands a verb removes or moves, each resolved against the directories the
+# command runs in (the payload's cwd, moved by the command's own cd chain).
+# The session's checkout is taken at each of those directories by the rule
+# above, so `cd X && write` reads as a `cd X` call, then the write: a worktree
+# seat's cd into main is bumped writing there, and a cd into a sibling seat's
+# worktree is the declared limit above. A form those readers do not read (a
+# write through a program they do not parse, a path held in a variable they do
+# not inline) stays unread, as it is for the zone check.
+_OTHER_CHECKOUT_SHELLS = frozenset({"Bash", "PowerShell"})
+# The effects whose operand leaves its tree changed: write_guard's
+# `_ZONE_EFFECTS` (this module cannot import that hook; tests pin the two equal).
+_OTHER_CHECKOUT_EFFECTS = frozenset({"delete", "move", "sweep", "clean"})
+# A character that ends a path word in a command, for the gate below.
+_PATH_WORD_EDGE = frozenset(" \t\r\n/'\";&|()<>=:`,{}[]")
+# `$CLAUDE_PROJECT_DIR/` and its spellings, which `_clean_path_prefixes`
+# strips to a relative path: the project dir's, never the base's.
+_PROJECT_DIR_SPELLINGS = ("$claude_project_dir", "${claude_project_dir}",
+                          "$env:claude_project_dir", "${env:claude_project_dir}")
+
+
+def _spellings(base: str) -> tuple[str, ...]:
+    """The casefolded spellings of a checkout a command may name it by: as
+    the registry holds it, without a macOS `/private` firmlink prefix, and
+    in Git Bash's `/c/...` form of a drive path."""
+    folded = base.casefold().rstrip("/")
+    out = [folded]
+    if folded.startswith("/private/"):
+        out.append(folded[len("/private"):])
+    if len(folded) > 2 and folded[1] == ":" and folded[0].isalpha():
+        out.append("/" + folded[0] + folded[2:])
+    return tuple(out)
+
+
+def _path_word_at(text: str, at: int, size: int) -> bool:
+    before = text[at - 1] if at > 0 else " "
+    after = text[at + size] if at + size < len(text) else " "
+    return before in _PATH_WORD_EDGE and after in _PATH_WORD_EDGE
+
+
+def _has_path_word(text: str, word: str) -> bool:
+    at = text.find(word)
+    while at != -1:
+        if _path_word_at(text, at, len(word)):
+            return True
+        at = text.find(word, at + 1)
+    return False
+
+
+def _nested_spellings(others: list[str], bases: tuple[str, ...]) -> list[str]:
+    """Each other checkout nested in one of ``bases`` (the main checkout's
+    worktrees, read from main), as a relative path from that base and each of
+    that path's tails of two parts or more (`.claude/worktrees/work`,
+    `worktrees/work`), casefolded. A one-part tail is left out: a worktree
+    named `2` would open the gate on every `2>&1`."""
+    out: list[str] = []
+    for other in others:
+        folded = other.casefold().rstrip("/")
+        for base in bases:
+            stem = base.casefold().rstrip("/") + "/"
+            if folded.startswith(stem):
+                parts = folded[len(stem):].split("/")
+                out.extend("/".join(parts[i:]) for i in range(len(parts) - 1))
+    return out
+
+
+def _shell_may_reach_another_checkout(command: str, others: list[str], ours: str, cwd_elsewhere: bool,
+                                      cwd_spelled: str | None = None) -> bool:
+    """The string gate ahead of the shell readers: could the command name a
+    path in another checkout at all? Maintenance mode skips the zone check, so
+    on a seat that runs it no Bash call reads the extractor today, and running
+    it on every call would add its whole pass. A superset, read on the text
+    casefolded with its separators folded: the shell sits in another checkout
+    (every relative path lands there), a parent step (`..`), a home step
+    (`~`), the project dir's variable, another checkout's root named where it
+    is not this session's own tree spelled through it (the main checkout's
+    root begins every path of a worktree inside it), or a checkout nested in
+    the session's own (or in ``cwd_spelled``, the shell's folder) named by its
+    relative path (air's 32b8d3: a main-checkout session's write to
+    `.claude/worktrees/work/f`). Declared limits: a checkout named by a link
+    spelling none of `_spellings` gives, from a session standing in its own
+    checkout, is not read (the readers resolve links; this gate reads text),
+    and nor is a nested one reached by a cd that leaves only its last part to
+    name (`cd .claude/worktrees && echo x > work/f`)."""
+    if cwd_elsewhere:
+        return True
+    text = command.replace("\\", "/").casefold()
+    while "//" in text:
+        text = text.replace("//", "/")
+    if any(name in text for name in _PROJECT_DIR_SPELLINGS) or _has_path_word(text, ".."):
+        return True
+    bases = (ours,) if cwd_spelled is None else (ours, cwd_spelled)
+    if any(_has_path_word(text, nested) for nested in _nested_spellings(others, bases)):
+        return True
+    at = text.find("~")
+    while at != -1:
+        if at == 0 or text[at - 1] in _PATH_WORD_EDGE:
+            return True
+        at = text.find("~", at + 1)
+    own = _spellings(ours)
+    for other in others:
+        for spelled in _spellings(other):
+            at = text.find(spelled)
+            while at != -1:
+                end = at + len(spelled)
+                if end == len(text) or text[end] in _PATH_WORD_EDGE:
+                    if not any(mine.startswith(spelled + "/") and text.startswith(mine, at)
+                               and (at + len(mine) == len(text) or text[at + len(mine)] in _PATH_WORD_EDGE)
+                               for mine in own):
+                        return True
+                at = text.find(spelled, at + 1)
+    return False
+
+
+def _shell_readers(tool_name: str) -> tuple[Callable[[str], Any], Callable[[str], Any], Callable[..., Any]]:
+    """``(write targets, removed or moved operands, bases)`` for a shell tool:
+    the readers its zone twin in write_guard takes."""
+    if tool_name == "PowerShell":
+        return (_bash_patterns._candidate_paths_from_powershell,
+                _bash_patterns.iter_ps_removed_or_relocated_operands, _bash_patterns.powershell_bases)
+    return (_bash_patterns._candidate_paths_from_bash,
+            _bash_patterns.iter_removed_or_relocated_operands, _bash_patterns.bash_bases)
+
+
+def _shell_reading(tool_name: str, command: str, root: Path,
+                   cwd: Path | None) -> tuple[str, str, str, str, str] | None:
+    """``(the target's checkout, the session's there, the path under it, the
+    verb, the target resolved)`` for the first path the command writes,
+    removes or moves in a checkout of this clone other than the session's;
+    None otherwise. Gated first, so an ordinary call reads no extractor."""
+    if containing_checkout is None or not isinstance(root, Path) or not command.strip():
+        return None
+    checkouts = sibling_checkouts(root)
+    if not checkouts:
+        return None   # a clone of one checkout has no other tree to land in
+    project = _checkout_holding(root, root)
+    here = _checkout_holding(cwd, root) if cwd is not None else None
+    ours = _session_checkout_of(project, here)
+    if ours is None:
+        return None
+    others = [s for s in (project, *(str(c).replace("\\", "/").rstrip("/") for c in checkouts))
+              if s is not None and s.casefold() != ours.casefold()]
+    if not others:
+        return None
+    cwd_spelled = None
+    if cwd is not None and any(o.casefold().startswith(ours.casefold() + "/") for o in others):
+        try:   # read only where a checkout sits inside the session's: the main seat's worktrees
+            cwd_spelled = str(cwd.resolve()).replace("\\", "/")
+        except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- an unresolvable cwd leaves the gate reading the nested paths from the session's root alone
+            cwd_spelled = None
+    if not _shell_may_reach_another_checkout(
+            command, others, ours, here is not None and here.casefold() != ours.casefold(), cwd_spelled):
+        return None
+    targets, removed, bases_for = _shell_readers(tool_name)
+    bases = bases_for(command, root, cwd)
+    raws = [("writes into", raw) for raw in targets(command)]
+    raws += [("removes or moves a file in", raw) for effect, raw in removed(command)
+             if effect in _OTHER_CHECKOUT_EFFECTS]
+    session_at: dict[str, str | None] = {}
+    for verb, raw in raws:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        for at in bases(raw):
+            try:
+                cleaned = Path(_hook_utils._clean_path_prefixes(raw))
+                start = root if raw.lstrip("\"'").casefold().startswith(_PROJECT_DIR_SPELLINGS) else at
+                target = (cleaned if cleaned.is_absolute() else start / cleaned).resolve()
+            except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- a path that cannot be resolved names no checkout, and CP-OTHER-CHECKOUT stays silent on it
+                continue
+            hit = containing_checkout(str(target).replace("\\", "/"), root)
+            if hit is None:
+                continue
+            theirs, rel = hit
+            if _no_seats_tree(theirs, rel):
+                continue
+            key = str(at)
+            if key not in session_at:
+                session_at[key] = _session_checkout(root, at)
+            mine = session_at[key]
+            if mine is None or theirs.casefold() == mine.casefold() or _inside_a_nested_repo(target, theirs):
+                continue
+            return theirs, mine, rel, verb, str(target)
+    return None
+
+
+#: The last shell call's reading (CP_KILL's memo): the predicate, the body and
+#: the flag key each ask, and the flag key is handed no root, so the reading
+#: is made once. Keyed by DEF-2073's reading too, as the text caches are.
+_last_shell: tuple[tuple[str, str, str, str, bool], tuple[str, str, str, str, str] | None] | None = None
+
+
+def _shell_checkout_hit(tool_name: str, tool_input: dict, root: Path | None,
+                        cwd: Path | None = None) -> tuple[str, str, str, str, str] | None:
+    global _last_shell
+    command = tool_input.get("command", "")
+    if tool_name not in _OTHER_CHECKOUT_SHELLS or not isinstance(command, str):
+        return None
+    reading = bool(getattr(_bash_patterns, "glued_reading", lambda: False)())
+    if root is None:   # the flag key is handed no root: the reading just made is this call's
+        return (_last_shell[1] if _last_shell is not None
+                and (_last_shell[0][:2], _last_shell[0][4]) == ((tool_name, command), reading) else None)
+    key = (tool_name, command, str(root), str(cwd), reading)
+    if _last_shell is None or _last_shell[0] != key:
+        _last_shell = (key, _shell_reading(tool_name, command, root, cwd))
+    return _last_shell[1]
+
+
 def _pred_other_checkout(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
+    if tool_name in _OTHER_CHECKOUT_SHELLS:
+        return _shell_checkout_hit(tool_name, tool_input, root, cwd) is not None
     return _other_checkout_hit(tool_name, tool_input, root, cwd) is not None
 
 
@@ -2836,24 +3074,32 @@ def _checkout_label(base: str, root: Path) -> str:
 
 
 def _other_checkout_body(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> str:
-    hit = _other_checkout_hit(tool_name, tool_input, root, cwd)
+    verb = "writes into"
+    if tool_name in _OTHER_CHECKOUT_SHELLS:
+        shell = _shell_checkout_hit(tool_name, tool_input, root, cwd)
+        hit = None if shell is None else shell[:3]
+        if shell is not None:
+            verb = shell[3]
+    else:
+        hit = _other_checkout_hit(tool_name, tool_input, root, cwd)
     if hit is None:
         return _OTHER_CHECKOUT_BODY
     theirs, ours, rel = hit
     mine = f"{ours}/{rel}" if rel else ours
-    return _other_checkout_text(tool_name, _checkout_label(theirs, root), _checkout_label(ours, root), mine)
+    return _other_checkout_text(tool_name, _checkout_label(theirs, root), _checkout_label(ours, root), mine, verb)
 
 
-def _other_checkout_text(tool_name: str, theirs: str, ours: str, mine: str) -> str:
+def _other_checkout_text(tool_name: str, theirs: str, ours: str, mine: str, verb: str = "writes into") -> str:
     """The reminder for one fire, within the reason's cap: the session's own
     copy whole wherever the room holds it, the two checkouts' names cut to
     their floor before it is, and its tail kept where even that is short.
+    ``verb`` is the shell arm's word for a removed or moved operand.
     Declared limit: the reason is 7-bit ASCII, so a path holding another
     character names it as ``?`` (a home folder spelled past ASCII)."""
     tool_name, theirs, ours, mine = (_ascii_text(s) for s in (tool_name, theirs, ours, mine))
 
     def compose(t: str, o: str, m: str) -> str:
-        return (f"this {tool_name} writes into {t}, another checkout of this clone (maybe another "
+        return (f"this {tool_name} {verb} {t}, another checkout of this clone (maybe another "
                 f"seat's live tree), not {o} where this session works; this session's copy is {m}: "
                 "use that one unless the other tree is meant")
 
@@ -2871,11 +3117,19 @@ def _other_checkout_key(tool_name: str, tool_input: dict) -> str:
     # compare folds (NFKC, then casefold: a bare `.lower()` misses what APFS
     # folds), hashed, since CP-GATEWEAKEN's bare-name key would make two
     # `__init__.py` files one; a case variant of the same file shares the key.
-    raw = _file_tool_path(tool_name, tool_input) or ""
-    try:
-        spelled = str(Path(_hook_utils._clean_path_prefixes(raw)).resolve())
-    except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- an unresolvable path keys on its spelling; the checkpoint still fires
-        spelled = raw
+    # A shell fire keys on the target its reading resolved, so a file the file
+    # tools were bumped on passes a later shell write too, and the reverse.
+    if tool_name in _OTHER_CHECKOUT_SHELLS:
+        shell = _shell_checkout_hit(tool_name, tool_input, None)
+        if shell is None:
+            return _discard_key(tool_name, tool_input)
+        spelled = shell[4]
+    else:
+        raw = _file_tool_path(tool_name, tool_input) or ""
+        try:
+            spelled = str(Path(_hook_utils._clean_path_prefixes(raw)).resolve())
+        except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- an unresolvable path keys on its spelling; the checkpoint still fires
+            spelled = raw
     folded = unicodedata.normalize("NFKC", spelled.replace("\\", "/")).casefold()
     return hashlib.sha256(folded.encode("utf-8", "replace")).hexdigest()[:16]
 
