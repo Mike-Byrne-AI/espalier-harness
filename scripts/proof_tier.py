@@ -250,6 +250,21 @@ SERIAL_CONTRACT_FILES: tuple[str, ...] = (
     "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
 )
 
+#: The serial files the tiered leg (``LEGS``) runs whole at one worker on the
+#: full tier, and on a cheaper tier whose diff brings any one of them in, so
+#: the full tier's run on test.yml's perturbed cell holds every node id a
+#: cheaper tier's run there holds and the cell keeps the stub-host catch its
+#: own-serial line had (DEF-5136, air's ruling d36425). Each one here went red
+#: on that cell alone, every test and test-serial cell green: the Store-stub
+#: ``python3`` as a dead spelling (run 44195841984, #717) and a sandbox row's
+#: absolute operand split by the spaced root (run 44117013709, 2026-11-17).
+#: Priced 2026-11-21: the first 2.2 min on that host (run 44840686277), worst
+#: 2.6 of 72 test-serial windows; the second 0.02 to 0.13 min there. The other
+#: serial files' rows apart from their contract ones run on no stub host.
+TIERED_SERIAL_FILES: tuple[str, ...] = (
+    "tests/test_guard_metamorphic.py", "tests/test_powershell_reachability_differential.py",
+)
+
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change
 #: to a corpus file moves them while touching no runtime path -- on 2026-09-11 a
@@ -357,16 +372,31 @@ FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS[
 RECALL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["recall"])
 CONTRACT_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["contract"])
 INSTALL_HINT = "needs pytest-xdist, mypy and ruff (the `dev` extra: pip install -e '.[dev]')"
+#: The tiered leg's line of the tiered serial files, one worker, whole: the
+#: full tier always runs it there, and a cheaper tier runs the same line where
+#: its diff brings in any one of them, so its argv is one the full tier's run
+#: holds (``TIERED_SERIAL_FILES``).
+_TIERED_SERIAL_ARGV: tuple[str, ...] = _PYTEST + _ONE_WORKER + _NOT_HEAVY + TIERED_SERIAL_FILES
 #: Why a leg can be empty: only the full tier has a serial leg (``LEGS``); a
-#: cheaper tier runs a changed serial file on its own-tests line at one
-#: worker, inside its parallel leg (``tier_argvs``).
-_EMPTY_LEG_WHY = ("only the full tier has a serial leg; a cheaper tier runs a changed serial "
-                  "file in its parallel leg, at one worker")
+#: cheaper tier runs a serial file its diff brings in on its own-tests line at
+#: one worker, inside its parallel leg (``tier_argvs``).
+_EMPTY_LEG_WHY = ("only the full tier has a serial leg; a cheaper tier runs a serial file its diff "
+                  "brings in on its parallel leg, at one worker, and on its tiered leg only the "
+                  "tiered serial files")
 #: The legs ``--leg`` can run. ``serial`` is the ``SERIAL_FILES`` line where a
 #: tier has one (only the full tier does); ``parallel`` is every other line, by
 #: complement, so a cheaper tier's required cells run their whole tier under
-#: ``parallel`` and nothing under ``serial``; ``both`` is the tier.
-LEGS: tuple[str, ...] = ("parallel", "serial", "both")
+#: ``parallel`` and nothing under ``serial``; ``both`` is the tier. ``tiered``
+#: is the leg of a cell named for the tier it ran (test.yml's perturbed,
+#: ``tools/cc/_post_merge.py``'s ``TIERED_CELLS``), where only a full-tier
+#: green clears a red: the parallel leg, plus the serial contract line and the
+#: tiered serial files' line on the full tier; on a cheaper tier its own-serial
+#: line becomes that tiered line where it holds a tiered serial file and goes
+#: where it does not. So the full tier's run holds every node id a cheaper
+#: tier's run there holds (DEF-5136: on the parallel leg it did not, 49 node
+#: ids, 401 with tests/test_hooks.py changed), and the serial files outside the
+#: tiered ones, their contract rows apart, run on that cell on no tier.
+LEGS: tuple[str, ...] = ("parallel", "serial", "both", "tiered")
 
 
 def _is_serial_line(argv: tuple[str, ...]) -> bool:
@@ -1073,7 +1103,9 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
     complement (see ``LEGS``), so the default form is always the whole tier and
-    ``FULL_COMMANDS`` stays the four lines the receipts count. ``basetemp``
+    ``FULL_COMMANDS`` stays the four lines the receipts count, except
+    ``tiered``, which adds two lines on the full tier and narrows or drops the
+    own-serial line on a cheaper tier (``LEGS`` says why). ``basetemp``
     puts pytest's ``--basetemp`` on each pytest line (``_with_basetemp``)."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
@@ -1084,16 +1116,27 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     own = tuple(rel for rel in own if rel not in whole)
     own_parallel = tuple(rel for rel in own if rel not in SERIAL_FILES)
     own_serial = tuple(rel for rel in own if rel in SERIAL_FILES)
-    lines = (argvs
-             + ((_PYTEST + _PARALLEL + _NOT_HEAVY + own_parallel,) if own_parallel else ())
-             + ((_PYTEST + _ONE_WORKER + _NOT_HEAVY + own_serial,) if own_serial else ()))
+    own_parallel_line = (_PYTEST + _PARALLEL + _NOT_HEAVY + own_parallel,) if own_parallel else ()
+    own_serial_line = (_PYTEST + _ONE_WORKER + _NOT_HEAVY + own_serial,) if own_serial else ()
+    if leg == "tiered":
+        # the full tier's run takes the serial contract line the cheaper tiers
+        # carry and the tiered serial files whole; a cheaper tier's own-serial
+        # line runs that same tiered line where its files meet them, and its
+        # other serial files stay on the test cells, so a full green there has
+        # run every node id a cheaper run there holds
+        tiered = (_TIERED_SERIAL_ARGV,) if which == "full" or set(own_serial) & set(TIERED_SERIAL_FILES) else ()
+        lines = (tuple(argv for argv in argvs if not _is_serial_line(argv))
+                 + (_CONTRACT_LINES[1:] if which == "full" else ())
+                 + own_parallel_line + tiered)
+    else:
+        lines = argvs + own_parallel_line + own_serial_line
     if heavy:
         lines = tuple(_without_heavy_filter(argv) for argv in lines)
     if leg == "serial":
         lines = tuple(argv for argv in lines if _is_serial_line(argv))
     elif leg == "parallel":
         lines = tuple(argv for argv in lines if not _is_serial_line(argv))
-    elif leg != "both":
+    elif leg not in ("both", "tiered"):
         raise ValueError(f"leg must be one of {LEGS}, got {leg!r}")
     if basetemp:
         lines = tuple(_with_basetemp(argv, basetemp) for argv in lines)
@@ -1942,7 +1985,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                          "clean-checkout cell and the fresh-clone gate's first leg run this form)")
     ap.add_argument("--leg", choices=LEGS, default="both",
                     help="run one leg of the tier: serial is the SERIAL_FILES line where one "
-                         "exists, parallel is every other line; both (the default) is the tier")
+                         "exists, parallel is every other line; both (the default) is the tier; "
+                         "tiered is a cell named for its tier (the parallel leg, plus the serial "
+                         "contract line and the tiered serial files on the full tier; a cheaper "
+                         "tier keeps of its serial files only those)")
     ap.add_argument("--basetemp", metavar="DIR",
                     help="give each pytest line pytest's --basetemp DIR, on its argv and never "
                          "in the environment, so a pytest child a test launches cannot inherit "
@@ -2081,6 +2127,13 @@ def main(argv: list[str] | None = None) -> int:
             elif args.leg == "parallel" and which != "full":
                 what = ("the whole tier (its parallel leg: only the full tier has a serial leg, "
                         "and a changed serial file runs here at one worker)")
+            elif args.leg == "tiered" and which == "full":
+                what = ("the tiered leg of the tier (the parallel leg, the serial files' contract rows "
+                        "and the tiered serial files whole: every node id a cheaper tier's tiered leg runs)")
+            elif args.leg == "tiered":
+                what = ("the tiered leg of the tier (its parallel leg, with a serial file the diff brings "
+                        "in kept only as the tiered serial files' line: another one runs at one worker "
+                        "on the test cells' plain host, and no cell runs it on this host)")
             else:
                 what = f"the {args.leg} leg of the tier"
             print(f"all {len(result['commands'])} lines are {what} -- `--run` executes them under one receipt")

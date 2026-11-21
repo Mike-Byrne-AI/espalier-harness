@@ -16,9 +16,10 @@ and its own words (a Windows red sat in GitHub's record for six hours on
 * ``tier_of`` reads a declared cell named for the proof tier it ran
   (``perturbed (recall tier)``, ``TIERED_CELLS``) as its cell and tier;
   every reader keys a check by its cell, and ``covers`` says whether a green
-  may clear a red (on a tiered cell, only a full-tier green: the tiers are
-  not test supersets there). Every other name is its own cell and keeps the
-  rule below unchanged (DEF-4117).
+  may clear a red (on a tiered cell, only a full-tier green: the cheaper
+  tiers are not test supersets of each other there, and the full tier's run
+  holds each of theirs). Every other name is its own cell and keeps the
+  rule below unchanged (DEF-4117, DEF-5136).
 * ``verdicts`` is the banner's per-pull-request rule: a check name is owned
   by the newest merged pull request whose latest run of it reached a
   verdict, green or red; a leg still running, cancelled or stale on a newer
@@ -115,15 +116,18 @@ TAG_FILTERS = ("tags", "tags-ignore")
 SHARED_GROUP_CONTEXTS = frozenset({"github.workflow", "github.ref", "github.ref_name", "github.event_name",
                                    "github.repository", "github.base_ref", "github.head_ref"})
 #: The proof tiers a tiered cell's name can carry (Espalier's own
-#: ``scripts/proof_tier.py``), cheapest first. They are NOT test supersets on
-#: that cell: a cheaper tier adds the pull request's own changed test files,
-#: so two contract-tier runs ran different tests, and the full tier's run of
-#: test.yml's ``perturbed`` cell (its parallel leg) skips the serial files,
-#: three of whose contract rows the cheaper tiers run there. So only a
-#: full-tier green clears a tiered red (``covers``); a red in those serial
-#: contract rows that a full green never ran is the rule's residual
-#: (DEF-5136). DEF-4117: two recall-tier greens cleared a full-tier red on
-#: 2026-11-13, and the red's return was dated to the merge after them.
+#: ``scripts/proof_tier.py``), cheapest first. The cheaper ones are NOT test
+#: supersets of each other on that cell: a cheaper tier adds the tests the
+#: pull request's diff brings in, so two contract-tier runs ran different
+#: tests. The full tier's run is a superset of each: test.yml's ``perturbed``
+#: cell runs proof_tier's tiered leg, where the full tier takes the serial
+#: files' contract rows the cheaper tiers carry and the tiered serial files
+#: whole, and a cheaper tier keeps of the serial files its diff brings in only
+#: that same tiered line (DEF-5136: on the parallel leg a full green cleared
+#: reds in 49 node ids it never ran). So only a full-tier green
+#: clears a tiered red (``covers``). DEF-4117: two recall-tier greens cleared
+#: a full-tier red on 2026-11-13, and the red's return was dated to the merge
+#: after them.
 TIERS = ("contract", "recall", "full")
 #: The cells named for the tier they ran, ``<cell> (<tier> tier)``: test.yml's
 #: ``perturbed``, the one cell that runs the earned tier and is not a required
@@ -193,9 +197,13 @@ def shown(name: str) -> str:
 def covers(green: int | None, red: int | None) -> bool:
     """Whether a green run of tier rank ``green`` may clear a red of rank
     ``red``. Two untiered runs: yes, the name was the whole rule. Any tiered
-    or mixed pair: only a full-tier green, since the tiers are not test
-    supersets on the cell (``TIERS``): a cheaper green, even of the red's own
-    tier, may not have run the red's rows. An untiered green never says what
+    or mixed pair: only a full-tier green, since the cheaper tiers are not
+    test supersets of each other on the cell (``TIERS``): a cheaper green,
+    even of the red's own tier, may not have run the red's rows, and the full
+    tier's run there holds every node id a cheaper one runs (proof_tier's
+    tiered leg, DEF-5136), within one tree: a later merge's full green still
+    clears an earlier red in a file the leg dropped between the two. An
+    untiered green never says what
     it ran, so it clears no tiered red; an untiered red (the cell's old name,
     until it ages out of the window) clears on a full green as well."""
     if green is None:

@@ -2095,6 +2095,10 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
         "a --collect-only of one file under a selection; 2.3 s",
     "tests/test_proof_tier.py::TestTheLegsAndTheHeavyLane::test_neither_line_collects_a_heavy_stage_without_heavy::collected":
         "a --collect-only of one file under a selection; 1.9 s",
+    "tests/test_proof_tier.py::TestTheTieredLeg::test_no_heavy_stage_is_a_contract_row::collected":
+        "two --collect-only runs of the heavy stages' files, under -m contract and with no marker, "
+        "no row run; 0.78 to 0.80 s together on the self-host Air (2026-11-21), not yet timed on "
+        "the Windows seat",
     "tests/test_timeout_backstop.py::_drive":
         "a planted one-file suite under --timeout=1; POSIX only (SIGALRM), untimed",
     "tests/test_write_guard.py::TestGitBashDrivePrefix::_inner_session":
@@ -2963,7 +2967,7 @@ class TestTheLegsAndTheHeavyLane:
         pt.main(["--root", str(r), "--leg", "serial"])
         out = capsys.readouterr().out
         assert "nothing to run: the serial leg of the contract tier" in out
-        assert "belong to the full tier" not in out and "in its parallel leg, at one worker" in out
+        assert "belong to the full tier" not in out and "on its parallel leg, at one worker" in out
 
     def test_the_own_tests_line_carries_the_heavy_filter_on_the_cheaper_tiers(self, pt):
         """Both reviews found the same regression: a changed heavy module rides
@@ -3032,6 +3036,177 @@ class TestTheLegsAndTheHeavyLane:
 
         assert collected(pt._NOT_HEAVY) == 0
         assert collected(()) == len(members)
+
+
+class TestTheTieredLeg:
+    """``--leg tiered`` is the leg test.yml's perturbed cell runs: the one cell
+    named for the tier it ran (``tools/cc/_post_merge.py``'s ``TIERED_CELLS``),
+    where only a full-tier green clears a red. That rule holds only while the
+    full tier's run there holds every node id a cheaper tier's run there holds,
+    and the parallel leg broke it: a cheaper tier's parallel leg carries the
+    serial files' contract rows and any serial file its diff brings in, which
+    the full tier's leaves out (49 node ids, 401 with ``tests/test_hooks.py``
+    changed, a collection census of 2026-11-21, DEF-5136). So the tiered leg is
+    the parallel leg with the serial contract line and the tiered serial files
+    (``TIERED_SERIAL_FILES``) added on the full tier, and a cheaper tier's
+    own-serial line kept only as that same line, where its diff brings one of
+    those files in (air's ruling d36425)."""
+
+    #: A change set per shape the own lines take: none, a serial file outside
+    #: the tiered ones, a serial contract file, a tiered serial file beside a
+    #: plain one, a file that brings a tiered serial file in by a path reader,
+    #: a tiered serial file beside an untiered one, a recall-corpus file.
+    CHANGED = (
+        (),
+        ("tests/test_hooks.py",),
+        ("tests/test_verify_pins.py",),
+        ("tests/test_powershell_reachability_differential.py", "tests/test_final_release_matrix.py"),
+        ("bench/guard_metamorphic.py",),
+        ("tests/test_guard_metamorphic.py", "tests/test_hooks.py"),
+        ("docs/SHARP_EDGES.md",),
+    )
+
+    def _cheaper_runs(self, pt):
+        for which in pt.TIERS:
+            if which != "full":
+                for changed in self.CHANGED:
+                    yield which, changed, pt.tier_argvs(which, changed, REPO_ROOT, leg="tiered")
+
+    def test_the_tiered_serial_files_are_serial_and_outside_the_contract_ones(self, pt):
+        """Dies to: a tiered file that is not serial (it would run twice on
+        the full tier, at one worker and in the pool), or a serial contract
+        file listed (its contract rows would run twice on every tier), or
+        either file that went red on that cell alone dropped: a full-tier green
+        from a later merge would then clear a cheaper red in it unrun (air's
+        ruling d36425; the amended failure-mode review, F3)."""
+        tiered = pt.TIERED_SERIAL_FILES
+        assert len(set(tiered)) == len(tiered) and set(tiered) <= set(pt.SERIAL_FILES), tiered
+        assert not set(tiered) & set(pt.SERIAL_CONTRACT_FILES), tiered
+        assert {"tests/test_guard_metamorphic.py", "tests/test_powershell_reachability_differential.py"} <= set(tiered)
+
+    def test_the_full_tiers_run_holds_every_serial_file_line_a_cheaper_run_has(self, pt):
+        """A line naming a serial file (bare, not an ``--ignore=``) runs that
+        file's rows, and the full tier's tiered run has the same line, so the
+        same node ids. Dies to: the full tier losing the serial contract line
+        or the tiered serial files' line, a cheaper tier's run keeping a serial
+        file outside the tiered ones, or a cheaper tier running part of the
+        tiered files' line (its argv then differs from the full tier's)."""
+        serial, tiered = set(pt.SERIAL_FILES), set(pt.TIERED_SERIAL_FILES)
+        full = pt.tier_argvs("full", leg="tiered")
+        named = kept = 0
+        for which, changed, lines in self._cheaper_runs(pt):
+            for argv in lines:
+                if serial & set(argv):
+                    named += 1
+                    kept += bool(tiered & set(argv))
+                    assert argv in full, (which, changed, argv)
+        assert named, "no cheaper run named a serial file: the population proves nothing"
+        assert kept, "no cheaper run kept a tiered serial file: the kept line is unproven"
+
+    def test_every_other_line_runs_inside_the_full_tiers_parallel_line(self, pt):
+        """A cheaper line naming no serial file is ruff, a contract line that
+        ignores only serial files, or a line of named files none of them
+        serial; the full tier's parallel line runs every file but the serial
+        ones, so each of those node ids runs there too, the heavy stages apart:
+        a line with no marker runs its files whole, so none of them may define
+        one, and a contract line's case is the next test. A contract line's
+        ignores leave out only serial contract files, whose contract rows the
+        serial contract line runs on every tier, and no other serial file holds
+        a contract row (TestNoParallelLineCollectsASerialFile::
+        test_the_one_worker_contract_line_runs_exactly_the_serial_files_with_a_contract_row,
+        DEF-5044). Dies to: a cheaper line with a selection the full tier's
+        lines do not hold."""
+        from tests.conftest import _HEAVY_E2E_TESTS
+        serial = set(pt.SERIAL_FILES)
+        full_parallel = pt._PYTEST + pt._PARALLEL + pt._NOT_HEAVY + tuple(f"--ignore={rel}" for rel in pt.SERIAL_FILES)
+        assert full_parallel in pt.tier_argvs("full", leg="tiered")
+        checked = 0
+        for which, changed, lines in self._cheaper_runs(pt):
+            for argv in lines:
+                if serial & set(argv) or argv[0] != "pytest":
+                    continue
+                checked += 1
+                words = [w for w in argv[1:] if w not in ("-q", "-n", "auto", "1")]
+                ignored = {w.removeprefix("--ignore=") for w in words if w.startswith("--ignore=")}
+                files = [w for w in words if w.startswith("tests/")]
+                marks = [words[i + 1] for i, w in enumerate(words) if w == "-m"]
+                assert ignored <= serial and marks in ([], ["contract"], ["not heavy_e2e"]), (which, argv)
+                assert len(words) == len(ignored) + len(files) + 2 * len(marks), (which, argv)
+                if not marks:
+                    assert files and not ignored, (which, argv)
+                    for rel in files:
+                        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+                        assert not [n for n in _HEAVY_E2E_TESTS if f"def {n}(" in text], (which, rel)
+        assert checked, "no cheaper line named no serial file: the population proves nothing"
+
+    def test_no_heavy_stage_is_a_contract_row(self, pt):
+        """The contract lines carry no heavy filter and the full tier's
+        parallel line does, so a heavy stage marked ``contract`` would run on a
+        cheaper tier's run and not on the full tier's. Driven: ``-m contract``
+        collects no member of ``_HEAVY_E2E_TESTS`` from the modules that define
+        them (derived, as the heavy lane's own driven test derives them), and
+        the same collection with no marker finds every member, so a collection
+        that failed or printed no node ids cannot read as none."""
+        from tests.conftest import _HEAVY_E2E_TESTS
+        members = sorted(_HEAVY_E2E_TESTS)
+        files = sorted(
+            str(f.relative_to(REPO_ROOT)).replace("\\", "/") for f in checkout_glob(REPO_ROOT / "tests", "test_*.py")
+            if any(f"def {name}(" in f.read_text(encoding="utf-8") for name in members)
+        )
+        assert files, "no module defines a heavy member -- the set and the tree disagree"
+
+        def collected(marks: tuple[str, ...]) -> list[str]:
+            argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *marks, *files]
+            done = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+            assert done.returncode in (0, 5), done.stdout[-2000:] + done.stderr[-2000:]
+            return [name for line in done.stdout.splitlines() for name in members if line.endswith("::" + name)]
+
+        assert not collected(("-m", "contract"))
+        assert sorted(set(collected(()))) == members
+
+    def test_it_is_the_parallel_leg_with_lines_added_or_one_narrowed(self, pt):
+        """Both directions: the full tier adds exactly the serial contract
+        line and the tiered serial files' line; a cheaper tier's own-serial
+        line becomes that same tiered line where its files meet the tiered
+        ones and goes where they do not, and nothing else moves."""
+        tiered_line = pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + pt.TIERED_SERIAL_FILES
+        assert pt._CONTRACT_LINES[1:] == (pt._CONTRACT_SERIAL_ARGV,)
+        assert pt.tier_argvs("full", leg="tiered") == (
+            pt.tier_argvs("full", leg="parallel") + pt._CONTRACT_LINES[1:] + (tiered_line,))
+        own_serial = pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY
+        seen = {"dropped": 0, "narrowed": 0}
+        for which, changed, lines in self._cheaper_runs(pt):
+            parallel = pt.tier_argvs(which, changed, REPO_ROOT, leg="parallel")
+            gone = [argv for argv in parallel if argv not in lines]
+            added = [argv for argv in lines if argv not in parallel]
+            assert [argv for argv in parallel if argv in lines] == [argv for argv in lines if argv not in added]
+            assert len(gone) <= 1 and len(added) <= 1, (which, changed, gone, added)
+            for argv in gone:
+                files = set(argv[len(own_serial):])
+                assert argv[:len(own_serial)] == own_serial and files <= set(pt.SERIAL_FILES), argv
+                if files & set(pt.TIERED_SERIAL_FILES):
+                    assert added == [tiered_line] or tiered_line in lines, (which, changed, lines)
+                    seen["narrowed"] += 1
+                else:
+                    assert not added, (which, changed, added)
+                    seen["dropped"] += 1
+            assert added in ([], [tiered_line]), (which, changed, added)
+        assert all(seen.values()), f"a change set shape went unexercised: {seen}"
+
+    def test_the_words_say_what_the_leg_runs_and_what_it_leaves_to_the_plain_host(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        rel = next(f for f in pt.SERIAL_FILES if f not in pt.TIERED_SERIAL_FILES + pt.SERIAL_CONTRACT_FILES)
+        (r / rel).write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(r), "add", rel], check=True)
+        pt.main(["--root", str(r), "--leg", "tiered"])
+        out = capsys.readouterr().out
+        assert out.startswith("contract") and f"-n 1 -m 'not heavy_e2e' {rel}" not in out
+        assert "the tiered leg of the tier" in out and "no cell runs it on this host" in out
+        pt.main(["--root", str(r), "--tier", "full", "--leg", "tiered"])
+        out = capsys.readouterr().out
+        assert "run: " + shlex.join(pt._CONTRACT_SERIAL_ARGV) in out
+        assert "run: " + shlex.join(pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + pt.TIERED_SERIAL_FILES) in out
+        assert "the tiered leg of the tier" in out and "the tiered serial files" in out
 
 
 class TestTheBasetempRidesTheArgv:

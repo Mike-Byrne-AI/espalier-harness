@@ -63,12 +63,16 @@ def _workflows() -> dict[str, dict]:
 
 
 def _serial_files() -> tuple[str, ...]:
+    return tuple(_proof_tier().SERIAL_FILES)
+
+
+def _proof_tier():
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     try:
         import proof_tier  # type: ignore[import-not-found]
     finally:
         sys.path.remove(str(REPO_ROOT / "scripts"))
-    return tuple(proof_tier.SERIAL_FILES)
+    return proof_tier
 
 
 def _suite_jobs() -> dict[tuple[str, str], dict]:
@@ -150,6 +154,11 @@ def _worst_serial_mark() -> float:
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 25.7,  # median 18.1, 2026-11-21; 80 cells, 20 runs
+    # The read its bound was set from, the tiered leg (DEF-5136) not yet on it:
+    # that leg adds the serial contract line and the tiered serial files
+    # (proof_tier.py::TIERED_SERIAL_FILES), a projected 74.3 against 67.3 on
+    # 2026-11-21, under the 80.0 past which the census reads RAISE.
+    ("test.yml", "perturbed"): 68.7,  # median 49.7, 2026-11-14
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 19.5,  # median 16.4, 2026-11-21
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
@@ -158,14 +167,15 @@ _SERIAL_JOBS_MEASURED_WORST = {
 }
 #: Minutes a bound sits past the census's needed figure from its entry, by a
 #: ruling of its own: the operator's on call a6ee94 (option B, read as needed
-#: plus 15 by ack b52060, 2026-11-14) for these two. The mark records that raise
-#: alone. Whether later raises add a margin is open on call be0067, so none is
-#: general: an entry absent here has none, and the next raise of either job here
-#: edits or drops its mark by be0067's ruling (a raise to needed plus 15 passes
-#: unedited, which is not a ruling).
+#: plus 15 by ack b52060, 2026-11-14) for these three, test.yml's perturbed
+#: enrolled with DEF-5136's tiered leg at the bound that ruling set. Call
+#: be0067 ruled every later raise needed plus 15 too (option A, ack 5f18c3,
+#: 2026-11-15), so a raise moves its entry and keeps its mark at 15; an entry
+#: absent here was set with none.
 _BOUND_MARGIN_PAST_THE_CENSUS = {
     ("post-merge.yml", "full-tier"): 15,
     ("clean-checkout.yml", "clean-checkout"): 15,
+    ("test.yml", "perturbed"): 15,
 }
 #: The entries whose bound a rule other than the census sets, each with that
 #: rule: the census's figure from such an entry is under its bound, and the
@@ -183,6 +193,13 @@ _SERIAL_FILES_MEASURED = (
     "tests/test_write_guard_time_budget.py", "tests/test_guard_metamorphic.py",
     "tests/test_powershell_reachability_differential.py", "tests/test_wheel_payload.py",
     "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
+)
+#: The tiered serial files (scripts/proof_tier.py::TIERED_SERIAL_FILES) the
+#: perturbed entry's projection above was priced over, 2026-11-21: 2.2 min and
+#: under 0.2 min on that host. A file added to them runs whole on every
+#: full-tier perturbed run, so it is priced there first.
+_TIERED_SERIAL_FILES_MEASURED = (
+    "tests/test_guard_metamorphic.py", "tests/test_powershell_reachability_differential.py",
 )
 
 
@@ -240,6 +257,18 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
             "serial-leg time to the figures of the jobs that run it now, raise any bound the floor then "
             "asks for, add the files here, and re-measure with python3 scripts/ci_job_bounds_census.py "
             "once the jobs have 20 runs (its floor column judges them from then on).")
+
+    def test_the_perturbed_projection_covers_every_tiered_serial_file(self):
+        """DEF-5136's tiered leg runs the tiered serial files whole on the full
+        tier's perturbed run, so each one adds its time to that job. Dies to: a
+        file added to them with no price on that host, which would move the
+        job toward its bound with every test green (amended review, F1)."""
+        added = sorted(set(_proof_tier().TIERED_SERIAL_FILES) - set(_TIERED_SERIAL_FILES_MEASURED))
+        assert not added, (
+            f"tiered serial files added since the perturbed projection was priced: {added}. Price each "
+            "one at one worker on the perturbed host, move test.yml's perturbed comment and the "
+            "projection beside its entry above, raise the bound if the census then asks, and add the "
+            "files here.")
 
     @pytest.mark.parametrize("key", sorted(_SERIAL_JOBS_MEASURED_WORST), ids="/".join)
     def test_its_bound_holds_the_worst_mark_plus_its_measured_run(self, key):
@@ -395,6 +424,8 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg serial', False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg "$LEG"', False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg parallel', False, False),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg tiered --basetemp "$RUNNER_TEMP/a b"',
+         False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg=parallel', False, False),
         ('python scripts/proof_tier.py --run --leg "parallel"', False, False),
         ("python scripts/proof_tier.py --base origin/main", False, False),
