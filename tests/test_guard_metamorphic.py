@@ -886,7 +886,10 @@ class TestR4RedsAReaderOffTheView:
         line for PowerShell (the third code review's S1, driven with pwsh)."""
         pwsh = _pwsh_or_skip()
         real = gm.operand_rows
-        keep = {("Bash", "bash-delete-git-rm"), ("PowerShell", "ps-delete-find-file")}
+        # with a row each carrier takes, since a derived run carrying nothing
+        # reads that carrier dead (DEF-5126)
+        keep = {("Bash", "bash-delete-git-rm"), ("Bash", "bash-delete-after-a-cd"),
+                ("PowerShell", "ps-delete-find-file")}
         monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
             r for r in real(quick) if (r["tool"], r["key"]) in keep])
         assert {(r["tool"], r["key"]) for r in gm.operand_rows(quick=True)} == keep, "an anchor row is gone"
@@ -963,3 +966,176 @@ class TestR4TheStdinProgramRowHoldsOnEveryKind:
         # each kind has a null place of its own: a total over the kinds would
         # pass with one kind judged on none (the second code review's N6)
         assert {r["kind"] for r in rows} == {k for k, n in report["null_by_kind"].items() if n}, report
+
+
+class TestR4OffersThePlacesInsideACarriedProgram:
+    """DEF-5126: R4 lays each denied Bash row inside each carrier the redirect
+    view reads one level down, and offers the places inside the carried
+    program as well as the command's own, within the view's stated reach (air's
+    ruling fd58a2), each proved null on the program's own parse."""
+
+    @staticmethod
+    def _inner(gm, command):
+        return [at for at, span in gm.r4_places(command, "Bash") if span is not None]
+
+    def test_each_carrier_offers_its_programs_places(self, gm):
+        """Each blank of the carried program after its command word and its
+        end; a substitution body also its command word's start, where a word's
+        is left out (a redirect there opens the word on a prefix)."""
+        for name, (before, after) in gm.R4_CARRIERS.items():
+            command = before + "rm -f x" + after
+            k = len(before)
+            first = [k] if gm._R4_CARRIER_KIND[name] == "body" else []
+            assert self._inner(gm, command) == first + [k + 2, k + 5, k + 7], name
+
+    def test_a_double_quoted_exec_word_is_carried_too(self, gm):
+        """The filed probe's spelling: a double-quoted `-c` word holding none of
+        the four characters special inside double quotes hands its inside down."""
+        command = 'bash -c "git status --short"'
+        assert self._inner(gm, command), command
+
+    def test_nothing_is_offered_outside_the_stated_reach(self, gm):
+        """A word holding a `$` or a quote, a word opening on a prefix, a body
+        holding a double quote, and a quoted word no shell or `eval` takes:
+        none is a program the view reads in place, so none gets a place."""
+        for command in ("bash -c 'rm -f $x'", "eval 'rm \"x\"'", "bash -c 'sudo rm x'",
+                        "bash -c 'X=1 rm x'", 'echo "$(rm "x")"', "git -c 'rm x'", "printf %s 'rm x'"):
+            assert self._inner(gm, command) == [], command
+
+    def test_a_carrier_head_counts_only_at_a_command_position(self, gm):
+        """A `-c` shell or an `eval` hands its word down only where it opens a
+        statement (the code review's M1): as another command's argument it
+        hands nothing down, and after a separator it does."""
+        assert self._inner(gm, "echo eval 'rm -f x'") == []
+        assert self._inner(gm, "echo bash -c 'rm -f x'") == []
+        assert self._inner(gm, "cd d && bash -c 'rm -f x'")
+        assert self._inner(gm, "true; eval 'rm -f x'")
+        assert self._inner(gm, "rm y 2>&1 eval 'rm -f x'") == [], "a redirect's & opened a statement"
+
+    def test_one_level_only(self, gm):
+        """R4 reads one level down, its own limit: the view also reads one
+        exec-quoted word inside a body, pinned there by the hand rows of
+        `tests/test_write_guard.py::TestARedirectInsideAHandedDownProgramKeepsTheVerdict`
+        (the failure-mode review's MINOR 6); R4 offers the body and not the
+        word inside it."""
+        command = "echo \"$(bash -c 'rm -f x')\""
+        quote = command.index("'")
+        inner = self._inner(gm, command)
+        assert inner and not any(quote < at < command.rindex("'") for at in inner), inner
+
+    def test_every_plain_place_is_kept(self, gm):
+        """Every place R4 offered before DEF-5126 is still offered, read the
+        same way: the command's own places are `_token_blanks`' own."""
+        for row in gm.operand_rows(quick=True):
+            own = [at for at, span in gm.r4_places(row["command"], row["tool"]) if span is None]
+            assert own == gm._token_blanks(row["command"], row["tool"]), row["key"]
+
+    def test_the_carried_rows_are_the_class_rows_carried(self, gm):
+        """Read from the class, never copied: each Bash row is carried in each
+        carrier or counted outside its reach, a PowerShell row never, and a
+        carried row is never carried again."""
+        plain = gm.operand_rows(quick=True)
+        bash = [r for r in plain if r["tool"] == "Bash"]
+        carried, outside = gm.carried_rows(plain)
+        for name, (before, after) in gm.R4_CARRIERS.items():
+            mine = [r for r in carried if r["carrier"] == name]
+            assert mine, f"no row is carried in {name}: R4 vouches for nothing there"
+            assert len(mine) + outside[name] == len(bash), name
+            assert all(r["command"].startswith(before) and r["command"].endswith(after) for r in mine)
+        assert not gm.carried_rows(carried)[0]
+
+    def test_each_prefix_word_is_one_the_view_reads(self, gm):
+        """R4's own prefix list names only what the view's family reads as a
+        prefix, so a word left here after the view stopped reading it cannot
+        hide a carried row the view reads (the blind direction)."""
+        assert "sudo" in gm.R4_WORD_PREFIXES
+        for word in [*gm.R4_WORD_PREFIXES, "X=1", "!", "2>x", "<x"]:
+            assert gm._R4_WORD_PREFIX_RE.match(word + " rm x"), word
+            assert gm._bash_patterns._PROGRAM_OPENS_ON_PREFIX_RE.match("'" + word + " rm x'"), word
+
+    def test_the_reach_characters_are_the_views(self, gm):
+        """Each character R4's reach leaves out is one the view reads no
+        program across, and a program free of them is read (the failure-mode
+        review's MAJOR 1): a view that widens to read past one reds here and
+        names `R4_REACH`, so R4 cannot stay blind to the rows it now reads."""
+        handed = gm._bash_patterns._programs_handed_down
+
+        def spans(command, start):
+            return handed(command, start, len(command))
+
+        assert spans("bash -c 'rm -f x'", 8), "the view reads no plain -c word: the controls are dead"
+        assert spans('echo "$(rm -f x)"', 5), "the view reads no plain body: the controls are dead"
+        for ch in gm.R4_REACH["word"]:
+            quote = '"' if ch == "'" else "'"
+            word = f"{quote}rm -f x{ch}y{quote}"
+            assert spans("bash -c " + word, 8) == [], f"R4_REACH['word'] leaves out {ch!r}, the view reads it"
+        for ch in gm.R4_REACH["body"]:
+            body = "rm -f x" + ("\\y" if ch == "\\" else f"{ch}y{ch}")
+            command = 'echo "$(' + body + ')"'
+            assert spans(command, 5) == [], f"R4_REACH['body'] leaves out {ch!r}, the view reads it"
+
+    def test_each_spelling_stays_inside_the_reach(self, gm):
+        """A spelling R4 writes adds none of the reach's characters to a
+        carried program, so the carrier still hands it down whole (the
+        failure-mode review's MINOR 7)."""
+        for spelling in gm.R4_REDIRECTS["Bash"] + tuple(gm.R4_BASH_TWINS.values()):
+            for kind in gm.R4_REACH:
+                assert gm._in_reach("rm " + spelling + " x", kind), (spelling, kind)
+
+
+@_needs_bash
+class TestR4RedsTheNestedReadingOffTheView:
+    """The relation's new axis is live (`memory/a-gate-can-be-blind-along-a-whole-dimension.md`):
+    with the view's one-level reading blinded, the carried rows red in every
+    carrier; on the tree as it is, they are clean."""
+
+    @staticmethod
+    def _rows(gm):
+        # the plain rows beside their carried ones, as a derived run has them:
+        # a run of carried rows alone reads the plain census dead
+        plain = [r for r in gm.operand_rows() if r["tool"] == "Bash" and r["key"] == "bash-delete-after-a-cd"]
+        assert plain, "the class's delete-after-a-cd row is gone: pick another row the view carries"
+        return plain + gm.carried_rows(plain)[0]
+
+    def test_a_blinded_nested_reading_reds_every_carrier(self, gm, monkeypatch):
+        rows = self._rows(gm)
+        report = gm.check_r4(rows=rows)
+        assert not report["violations"], report["violations"]
+        assert not report["dead_separators"], report["dead_separators"]
+        monkeypatch.setattr(gm._bash_patterns, "_nested_programs_blanked", lambda scan, start, end, chars: chars)
+        blinded = gm.check_r4(rows=rows)
+        assert {v["carrier"] for v in blinded["violations"]} == set(gm.R4_CARRIERS), blinded["violations"]
+        assert all(v["inside"] for v in blinded["violations"])
+
+    def test_the_derived_run_carries_the_rows_it_judges(self, gm, monkeypatch):
+        """R4's own derived run lays its rows in the carriers: with the view's
+        one-level reading blinded it reds on a row whose plain form that
+        blinding leaves denied. Before DEF-5126 R4 offered no place inside a
+        carried program, and this run stayed green (the row's guard, through
+        the names the bench had then)."""
+        real = gm.operand_rows
+        monkeypatch.setattr(gm, "operand_rows", lambda quick=False: [
+            r for r in real(quick) if r["tool"] == "Bash" and r["key"] == "bash-delete-after-a-cd"])
+        monkeypatch.setattr(gm._bash_patterns, "_nested_programs_blanked", lambda scan, start, end, chars: chars)
+        report = gm.check_r4(quick=True)
+        assert report["violations"], "R4's derived run offered no place inside a carried program"
+
+    def test_a_carrier_the_judge_never_denies_reads_dead(self, gm, monkeypatch):
+        cls = gm._operand_class()
+        real = cls._zone_denied
+        monkeypatch.setattr(cls, "_zone_denied",
+                            staticmethod(lambda tool, text, project: not text.startswith("eval ")
+                                         and real(tool, text, project)))
+        report = gm.check_r4(rows=self._rows(gm))
+        assert any("carried in eval" in d for d in report["dead_separators"]), report["dead_separators"]
+        assert report["carried_undenied"] and all(x.endswith("in eval") for x in report["carried_undenied"])
+
+    def test_a_carrier_whose_inner_places_vanish_reads_dead(self, gm, monkeypatch):
+        """The carrier's own outer places stay null when its inner places are
+        lost, so the inner places gate apart (the failure-mode review's
+        MINOR 3, the code review's M3)."""
+        monkeypatch.setattr(gm, "_carried_spans", lambda _command: [])
+        report = gm.check_r4(rows=self._rows(gm))
+        assert {name for name in gm.R4_CARRIERS
+                if any(f"carried in {name} is proved null" in d for d in report["dead_separators"])} \
+            == set(gm.R4_CARRIERS), report["dead_separators"]
