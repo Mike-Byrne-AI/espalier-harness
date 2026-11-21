@@ -738,6 +738,9 @@ class TestAWriteIntoAnotherCheckoutIsBumped:
         assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / ".git" / "info" / "exclude", live, tool="Write"), env))
         assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / ".git", root, tool="Write"), _seat_env(root)))
         _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))   # control
+        # a name that only starts like it is a tree file, and still bumped
+        _bumped(run_hook("write_guard.py", _edit_payload(root / ".github" / "x.yml", live, tool="Write"), env))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / ".gitignore", live, tool="Write"), env))
 
     def test_a_session_that_entered_a_worktree_keeps_its_tree_and_bumps_a_dropped_segment(self, tmp_path):
         # CLAUDE_PROJECT_DIR stays at the root after a session enters a worktree
@@ -872,7 +875,9 @@ class TestTheOtherCheckoutRegistryRow:
         assert f"copy is {longer_seat}: use" in reason and long_name not in reason
         overlong = "/" + "f" * 300 + "/.claude/worktrees/work/src/app.py"
         reason = sent("NotebookEdit", long_name, long_name, overlong)
-        assert "copy is ..." in reason and f"{overlong[-120:]}: use" in reason
+        # the tail fills the room the floors leave, the reason at its cap, never the old 120 cut
+        assert "copy is ..." in reason and f"{overlong[-160:]}: use" in reason
+        assert len(reason.encode("utf-8")) == 512
 
     def test_a_helper_without_the_checkout_reader_leaves_it_silent(self, monkeypatch, tmp_path):
         # A kept, older `_hook_utils.py` that predates `containing_checkout`

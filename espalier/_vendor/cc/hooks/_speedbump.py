@@ -2817,7 +2817,9 @@ def _pred_other_checkout(tool_name: str, tool_input: dict, root: Path, cwd: Path
 
 
 def _tail(text: str, cap: int) -> str:
-    return text if len(text) <= cap else "..." + text[-(cap - 3):]
+    """``text`` cut to its last ``cap`` characters behind ``...``. Its callers
+    pass a cap of 24 or more (at its floors the own copy keeps 171)."""
+    return text if len(text) <= cap else "..." + text[-max(cap - 3, 1):]
 
 
 def _checkout_label(base: str, root: Path) -> str:
@@ -2845,7 +2847,9 @@ def _other_checkout_body(tool_name: str, tool_input: dict, root: Path, cwd: Path
 def _other_checkout_text(tool_name: str, theirs: str, ours: str, mine: str) -> str:
     """The reminder for one fire, within the reason's cap: the session's own
     copy whole wherever the room holds it, the two checkouts' names cut to
-    their floor before it is, and its tail kept where even that is short."""
+    their floor before it is, and its tail kept where even that is short.
+    Declared limit: the reason is 7-bit ASCII, so a path holding another
+    character names it as ``?`` (a home folder spelled past ASCII)."""
     tool_name, theirs, ours, mine = (_ascii_text(s) for s in (tool_name, theirs, ours, mine))
 
     def compose(t: str, o: str, m: str) -> str:

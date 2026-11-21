@@ -856,6 +856,8 @@ class TestTheFileToolKinds:
 
     def test_only_the_maintenance_twins_set_the_switch(self, tmp_path):
         assert census.MAINTENANCE_KINDS < census.REPO_KINDS <= set(census.KINDS)
+        # held whole, so the loop below cannot narrow with it unseen
+        assert census.REPO_KINDS == {"write", "edit", "write_maintenance", "edit_maintenance"}
         assert census.child_env(tmp_path, tmp_path, maintenance=True)["ESPALIER_MAINTENANCE_MODE"] == "1"
         assert "ESPALIER_MAINTENANCE_MODE" not in census.child_env(tmp_path, tmp_path)
         for kind in census.REPO_KINDS:
