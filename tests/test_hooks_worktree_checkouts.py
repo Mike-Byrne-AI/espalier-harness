@@ -569,6 +569,7 @@ _SIBLING_READERS = {
     ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",
     ("tools/cc/hooks/_speedbump.py", "<module>"): "binds the reader with a degrade, places nothing",
     ("tools/cc/hooks/_speedbump.py", "_kill_reading"): "handed to checkout_sync.cwd_checkout",
+    ("tools/cc/hooks/_speedbump.py", "_checkout_label"): "the main checkout picked by its .git folder, never by position",
     ("tools/cc/hooks/session_start.py", "_loose_processes_line"): "handed to checkout_sync.pid_checkout",
 }
 
@@ -688,8 +689,11 @@ class TestAWriteIntoAnotherCheckoutIsBumped:
         slip = _edit_payload(root / "src" / "app.py", live)
         reason = _bumped(run_hook("write_guard.py", slip, _seat_env(live)))
         assert "writes into the main checkout" in reason
-        assert "not .claude/worktrees/live, where this session works" in reason
-        assert _posix(live / "src" / "app.py")[-60:] in reason   # the session's own copy, named
+        assert "not .claude/worktrees/live where this session works" in reason
+        # the session's own copy, whole: a tail cut read as a relative path and
+        # the agent wrote to one it made up (the 2026-11-21 drive, 1 run of 3)
+        own = _posix((live / "src" / "app.py").resolve())
+        assert f"this session's copy is {own}: use that one unless the other tree is meant" in reason
         assert_hook_allowed(run_hook("write_guard.py", slip, _seat_env(live)))   # the re-issue passes
         assert (root / "src" / "app.py").read_text(encoding="utf-8") == "x = 1\n"
 
@@ -711,6 +715,29 @@ class TestAWriteIntoAnotherCheckoutIsBumped:
         root, live = _repo_with_worktree(tmp_path)
         reason = _bumped(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", root), _seat_env(root)))
         assert "writes into .claude/worktrees/live" in reason and "not the main checkout" in reason
+        # The same payload is also a declared limit's: a session working in that
+        # worktree (entered, or a main seat's agent) whose shell moved back into
+        # main sends exactly this, so it reads main as its own and is bumped here.
+
+    def test_a_session_whose_shell_moved_into_a_sibling_reads_it_as_its_own(self, tmp_path):
+        # Declared limit (the session's checkout is cwd's): a worktree seat whose
+        # shell moved into another seat's worktree writes there unsaid and is
+        # bumped writing its own tree. Pinned so a refactor flips it on purpose.
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(other / "src" / "app.py", other), _seat_env(live)))
+        reason = _bumped(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", other), _seat_env(live)))
+        assert "writes into .claude/worktrees/live" in reason and "not .claude/worktrees/other" in reason
+
+    def test_a_write_under_a_checkouts_git_folder_is_silent(self, tmp_path):
+        # The common dir every checkout shares (`.git/info/exclude` is each
+        # worktree's too) and a worktree's link file are git's, no seat's tree;
+        # a bump there named a `<own>/.git/...` copy that does not exist.
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / ".git" / "info" / "exclude", live, tool="Write"), env))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / ".git", root, tool="Write"), _seat_env(root)))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))   # control
 
     def test_a_session_that_entered_a_worktree_keeps_its_tree_and_bumps_a_dropped_segment(self, tmp_path):
         # CLAUDE_PROJECT_DIR stays at the root after a session enters a worktree
@@ -820,3 +847,57 @@ class TestTheOtherCheckoutRegistryRow:
         body = speedbump._other_checkout_body("NotebookEdit", {}, tmp_path, None)
         reason = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=body)
         assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
+        # a name past ASCII is measured as the one byte it is sent as
+        accented = speedbump._other_checkout_text("NotebookEdit", "é" * 300, "é" * 300, "/é" * 300)
+        sent = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=accented)
+        assert len(sent.encode("utf-8")) <= 512, len(sent.encode("utf-8"))
+
+    def test_the_sessions_own_copy_is_whole_and_the_names_are_cut_first(self):
+        # The own copy is what the agent acts on: whole at a seat's length (this
+        # clone's seats run 67 characters of checkout plus at most 84 of path),
+        # the checkouts' names cut to their floor before it is, and past even
+        # that its tail is kept, the part that names the checkout and the file.
+        speedbump = _hook_module("_speedbump")
+        text, template = speedbump._other_checkout_text, speedbump._REASON_TEMPLATE
+
+        def sent(*args: str) -> str:
+            reason = template.format(id="CP-OTHER-CHECKOUT", body=text(*args))
+            assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
+            return reason
+
+        seat = "/Users/someone/Developer/espalier-harness/.claude/worktrees/work/" + "d" * 84
+        assert f"copy is {seat}: use" in sent("Edit", "the main checkout", ".claude/worktrees/work", seat)
+        long_name, longer_seat = "n" * 60, "/" + "e" * 160
+        reason = sent("NotebookEdit", long_name, long_name, longer_seat)
+        assert f"copy is {longer_seat}: use" in reason and long_name not in reason
+        overlong = "/" + "f" * 300 + "/.claude/worktrees/work/src/app.py"
+        reason = sent("NotebookEdit", long_name, long_name, overlong)
+        assert "copy is ..." in reason and f"{overlong[-120:]}: use" in reason
+
+    def test_a_helper_without_the_checkout_reader_leaves_it_silent(self, monkeypatch, tmp_path):
+        # A kept, older `_hook_utils.py` that predates `containing_checkout`
+        # (DEF-1176): the checkpoint passes the write with no word and spends
+        # no flag, as before it existed, never a raise into the hook.
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+        monkeypatch.setattr(speedbump, "containing_checkout", None)
+        slip = _edit_payload(root / "src" / "app.py", live)["tool_input"]
+        assert speedbump.check_fired("Edit", slip, live, bumps=(speedbump.CP_OTHER_CHECKOUT,), cwd=live) is None
+        state = live / speedbump.STATE_DIR
+        assert not (state.is_dir() and any(state.glob("speedbump_*")))
+
+    def test_a_checkout_that_cannot_be_resolved_is_named_by_its_path(self, monkeypatch, tmp_path):
+        # The name read for the reminder resolves every checkout of the clone;
+        # one that raises there names the checkout by its path, and the fire
+        # keeps its per-fire text (an unguarded resolve fell to the static body).
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+
+        class _Unresolvable(type(Path())):
+            def resolve(self, strict=False):
+                raise OSError("unresolvable")
+
+        monkeypatch.setattr(speedbump, "sibling_checkouts", lambda _root: (_Unresolvable(root),))
+        body = speedbump._other_checkout_body("Edit", _edit_payload(root / "src" / "app.py", live)["tool_input"], live, live)
+        assert body != speedbump.CP_OTHER_CHECKOUT.body
+        assert body.startswith("this Edit writes into ") and "the main checkout" not in body

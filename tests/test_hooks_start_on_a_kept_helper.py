@@ -88,14 +88,15 @@ FLOOR_PLANTS = (HELPER, REASONS, "_maintenance_mode", "_json_safe", REFUSAL)
 #: and the bounded spawn (2026-10-13) in ``_speedbump.py`` and ``_reinject.py``,
 #: and CP-KILL's reader, loader and checkout list (2026-11-02) in ``_speedbump.py``,
 #: and the torn-line heal (2026-11-08) in ``_integrity.py``, ``_speedbump.py`` and
-#: ``_born_weak.py`` -- so a helper missing one judges on (Decision 3 of TP-474).
+#: ``_born_weak.py``, and CP-OTHER-CHECKOUT's checkout reader (2026-11-21, DEF-3106)
+#: in ``_speedbump.py`` -- so a helper missing one judges on (Decision 3 of TP-474).
 #: Derived per hook by :func:`degraded_names`; this union is pinned so the
 #: degrade list grows only by a deliberate edit here.
 EXPECTED_DEGRADED_UNION = frozenset({
     "spawn_timeout", "STATE_WRITE_LOCK", "set_judgment_deadline",
     "is_python_launcher", "LAUNCHER_VERSION_FLAG", "run_bounded",
     "load_checkout_sync", "_load_beside_hooks", "sibling_checkouts",
-    "own_line",
+    "own_line", "containing_checkout",
 })
 
 #: The measured skew (TP-474 Task 0): the two names the 2026-10-07 budget added
