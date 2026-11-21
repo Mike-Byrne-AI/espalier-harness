@@ -26108,10 +26108,41 @@ class TestTheLinkReadFollowsAJunctionAndNoOtherReparsePoint:
         found, followed = self._stand_in(monkeypatch, tmp_path, 0x9000701A)
         assert found is None and not followed, (found, followed)
 
-    @pytest.mark.parametrize("spelled", ["//host/share/notes.txt", "\\\\host\\share\\notes.txt"])
+    def test_a_junction_named_secrets_to_another_folder_is_refused_as_a_link(self, monkeypatch, tmp_path):
+        """A junction lstats as a folder, so the junction test must come
+        before DEF-5131's folder test: the refusal then names the junction's
+        target, which the folder test would not (the code review's note)."""
+        import stat
+        import types
+        _bash_patterns_module()
+        import write_guard as wg
+        (tmp_path / "vault").mkdir()
+        point, vault = str(tmp_path / "secrets"), str(tmp_path / "vault")
+        real_lstat, real_realpath = wg.os.lstat, wg.os.path.realpath
+
+        def lstat(path, *a, **k):
+            if str(path) == point:
+                return types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_reparse_tag=0xA0000003)
+            return real_lstat(path, *a, **k)
+
+        def readlink(path, *a, **k):
+            raise OSError("not a link")
+
+        monkeypatch.setattr(wg.os, "lstat", lstat)
+        monkeypatch.setattr(wg.os.path, "realpath", lambda p, *a, **k: vault if str(p) == point else real_realpath(p, *a, **k))
+        monkeypatch.setattr(wg.os, "readlink", readlink)
+        assert wg._linked_secret("secrets", tmp_path, bash=False) == ("secrets/**", vault)
+
+    @pytest.mark.parametrize("spelled", [
+        "//host/share/notes.txt", "\\\\host\\share\\notes.txt",
+        "\\\\?\\C:\\proj\\secrets", "\\\\.\\C:\\proj\\secrets",
+    ])
     def test_a_network_share_spelling_is_never_looked_up(self, spelled, monkeypatch, tmp_path):
         """A share's lookup can wait on the network past the hook's budget,
-        so the spelling is judged by its name alone (docs/HOOKS.md)."""
+        so the spelling is judged by its name alone (docs/HOOKS.md); a local
+        device spelling (`\\\\?\\`, `\\\\.\\`) starts with the same double
+        backslash and is judged the same way, so its bare secrets folder is
+        not looked up (air's c17a89 placement of DEF-5131's review note)."""
         _bash_patterns_module()
         import write_guard as wg
         asked = []
@@ -26124,7 +26155,9 @@ class TestTheSecretsRuleReadsAFolderEndedByASlash:
     (`secrets/`), never below another folder (`x/secrets/`) or by its full
     path (`/abs/secrets/`), so a link to the folder, which resolves to the
     full path, read clean (DEF-3099's lane). A name with no slash after it
-    may be a file and stays as it was."""
+    may be a file and stays as it was in the matcher, which reads no disk;
+    the link read judges an existing folder by it (DEF-5131, the class
+    after this one)."""
 
     @pytest.mark.parametrize("spelled", ["secrets/", "x/secrets/", "/abs/secrets/", "C:\\abs\\secrets\\"])
     def test_a_folder_ended_by_a_slash_matches(self, spelled):
@@ -26137,6 +26170,189 @@ class TestTheSecretsRuleReadsAFolderEndedByASlash:
         _bash_patterns_module()
         import write_guard as wg
         assert wg._secret_pattern_for(spelled) is None
+
+
+def _secrets_folder_tree(tmp_path: Path) -> Path:
+    """A project holding a ``secrets`` folder and a ``config/secrets``
+    folder, each with a key file in it."""
+    project = tmp_path / "proj"
+    for folder in (project / "secrets", project / "config" / "secrets"):
+        folder.mkdir(parents=True)
+        (folder / "k.txt").write_bytes(b"K\n")
+    return project
+
+
+class TestASecretsFolderNamedWholeIsTheFolder:
+    """DEF-5131: the secrets rule read a folder only when a slash ended it,
+    so a Grep of the folder by the full path the Grep tool sends
+    (`<project>/secrets`), bare or dot-slash, and a `cp -r` or a `tar` of
+    it bare, searched or copied every file in it where the same call on
+    `secrets/` was refused. The link read's lstat now judges an existing
+    folder by the name typed with a slash after it, and so the typed name of
+    a link whose last target is a folder. Through the real hook, each beside
+    its slash control; a name no folder answers to stays a name."""
+
+    # (tool, call with the folder bare, the same call with a slash after it)
+    _BARE = {
+        "grep-tool-by-full-path": ("Grep", "<P>/secrets", "<P>/secrets/"),
+        "grep-tool-bare": ("Grep", "secrets", "secrets/"),
+        "grep-tool-dot-slash": ("Grep", "./secrets", "./secrets/"),
+        "grep-tool-below-a-folder": ("Grep", "config/secrets", "config/secrets/"),
+        "cp-r": ("Bash", "cp -r secrets backup", "cp -r secrets/ backup"),
+        "tar": ("Bash", "tar czf s.tgz secrets", "tar czf s.tgz secrets/"),
+        "copy-item": ("PowerShell", "Copy-Item -Recurse secrets backup",
+                      "Copy-Item -Recurse secrets/ backup"),
+        "compress-archive": ("PowerShell", "Compress-Archive -Path secrets -DestinationPath s.zip",
+                             "Compress-Archive -Path secrets/ -DestinationPath s.zip"),
+    }
+
+    @staticmethod
+    def _verdict(tool: str, spelled: str, project: Path) -> subprocess.CompletedProcess:
+        if tool == "Grep":
+            return run_guard_tool(
+                "Grep", {"pattern": "K", "path": spelled.replace("<P>", str(project))}, project)
+        return run_guard_from(tool, spelled, project, project)
+
+    @pytest.mark.parametrize("key", list(_BARE))
+    def test_the_folder_named_with_no_slash_is_refused_as_with_one(self, key, tmp_path):
+        project = _secrets_folder_tree(tmp_path)
+        tool, bare, slashed = self._BARE[key]
+        assert_hook_denied(self._verdict(tool, slashed, project), contains_reason="secrets/**")
+        verdict = self._verdict(tool, bare, project)
+        assert_hook_denied(verdict, contains_reason="secrets/**")
+        assert "a link to" not in verdict.stdout, verdict.stdout
+
+    @pytest.mark.parametrize(("tree", "tool", "spelled"), [
+        ("file", "Grep", "secrets"),
+        ("file", "Bash", "cp secrets backup"),
+        ("absent", "Grep", "secrets"),
+        ("absent", "Bash", "tar czf s.tgz secrets"),
+        ("other-case", "Grep", "Secrets"),
+        ("other-case", "Bash", "cp -r Secrets backup"),
+    ])
+    def test_a_name_no_folder_of_that_name_answers_stays_a_name(self, tree, tool, spelled, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        if tree == "file":
+            (project / "secrets").write_bytes(b"K\n")
+        elif tree == "other-case":
+            (project / "Secrets").mkdir()
+            (project / "Secrets" / "k.txt").write_bytes(b"K\n")
+        assert_hook_allowed(self._verdict(tool, spelled, project))
+
+    def test_grep_on_bash_stays_off_the_read_roster(self, tmp_path):
+        """The read roster does not grow: `grep` on Bash is outside it, with
+        the slash or without (the boundary `_secret_read_targets_one`'s
+        docstring declares, DEF-718), so the folder's existing makes no
+        difference here; the Grep tool is the reader this row fixes."""
+        project = _secrets_folder_tree(tmp_path)
+        assert_hook_allowed(run_guard_from("Bash", "grep -r K secrets", project, project))
+        assert_hook_allowed(run_guard_from("Bash", "grep -r K secrets/", project, project))
+
+    def test_a_folder_an_earlier_cd_reaches_stays_a_name(self, tmp_path):
+        """The folder is looked for from the directory the call starts in,
+        as the link read looks for a link, so after a `cd` in the same call
+        the bare name is not found and stays a name; its slash spelling is
+        refused by name (the failure-mode review's F2)."""
+        project = tmp_path / "proj"
+        (project / "config" / "secrets").mkdir(parents=True)
+        (project / "config" / "secrets" / "k.txt").write_bytes(b"K\n")
+        assert_hook_allowed(run_guard_from("Bash", "cd config && cp -r secrets out", project, project))
+        assert_hook_denied(
+            run_guard_from("Bash", "cd config && cp -r secrets/ out", project, project),
+            contains_reason="secrets/**")
+
+    @pytest.mark.parametrize("command", [
+        "rsync -a --exclude secrets ./ backup/",
+        "zip -r out.zip . -x secrets",
+        "git mv k.pem secrets",
+        "cp -t secrets k.pem",
+        "install -d secrets",
+    ])
+    def test_the_slash_spelling_s_reader_friction_now_holds_bare(self, command, tmp_path):
+        """These readers take an exclude value, a destination or a target
+        folder for a path the call reads or moves, so the slash spelling was
+        refused already; the bare spelling of an existing folder now agrees.
+        Pinned at the verdict it has, so the day a reader stops taking such
+        a value its row reds and is rewritten on purpose (the failure-mode
+        review's F1; DEF-5134 is the readers' row, `_copier_sources` and
+        `_bash_patterns.iter_removed_or_relocated_operands`)."""
+        project = _secrets_folder_tree(tmp_path)
+        (project / "k.pem").write_bytes(b"k\n")
+        slashed = command.replace("secrets", "secrets/")
+        assert_hook_denied(run_guard_from("Bash", slashed, project, project), contains_reason="secrets/**")
+        assert_hook_denied(run_guard_from("Bash", command, project, project), contains_reason="secrets/**")
+
+    def test_the_folder_test_costs_no_read_beyond_the_lstat(self, monkeypatch, tmp_path):
+        """One lstat and no stat for a plain folder and a plain file: the
+        folder test reads the lstat in hand (the failure-mode review's F4; an
+        `os.path.isdir` there would stat every existing candidate)."""
+        _bash_patterns_module()
+        import write_guard as wg
+        project = _secrets_folder_tree(tmp_path)
+        (project / "plain.txt").write_bytes(b"p\n")
+        calls = []
+        real_lstat, real_stat = wg.os.lstat, wg.os.stat
+        monkeypatch.setattr(wg.os, "lstat", lambda p, *a, **k: calls.append(("lstat", p)) or real_lstat(p, *a, **k))
+        monkeypatch.setattr(wg.os, "stat", lambda p, *a, **k: calls.append(("stat", p)) or real_stat(p, *a, **k))
+        for name in ("secrets", "plain.txt"):
+            calls.clear()
+            wg._linked_secret(name, project, bash=True)
+            assert [kind for kind, _ in calls] == ["lstat"], (name, calls)
+
+    def test_the_matcher_reads_no_disk(self, monkeypatch):
+        """`_secret_pattern_for` stays a pure function of the spelling:
+        `tools/cc/mail.py::secret_hits` screens mail text with it (the
+        failure-mode review's F5). A disk read there raises here."""
+        _bash_patterns_module()
+        import write_guard as wg
+
+        def refuse(*a, **k):
+            raise AssertionError("the matcher read the disk")
+
+        with monkeypatch.context() as scoped:  # undone before any fixture's teardown reads the disk
+            for name in ("lstat", "stat", "listdir", "scandir"):
+                scoped.setattr(wg.os, name, refuse)
+            labels = [wg._secret_pattern_for(spelled) for spelled in
+                      ("secrets", "/abs/secrets", "secrets/", ".env", "x/credentials.json", "notes.txt")]
+        assert labels == [None, None, "secrets/**", ".env / .env.*", "**/credentials.json", None], labels
+
+    def test_the_link_read_returns_the_folder_with_no_link_to_name(self, tmp_path):
+        """In process: the label, and an empty second item where the target
+        itself is the folder; a file of the name, and nothing, read None."""
+        _bash_patterns_module()
+        import write_guard as wg
+        project = _secrets_folder_tree(tmp_path)
+        assert wg._linked_secret("secrets", project, bash=True) == ("secrets/**", "")
+        assert wg._linked_secret(str(project / "config" / "secrets"), project, bash=False) == (
+            "secrets/**", "")
+        (project / "other").mkdir()
+        assert wg._linked_secret("other", project, bash=True) is None
+        assert wg._linked_secret("secrets/k.txt", project, bash=True) is None
+        assert wg._linked_secret("nothing-here", project, bash=True) is None
+
+    @requires_symlink
+    @pytest.mark.parametrize(("tool", "spelled"), [
+        ("Grep", "secrets"),
+        ("Grep", "<P>/secrets"),
+        ("Bash", "tar czf s.tgz secrets"),
+    ])
+    def test_a_link_named_secrets_to_a_folder_of_another_name_is_refused(self, tool, spelled, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "k.txt").write_bytes(b"K\n")
+        os.symlink(vault, project / "secrets", target_is_directory=True)
+        assert_hook_denied(self._verdict(tool, spelled, project), contains_reason="a link to")
+
+    @requires_symlink
+    def test_a_link_named_secrets_to_a_file_stays_a_name(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "plain.txt").write_bytes(b"p\n")
+        os.symlink(project / "plain.txt", project / "secrets")
+        assert_hook_allowed(self._verdict("Grep", "secrets", project))
 
 
 

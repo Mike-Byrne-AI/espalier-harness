@@ -2158,7 +2158,14 @@ Reads of secret-bearing paths -- dotenv files (a dotenv TEMPLATE, the
 so a newcomer can copy it, is not one, and a copier's destination is a
 write, so `cp .env.example .env` runs), a `secrets/` directory (a path
 through a `secrets` folder, or one ending in it and a slash, at any depth:
-`secrets/`, `x/secrets/`, `/abs/secrets/`), AWS
+`secrets/`, `x/secrets/`, `/abs/secrets/`; and one ending in it with no
+slash where a folder of that name exists, looked for from the directory
+the call starts in, as the full path the `Grep` tool sends, `./secrets` or
+`cp -r secrets x`, while a file of that name, or a name nothing on disk
+answers to, stays a name; a reader that takes an exclude value, a
+destination or a target folder for a path it reads, as `rsync --exclude`,
+`zip -x`, `git mv`, `cp -t` and `install -d` are taken, refuses that bare
+name as it refused the slash spelling already), AWS
 and JSON credential files -- are denied on the `Read`, `Grep`, `Edit` and
 `NotebookEdit` tools (`_CONTENT_SURFACING_TOOLS`, checked before the guard's
 early return for a read-only tool, so a read-only tool is refused too) and,
@@ -2533,7 +2540,9 @@ spellings of them are work:
   manager, the operator): a Read, a `cat` or a `Get-Content` of a link to a
   dotenv file, or a search through a link to the `secrets` folder, is
   refused as a read of the target is, and the refusal names the link and
-  its target. Each link of a chain is judged by its name as well as the
+  its target. A link named `secrets` that opens on a folder of another
+  name is read as the `secrets` folder.
+  Each link of a chain is judged by its name as well as the
   last target, since a dotfile manager's `.env` may itself be a link. The
   target's last name alone is read (the folders above it are not
   followed), with any slash after it taken off, a relative one from the
@@ -2551,7 +2560,9 @@ spellings of them are work:
   reaches; a name computed when the command runs (a variable it does not
   bind, a substitution's output); and a network-share spelling
   (`//host/...`, `\\host\...`), judged by its name alone, since its lookup
-  can wait on the network. Every target the secret check reads is followed
+  can wait on the network, as is a local device spelling (`\\?\C:\...`,
+  `\\.\...`), which starts with the same double backslash the share test
+  reads, though its lookup waits on nothing. Every target the secret check reads is followed
   alike: `dd`, `zip` and `Compress-Archive` follow the link, so refusing
   them catches the target's bytes as a read of it does, while a `mv`, a
   `tar` without `-h` and an `ln` act on the link itself and move no bytes,
