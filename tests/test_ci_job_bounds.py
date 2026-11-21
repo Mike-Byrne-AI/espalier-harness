@@ -150,7 +150,7 @@ _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
-    ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
+    ("post-merge-windows.yml", "serial-leg"): 19.5,  # median 16.4, 2026-11-21
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
     ("clean-checkout.yml", "clean-checkout"): 124.4,  # median 98.0, 2026-11-14
     ("release.yml", "release-check"): 47.8,  # median 37.6
