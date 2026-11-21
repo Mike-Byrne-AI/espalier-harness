@@ -1678,6 +1678,35 @@ class TestTheRefusalReadsWhatSpentTheTime:
         assert start_up == pytest.approx(3.0, abs=1e-5)
         assert judged == pytest.approx(write_guard.HARD_DEADLINE_S - 3.0, abs=1e-5)
 
+    @pytest.mark.parametrize("past", [1e-3, 0.05, 2.0], ids=["a millisecond", "50 ms", "two seconds"])
+    def test_a_mark_past_the_deadline_is_start_ups_whole_share(self, past):
+        # DEF-3108: the child was still starting up when the parent's clock ran
+        # out, and wrote its mark before the kill landed. Judging had not begun
+        # by the deadline, so start-up spent all of it; it read as begun at a
+        # time not read, which asked for the split and kept the suite from
+        # spending its start-up retry on it (#734's windows-latest job).
+        deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
+        assert write_guard._how_the_child_spent_it([b"x\n" + self._mark(deadline + past)]) == (
+            False, write_guard.HARD_DEADLINE_S, 0.0)
+
+    def test_a_mark_past_the_deadline_asks_for_the_re_issue_the_suite_retries(self):
+        # The reading's two readers: the refusal's own remedy, and the suite's
+        # start-up retry (tests/_hook_spawn.py, DEF-2093), which reads the words.
+        from tests._hook_spawn import NOT_BEGUN
+
+        deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
+        began, start_up, judged = write_guard._how_the_child_spent_it([self._mark(deadline + 0.05)])
+        assert write_guard._spent(began, start_up, judged).startswith(NOT_BEGUN)
+        assert write_guard._plain_remedy(began, False, start_up, judged, True).startswith("Re-issue")
+
+    def test_a_mark_at_the_deadline_is_still_read_as_begun(self):
+        # The boundary stays inside the hook's clock: judging began as the
+        # deadline came, with none of it left to judge.
+        deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
+        began, start_up, judged = write_guard._how_the_child_spent_it([self._mark(deadline)])
+        assert began is True and judged == 0.0
+        assert start_up == pytest.approx(write_guard.HARD_DEADLINE_S, abs=1e-5)
+
     @pytest.mark.parametrize(("began", "spent", "start_up", "judged", "short", "re_issue"), [
         (False, None, 4.0, 0.0, None, True),
         (False, False, 4.0, 0.0, False, True),

@@ -190,7 +190,8 @@ _BUILD_THE_REFUSAL_AT_S = 2.0
 #: judging spent the time (DEF-2091), and from a child that answered it takes
 #: the line out of what it relays. ``time.monotonic`` is one clock across the
 #: two processes on the hosts measured (Windows 3.10, 3.11 and 3.13, 20 spawns
-#: each, 2026-11-16); a reading outside the parent's own is not used.
+#: each, 2026-11-16); a reading before the hook's first line is not used, and
+#: one past the deadline is start-up's whole share (DEF-3108).
 _BEGUN_MARK = b"write_guard: judging began at "
 #: What the judging child writes on stderr as a speed-bump checkpoint is about
 #: to spend its one-shot state, or as the pattern load finds a kept, older
@@ -244,7 +245,13 @@ def _how_the_child_spent_it(heard: list[bytes]) -> tuple[bool | None, float | No
     """At the parent's deadline, from the stderr drained from the killed child:
     whether it had begun judging (``None`` where nothing was read), then the
     seconds of the deadline that start-up and judging took (``None`` where the
-    child's clock reads outside the parent's, so it is not used)."""
+    child's clock reads before the hook's own start, so it is not used).
+
+    A mark later than the deadline is start-up's whole share (DEF-3108): the
+    child was still starting up when the deadline came and wrote its mark
+    before the kill landed, so judging had not begun by the deadline. It read
+    as begun at a time not read, which asked a short call for the split and
+    kept the suite's start-up retry (DEF-2093) off it."""
     if not heard:
         return None, None, None
     at = heard[0].find(_BEGUN_MARK)
@@ -255,7 +262,9 @@ def _how_the_child_spent_it(heard: list[bytes]) -> tuple[bool | None, float | No
         began_at = float(heard[0][at + len(_BEGUN_MARK):].split(b"\n", 1)[0])
     except (ValueError, TypeError):  # fail-open: ok deliberate -- a mark the kill cut short: the child had begun, when is unread
         return True, None, None
-    if not _HOOK_STARTED <= began_at <= deadline:
+    if began_at > deadline:
+        return False, HARD_DEADLINE_S, 0.0
+    if began_at < _HOOK_STARTED:
         return True, None, None
     return True, began_at - _HOOK_STARTED, deadline - began_at
 

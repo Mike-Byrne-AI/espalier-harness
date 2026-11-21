@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3108",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import sys; sys.path.insert(0, 'tools/cc/hooks'); import write_guard as w; m = w._BEGUN_MARK + b'%.6f' % (w._HOOK_STARTED + w.HARD_DEADLINE_S + 0.05) + bytes([10]); print(w._how_the_child_spent_it([m]))\"",
+ "open_value": "(True, None, None)",
+ "why_not": null,
+ "row_sha": "be7edaad2bca",
+ "text_sha": "96039bf562f4",
+ "verified_2026_11_21": "OPEN (filed 2026-11-21; probe driven at filing here and in the export of HEAD 1c43e7ba09a8)"
+}
