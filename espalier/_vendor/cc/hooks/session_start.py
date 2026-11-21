@@ -1866,9 +1866,11 @@ def _post_merge_verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[
     or stale on the newer merge supersedes nothing (the red-team drove the
     silent shape: a long leg pending on the newer of two merges nineteen minutes
     apart hid the older one's red). Inside one pull request
-    `_latest_run_per_check` keeps one row per name, so a cancelled latest run
-    has already displaced that pull request's own older red -- the helper's
-    contract, and `no verdict` is the loud substitute."""
+    `_latest_run_per_check` keeps one row per check (a declared tiered cell's
+    names are one check), so a cancelled latest run has already displaced
+    that pull request's own older red -- the helper's contract, and `no
+    verdict` is the loud substitute. On a tiered cell only a newer green that
+    ran the full tier supersedes an older red (DEF-4117)."""
     post_merge = _load_post_merge()
     if post_merge is None:  # fail-open: ok deliberate -- no rule to own with; nothing is named red, and the block's gate voices the absence
         return {}

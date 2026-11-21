@@ -124,6 +124,8 @@ import math
 import os
 import platform
 import random
+import re
+import shlex
 import statistics
 import subprocess
 import sys
@@ -393,6 +395,31 @@ def child_env(project: Path | None, audit_dir: Path, *, maintenance: bool = Fals
 # -- --calls -----------------------------------------------------------------
 
 
+#: The characters a path may hold and stay bare in either shell: letters,
+#: digits and ``_ . / : - \``, so a POSIX temp root and a Windows drive path
+#: keep the bytes the census has always timed. Anything else (a space, a comma
+#: PowerShell reads as an array, a quote) is quoted.
+_BARE_OPERAND_RE = re.compile(r"[A-Za-z0-9_./:\\-]+")
+#: The characters PowerShell reads as a single quote inside a single-quoted
+#: string, each escaped by doubling: the ASCII one and the two typographic ones.
+_POWERSHELL_QUOTES = ("'", "‘", "’")
+
+
+def shell_operand(path: str, *, powershell: bool = False) -> str:
+    """``path`` as one shell operand: bare where every character is in
+    ``_BARE_OPERAND_RE`` (so the timed commands stay byte for byte what the
+    census has always timed, on POSIX and Windows roots alike), else quoted
+    for the shell named, so a project root holding a space (the perturbed CI
+    cell's pytest root) is still one operand the hook judges."""
+    if _BARE_OPERAND_RE.fullmatch(path):
+        return path
+    if not powershell:
+        return shlex.quote(path)
+    for quote in _POWERSHELL_QUOTES:
+        path = path.replace(quote, quote * 2)
+    return f"'{path}'"
+
+
 def payload(kind: str, project: Path) -> dict:
     """The PreToolUse payload of one call kind, naming a file in ``project``."""
     notes = str(project / "notes.txt")
@@ -412,10 +439,11 @@ def payload(kind: str, project: Path) -> dict:
     elif kind in ("edit", "edit_maintenance"):
         base.update(tool_name="Edit", tool_input={"file_path": notes, "old_string": "x", "new_string": "y"})
     elif kind in ("bash_seat", "bash_seat_maintenance"):
-        base.update(tool_name="Bash", tool_input={"command": f"ls -la {notes}", "description": "List files"})
+        base.update(tool_name="Bash", tool_input={"command": f"ls -la {shell_operand(notes)}", "description": "List files"})
     elif kind in ("powershell_seat", "powershell_seat_maintenance"):
         base.update(tool_name="PowerShell",
-                    tool_input={"command": f"Get-ChildItem {notes}", "description": "List files"})
+                    tool_input={"command": f"Get-ChildItem {shell_operand(notes, powershell=True)}",
+                                "description": "List files"})
     else:
         raise ValueError(f"no payload for kind {kind!r}")
     return base

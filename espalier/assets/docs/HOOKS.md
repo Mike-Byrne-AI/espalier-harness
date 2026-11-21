@@ -242,7 +242,9 @@ a keyword it passes, gets one line too, naming what it lacks and the repair
 Each check name is owned by the newest merge whose run of it reached
 a verdict, so a later green run clears an older red, while a run still
 pending, cancelled or stale supersedes nothing (the last two read
-`no verdict:`). A lane shipped with auto-merge armed lands while nobody is watching,
+`no verdict:`). A check named for the proof tier it ran (`perturbed (recall
+tier)`) is read under its plain name whatever tier ran, and only a green of
+it that ran the full tier clears an older red. A lane shipped with auto-merge armed lands while nobody is watching,
 so the next session opens on a local `main` behind it -- or, when a check
 went red or the branch fell behind a base that must be up to date, on a PR
 that sits armed and unmerged (the behind row and the conflict row each name the

@@ -314,7 +314,17 @@ jobs:
   # required name that never reports parks every pull request
   # (tests/test_required_status_checks.py). Its row in tests/_axis_registry.py's
   # INSTRUMENTS is read against these steps.
+  # Named for the tier it ran, with the tier step's own fallback, because it is
+  # the one cell that runs the earned tier and can be red on a merged pull
+  # request: tools/cc/_post_merge.py::tier_of reads the name (TIERED_CELLS
+  # declares this job; a test pins the two equal), and only a full-tier green
+  # clears its red (DEF-4117). A required name must be fixed, so promoting this
+  # cell drops the tier from its name first; a required cell is never red on a
+  # merged pull request, so the rule then has nothing to do for it, except that
+  # a tiered red standing at the promotion stays on the checks line until a
+  # full-tier green clears it or it leaves the 20-merge window.
   perturbed:
+    name: perturbed (${{ needs.tier.outputs.tier || 'full' }} tier)
     needs: tier
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

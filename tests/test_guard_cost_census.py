@@ -19,6 +19,7 @@ import io
 import json
 import os
 import py_compile
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -866,7 +867,9 @@ class TestTheFileToolKinds:
         notes = str(tmp_path / "notes.txt")
         for kind in census.REPO_KINDS:
             body = census.payload(kind, tmp_path)
-            named = body["tool_input"].get("file_path") or body["tool_input"]["command"].split()[-1]
+            # shlex reads the quoted operand whole, so a root holding a space
+            # (the perturbed cell's pytest root) names the one file
+            named = body["tool_input"].get("file_path") or shlex.split(body["tool_input"]["command"])[-1]
             assert body["tool_name"] in ("Write", "Edit", "Bash", "PowerShell") and named == notes, body
 
     @pytest.mark.parametrize("kind, head", [("bash_seat", "ls -la "), ("powershell_seat", "Get-ChildItem ")])
@@ -876,4 +879,23 @@ class TestTheFileToolKinds:
         worktree = census._new_repo_project(tmp_path)
         command = census.payload(kind, worktree)["tool_input"]["command"]
         main = str(worktree.parent.parent.parent)
-        assert command == head + str(worktree / "notes.txt") and str(worktree).startswith(main + "/")
+        notes = str(worktree / "notes.txt")
+        assert command == head + census.shell_operand(notes, powershell=kind.startswith("powershell"))
+        # Normalised, as every path comparison here is: str() of a Windows
+        # path spells a backslash, and the spelling is what the gate reads.
+        assert str(worktree).replace("\\", "/").startswith(main.replace("\\", "/") + "/")
+
+    def test_a_shell_operand_is_bare_unless_it_needs_quoting(self):
+        """The timed commands keep their old bytes on a plain root, and a
+        root holding a space (the perturbed cell's) stays one operand in each
+        shell. Dies to: the operand always quoted (every census figure's
+        command moves, a Windows drive path's included), or never (the
+        perturbed cell's census row reds), or a PowerShell quote left single
+        (a comma or a typographic quote splits or ends the operand)."""
+        for plain in ("/a/b/notes.txt", r"C:\Users\x\notes.txt", "/v/f-1_2/T/p.3/notes.txt"):
+            assert census.shell_operand(plain) == plain
+            assert census.shell_operand(plain, powershell=True) == plain
+        assert shlex.split(census.shell_operand("/a b/it's.txt")) == ["/a b/it's.txt"]
+        assert census.shell_operand("/a b/it's.txt", powershell=True) == "'/a b/it''s.txt'"
+        assert census.shell_operand("/a,b/n.txt", powershell=True) == "'/a,b/n.txt'"
+        assert census.shell_operand("/a/\u2019n.txt", powershell=True) == "'/a/\u2019\u2019n.txt'"
