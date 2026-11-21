@@ -96,6 +96,14 @@ class Thing:
 '''
 
 
+def _write(path: pathlib.Path, text: str) -> None:
+    """A fixture file's bytes, the same on every platform. ``write_text`` writes each
+    ``\\n`` as ``\\r\\n`` on Windows, and ``_git_env`` drops the system config, so no
+    ``core.autocrlf`` folds it back and the blob keeps it: a test asking a blob's
+    exact text then reds on windows-latest alone."""
+    path.write_bytes(text.encode("utf-8"))
+
+
 def _git_env() -> dict[str, str]:
     env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                GIT_AUTHOR_NAME="fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
@@ -114,7 +122,7 @@ def _git(repo: pathlib.Path, *args: str) -> str:
 def repo(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "espalier").mkdir(parents=True)
-    (root / "espalier" / "cli.py").write_text(_CLI_FIXTURE, encoding="utf-8")
+    _write(root / "espalier" / "cli.py", _CLI_FIXTURE)
     _git(root, "init", "-q")
     _git(root, "add", "espalier/cli.py")
     _git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
@@ -154,8 +162,7 @@ class TestThePinIsRequiredAndReadFromTheCommit:
         would be counted at it."""
         at = _head(repo)
         path = repo / "espalier" / "cli.py"
-        path.write_text(path.read_text(encoding="utf-8") + "\n\ndef cmd_gamma(args):\n    return 0\n",
-                        encoding="utf-8")
+        _write(path, path.read_text(encoding="utf-8") + "\n\ndef cmd_gamma(args):\n    return 0\n")
         _CENSUS.source_at.cache_clear()
         out = _CENSUS.census(repo, at, ["functions"])
         assert out["functions"]["commands"] == ["cmd_alpha", "cmd_beta"]
@@ -301,7 +308,7 @@ class TestOwnershipFollowsTheCommands:
         command outside it also calls (here `_reader`, shared with `cmd_gamma`) is priced as the
         concern's own. The pack's 225 functions at 17d83e0 is the owned part; the reach is 249."""
         path = repo / "espalier" / "cli.py"
-        path.write_text(_CLI_FIXTURE + "\n\ndef cmd_gamma(args):\n    return _reader()\n", encoding="utf-8")
+        _write(path, _CLI_FIXTURE + "\n\ndef cmd_gamma(args):\n    return _reader()\n")
         _git(repo, "add", "espalier/cli.py")
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "gamma")
         _CENSUS.source_at.cache_clear()
@@ -328,11 +335,11 @@ def run():
 
     @pytest.fixture
     def importing(self, repo):
-        (repo / "espalier" / "other.py").write_text(self._OTHER, encoding="utf-8")
+        _write(repo / "espalier" / "other.py", self._OTHER)
         (repo / "tests").mkdir()
-        (repo / "tests" / "test_x.py").write_text(self._TEST, encoding="utf-8")
+        _write(repo / "tests" / "test_x.py", self._TEST)
         (repo / "docs").mkdir()
-        (repo / "docs" / "RUN.md").write_text("python -m espalier.cli init .\n", encoding="utf-8")
+        _write(repo / "docs" / "RUN.md", "python -m espalier.cli init .\n")
         _git(repo, "add", "-A")
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "importers")
         _CENSUS.source_at.cache_clear()
@@ -383,7 +390,7 @@ def test_it(monkeypatch):
     @pytest.fixture
     def section(self, repo):
         (repo / "tests").mkdir()
-        (repo / "tests" / "test_patching.py").write_text(self._TEST, encoding="utf-8")
+        _write(repo / "tests" / "test_patching.py", self._TEST)
         _git(repo, "add", "-A")
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "patches")
         _CENSUS.source_at.cache_clear()
@@ -415,7 +422,7 @@ def _add(repo: pathlib.Path, files: dict[str, str], message: str = "files") -> N
     for rel, text in files.items():
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        _write(target, text)
     _git(repo, "add", "-A")
     _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message)
     _CENSUS.source_at.cache_clear()
@@ -1504,7 +1511,7 @@ def _edit(repo: pathlib.Path, old: str, new: str, path: str = "espalier/cli.py")
     target = repo / path
     text = target.read_text(encoding="utf-8")
     assert text.count(old) == 1, old
-    target.write_text(text.replace(old, new), encoding="utf-8")
+    _write(target, text.replace(old, new))
 
 
 def _lane(repo: pathlib.Path, branch: str, old: str, new: str, *, base: str = "main",
@@ -1547,7 +1554,7 @@ class TestTheReplayReadsAConflictOnTheCliModule:
         _trunk(repo)
         base = _head(repo)
         _git(repo, "checkout", "-q", "-b", "lane/y", base)
-        (repo / "README.md").write_text("readme\n", encoding="utf-8")
+        _write(repo / "README.md", "readme\n")
         _commit_all(repo, "readme")
         _git(repo, "checkout", "-q", "-b", "lane/x", base)
         _edit(repo, "    return 1\n", "    return 2\n")
@@ -1560,14 +1567,13 @@ class TestTheReplayReadsAConflictOnTheCliModule:
         _git(repo, "checkout", "-q", "lane/x")
         assert _git_try(repo, "-c", "commit.gpgsign=false", "merge", "-m",
                         "Merge branch 'main' into lane/x", "main").returncode == 1
-        (repo / "espalier" / "cli.py").write_text(_CLI_FIXTURE.replace("    return 1\n", "    return 4\n"),
-                                                  encoding="utf-8")
+        _write(repo / "espalier" / "cli.py", _CLI_FIXTURE.replace("    return 1\n", "    return 4\n"))
         _git(repo, "add", "-A")
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "--no-edit")
         conflicted = _head(repo)
         _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'lane/y' into lane/x", "lane/y")
         _land(repo, 5, "lane/y")
-        (repo / ".gitattributes").write_text("espalier/cli.py merge=union\n", encoding="utf-8")
+        _write(repo / ".gitattributes", "espalier/cli.py merge=union\n")
         _commit_all(repo, "the union driver for cli.py")
         _land(repo, 7, "lane/x")
         out = _CENSUS.conflicts(_ctx(repo))
@@ -1644,7 +1650,7 @@ class TestACatchUpCarriesACliChangeOrNot:
         _trunk(repo)
         base = _head(repo)
         _git(repo, "checkout", "-q", "-b", "lane/a", base)
-        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        _write(repo / "a.txt", "a\n")
         _commit_all(repo, "lane a")
         _git(repo, "checkout", "-q", "main")
         _edit(repo, "    return 1\n", "    return 2\n")
@@ -1652,10 +1658,10 @@ class TestACatchUpCarriesACliChangeOrNot:
         _git(repo, "checkout", "-q", "lane/a")
         _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/a", "main")
         _git(repo, "checkout", "-q", "-b", "lane/b", "main")
-        (repo / "b.txt").write_text("b\n", encoding="utf-8")
+        _write(repo / "b.txt", "b\n")
         _commit_all(repo, "lane b")
         _git(repo, "checkout", "-q", "main")
-        (repo / "README.md").write_text("readme\n", encoding="utf-8")
+        _write(repo / "README.md", "readme\n")
         _commit_all(repo, "main brings a readme")
         _git(repo, "checkout", "-q", "lane/b")
         _git(repo, "-c", "commit.gpgsign=false", "merge", "-q", "-m", "Merge branch 'main' into lane/b", "main")
@@ -1678,7 +1684,7 @@ class TestTheHolds:
 
     @pytest.fixture
     def ctx(self, repo):
-        (repo / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        _write(repo / "espalier.toml", 'dispatcher = "air"\n')
         _commit_all(repo, "toml")
         return _ctx(repo, _mail_at={"air": self._MESSAGES, "other": [
             {"id": "m5", "at": "2020-01-01T07:00:00Z", "text": "the other waits for it, cli.py", "re": {}}]})
@@ -1789,7 +1795,7 @@ class TestTheLaneRead:
         """`short` is lines 1 to 3, `long` 4 to 13 (ten lines) with no gap between, a comment on
         14 and `tail` 15 to 16."""
         _trunk(repo)
-        (repo / "espalier" / "cli.py").write_text(self._SHORT_THEN_LONG, encoding="utf-8")
+        _write(repo / "espalier" / "cli.py", self._SHORT_THEN_LONG)
         _commit_all(repo, "shaped")
         _CENSUS.source_at.cache_clear()
         return repo, _head(repo)
@@ -2011,7 +2017,7 @@ class TestTheTranscriptsSection:
         claim, and 500 of cli.py after the pin. The project folder differs in case from the
         checkout's derived name."""
         (repo / "docs").mkdir()
-        (repo / "docs" / "x.md").write_text("one\ntwo\n", encoding="utf-8")
+        _write(repo / "docs" / "x.md", "one\ntwo\n")
         _commit_all(repo, "docs")
         _trunk(repo)
         _lane(repo, "lane/a", "    return 1\n", "    return 2\n")
@@ -2037,7 +2043,7 @@ class TestTheTranscriptsSection:
                 _result("t4", "", {"file": {"numLines": 99}}),
                 use("t5", "2020-01-03T00:00:00Z", "lane/a", "Read", file_path=f"{root}/espalier/cli.py"),
                 _result("t5", "", {"file": {"numLines": 500}})]
-        (proj / "s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+        _write(proj / "s1.jsonl", "".join(json.dumps(r) + "\n" for r in recs))
 
         def run(extra_checkouts=(), seen=None):
             ctx = _ctx(repo, _mail_at=mail, projects_dir=str(tmp_path / "projects"),
@@ -2099,8 +2105,8 @@ class TestTheTranscriptsSection:
         folder.mkdir()
         rec = {**_use("t9", "Read", "2020-01-01T01:30:00Z", "main", file_path="/wt/agent-y/docs/x.md"),
                "cwd": "/wt/agent-y"}
-        (folder / "s9.jsonl").write_text(json.dumps(rec) + "\n" + json.dumps(_result("t9", "", {"file": {"numLines": 3}}))
-                                         + "\n", encoding="utf-8")
+        _write(folder / "s9.jsonl",
+               json.dumps(rec) + "\n" + json.dumps(_result("t9", "", {"file": {"numLines": 3}})) + "\n")
         out = section([{"path": "/wt/agent-y", "seat": "air-work", "folder": "-wt-agent-y", "own_name": False}])
         assert [(p["folder"], p["records"]) for p in out["population"]] == [("proj-work", 4), ("-wt-agent-y", 1)]
         assert out["skipped_never_named"] == []
@@ -2116,8 +2122,7 @@ class TestTheTranscriptsSection:
                 _result("t7", "", {"stdout": _lines(40)}),
                 _use("t8", "Bash", "2020-01-01T01:25:00Z", "lane/a", command=missed),
                 _result("t8", "", {"stdout": ""})]
-        (tmp_path / "projects" / "proj-work" / "s2.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs),
-                                                                      encoding="utf-8")
+        _write(tmp_path / "projects" / "proj-work" / "s2.jsonl", "".join(json.dumps(r) + "\n" for r in recs))
         seen: list[dict] = []
         out = section(seen=seen)
         assert out["calls"]["unlexed"] == {"own": {"commands": 1, "naming_cli": 1},
@@ -2166,7 +2171,7 @@ class TestTheTranscriptsSection:
         proj = tmp_path / "projects" / "proj"
         proj.mkdir(parents=True)
         late = _use("t1", "Read", "2020-01-03T00:00:00Z", "main", file_path=f"{repo}/espalier/cli.py")
-        (proj / "s1.jsonl").write_text(json.dumps(late) + "\n", encoding="utf-8")
+        _write(proj / "s1.jsonl", json.dumps(late) + "\n")
         ctx = _ctx(repo, _mail_at={}, projects_dir=str(tmp_path / "projects"),
                    checkouts=[{"path": str(repo), "seat": "air", "folder": "proj"}])
         with pytest.raises(_CENSUS.Unread, match="hold no record up to"):
@@ -2236,7 +2241,7 @@ class TestAFailedReadIsUnreadNeverAnAbort:
         reads as one with no open time)."""
         saved = tmp_path / "prs.json"
         if body is not None:
-            saved.write_text(body, encoding="utf-8")
+            _write(saved, body)
         _trunk(repo)
         out = _CENSUS.census(repo, _head(repo), ["collision"], extra={
             "prs_json": str(saved), "skip_components": ("conflicts", "claims", "holds", "catch_ups")})["collision"]
@@ -2247,9 +2252,9 @@ class TestAFailedReadIsUnreadNeverAnAbort:
         """Dies to: `--prs-json` not read (then `gh` runs, which this tmp repo has no remote for),
         or a pull request with no `createdAt` given a stamp it does not have."""
         saved = tmp_path / "prs.json"
-        saved.write_text(json.dumps([
+        _write(saved, json.dumps([
             {"number": 3, "createdAt": "2020-01-01T00:00:00Z", "mergedAt": "2020-01-01T01:00:00+00:00"},
-            {"number": 4, "createdAt": None, "mergedAt": "2020-01-01T02:00:00Z"}]), encoding="utf-8")
+            {"number": 4, "createdAt": None, "mergedAt": "2020-01-01T02:00:00Z"}]))
         assert _CENSUS.pr_meta(_ctx(repo, prs_json=str(saved))) == {
             3: {"created": "2020-01-01T00:00:00Z", "merged": "2020-01-01T01:00:00Z"}}
 
@@ -2336,7 +2341,7 @@ class TestTheLaneReadOfAModuleTheBaseDoesNotHold:
         module (a move's new module: the very lane the census is for)."""
         _trunk(repo)
         _git(repo, "checkout", "-q", "-b", "lane/n", "main")
-        (repo / "espalier" / "newmod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        _write(repo / "espalier" / "newmod.py", "def f():\n    return 1\n")
         _edit(repo, "    return 1\n", "    return 2\n")
         _commit_all(repo, "a new module")
         _land(repo, 1, "lane/n")
@@ -2358,7 +2363,7 @@ class TestTheLaneReadOfAModuleTheBaseDoesNotHold:
 class TestTheHoldsWhereTheRecordIsMissingOrOutOfOrder:
     @pytest.fixture
     def toml(self, repo):
-        (repo / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        _write(repo / "espalier.toml", 'dispatcher = "air"\n')
         _commit_all(repo, "toml")
         return repo
 
@@ -2382,7 +2387,7 @@ class TestACatchUpDiffGitCannotGiveIsUnread:
         catch-up that brought no CLI change."""
         _trunk(repo)
         _git(repo, "checkout", "-q", "-b", "lane/a", "main")
-        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        _write(repo / "a.txt", "a\n")
         _commit_all(repo, "lane a")
         _git(repo, "checkout", "-q", "main")
         _edit(repo, "    return 1\n", "    return 2\n")
@@ -2422,7 +2427,7 @@ class TestGitOutputIsSplitOnNul:
         _trunk(repo)
         _git(repo, "checkout", "-q", "-b", "lane/u", "main")
         (repo / "docs").mkdir()
-        (repo / "docs" / "café.md").write_text("x\n", encoding="utf-8")
+        _write(repo / "docs" / "café.md", "x\n")
         _commit_all(repo, "u")
         _land(repo, 1, "lane/u")
         (pr,) = _CENSUS._prs(_ctx(repo))
@@ -2488,6 +2493,34 @@ class TestTheBatchReadKeepsEachPathToItsOwnText:
 
         monkeypatch.setattr(_CENSUS, "run_bounded", reply)
         assert _CENSUS.blobs_at(repo, "HEAD", ["tests/test_sub.py", "docs/a.md"]) == {"docs/a.md": "alpha\n"}
+
+
+class TestAFixtureIsTheSameBytesOnEveryPlatform:
+    def test_a_committed_fixture_holds_the_bytes_the_test_wrote(self, repo, monkeypatch):
+        """Dies to: ``_add`` writing in text mode, read here on any host with ``write_text``
+        made to translate as Windows does (each ``\\n`` written as ``\\r\\n``): the blob then
+        holds CRLF where the test wrote LF, the windows-latest red of
+        ``test_a_tree_entry_s_body_is_stepped_over`` (#725's and #726's portability leg)."""
+        real = pathlib.Path.write_text
+
+        def windows_write_text(self, data, encoding=None, errors=None, newline=None):
+            return real(self, data, encoding=encoding, errors=errors, newline="\r\n" if newline is None else newline)
+
+        monkeypatch.setattr(pathlib.Path, "write_text", windows_write_text)
+        _add(repo, {"docs/a.md": "alpha\n"})
+        blob = subprocess.run(["git", "cat-file", "blob", "HEAD:docs/a.md"], cwd=repo, capture_output=True,
+                              env=_git_env(), check=True, timeout=45).stdout
+        assert blob == b"alpha\n"
+
+    def test_no_fixture_in_this_file_is_written_in_text_mode(self):
+        """Dies to: a fixture written with ``write_text`` and no ``newline``, whose blob holds CRLF
+        on Windows alone, so a test asking its exact text reds on windows-latest and nowhere a
+        required check runs. Each fixture goes through ``_write``."""
+        tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+        text_mode = [n.lineno for n in ast.walk(tree)
+                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "write_text"
+                     and not any(k.arg == "newline" for k in n.keywords)]
+        assert text_mode == []
 
 
 # ---------------------------------------------------------------- the review fold: reads the census missed
@@ -3009,10 +3042,9 @@ class TestTheWorkingTreeIsNeverRead:
         import and an uncommitted patch sit beside the committed ones."""
         _add(repo, {"tests/test_x.py": "from espalier import cli\n\n\ndef test_a(monkeypatch):\n"
                                        "    monkeypatch.setattr(cli, '_helper', None)\n"})
-        (repo / "tests" / "test_x.py").write_text(
-            "from espalier import cli\nfrom espalier.cli import Thing\n\n\ndef test_a(monkeypatch):\n"
-            "    monkeypatch.setattr(cli, '_helper', None)\n    monkeypatch.setattr(cli, '_reader', None)\n",
-            encoding="utf-8")
+        _write(repo / "tests" / "test_x.py",
+               "from espalier import cli\nfrom espalier.cli import Thing\n\n\ndef test_a(monkeypatch):\n"
+               "    monkeypatch.setattr(cli, '_helper', None)\n    monkeypatch.setattr(cli, '_reader', None)\n")
         out = _CENSUS.census(repo, _head(repo), ["importers", "patches"])
         assert out["importers"]["tests"] == {"files": 1, "distinct_names": 0}
         assert (out["patches"]["sites"], sorted(out["patches"]["per_target"])) == (1, ["_helper"])
@@ -3117,8 +3149,7 @@ class TestTheMailAtThePin:
     def mailed(self, repo):
         _trunk(repo)
         _git(repo, "checkout", "-q", "-b", "mail-air")
-        (repo / "mail.jsonl").write_text("".join(json.dumps(m) + "\n" for m in self._MESSAGES) + "not json\n",
-                                         encoding="utf-8")
+        _write(repo / "mail.jsonl", "".join(json.dumps(m) + "\n" for m in self._MESSAGES) + "not json\n")
         _commit_all(repo, "mail")
         _git(repo, "update-ref", "refs/remotes/origin/mail/air", "HEAD")
         _git(repo, "checkout", "-q", "main")
@@ -3217,7 +3248,7 @@ class TestTheCheckoutsOfAClone:
         name read from the user's global config (scope `global`) makes a fork's worktree, which
         no session ran in, read as a seat's checkout."""
         glob = tmp_path / "global.gitconfig"
-        glob.write_text("[espalier]\n\tmachine = air\n", encoding="utf-8")
+        _write(glob, "[espalier]\n\tmachine = air\n")
         monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
         side = tmp_path / "side.wt"
@@ -3245,8 +3276,8 @@ class TestTheCheckoutsOfAClone:
         assert (by["repo"]["own_name"], by["side.wt"]["seat"], by["side.wt"]["own_name"]) == (True, "air", None)
         main = tmp_path / "projects" / by["repo"]["folder"]
         main.mkdir(parents=True)
-        (main / "s1.jsonl").write_text(json.dumps(_use("t1", "Read", "2020-01-01T01:00:00Z", "main",
-                                                       file_path=f"{repo}/espalier/cli.py")) + "\n", encoding="utf-8")
+        _write(main / "s1.jsonl", json.dumps(_use("t1", "Read", "2020-01-01T01:00:00Z", "main",
+                                                  file_path=f"{repo}/espalier/cli.py")) + "\n")
         ctx = _ctx(repo, _mail_at={}, projects_dir=str(tmp_path / "projects"), checkouts=rows)
         with pytest.raises(_CENSUS.Unread, match="transcript folder"):
             _CENSUS.section_transcripts(ctx)
@@ -3541,8 +3572,8 @@ class TestABoxSeatWhoseTranscriptsWereNotReadIsNamed:
         proj = tmp_path / "projects" / "proj-work"
         proj.mkdir(parents=True)
         rec = {**_use("t1", "Read", d + "01:00:00Z", "lane/a", file_path=f"{root}/espalier/cli.py"), "cwd": root}
-        (proj / "s1.jsonl").write_text(json.dumps(rec) + "\n" + json.dumps(_result("t1", "", {"file": {"numLines": 40}}))
-                                       + "\n", encoding="utf-8")
+        _write(proj / "s1.jsonl",
+               json.dumps(rec) + "\n" + json.dumps(_result("t1", "", {"file": {"numLines": 40}})) + "\n")
 
         def run(extra):
             ctx = _ctx(repo, _mail_at=mail, projects_dir=str(tmp_path / "projects"),
@@ -3595,7 +3626,7 @@ class TestAMailSeatWhoseRefTheCloneLacksIsNamed:
     def _mailed(repo, messages):
         _trunk(repo)
         _git(repo, "checkout", "-q", "-b", "mail-air")
-        (repo / "mail.jsonl").write_text("".join(json.dumps(m) + "\n" for m in messages), encoding="utf-8")
+        _write(repo / "mail.jsonl", "".join(json.dumps(m) + "\n" for m in messages))
         _commit_all(repo, "mail")
         _git(repo, "update-ref", "refs/remotes/origin/mail/air", "HEAD")
         _git(repo, "checkout", "-q", "main")
