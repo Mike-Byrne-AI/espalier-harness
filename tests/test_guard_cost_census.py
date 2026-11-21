@@ -881,7 +881,9 @@ class TestTheFileToolKinds:
         main = str(worktree.parent.parent.parent)
         notes = str(worktree / "notes.txt")
         assert command == head + census.shell_operand(notes, powershell=kind.startswith("powershell"))
-        assert str(worktree).startswith(main + "/")
+        # Normalised, as every path comparison here is: str() of a Windows
+        # path spells a backslash, and the spelling is what the gate reads.
+        assert str(worktree).replace("\\", "/").startswith(main.replace("\\", "/") + "/")
 
     def test_a_shell_operand_is_bare_unless_it_needs_quoting(self):
         """The timed commands keep their old bytes on a plain root, and a
