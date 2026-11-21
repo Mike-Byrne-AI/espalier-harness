@@ -404,9 +404,17 @@ jobs:
         # cheaper tier keeps of the serial files its diff brings in only that
         # same line. So the full tier's run here holds every node id a cheaper
         # tier's run here holds, which the checks rule's only-full clear rests
-        # on (DEF-5136). The other serial files' rows, their contract ones
-        # apart, never run on this host; the contract rows take 3.6 minutes
-        # here at the median (2.6 to 4.3 over 9 recall-tier runs, 2026-11-21).
+        # on (DEF-5136). Declared limits, each with the reading that files it:
+        # the other serial files' rows, their contract ones apart, run on no
+        # stub host (a cheaper tier's run here carried one its diff brought in,
+        # 10 such lines over 133 runs from 2026-11-15 to 11-21, test_hooks.py
+        # in 5, all green; every red came from the two kept files), so a row
+        # at the first stub-host red seen in a serial file outside them, on any
+        # run; and a later merge's full green clears an earlier red in a file a
+        # lane between the two dropped from the tiered files, so such a lane
+        # reads the checks line's tiered reds across its merge in its own body.
+        # The contract rows take 3.6 minutes here at the median (2.6 to 4.3
+        # over 9 recall-tier runs, 2026-11-21).
         env:
           TIER: ${{ needs.tier.outputs.tier || 'full' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
