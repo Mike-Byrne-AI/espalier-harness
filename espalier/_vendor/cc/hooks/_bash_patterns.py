@@ -3530,8 +3530,11 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # An assignment whose name collides with an interpreter (`python3=/opt/bin/py`)
 # is excluded by the grammar itself, not by a `(?!=)` guard: after the name only
 # blanks, `-`+letters, a `-` operand or `<<` may follow, and none of them can
-# consume the `=`. Whitespace is never REQUIRED (SHARP_EDGES: exclude `=`, never
-# require whitespace -- `python3<<'PY'` is a real invocation). Known miss,
+# consume the `=`. Whitespace is never REQUIRED after the head (SHARP_EDGES:
+# exclude `=`, never require whitespace -- `python3<<'PY'` is a real
+# invocation); the flag run does take a blank after each flag, and a flag
+# glued to the operator (`-u<<'PY'`) is read on the opener view, which blanks
+# the flag (DEF-5125). Known miss,
 # named rather than widened: a valued flag before the operand (`-W ignore -
 # <<EOF`). An output redirect after the operand or the flags (`-
 # 2>/dev/null <<EOF`) is read on the scan, DEF-3077's `_OUTPUT_REDIRECT_RUN`
@@ -3541,6 +3544,9 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # program), a glued chain (`- 2>&1>/dev/null <<EOF`) and an operator glued
 # to a target (`- >o<<EOF`) are read on the opener view instead
 # (`_heredoc_opener_view`, DEF-5120: every redirect blank, the `<<` kept),
+# and so are an fd-0 operator (`- 0<<EOF`, put back bare) and an output
+# redirect glued to a word before the operator (`-u>o<<EOF`, `-u&>o`, `-
+# arg>o <<EOF`, blanked with its target: DEF-5125),
 # not by interleaving the unit with the flags, which would give a redirect
 # two parses beside the run after the operand (both reviews of DEF-3077).
 # An input redirect AFTER the operator (`- <<EOF <f`) is read as if the
@@ -8620,6 +8626,85 @@ def _inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]
             yield interp, _bash_word_text(command[m.start("word"):m.end("word")])
 
 
+#: What a word's text before a glued redirect or operator never holds for
+#: `_word_glued_redirect` and `_flag_glued_to_operator` to read it: an
+#: expansion, an escape or an input redirect, after which the angle is
+#: something this reading does not model, and the view's statement keepers
+#: (`_REDIRECT_VIEW_KEEP`, defined above: this line reads it at import),
+#: which end the word.
+_GLUE_UNREAD = frozenset("$`\\<") | _REDIRECT_VIEW_KEEP
+#: The first characters of a token `_word_glued_redirect` leaves alone: a
+#: stream number, `&` and an angle open the redirect view's own redirects,
+#: and a quote opens a quoted word, no redirect of the command.
+_GLUE_NOT_A_WORD = frozenset("0123456789&<>'\"")
+#: Where a glued redirect's target ends in its token: an angle, a keeper,
+#: and a backslash, after which an angle is the target's text, not an
+#: operator (`_word_glued_redirect` reads no split there).
+_GLUED_TARGET_STOP = frozenset("<>\\") | _REDIRECT_VIEW_KEEP
+
+
+def _word_glued_redirect(tok: str) -> "tuple[int, int, bool] | None":
+    """Where an output redirect glued to the bare word ``tok`` stands, as
+    ``(start, stop, bare)``: bash ends a bare word at `>` and at `&>`
+    (bash 5.2.37, driven), so in `-u>o<<` the word is `-u`, the redirect
+    `>o` (``tok[2:4]``) and the `<<` after it an operator of its own, in
+    `-u&>o` the redirect is `&>o`, and in `- arg>o<<` the word is `arg`;
+    ``bare`` when the operator ends the token, its target the next one
+    (`-u> o`). The operator is `&>` or an angle or two with one glued `&`
+    or `|`, the target runs to `_GLUED_TARGET_STOP`. None where the token
+    opens with what `_GLUE_NOT_A_WORD` names, a flag's redirect stands under
+    two characters in (`->o` is the `-` operand, which the opener reads
+    already), the word holds what `_GLUE_UNREAD` names, the `>` opens a
+    process substitution, the target holds a backslash, or the operator has
+    no target before another angle: the token is then left as the view has
+    it, the side that changes nothing (DEF-5125)."""
+    gt = tok.find(">")
+    if gt < 1 or tok[0] in _GLUE_NOT_A_WORD:
+        return None
+    lo = gt - 1 if tok[gt - 1] == "&" else gt
+    if lo < (2 if tok[0] == "-" else 1) or any(ch in _GLUE_UNREAD for ch in tok[:lo]):
+        return None
+    at = gt + 1
+    if tok.startswith(">", at):
+        at += 1
+    if lo == gt and at < len(tok) and tok[at] in "&|":
+        at += 1
+    if tok.startswith("(", at):
+        return None
+    stop = at
+    while stop < len(tok) and tok[stop] not in _GLUED_TARGET_STOP:
+        stop += 1
+    if (stop < len(tok) and tok[stop] == "\\") or (stop == at and stop < len(tok)):
+        return None
+    return lo, stop, stop == at
+
+
+def _flag_glued_to_operator(tok: str, at: int) -> bool:
+    """Whether the bare token ``tok``, its heredoc or here-string operator
+    at ``at``, is a flag glued to that operator (`-u<<'PY'`, `- -u<<`):
+    bash ends the flag's word at the `<`, so the operator is the
+    interpreter's stdin as after a spaced flag (bash 5.2.37, driven), and
+    the view blanks the flag, which the opener's flag run reads only with a
+    blank after it. Another word stays: a script operand glued to the
+    operator (`x.py<<`) is the program and the heredoc its data, and the `-`
+    operand glued to it (`-<<`) is the opener's own already. A flag holding
+    a `>` before the operator is `_word_glued_redirect`'s (DEF-5125)."""
+    return (tok[0] == "-" and at >= 2
+            and not any(ch in _GLUE_UNREAD or ch == ">" for ch in tok[:at]))
+
+
+def _glued_target_end(tok: str) -> int:
+    """Where the target a bare glued operator takes (`-u> o<<`,
+    `_word_glued_redirect`) ends in its token ``tok``: a quoted span whole,
+    a bare word at `_GLUED_TARGET_STOP`, as bash ends it (DEF-5125)."""
+    if tok[0] in "'\"":
+        return len(tok)
+    stop = 0
+    while stop < len(tok) and tok[stop] not in _GLUED_TARGET_STOP:
+        stop += 1
+    return stop
+
+
 def _heredoc_opener_view(scan: str) -> str:
     """The redirect view (`_redirects_blanked`) with each heredoc and
     here-string operator as the scan has it, a bare operator's delimiter or
@@ -8627,17 +8712,22 @@ def _heredoc_opener_view(scan: str) -> str:
     stops at a redirect before the `-` operand or a flag, where bash hands
     the interpreter its stdin program all the same (DEF-5120's R4: `python3
     2>/dev/null - <<'EOF'` read no program, where `python3 - 2>/dev/null
-    <<'EOF'` was read since DEF-3077). The scan itself comes back when it
-    holds no `<<`, so a call with no heredoc pays one membership test; the
-    redirect view is the shared one, never rebuilt here, and this one is
-    built once a reading however many readers ask (the second failure-mode
-    review of DEF-5120's batch measured 5 to 8 builds a judgment)."""
+    <<'EOF'` was read since DEF-3077). An fd-0 operator (`0<<`, `00<<`,
+    `0<<<`) is put back bare, since fd 0 is stdin; an output redirect glued
+    to a word (`-u>o<<`, `-u&>o`, `-u> o`, `- arg>o<<`) is blanked with its
+    target, and a flag glued to the operator (`-u<<`) is blanked, since bash
+    ends a bare word at an angle (DEF-5125). The scan itself comes back when
+    it holds no `<<`, so a call with no heredoc pays one membership test;
+    any other call is built, since what the builder may change is the
+    builder's to say (an early return on an unchanged redirect view skipped
+    a flag's glued redirect, which that view reads as one word: DEF-5125).
+    The redirect view is the shared one, never rebuilt or widened here
+    (air's 1aac17), and this view is built once a reading however many
+    readers ask (the second failure-mode review of DEF-5120's batch measured
+    5 to 8 builds a judgment)."""
     if "<<" not in scan:
         return scan
-    view = _redirects_blanked(scan, powershell=False)
-    if view is scan:
-        return scan
-    return _heredoc_opener_view_built(scan, view)
+    return _heredoc_opener_view_built(scan, _redirects_blanked(scan, powershell=False))
 
 
 @reading_cache(maxsize=16)
@@ -8646,19 +8736,52 @@ def _heredoc_opener_view_built(scan: str, view: str) -> str:
     view, remembered: keyed on the view as well, so a view built another way
     (a test that blinds `_redirects_blanked`) is never served this one's. A
     test that blinds what the loop below reads (`_redirect_words`, the
-    tokenizer) clears it (`cache_clear`) first: the key cannot see those
-    (the third failure-mode review's N-3)."""
+    tokenizer, `_word_glued_redirect`, `_flag_glued_to_operator`,
+    `_glued_target_end`) clears it (`cache_clear`) first: the key cannot see
+    those (the third failure-mode review's N-3)."""
     chars: list[str] | None = None
     keep_next = False
     target_next = False
+    glued_target_next = False
     for m in _OPERAND_TOKEN_RE.finditer(scan):
         tok = m.group()
         start, end = m.span()
         is_target, target_next = target_next, False
+        glued_target, glued_target_next = glued_target_next, False
+        glued = (None if glued_target or is_target or ">" not in tok
+                 else _word_glued_redirect(tok))
         if keep_next:
             keep_next = False
+        elif glued_target or glued is not None:
+            # an output redirect glued to a word (`-u>o<<'PY'`, `-u>>o`,
+            # `-u&>o`, `-NoProfile>o`, `- arg>o<<`), or the target its bare
+            # operator takes (`-u> o`): bash ends the word at the angle, so
+            # the redirect and its target are blanked, as the redirect view
+            # blanks a spaced one, and a heredoc operator glued after them
+            # stands as the scan has it, since the redirect view read the
+            # whole token as one word and blanked none of it (DEF-5125). That
+            # view is shared, so the split is this view's alone (air's 1aac17)
+            lo, stop, bare = glued if glued is not None else (0, _glued_target_end(tok), False)
+            if chars is None:
+                chars = list(view)
+            chars[start + lo:start + stop] = " " * (stop - lo)
+            glued_target_next = bare
+            if not tok.startswith("<<", stop):
+                continue
+            start += stop
+            tok = tok[stop:]
+            keep_next = _redirect_words(tok) == 2
         elif not is_target and tok.lstrip("0123456789").startswith("<<"):
             keep_next = _redirect_words(tok) == 2
+            fd = len(tok) - len(tok.lstrip("0123456789"))
+            if fd and not tok[:fd].strip("0"):
+                # fd 0 is stdin: `0<<'PY'`, `00<<`, `0<<-` and `0<<<` hand
+                # the interpreter its program as the bare operator does, so
+                # the operator is put back bare and its digits stay blank
+                # (DEF-5125); another fd's (`3<<`, `10<<`) is kept whole and
+                # reads no program
+                start += fd
+                tok = tok[fd:]
         elif tok[0] not in "'\"" and (at := tok.find("<<")) > 0:
             # a heredoc operator glued after a redirect's target, one bare
             # token (`>o<<'PY'`, `2>&1<<EOF`, `o<<` or the scan's neutralised
@@ -8667,7 +8790,14 @@ def _heredoc_opener_view_built(scan: str, view: str) -> str:
             # or target before it stays blank. A token opening `3<<` that no
             # bare redirect takes as its target is the branch above, whole,
             # so a non-stdin fd's heredoc still reads no program (review of
-            # DEF-5120's batch, S1; bash refuses a literal `2> 3<<EOF`)
+            # DEF-5120's batch, S1; bash refuses a literal `2> 3<<EOF`). A
+            # flag glued to the operator (`-u<<'PY'`) is blanked, since the
+            # opener's flag run reads a flag only with a blank after it
+            # (`_flag_glued_to_operator`, DEF-5125)
+            if not is_target and _flag_glued_to_operator(tok, at):
+                if chars is None:
+                    chars = list(view)
+                chars[start:start + at] = " " * at
             start += at
             tok = tok[at:]
             keep_next = _redirect_words(tok) == 2

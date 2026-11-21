@@ -7954,6 +7954,115 @@ class TestInterpreterStdinHeredocWrite:
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
 
+#: DEF-5125's openers, each up to its heredoc delimiter: an fd-0 operator
+#: (`0<<`, `00<<`, `0<<-`), an output redirect glued to a flag or a word
+#: (its target glued, spaced, or the operator bare; each operator form the
+#: helper reads: append, both streams, a dup, noclobber), and a flag glued
+#: to the operator. Composed with one body below.
+_FD_ZERO_AND_GLUED_FLAG_HEADS = [
+    ("python3 - 0<<", "fd-zero-after-dash"),
+    ("python3 2>&1 - 0<<", "fd-zero-after-a-merge"),
+    ("python3 0<<", "fd-zero-no-dash"),
+    ("python3 -u 0<<", "fd-zero-after-a-flag"),
+    ("python3 - 00<<", "fd-zero-twice"),
+    ("python3 - 0<<-", "fd-zero-tab-strip"),
+    ("python3 -u>o<<", "glued-flag-target-and-operator"),
+    ("python3 -u>>o<<", "glued-flag-append"),
+    ("python3 -u&>o<<", "glued-flag-both-streams"),
+    ("python3 -u>&2<<", "glued-flag-dup"),
+    ("python3 -u>|o<<", "glued-flag-noclobber"),
+    ("python3 -u>o <<", "glued-flag-spaced-operator"),
+    ("python3 -u> o <<", "glued-flag-bare-operator"),
+    ("python3 -u> o<<", "glued-flag-bare-operator-target-glued"),
+    ("python3 - -u>o<<", "dash-then-glued-flag"),
+    ("python3 -u>o -<<", "glued-flag-then-dash"),
+    ("python3 - arg>o<<", "dash-then-glued-word"),
+    ("python3 -u<<", "flag-glued-to-the-operator"),
+    ("python3 - -u<<", "dash-then-flag-glued-to-the-operator"),
+]
+
+
+class TestAStdinOpenerReadsItsOperatorAsBashSplitsIt:
+    """DEF-5125: the stdin opener reads the program behind an fd-0 heredoc
+    or here-string operator, behind an output redirect glued to a flag or a
+    word, and behind a flag glued to the operator, as bash splits them: bash
+    consumes each before the interpreter runs (air's 1aac17: python3 got
+    ``['-']`` and ``['']`` under bash 3.2.57; the glued `&>`, the flag glued
+    to the operator and the word's glued redirect under bash 5.2.37), so the
+    program is the one the plain spelling's opener reads, python's head and
+    pwsh's alike. `_heredoc_opener_view` puts an fd-0 operator back bare,
+    blanks a glued redirect with its target and blanks a flag glued to the
+    operator, on its own view; the shared redirect view (`_redirects_blanked`)
+    is left as it was (1aac17's second trap). Each row is the plain
+    spelling's protected-zone write with only its opener changed."""
+
+    _PY_WRITE = "open('tools/cc/hooks/x.py', 'w').write('x')"
+    _PS_WRITE = "Set-Content -Path tools/cc/hooks/x.py -Value 1"
+
+    @pytest.mark.parametrize("head", [h for h, _ in _FD_ZERO_AND_GLUED_FLAG_HEADS],
+                             ids=[i for _, i in _FD_ZERO_AND_GLUED_FLAG_HEADS])
+    def test_the_heredoc_program_is_read_behind_the_operator(self, tmp_path, head):
+        cmd = head + "'PY'\n" + self._PY_WRITE + "\nPY"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("head", [h for h, _ in _FD_ZERO_AND_GLUED_FLAG_HEADS],
+                             ids=[i for _, i in _FD_ZERO_AND_GLUED_FLAG_HEADS])
+    def test_the_stdin_reader_yields_the_program(self, head):
+        """The stdin reader itself, below the hook's verdict: both streams
+        glued to a flag is refused end to end by another reader at the base
+        as well, so the verdict rows alone would not pin this reader there."""
+        b = _bash_patterns_module()
+        cmd = head + "'PY'\n" + self._PY_WRITE + "\nPY"
+        bodies = list(b._stdin_program_bodies(cmd, b.mask_inert_syntax(cmd)))
+        assert [interp for interp, _ in bodies] == ["python"] and self._PY_WRITE in bodies[0][1]
+
+    @pytest.mark.parametrize("head", ["python3 - 0<<<", "python3 -u>o<<<", "python3 -u<<<"],
+                             ids=["fd-zero", "glued-flag", "flag-glued-to-the-operator"])
+    def test_a_here_string_is_read_as_the_program_behind_the_operator(self, tmp_path, head):
+        cmd = head + ' "' + self._PY_WRITE + '"'
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("head", ["pwsh -Command - 0<<", "pwsh -NoProfile>o -Command - <<"],
+                             ids=["fd-zero", "glued-flag"])
+    def test_the_powershell_head_reads_the_same_operators(self, tmp_path, head):
+        cmd = head + "'EOF'\n" + self._PS_WRITE + "\nEOF"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "python3 - 3<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 - 10<<'PY'\n" + _PY_WRITE + "\nPY",
+        'python3 - 3<<< "' + _PY_WRITE + '"',
+        "python3 x.py 0<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 x.py -u>o<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 x.py>o<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 x.py -u<<'PY'\n" + _PY_WRITE + "\nPY",
+        "python3 x.py<<'PY'\n" + _PY_WRITE + "\nPY",
+        "ls # python3 -u>o<<'PY'\n" + _PY_WRITE + "\nPY",
+        "ls # python3 - 0<<'PY'\n" + _PY_WRITE + "\nPY",
+        "echo \"python3 -u<<'PY'\"",
+        "python3=/opt/py/bin/python3; echo -u>o<<'PY'\n" + _PY_WRITE + "\nPY",
+    ], ids=["fd-three", "fd-ten", "fd-three-here-string", "script-then-fd-zero",
+            "script-then-glued-flag", "script-with-a-glued-redirect", "script-then-flag-glued",
+            "script-glued-to-the-operator", "glued-flag-after-a-comment", "fd-zero-after-a-comment",
+            "flag-glued-in-prose", "assignment-head-then-glued-flag"])
+    def test_another_fd_or_a_script_operand_keeps_the_body_data(self, tmp_path, cmd):
+        """A heredoc on another fd is not stdin, a script operand is the
+        program with the heredoc its stdin, and an opener behind a comment,
+        inside prose or after a head that is no interpreter is no
+        invocation: each allows as before the fix."""
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    def test_the_shared_redirect_view_keeps_the_glued_flag_whole(self):
+        """The split is the heredoc view's alone: the redirect view many
+        readers share comes back unchanged for a flag's glued redirect, and
+        the heredoc view blanks it."""
+        b = _bash_patterns_module()
+        scan = b.mask_inert_syntax("python3 -u>o<<'PY'\n" + self._PY_WRITE + "\nPY")
+        assert b._redirects_blanked(scan, powershell=False) is scan
+        view = b._heredoc_opener_view(scan)
+        assert view.startswith("python3 -u  <<'PY'") and len(view) == len(scan)
+
+
 class TestBashOperandSpansStopAtNewline:
     r"""DEF-701: a newline between two statements is a boundary, and `\s` is
     not the character class that respects it.
