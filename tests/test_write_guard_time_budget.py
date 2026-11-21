@@ -1233,8 +1233,15 @@ class TestTheMarkFollowsThePatternImport:
         (True, 2.5, False, _LONG_COMMAND, True, 2.5, False),
         (True, 2.5, True, "git status", True, 2.5, False),
         (False, None, None, "git status", True, 0.25, False),
+        # DEF-3108's sibling: the worker wrote its mark after the budget ran
+        # out and before the refusal read it, or within a step of the clock of
+        # the deadline: not begun by then, whatever the command's length.
+        (True, 3.55, False, "git status", False, 3.5, True),
+        (True, 3.55, False, _LONG_COMMAND, False, 3.5, True),
+        (True, 3.49, False, "git status", False, 3.5, True),
     ], ids=["child-before-the-mark", "child-past-the-mark", "start-up-took-more", "a-long-command",
-            "a-one-shot-spent", "in-place"])
+            "a-one-shot-spent", "in-place", "child-mark-past-its-deadline", "child-mark-past-its-deadline-long",
+            "child-mark-within-a-step"])
     def test_the_child_budget_reads_the_begun_mark(self, monkeypatch, guard_root, capsys, marking, mark_after_s,
                                                    spent, command, began, start_up_s, re_issue):
         """The child's own budget refusal, driven on `_verdict_for` with no
@@ -1666,7 +1673,7 @@ class TestTheRefusalReadsWhatSpentTheTime:
         ([_THE_MARK + b"not a time\n"], (True, None, None)),
         ([_THE_MARK + b"-5.0\n"], (True, None, None)),
     ], ids=["nothing read", "nothing written", "no mark", "a mark cut short", "a mark that is no time",
-            "a time outside the hook's clock"])
+            "a time before the hook's start"])
     def test_a_reading_without_a_usable_time(self, heard, expected):
         heard = [part.replace(_THE_MARK, write_guard._BEGUN_MARK) for part in heard]
         assert write_guard._how_the_child_spent_it(heard) == expected
@@ -1678,7 +1685,7 @@ class TestTheRefusalReadsWhatSpentTheTime:
         assert start_up == pytest.approx(3.0, abs=1e-5)
         assert judged == pytest.approx(write_guard.HARD_DEADLINE_S - 3.0, abs=1e-5)
 
-    @pytest.mark.parametrize("past", [1e-3, 0.05, 2.0], ids=["a millisecond", "50 ms", "two seconds"])
+    @pytest.mark.parametrize("past", [1e-3, 0.05, 0.5], ids=["a millisecond", "50 ms", "half a second"])
     def test_a_mark_past_the_deadline_is_start_ups_whole_share(self, past):
         # DEF-3108: the child was still starting up when the parent's clock ran
         # out, and wrote its mark before the kill landed. Judging had not begun
@@ -1699,13 +1706,49 @@ class TestTheRefusalReadsWhatSpentTheTime:
         assert write_guard._spent(began, start_up, judged).startswith(NOT_BEGUN)
         assert write_guard._plain_remedy(began, False, start_up, judged, True).startswith("Re-issue")
 
-    def test_a_mark_at_the_deadline_is_still_read_as_begun(self):
-        # The boundary stays inside the hook's clock: judging began as the
-        # deadline came, with none of it left to judge.
+    @staticmethod
+    def _exact_mark(at: float) -> bytes:
+        # The time spelled so it reads back as the same float: `%.6f` can
+        # round a time on a clock finer than a microsecond across the deadline.
+        return write_guard._BEGUN_MARK + repr(at).encode() + b"\n"
+
+    @pytest.mark.parametrize("before", [0.0, 0.01], ids=["at the deadline", "10 ms before it"])
+    def test_a_mark_within_a_step_of_the_clock_of_the_deadline_is_start_up(self, before):
+        # Windows before 3.13 steps its monotonic clock 15.625 ms, a whole
+        # number of steps to the deadline: a mark written in the first step past
+        # it reads as the deadline itself (DEF-3108's failure-mode review, R1).
         deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
-        began, start_up, judged = write_guard._how_the_child_spent_it([self._mark(deadline)])
-        assert began is True and judged == 0.0
-        assert start_up == pytest.approx(write_guard.HARD_DEADLINE_S, abs=1e-5)
+        assert write_guard._how_the_child_spent_it([self._exact_mark(deadline - before)]) == (
+            False, write_guard.HARD_DEADLINE_S, 0.0)
+
+    def test_a_mark_more_than_a_step_before_the_deadline_is_still_begun(self):
+        deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
+        began, start_up, judged = write_guard._how_the_child_spent_it([self._exact_mark(deadline - 0.05)])
+        assert began is True
+        assert judged == pytest.approx(0.05, abs=1e-6)
+        assert start_up == pytest.approx(write_guard.HARD_DEADLINE_S - 0.05, abs=1e-6)
+
+    @pytest.mark.parametrize("spelled", [b"<past the exit>", b"nan", b"inf"], ids=["past the parent's exit",
+                                                                                 "not a number", "infinity"])
+    def test_a_mark_no_drained_child_could_write_stays_unread(self, spelled):
+        # No mark this parent drains can be later than its own exit bound, so
+        # one is a clock not the parent's; a NaN read through the old window
+        # test as unread and must still (the code review's WARN).
+        if spelled == b"<past the exit>":
+            spelled = repr(write_guard._HOOK_STARTED + write_guard.EXIT_BY_S + 0.1).encode()
+        assert write_guard._how_the_child_spent_it([write_guard._BEGUN_MARK + spelled + b"\n"]) == (
+            True, None, None)
+
+    def test_a_late_mark_beside_a_spent_mark_keeps_the_split(self):
+        # A child whose mark landed in the kill window can still reach a speed
+        # bump before the kill: its spend keeps the split, since the identical
+        # re-issue would pass that nudge unseen.
+        deadline = write_guard._HOOK_STARTED + write_guard.HARD_DEADLINE_S
+        heard = [self._exact_mark(deadline + 0.05) + write_guard._SPENT_MARK]
+        began, start_up, judged = write_guard._how_the_child_spent_it(heard)
+        spent = write_guard._spent_a_one_shot(heard)
+        assert (began, spent) == (False, True)
+        assert write_guard._plain_remedy(began, spent, start_up, judged, True).startswith("Split")
 
     @pytest.mark.parametrize(("began", "spent", "start_up", "judged", "short", "re_issue"), [
         (False, None, 4.0, 0.0, None, True),
