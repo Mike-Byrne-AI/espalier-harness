@@ -2282,8 +2282,10 @@ CP_MCP_SIDEEFFECT = SpeedBump(
 #   root checkout (driven 2026-11-02, air's c8e05b), so "any parent" would
 #   nudge every kill of one's own run;
 # - or that is, or runs under, a holder of the box lock's slots (the records in
-#   the lock file `$ESPALIER_BOX_LOCK` names and, on a box of several slots, in
-#   each `<lock>.slot<k>` beside it; never a default path, which moves) when
+#   the lock file `$ESPALIER_BOX_LOCK` names, the launcher's old default read
+#   where the suite's plugin moves it, and, on a box of several slots, in each
+#   `<lock>.slot<k>` beside it; never a default path for an unset variable,
+#   which moves) when
 #   that record's seat or lane is not this checkout's. A seat's own fresh-clone
 #   gate writes seat `?` (its clone has no local config) and is nudged once,
 #   declared.
@@ -2476,13 +2478,45 @@ def _box_lock_slot_files(path: str) -> list[str]:
     return reader(path)[0]
 
 
+_BOX_LOCK_NAME = "espalier-box.lock"
+
+
+def _box_lock_path() -> str:
+    """The box lock's path as the suite's plugin locks it: the file
+    `$ESPALIER_BOX_LOCK` names, except the launcher's old default (the lock's
+    name under the temp directory), which ``tests/_box_lock.py::current_path``
+    moves to the home default, so a seat whose shell still exports it holds
+    the home file and is read there (DEF-2106, air's 016cf1: read raw, a
+    sibling's tier held there named no holder). '' where the variable is
+    unset: no default path is read, which moves.
+    ``tests/test_speedbump_kill.py`` pins the move to the plugin's. The temp
+    directory is asked, and its module loaded, only for a path bearing the
+    lock's name, as ``tempfile.gettempdir`` probes the disk on its first
+    call."""
+    path = os.environ.get(_BOX_LOCK_ENV, "")
+    if not path or os.path.normcase(os.path.basename(os.path.abspath(path))) != os.path.normcase(_BOX_LOCK_NAME):
+        return path
+    try:
+        home = Path.home()
+    except RuntimeError:  # fail-open: ok deliberate -- no home to move it to, as the plugin; the variable as set
+        return path
+    if not home.is_absolute() or home.parent == home:
+        return path
+    import tempfile  # lazy: a path bearing the lock's name, read on a kill alone
+    old = os.path.join(tempfile.gettempdir(), _BOX_LOCK_NAME)
+    if os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(old)):
+        return path
+    return str(home / ".espalier" / _BOX_LOCK_NAME)
+
+
 def _box_lock_holders() -> list[dict[str, Any]]:
     """Every holder of the box lock's slots (seat, lane, pid), each pid once,
-    from the records in the slot files `$ESPALIER_BOX_LOCK` names; empty where
-    it is unset or no slot's record names a positive pid. One record, the
-    lock's own, was read before (DEF-2105): on a box of several slots a kill
-    of slot 2's tree got no nudge."""
-    path = os.environ.get(_BOX_LOCK_ENV, "")
+    from the records in the slot files of the lock ``_box_lock_path`` reads
+    (the one the plugin locks); empty where the variable is unset or no
+    slot's record names a positive pid. One record, the lock's own, was read
+    before (DEF-2105): on a box of several slots a kill of slot 2's tree got
+    no nudge."""
+    path = _box_lock_path()
     if not path:
         return []
     holders: list[dict[str, Any]] = []

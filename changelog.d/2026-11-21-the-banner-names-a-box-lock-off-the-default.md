@@ -14,3 +14,9 @@
   temp-directory default counts as the box's, since the plugin locks the
   home default in its place. A seat that meant its own path still reads the
   line; it blocks nothing.
+- **The kill speed bump reads the lock the suite takes.** Its box-lock
+  reading read `ESPALIER_BOX_LOCK` as set, so a seat whose shell still
+  exported the launcher's old temp-directory default, which the suite's
+  plugin moves to the home file, saw no holder there, and on Windows, where
+  that reading is the only one, a kill of another seat's tier was not
+  nudged. It now reads the file the plugin locks.

@@ -508,6 +508,32 @@ class TestTheBoxLocksHolder:
         (tmp_path / "box.lock.slots").write_text("many", encoding="utf-8")
         assert [h["pid"] for h in _speedbump._box_lock_holders()] == [4242]
 
+    def test_the_launchers_old_default_is_read_where_the_plugin_locks_it(self, tmp_path, monkeypatch):
+        """DEF-2106 (air 016cf1): a seat whose shell still exports the
+        launcher's old default (the lock's name under the temp directory)
+        holds the home file, since the plugin's ``current_path`` moves it
+        there, but the reading read the variable raw and found no holder, so
+        on Windows, where the box lock is the only arm, a kill of a sibling's
+        tier got no nudge. The reading now reads the path the plugin locks,
+        pinned to ``current_path`` over the old default, the home file, a
+        shared path bearing the lock's name and another name. Mutation: the
+        variable read raw; every path bearing the lock's name moved home."""
+        import tests._box_lock as box
+        monkeypatch.setattr(box.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+        monkeypatch.setattr(box.Path, "home", staticmethod(lambda: tmp_path / "home"))
+        home_lock = tmp_path / "home" / ".espalier" / "espalier-box.lock"
+        home_lock.parent.mkdir(parents=True)
+        home_lock.write_text(json.dumps({"seat": "s", "lane": "l", "pid": 4242}), encoding="utf-8")
+        old = str(tmp_path / "temp" / "espalier-box.lock")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", old)
+        assert _speedbump._box_lock_holders() == [{"pid": 4242, "seat": "s", "lane": "l"}]
+        sink = types.SimpleNamespace(write=lambda _s: None, flush=lambda: None)
+        for held in (old, str(home_lock), str(tmp_path / "shared" / "espalier-box.lock"), str(tmp_path / "other.lock")):
+            monkeypatch.setenv("ESPALIER_BOX_LOCK", held)
+            assert _speedbump._box_lock_path() == box.current_path(held, stream=sink), held
+        monkeypatch.delenv("ESPALIER_BOX_LOCK")
+        assert _speedbump._box_lock_path() == "", "no variable, no default path read"
+
 
 class TestTheKillWords:
     @pytest.mark.parametrize("command,pids", [
