@@ -514,25 +514,52 @@ class TestTheBoxLocksHolder:
         holds the home file, since the plugin's ``current_path`` moves it
         there, but the reading read the variable raw and found no holder, so
         on Windows, where the box lock is the only arm, a kill of a sibling's
-        tier got no nudge. The reading now reads the path the plugin locks,
-        pinned to ``current_path`` over the old default, the home file, a
-        shared path bearing the lock's name and another name. Mutation: the
-        variable read raw; every path bearing the lock's name moved home."""
+        tier got no nudge. A victim whose plugin did not move it (one older
+        than the move, or a temp folder spelled otherwise) locks the raw file,
+        which the raw read found, so both are read: the variable's file and,
+        for the lock's own name, the home file, a pid counted once. Pinned:
+        the file ``current_path`` locks and the raw file are always among
+        those read, over spellings and homes. Mutation: the variable read
+        raw; the home file read in its place; a pid counted twice."""
         import tests._box_lock as box
         monkeypatch.setattr(box.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
         monkeypatch.setattr(box.Path, "home", staticmethod(lambda: tmp_path / "home"))
         home_lock = tmp_path / "home" / ".espalier" / "espalier-box.lock"
         home_lock.parent.mkdir(parents=True)
-        home_lock.write_text(json.dumps({"seat": "s", "lane": "l", "pid": 4242}), encoding="utf-8")
         old = str(tmp_path / "temp" / "espalier-box.lock")
+        (tmp_path / "temp").mkdir()
+        moved, raw = {"seat": "s", "lane": "l", "pid": 4242}, {"seat": "t", "lane": "m", "pid": 5151}
+        home_lock.write_text(json.dumps(moved), encoding="utf-8")
         monkeypatch.setenv("ESPALIER_BOX_LOCK", old)
-        assert _speedbump._box_lock_holders() == [{"pid": 4242, "seat": "s", "lane": "l"}]
+        assert _speedbump._box_lock_holders() == [moved], "the moved holder, read in the home file"
+        Path(old).write_text(json.dumps(raw), encoding="utf-8")
+        assert _speedbump._box_lock_holders() == [raw, moved], "an unmoved victim's raw file is read too"
+        home_lock.write_text(json.dumps(raw), encoding="utf-8")
+        assert _speedbump._box_lock_holders() == [raw], "one pid in both files is one holder"
         sink = types.SimpleNamespace(write=lambda _s: None, flush=lambda: None)
-        for held in (old, str(home_lock), str(tmp_path / "shared" / "espalier-box.lock"), str(tmp_path / "other.lock")):
-            monkeypatch.setenv("ESPALIER_BOX_LOCK", held)
-            assert _speedbump._box_lock_path() == box.current_path(held, stream=sink), held
+
+        def key(path: str) -> str:
+            return os.path.normcase(os.path.abspath(path))
+        spellings = [old, os.path.join(os.path.dirname(old), ".", "espalier-box.lock"), old + os.sep, old + "\r",
+                     str(home_lock), str(tmp_path / "shared" / "espalier-box.lock"), str(tmp_path / "other.lock"),
+                     "~/.espalier/espalier-box.lock", "espalier-box.lock"]
+        if os.name == "nt":
+            spellings.append(old.swapcase().replace("\\", "/"))
+
+        def no_home() -> Path:
+            raise RuntimeError("no home")
+
+        homes = [staticmethod(lambda: tmp_path / "home"), staticmethod(no_home),
+                 staticmethod(lambda: Path("relative-home")), staticmethod(lambda: Path(tmp_path.anchor))]
+        for home in homes:
+            monkeypatch.setattr(box.Path, "home", home)
+            for held in spellings:
+                monkeypatch.setenv("ESPALIER_BOX_LOCK", held)
+                read = [key(p) for p in _speedbump._box_lock_paths()]
+                assert read[0] == key(held) and key(box.current_path(held, stream=sink)) in read, (home, held, read)
+                assert len(read) == len(set(read)), (home, held, read)
         monkeypatch.delenv("ESPALIER_BOX_LOCK")
-        assert _speedbump._box_lock_path() == "", "no variable, no default path read"
+        assert _speedbump._box_lock_paths() == [], "no variable, no default path read"
 
 
 class TestTheKillWords:

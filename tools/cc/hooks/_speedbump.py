@@ -2282,8 +2282,9 @@ CP_MCP_SIDEEFFECT = SpeedBump(
 #   root checkout (driven 2026-11-02, air's c8e05b), so "any parent" would
 #   nudge every kill of one's own run;
 # - or that is, or runs under, a holder of the box lock's slots (the records in
-#   the lock file `$ESPALIER_BOX_LOCK` names, the launcher's old default read
-#   where the suite's plugin moves it, and, on a box of several slots, in each
+#   the lock file `$ESPALIER_BOX_LOCK` names, and the home file beside a path
+#   bearing the lock's name, where the suite's plugin moves the launcher's old
+#   default, and, on a box of several slots, in each
 #   `<lock>.slot<k>` beside it; never a default path for an unset variable,
 #   which moves) when
 #   that record's seat or lane is not this checkout's. A seat's own fresh-clone
@@ -2481,49 +2482,48 @@ def _box_lock_slot_files(path: str) -> list[str]:
 _BOX_LOCK_NAME = "espalier-box.lock"
 
 
-def _box_lock_path() -> str:
-    """The box lock's path as the suite's plugin locks it: the file
-    `$ESPALIER_BOX_LOCK` names, except the launcher's old default (the lock's
-    name under the temp directory), which ``tests/_box_lock.py::current_path``
-    moves to the home default, so a seat whose shell still exports it holds
-    the home file and is read there (DEF-2106, air's 016cf1: read raw, a
-    sibling's tier held there named no holder). '' where the variable is
-    unset: no default path is read, which moves.
-    ``tests/test_speedbump_kill.py`` pins the move to the plugin's. The temp
-    directory is asked, and its module loaded, only for a path bearing the
-    lock's name, as ``tempfile.gettempdir`` probes the disk on its first
-    call."""
+def _box_lock_paths() -> list[str]:
+    """The lock files whose slots name the box lock's holders: the one
+    `$ESPALIER_BOX_LOCK` names and, where it bears the lock's own name, the
+    home default too, a path counted once. The suite's plugin moves the
+    launcher's old default (the lock's name under the temp directory) to the
+    home file (``tests/_box_lock.py::current_path``), so a seat whose shell
+    still exports it holds the home file (DEF-2106, air's 016cf1); a victim
+    whose plugin did not move it (older than the move, or a temp folder
+    spelled otherwise) holds the raw file. Reading both needs no guess at the
+    victim's temp folder, and a holder read beside them still nudges only a
+    kill under another seat's run. [] where the variable is unset: no default
+    path is read, which moves. ``tests/test_speedbump_kill.py`` pins that the
+    file the plugin locks is among them."""
     path = os.environ.get(_BOX_LOCK_ENV, "")
-    if not path or os.path.normcase(os.path.basename(os.path.abspath(path))) != os.path.normcase(_BOX_LOCK_NAME):
-        return path
+    if not path:
+        return []
+    if os.path.normcase(os.path.basename(os.path.abspath(path))) != os.path.normcase(_BOX_LOCK_NAME):
+        return [path]
     try:
         home = Path.home()
-    except RuntimeError:  # fail-open: ok deliberate -- no home to move it to, as the plugin; the variable as set
-        return path
+    except RuntimeError:  # fail-open: ok deliberate -- no home to read beside it, as the plugin; the variable's file alone
+        return [path]
     if not home.is_absolute() or home.parent == home:
-        return path
-    import tempfile  # lazy: a path bearing the lock's name, read on a kill alone
-    old = os.path.join(tempfile.gettempdir(), _BOX_LOCK_NAME)
-    if os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(old)):
-        return path
-    return str(home / ".espalier" / _BOX_LOCK_NAME)
+        return [path]
+    new = str(home / ".espalier" / _BOX_LOCK_NAME)
+    same = os.path.normcase(os.path.abspath(new)) == os.path.normcase(os.path.abspath(path))
+    return [path] if same else [path, new]
 
 
 def _box_lock_holders() -> list[dict[str, Any]]:
     """Every holder of the box lock's slots (seat, lane, pid), each pid once,
-    from the records in the slot files of the lock ``_box_lock_path`` reads
-    (the one the plugin locks); empty where the variable is unset or no
+    from the records in the slot files of the locks ``_box_lock_paths``
+    reads; empty where the variable is unset or no
     slot's record names a positive pid. One record, the lock's own, was read
     before (DEF-2105): on a box of several slots a kill of slot 2's tree got
     no nudge."""
-    path = _box_lock_path()
-    if not path:
-        return []
     holders: list[dict[str, Any]] = []
-    for slot in _box_lock_slot_files(path):
-        holder = _box_lock_record(slot)
-        if holder is not None and all(seen["pid"] != holder["pid"] for seen in holders):
-            holders.append(holder)
+    for path in _box_lock_paths():
+        for slot in _box_lock_slot_files(path):
+            holder = _box_lock_record(slot)
+            if holder is not None and all(seen["pid"] != holder["pid"] for seen in holders):
+                holders.append(holder)
     return holders
 
 

@@ -19,4 +19,6 @@
   exported the launcher's old temp-directory default, which the suite's
   plugin moves to the home file, saw no holder there, and on Windows, where
   that reading is the only one, a kill of another seat's tier was not
-  nudged. It now reads the file the plugin locks.
+  nudged. It now reads the variable's file and, where the path bears the
+  lock's own name, the home file beside it, a holder counted once, so a
+  victim whose plugin did not move the path is read too.
