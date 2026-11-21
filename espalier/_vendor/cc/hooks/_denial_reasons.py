@@ -613,8 +613,9 @@ WRITE_GUARD_TIME_BUDGET = (
 )
 
 #: write_guard's time budget, where start-up spent the time: the judging
-#: child had not begun judging, so no judgment ran and the re-issue passes no
-#: nudge unseen; or it had, no checkpoint spent its one-shot, start-up took at
+#: child had not begun judging by the deadline, so no judgment ran before it
+#: and, with no spend read, the re-issue passes no nudge unseen; or it had, no
+#: checkpoint spent its one-shot, start-up took at
 #: least judging's share, and the call has no command or a short one, whose
 #: judging past the mark is mostly the first-use compiles every call pays
 #: (DEF-2097; ``{spent}`` then shows the split, and "not to this command"

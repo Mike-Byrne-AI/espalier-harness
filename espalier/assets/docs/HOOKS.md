@@ -2323,7 +2323,7 @@ judging, and asks for the command split into shorter ones (batches of a
 hundred or two paths). Where the judging child had not begun judging at the
 parent's deadline (below), it asks instead for the same command once more,
 since a busy machine's start-up, not the command, spent the time and no
-judgment ran. It asks the same where the child had begun, no speed-bump
+judgment ran before it. It asks the same where the child had begun, no speed-bump
 checkpoint had spent its one-shot, start-up took at least judging's share of
 the bound, and the call carries no command or one under 1,500 characters
 (`write_guard.py`'s `_RE_ISSUE_GATE_CHARS`): a shorter command would pay the
