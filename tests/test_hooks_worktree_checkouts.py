@@ -569,6 +569,7 @@ _SIBLING_READERS = {
     ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",
     ("tools/cc/hooks/_speedbump.py", "<module>"): "binds the reader with a degrade, places nothing",
     ("tools/cc/hooks/_speedbump.py", "_kill_reading"): "handed to checkout_sync.cwd_checkout",
+    ("tools/cc/hooks/_speedbump.py", "_checkout_label"): "the main checkout picked by its .git folder, never by position",
     ("tools/cc/hooks/session_start.py", "_loose_processes_line"): "handed to checkout_sync.pid_checkout",
 }
 
@@ -638,3 +639,270 @@ class TestEverySiblingReaderIsNamedWithItsRule:
         assert _sibling_checkout_readers(tmp_path) == {
             ("tools/cc/hooks/_planted.py", "<module>"), ("tools/cc/hooks/_planted.py", "first_holder"),
             ("tools/cc/hooks/_planted.py", "by_name"), ("tools/cc/_aliased.py", "<module>")}
+
+
+# -- DEF-3106: a file tool's write into another checkout of this clone --------
+
+
+def _seat_env(project: Path, *, maintenance: bool = False) -> dict:
+    """``CLAUDE_PROJECT_DIR`` at the session's project dir (a worktree seat
+    launches in its worktree; a session that entered a worktree keeps the
+    root), and the maintenance switch as the row asks."""
+    return {"CLAUDE_PROJECT_DIR": str(project), "ESPALIER_MAINTENANCE_MODE": "1" if maintenance else None}
+
+
+def _edit_payload(target: Path, cwd: Path | None, *, tool: str = "Edit") -> dict:
+    payload: dict = {"hook_event_name": "PreToolUse", "tool_name": tool}
+    if tool == "NotebookEdit":
+        payload["tool_input"] = {"notebook_path": str(target), "new_source": "x"}
+    elif tool == "Write":
+        payload["tool_input"] = {"file_path": str(target), "content": "x"}
+    else:
+        payload["tool_input"] = {"file_path": str(target), "old_string": "x = 1", "new_string": "x = 2"}
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    return payload
+
+
+def _bumped(result) -> str:
+    """The reason of a CP-OTHER-CHECKOUT fire, failing on any other answer."""
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip(), f"the write passed with no word: no checkpoint fired ({result.stderr[-300:]})"
+    out = json.loads(result.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny", out
+    reason = out["permissionDecisionReason"]
+    assert "[CP-OTHER-CHECKOUT]" in reason, reason
+    return reason
+
+
+class TestAWriteIntoAnotherCheckoutIsBumped:
+    """CP-OTHER-CHECKOUT, through the real hook on real worktree layouts: a
+    Write, Edit or NotebookEdit into a checkout of this clone other than the
+    session's own is refused once per file per session, naming both checkouts
+    and the session's own copy, and passes on its re-issue. The session's
+    checkout is the one holding the payload's cwd (air's 16ab70 (1)); the
+    worktree seats' slips it answers (win-2's into win's tree, 2026-11-18; five
+    on the Air) all dropped ``.claude/worktrees/<name>`` from the path."""
+
+    def test_a_worktree_seat_writing_the_main_checkouts_copy_is_bumped_once(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        slip = _edit_payload(root / "src" / "app.py", live)
+        reason = _bumped(run_hook("write_guard.py", slip, _seat_env(live)))
+        assert "writes into the main checkout" in reason
+        assert "not .claude/worktrees/live where this session works" in reason
+        # the session's own copy, whole: a tail cut read as a relative path and
+        # the agent wrote to one it made up (the 2026-11-21 drive, 1 run of 3)
+        own = _posix((live / "src" / "app.py").resolve())
+        assert f"this session's copy is {own}: use that one unless the other tree is meant" in reason
+        assert_hook_allowed(run_hook("write_guard.py", slip, _seat_env(live)))   # the re-issue passes
+        assert (root / "src" / "app.py").read_text(encoding="utf-8") == "x = 1\n"
+
+    def test_the_sessions_own_tree_is_silent(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", live), _seat_env(live)))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", root), _seat_env(root)))
+        # a path under no checkout of this clone is out of scope
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(tmp_path / "notes.md", live, tool="Write"),
+                                     _seat_env(live)))
+
+    def test_a_sibling_worktree_is_bumped(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        reason = _bumped(run_hook("write_guard.py", _edit_payload(other / "src" / "app.py", live), _seat_env(live)))
+        assert "writes into .claude/worktrees/other" in reason
+
+    def test_the_main_checkout_writing_a_nested_worktree_is_bumped(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        reason = _bumped(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", root), _seat_env(root)))
+        assert "writes into .claude/worktrees/live" in reason and "not the main checkout" in reason
+        # The same payload is also a declared limit's: a session working in that
+        # worktree (entered, or a main seat's agent) whose shell moved back into
+        # main sends exactly this, so it reads main as its own and is bumped here.
+
+    def test_a_session_whose_shell_moved_into_a_sibling_reads_it_as_its_own(self, tmp_path):
+        # Declared limit (the session's checkout is cwd's): a worktree seat whose
+        # shell moved into another seat's worktree writes there unsaid and is
+        # bumped writing its own tree. Pinned so a refactor flips it on purpose.
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(other / "src" / "app.py", other), _seat_env(live)))
+        reason = _bumped(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", other), _seat_env(live)))
+        assert "writes into .claude/worktrees/live" in reason and "not .claude/worktrees/other" in reason
+
+    def test_a_write_under_a_checkouts_git_folder_is_silent(self, tmp_path):
+        # The common dir every checkout shares (`.git/info/exclude` is each
+        # worktree's too) and a worktree's link file are git's, no seat's tree;
+        # a bump there named a `<own>/.git/...` copy that does not exist.
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(root / ".git" / "info" / "exclude", live, tool="Write"), env))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / ".git", root, tool="Write"), _seat_env(root)))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), env))   # control
+        # a name that only starts like it is a tree file, and still bumped
+        _bumped(run_hook("write_guard.py", _edit_payload(root / ".github" / "x.yml", live, tool="Write"), env))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / ".gitignore", live, tool="Write"), env))
+
+    def test_a_session_that_entered_a_worktree_keeps_its_tree_and_bumps_a_dropped_segment(self, tmp_path):
+        # CLAUDE_PROJECT_DIR stays at the root after a session enters a worktree
+        # (docs/external/cc-worktrees.md): read alone it would bump the tree the
+        # session now works in, which is the mutant this row kills.
+        root, live = _repo_with_worktree(tmp_path)
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", live), _seat_env(root)))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), _seat_env(root)))
+
+    def test_an_agent_worktree_writes_its_own_tree_silently(self, tmp_path):
+        # An `isolation: worktree` agent spawned by a worktree seat: the seat's
+        # project dir, the agent's cwd in a tree of its own beside the seat's
+        # (40 such writes in the Air's transcripts, none a slip).
+        root, live = _repo_with_worktree(tmp_path)
+        agent = _add_worktree(root, "agent-a1b2c3")
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(agent / "src" / "app.py", agent), _seat_env(live)))
+        _bumped(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", agent), _seat_env(live)))
+
+    def test_a_worktree_seat_whose_shell_moved_into_main_keeps_its_own_tree(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", root), _seat_env(live)))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", root), _seat_env(live)))
+
+    def test_a_cwd_in_no_checkout_reads_the_project_dirs(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", elsewhere), _seat_env(live)))
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", elsewhere), _seat_env(live)))
+        # a payload that carries no cwd reads the same way
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(live / "src" / "app.py", None), _seat_env(live)))
+
+    def test_a_clone_nested_in_the_other_checkout_is_silent(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        foreign = _foreign_clone(root)
+        (foreign / "x.py").write_text("x = 1\n", encoding="utf-8")
+        assert_hook_allowed(run_hook("write_guard.py", _edit_payload(foreign / "x.py", live), _seat_env(live)))
+        # control: the same folder with no repository of its own is the main checkout's tree
+        shutil.rmtree(foreign / ".git")
+        _bumped(run_hook("write_guard.py", _edit_payload(foreign / "x.py", live), _seat_env(live)))
+
+    def test_it_fires_under_maintenance_mode(self, tmp_path):
+        # Every seat on the Air runs maintenance mode, which skips the zone
+        # check; a bump fires there, which is why this is a bump.
+        root, live = _repo_with_worktree(tmp_path)
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "src" / "app.py", live), _seat_env(live, maintenance=True)))
+
+    def test_a_second_file_is_bumped_again_and_a_case_variant_of_the_first_is_not(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live)
+        first = _edit_payload(root / "src" / "app.py", live)
+        _bumped(run_hook("write_guard.py", first, env))
+        assert_hook_allowed(run_hook("write_guard.py", first, env))
+        _bumped(run_hook("write_guard.py", _edit_payload(root / "tests" / "test_app.py", live), env))
+        variant = _edit_payload(root / "SRC" / "App.py", live)
+        assert_hook_allowed(run_hook("write_guard.py", variant, env))
+
+    def test_a_notebook_edit_is_read_by_its_notebook_path(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        reason = _bumped(run_hook("write_guard.py", _edit_payload(root / "n.ipynb", live, tool="NotebookEdit"),
+                                  _seat_env(live)))
+        assert "this NotebookEdit writes into the main checkout" in reason
+
+    def test_a_cross_checkout_edit_that_weakens_a_guard_file_meets_both_nudges_in_turn(self, tmp_path):
+        # Registered ahead of CP-GATEWEAKEN (air's 16ab70 (5)): the wrong tree
+        # is said first, the weakening on the re-issue, then the edit passes.
+        # Maintenance mode, as a self-edit session runs, so no zone deny answers first.
+        root, live = _repo_with_worktree(tmp_path)
+        env = _seat_env(live, maintenance=True)
+        weaken = {"hook_event_name": "PreToolUse", "tool_name": "Edit", "cwd": str(live),
+                  "tool_input": {"file_path": str(root / TARGET), "old_string": "return deny(r)", "new_string": "pass"}}
+        _bumped(run_hook("write_guard.py", weaken, env))
+        second = json.loads(run_hook("write_guard.py", weaken, env).stdout)["hookSpecificOutput"]
+        assert second["permissionDecision"] == "deny" and "[CP-GATEWEAKEN]" in second["permissionDecisionReason"]
+        assert_hook_allowed(run_hook("write_guard.py", weaken, env))
+
+
+class TestTheOtherCheckoutRegistryRow:
+    """The checkpoint's settings, each load-bearing (docs/SHARP_EDGES.md, the
+    keystone speed-bump entry): cap-exempt, keyed per file, its reason held to
+    512 bytes at its caps."""
+
+    def test_it_fires_with_the_session_cap_spent(self, tmp_path):
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+        canaries = tuple(speedbump.SpeedBump(id=f"CP-CANARY-{i}", predicate=lambda *a: True, body="canary")
+                         for i in range(speedbump.SPEEDBUMP_SESSION_CAP))
+        for _ in range(speedbump.SPEEDBUMP_SESSION_CAP):
+            speedbump.check("Bash", {"command": "x"}, live, bumps=canaries)
+        fired = speedbump.check_fired("Edit", _edit_payload(root / "src" / "app.py", live)["tool_input"], live,
+                                      bumps=(speedbump.CP_OTHER_CHECKOUT,), cwd=live)
+        assert fired is not None and fired[0] == "CP-OTHER-CHECKOUT"
+
+    def test_the_row_sits_ahead_of_the_gate_weaken_nudge_and_keys_per_file(self):
+        speedbump = _hook_module("_speedbump")
+        ids = [b.id for b in speedbump.SPEEDBUMPS]
+        assert ids.index("CP-OTHER-CHECKOUT") + 1 == ids.index("CP-GATEWEAKEN")
+        bump = speedbump.CP_OTHER_CHECKOUT
+        assert bump.cap_exempt is True and bump.fires_in_maintenance is True
+        one = bump.flag_key("Edit", {"file_path": "/r/src/__init__.py"})
+        assert one != bump.flag_key("Edit", {"file_path": "/r/tests/__init__.py"})   # a bare-name key would collide
+        assert one == bump.flag_key("Write", {"file_path": "/R/SRC/__init__.py"})
+
+    def test_the_reason_stays_within_512_bytes_at_its_caps(self, monkeypatch, tmp_path):
+        speedbump = _hook_module("_speedbump")
+        monkeypatch.setattr(speedbump, "_other_checkout_hit", lambda *a, **k: ("/" + "a" * 300, "/" + "b" * 300, "c" * 400))
+        body = speedbump._other_checkout_body("NotebookEdit", {}, tmp_path, None)
+        reason = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=body)
+        assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
+        # a name past ASCII is measured as the one byte it is sent as
+        accented = speedbump._other_checkout_text("NotebookEdit", "é" * 300, "é" * 300, "/é" * 300)
+        sent = speedbump._REASON_TEMPLATE.format(id="CP-OTHER-CHECKOUT", body=accented)
+        assert len(sent.encode("utf-8")) <= 512, len(sent.encode("utf-8"))
+
+    def test_the_sessions_own_copy_is_whole_and_the_names_are_cut_first(self):
+        # The own copy is what the agent acts on: whole at a seat's length (this
+        # clone's seats run 67 characters of checkout plus at most 84 of path),
+        # the checkouts' names cut to their floor before it is, and past even
+        # that its tail is kept, the part that names the checkout and the file.
+        speedbump = _hook_module("_speedbump")
+        text, template = speedbump._other_checkout_text, speedbump._REASON_TEMPLATE
+
+        def sent(*args: str) -> str:
+            reason = template.format(id="CP-OTHER-CHECKOUT", body=text(*args))
+            assert len(reason.encode("utf-8")) <= 512, len(reason.encode("utf-8"))
+            return reason
+
+        seat = "/Users/someone/Developer/espalier-harness/.claude/worktrees/work/" + "d" * 84
+        assert f"copy is {seat}: use" in sent("Edit", "the main checkout", ".claude/worktrees/work", seat)
+        long_name, longer_seat = "n" * 60, "/" + "e" * 160
+        reason = sent("NotebookEdit", long_name, long_name, longer_seat)
+        assert f"copy is {longer_seat}: use" in reason and long_name not in reason
+        overlong = "/" + "f" * 300 + "/.claude/worktrees/work/src/app.py"
+        reason = sent("NotebookEdit", long_name, long_name, overlong)
+        # the tail fills the room the floors leave, the reason at its cap, never the old 120 cut
+        assert "copy is ..." in reason and f"{overlong[-160:]}: use" in reason
+        assert len(reason.encode("utf-8")) == 512
+
+    def test_a_helper_without_the_checkout_reader_leaves_it_silent(self, monkeypatch, tmp_path):
+        # A kept, older `_hook_utils.py` that predates `containing_checkout`
+        # (DEF-1176): the checkpoint passes the write with no word and spends
+        # no flag, as before it existed, never a raise into the hook.
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+        monkeypatch.setattr(speedbump, "containing_checkout", None)
+        slip = _edit_payload(root / "src" / "app.py", live)["tool_input"]
+        assert speedbump.check_fired("Edit", slip, live, bumps=(speedbump.CP_OTHER_CHECKOUT,), cwd=live) is None
+        state = live / speedbump.STATE_DIR
+        assert not (state.is_dir() and any(state.glob("speedbump_*")))
+
+    def test_a_checkout_that_cannot_be_resolved_is_named_by_its_path(self, monkeypatch, tmp_path):
+        # The name read for the reminder resolves every checkout of the clone;
+        # one that raises there names the checkout by its path, and the fire
+        # keeps its per-fire text (an unguarded resolve fell to the static body).
+        speedbump = _hook_module("_speedbump")
+        root, live = _repo_with_worktree(tmp_path)
+
+        class _Unresolvable(type(Path())):
+            def resolve(self, strict=False):
+                raise OSError("unresolvable")
+
+        monkeypatch.setattr(speedbump, "sibling_checkouts", lambda _root: (_Unresolvable(root),))
+        body = speedbump._other_checkout_body("Edit", _edit_payload(root / "src" / "app.py", live)["tool_input"], live, live)
+        assert body != speedbump.CP_OTHER_CHECKOUT.body
+        assert body.startswith("this Edit writes into ") and "the main checkout" not in body

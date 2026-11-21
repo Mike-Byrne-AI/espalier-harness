@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5135",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a shell slip is a path the session chose; the absence of a shell-channel bump has no structural signature a probe can read without keying on the name the fix would choose",
+ "row_sha": "64c89360c678",
+ "text_sha": "667704a5f30f",
+ "verified_2026_11_21": "OPEN (filed 2026-11-21; probe driven at filing)"
+}

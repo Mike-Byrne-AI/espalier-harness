@@ -285,6 +285,8 @@ _UNLOCKED_MAKERS: dict[str, str] = {
         "and its audit records; a hand-run census, so a kill is the operator's"),
     "scripts/guard_cost_census.py::_new_project":
         "made inside main's context-managed folder, so it goes with that folder",
+    "scripts/guard_cost_census.py::_new_repo_project":
+        "made inside main's context-managed folder, as _new_project is, so it goes with that folder",
     "bench/end_to_end/runner.py::run_scenario":
         "removed in its own finally unless --keep-work-dir; a paid, hand-run bench, so a kill is the operator's",
     "bench/guard_metamorphic.py::_spelling_rc": _CM_SMALL + "an empty dir or one probe file",

@@ -210,7 +210,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension
     "tests/test_guard_cost_census.py": (
-        4, "3b8d77a04a93429509e184cf8822acc00dfdd93b921307b7a83d524787b42051",
+        5, "b8866d7c1303d70611df7c56c5b5654fad6612c94b98144d20fa9b91b9f9a6a3",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-15 (DEF-4122): two comprehensions over first_use_patterns(module) in "
         "test_the_carried_rule_is_the_helpers_both_ways, each fixture module's key set held equal to a "
@@ -222,7 +222,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "held to its decision, everything present safe; the kinds that must be there, the calls each "
         "first-use accessor exists for, are pinned present by tests/test_guard_compile_ratchet.py's "
         "test_the_census_times_each_call_a_first_use_compile_exists_for against OPENING_CALLS, which "
-        "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there.",
+        "is held equal to the AST-read FIRST_USE_COMPILES, so a kind dropped reds there. Kept "
+        "2026-11-21 (DEF-3106): the fifth row loops census.REPO_KINDS in "
+        "test_only_the_maintenance_twins_set_the_switch, each kind's payload a Write or Edit of the "
+        "project's file; the same test holds REPO_KINDS equal to a hand literal of its four kinds, so a "
+        "shrink reds there.",
     ),
     # 1 row(s), shapes: comprehension
     "tests/test_audit_dead_rules.py": (

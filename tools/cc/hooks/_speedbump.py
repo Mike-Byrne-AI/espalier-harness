@@ -56,6 +56,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata  # already loaded by _hook_utils (its NFKC fold); CP-OTHER-CHECKOUT's key folds with it
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
 # NamedTuple (not @dataclass) for the value types below: `dataclasses` eagerly
@@ -2704,10 +2705,230 @@ CP_KILL = SpeedBump(
 )
 
 
+# ── Another checkout's tree (DEF-3106) ──────────────────────────────────────
+# A Write, Edit or NotebookEdit whose path lies in a checkout of this clone
+# other than the one the session works in. Claude Code's worktree isolation
+# fences compound shell, not the file tools, and a worktree sits inside the
+# main checkout's folder, so a path that drops `.claude/worktrees/<name>`
+# still names a real file: in another seat's live tree, whose tier or diff
+# then carries the edit (win-2's Edit of win's espalier/cli.py during win's
+# tier, 2026-11-18; five on the Air from 2026-10-18 to 2026-11-16, each one a
+# slip). A bump, not a deny: the zone check it would sit beside is skipped
+# under maintenance mode, which every seat on the Air runs, and a deliberate
+# write there (the operator's own, a hand fix in the dispatcher's catch-up
+# copy) passes on its re-issue. Pure path work over the memoised worktree
+# registry (`_hook_utils.sibling_checkouts`): no git call per Write or Edit.
+#
+# Declared limit: the session's checkout is read from the payload's cwd, so a
+# session whose shell moved into another seat's worktree (the dispatcher's
+# did, 2026-11-07) reads that tree as its own and is not bumped there, and
+# is bumped writing its own. The one exception is a worktree seat whose shell
+# moved into the main checkout: its project dir's checkout stays its own
+# (air's 16ab70). Its mirror has none: a session whose project dir is the
+# main checkout but which works in a worktree (one it entered, or a main
+# seat's `isolation: worktree` agent) and whose shell moved back into main
+# sends what the main seat itself sends, so it reads main as its own. A
+# write under a checkout's `.git` is git's, never a seat's tree, and passes.
+_OTHER_CHECKOUT_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+# The reason is held to 512 bytes like every reason here, and the session's
+# own copy of the file is the part the agent acts on, so it is given whole
+# wherever it fits and the two checkouts' names are cut first: a drive's
+# 120-character tail cut left it reading `...de-worktrees-work/...`, and the
+# agent wrote to a path it made up from that (2026-11-21, 1 run of 3).
+_OTHER_CHECKOUT_REASON_CAP = 512
+_OTHER_CHECKOUT_NAME_CAP = 60    # each checkout's name, before the own copy needs the room
+_OTHER_CHECKOUT_NAME_FLOOR = 24  # each checkout's name, when the own copy still needs it
+_OTHER_CHECKOUT_BODY = (
+    "this file tool writes into another checkout of this clone than the one this session "
+    "works in (a path that dropped .claude/worktrees/<name>); a write there lands in another "
+    "seat's live tree unseen"
+)
+# Read with the degrade the helpers above take (DEF-1176): a kept
+# `_hook_utils.py` that predates it leaves this checkpoint silent, as before
+# it, never the guard refusing to start. `_clean_path_prefixes` is not
+# degraded: write_guard reads it bare, so a helper without it is refused at
+# start whatever this module does, and a degrade here would only move where
+# that failure lands (tests/test_hooks_start_on_a_kept_helper.py).
+containing_checkout: Callable[[str, Path], Any] | None = getattr(_hook_utils, "containing_checkout", None)
+
+
+def _file_tool_path(tool_name: str, tool_input: dict) -> str | None:
+    """The path a file tool writes, read as write_guard reads it: ``file_path``,
+    else ``notebook_path`` only where ``file_path`` is absent."""
+    if tool_name not in _OTHER_CHECKOUT_TOOLS:
+        return None
+    raw = tool_input.get("file_path") if "file_path" in tool_input else tool_input.get("notebook_path")
+    return raw if isinstance(raw, str) and raw.strip() else None
+
+
+def _checkout_holding(path: Path, root: Path) -> str | None:
+    """The spelling ``_hook_utils.containing_checkout`` gives the deepest
+    checkout of this clone holding ``path`` once resolved, else None."""
+    try:
+        spelled = str(path.resolve()).replace("\\", "/")
+    except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- a path that cannot be resolved names no checkout, and CP-OTHER-CHECKOUT stays silent
+        return None
+    hit = containing_checkout(spelled, root) if containing_checkout is not None else None
+    return None if hit is None else hit[0]
+
+
+def _is_main_checkout(base: str) -> bool:
+    """Is ``base`` a main checkout, read by its ``.git`` being a folder? A
+    linked worktree's is a file. Declared limit, as ``sibling_checkouts``
+    declares its own: a ``--separate-git-dir`` main checkout's ``.git`` is a
+    file too, so there a worktree seat whose shell moved into the main
+    checkout reads main as its own tree and is not bumped writing it."""
+    try:
+        return (Path(base) / ".git").is_dir()
+    except OSError:  # fail-open: ok deliberate -- an unreadable .git is no main checkout; the session's checkout stays cwd's
+        return False
+
+
+def _session_checkout(root: Path, cwd: Path | None) -> str | None:
+    """The checkout this session works in (air's 16ab70 (1)): the one holding
+    the payload's cwd; the project dir's where cwd is in none; and the
+    project dir's where cwd is in the main checkout while the project dir is
+    a linked worktree, a seat whose shell moved into main. ``root`` is
+    ``CLAUDE_PROJECT_DIR``, which Claude Code keeps at the project root after
+    a session enters a worktree (Claude Code's worktree docs; an agent
+    worktree's write was driven with it so, 2026-11-21), so it alone
+    would read an agent's own worktree as another seat's."""
+    project = _checkout_holding(root, root)
+    here = _checkout_holding(cwd, root) if cwd is not None else None
+    if here is None:
+        return project
+    if (project is not None and here.casefold() != project.casefold()
+            and _is_main_checkout(here) and not _is_main_checkout(project)):
+        return project
+    return here
+
+
+def _inside_a_nested_repo(target: Path, base: str) -> bool:
+    """A ``.git`` between the file and the checkout holding it: a clone or a
+    submodule nested in that checkout's folder, which ``containing_checkout``
+    reads as the checkout itself (air's 16ab70 (2)). Read only where the
+    checkpoint would fire, so an ordinary write pays none of it."""
+    stop = base.casefold().rstrip("/")
+    for parent in target.parents:
+        spelled = str(parent).replace("\\", "/").casefold().rstrip("/")
+        if spelled == stop or len(spelled) <= len(stop):
+            return False
+        if (parent / ".git").exists():
+            return True
+    return False
+
+
+def _other_checkout_hit(tool_name: str, tool_input: dict, root: Path,
+                        cwd: Path | None = None) -> tuple[str, str, str] | None:
+    """``(the target's checkout, the session's checkout, the path under the
+    checkout)`` for a file tool's write into a checkout of this clone other
+    than the session's; None otherwise. A relative path is never judged (the
+    file tools take absolute ones), and a read that fails names nothing."""
+    raw = _file_tool_path(tool_name, tool_input)
+    if raw is None or containing_checkout is None or not isinstance(root, Path):
+        return None
+    try:
+        cleaned = Path(_hook_utils._clean_path_prefixes(raw))
+        if not cleaned.is_absolute():
+            return None
+        target = cleaned.resolve()
+    except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- a path that cannot be resolved names no checkout, and CP-OTHER-CHECKOUT stays silent
+        return None
+    hit = containing_checkout(str(target).replace("\\", "/"), root)
+    if hit is None:
+        return None
+    theirs, rel = hit
+    if rel.casefold() == ".git" or rel.casefold().startswith(".git/"):
+        return None   # git's own files (the common dir every checkout shares, a worktree's link), no seat's tree
+    ours = _session_checkout(root, cwd)
+    if ours is None or theirs.casefold() == ours.casefold() or _inside_a_nested_repo(target, theirs):
+        return None
+    return theirs, ours, rel
+
+
+def _pred_other_checkout(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
+    return _other_checkout_hit(tool_name, tool_input, root, cwd) is not None
+
+
+def _tail(text: str, cap: int) -> str:
+    """``text`` cut to its last ``cap`` characters behind ``...``. Its callers
+    pass a cap of 24 or more (at its floors the own copy keeps 171)."""
+    return text if len(text) <= cap else "..." + text[-max(cap - 3, 1):]
+
+
+def _checkout_label(base: str, root: Path) -> str:
+    """A checkout named as the board names one: the main checkout, a worktree
+    by its path under the main checkout's folder, else its own path."""
+    main = next((_checkout_holding(c, root) for c in (root, *sibling_checkouts(root))
+                 if _is_main_checkout(str(c))), None)
+    if main is not None:
+        if base.casefold() == main.casefold():
+            return "the main checkout"
+        if base.casefold().startswith(main.casefold() + "/"):
+            return base[len(main) + 1:]
+    return base
+
+
+def _other_checkout_body(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> str:
+    hit = _other_checkout_hit(tool_name, tool_input, root, cwd)
+    if hit is None:
+        return _OTHER_CHECKOUT_BODY
+    theirs, ours, rel = hit
+    mine = f"{ours}/{rel}" if rel else ours
+    return _other_checkout_text(tool_name, _checkout_label(theirs, root), _checkout_label(ours, root), mine)
+
+
+def _other_checkout_text(tool_name: str, theirs: str, ours: str, mine: str) -> str:
+    """The reminder for one fire, within the reason's cap: the session's own
+    copy whole wherever the room holds it, the two checkouts' names cut to
+    their floor before it is, and its tail kept where even that is short.
+    Declared limit: the reason is 7-bit ASCII, so a path holding another
+    character names it as ``?`` (a home folder spelled past ASCII)."""
+    tool_name, theirs, ours, mine = (_ascii_text(s) for s in (tool_name, theirs, ours, mine))
+
+    def compose(t: str, o: str, m: str) -> str:
+        return (f"this {tool_name} writes into {t}, another checkout of this clone (maybe another "
+                f"seat's live tree), not {o} where this session works; this session's copy is {m}: "
+                "use that one unless the other tree is meant")
+
+    room = _OTHER_CHECKOUT_REASON_CAP - len(_REASON_TEMPLATE.format(id=CP_OTHER_CHECKOUT.id, body=compose("", "", "")))
+    for cap in (_OTHER_CHECKOUT_NAME_CAP, _OTHER_CHECKOUT_NAME_FLOOR):
+        t, o = _tail(theirs, cap), _tail(ours, cap)
+        if len(t) + len(o) + len(mine) <= room:
+            return compose(t, o, mine)
+    return compose(t, o, _tail(mine, room - len(t) - len(o)))
+
+
+def _other_checkout_key(tool_name: str, tool_input: dict) -> str:
+    # Per file, never per checkout: one fire would let every later slip into
+    # that tree pass unsaid. Keyed on the resolved path folded as the zone
+    # compare folds (NFKC, then casefold: a bare `.lower()` misses what APFS
+    # folds), hashed, since CP-GATEWEAKEN's bare-name key would make two
+    # `__init__.py` files one; a case variant of the same file shares the key.
+    raw = _file_tool_path(tool_name, tool_input) or ""
+    try:
+        spelled = str(Path(_hook_utils._clean_path_prefixes(raw)).resolve())
+    except (OSError, ValueError, RuntimeError):  # fail-open: ok deliberate -- an unresolvable path keys on its spelling; the checkpoint still fires
+        spelled = raw
+    folded = unicodedata.normalize("NFKC", spelled.replace("\\", "/")).casefold()
+    return hashlib.sha256(folded.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+CP_OTHER_CHECKOUT = SpeedBump(
+    id="CP-OTHER-CHECKOUT",
+    predicate=_pred_other_checkout,
+    body=_OTHER_CHECKOUT_BODY,
+    body_for=_other_checkout_body,   # names both checkouts and the session's own copy for this fire
+    cap_exempt=True,                 # a suppressed fire is the silent write the checkpoint exists for
+    flag_key=_other_checkout_key,    # per file
+)
+
+
 # Registry consumed by `check()` (default arg) + write_guard's dispatch.
 SPEEDBUMPS: tuple[SpeedBump, ...] = (
     CP_FORCEPUSH, CP_RELEASE, CP_DISCARD, CP_GITCLEAN, CP_RMRF, CP_FETCHEXEC,   # irreversible-external
     CP_KILL,                                          # another seat's run (DEF-4078)
+    CP_OTHER_CHECKOUT,                                # another seat's tree (DEF-3106), ahead of the gate-weaken nudge
     CP_GATEWEAKEN, CP_COMPACT,                        # meta-cognitive
     CP_MCP_SIDEEFFECT,                               # v1.1 rescued (MCP side-effect)
 )
