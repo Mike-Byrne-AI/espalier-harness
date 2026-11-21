@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5134",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c 'import os, sys, tempfile, pathlib\nos.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None)\nsys.path.insert(0, \".\")\nfrom tests.test_write_guard import run_bash_guard as g\nwith tempfile.TemporaryDirectory() as d:\n    p = pathlib.Path(d)\n    v = [g(c, p) for c in (\"rsync -a --exclude secrets/ ./ backup/\", \"git mv k.pem secrets/\")]\nprint([chr(34) + \"deny\" + chr(34) in (r.stdout or \"\") for r in v])'",
+ "open_value": "[True, True]",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py"
+ ],
+ "row_sha": "5b0eae5af129",
+ "text_sha": "fec8afa8b0bb",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing here and in the export of HEAD 0e0b76d41cc4)"
+}

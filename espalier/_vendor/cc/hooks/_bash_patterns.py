@@ -2450,7 +2450,7 @@ def _powershell_word_programs(words: list[str]) -> list[str]:
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
 #: A POSIX shell's switch run before its program operand, ONE home for the
-#: `-c` opener below, the here-string opener (`_SHELL_HERESTRING_RE`) and the
+#: `-c` opener below, the stdin opener (`_SHELL_STDIN_RE`) and the
 #: speed bump's substitution arm (`_speedbump._FETCH_EXEC_SUBST_RE`).
 #: Each switch may carry one bare value, which never starts with `-` (so a
 #: value is never the next switch) and is never a spelling of a shell head:
@@ -9286,18 +9286,31 @@ _INTERP_PIPE_RE = _first_use(
     r"(?:[ \t]+-(?:[ \t]+" + _OUTPUT_REDIRECT_UNIT + r")*)?(?=[ \t]*" + _PIPE_STATEMENT_END + r")"
 )
 
-#: A POSIX shell fed its program by here-string (`bash <<< "..."`, bare or
-#: valued switches between, the operator glued or spaced -- bash accepts
-#: `sh<<<'...'`, so the arm must not REQUIRE the blank). The heredoc
-#: spelling needs no arm -- behind a shell head the body stays raw and the
-#: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
-_SHELL_HERESTRING_RE = _first_use(
-    _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
+#: A POSIX shell fed its program on stdin, by here-string (`bash <<< "..."`)
+#: or heredoc (`bash <<'SH'`): bare or valued switches between, the operator
+#: glued or spaced (bash accepts `sh<<<'...'`, so the arm must not REQUIRE
+#: the blank), and a `-` or `--` ending the options, after which the shell
+#: still reads its program on stdin (`bash -`, `bash --`, `bash -s`, `bash
+#: -s a1 a2` and `dash -s` each ran it, bash 5.2 and dash through WSL,
+#: DEF-3103). The opener ends at the `<<`, as `_INTERP_STDIN_RE` does, and
+#: each consumer tells the spellings apart by a third angle: the
+#: here-string's word is `_shell_out_program_bodies`', for every reader; a
+#: heredoc's body is `_posix_shell_heredoc_ops`', for the secret leg alone,
+#: since behind a shell head the body stays raw and the whole-command scan
+#: the other legs read sees it (DEF-3103, driven: the zone write and four
+#: speed bumps fired on the heredoc as on the plain spelling). Group 1 is
+#: the head, where the heredoc reader starts its `-c` check. The pipe
+#: spelling is `_INTERP_PIPE_RE`'s.
+_SHELL_STDIN_RE = _first_use(
+    _CMD_POS + r"((?i:" + _POSIX_SHELL_HEADS + r"))" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     # the shared switch run (§C52): unbounded, and linear because a value is
     # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
     # DEF-3077: the run holds the redirects too (`bash 2>&1 <<< '...'`,
-    # `bash 2>&1 -x <<< '...'`), so no second redirect run sits after it
-    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]*<<<[ \t]*"
+    # `bash 2>&1 -x <<< '...'`), so no second redirect run sits after it.
+    # DEF-3103: the `-` or `--` is neither a switch of the run (a switch
+    # takes a letter after its sign) nor a redirect, so the run keeps its
+    # one parse
+    + _POSIX_SHELL_SWITCH_RUN + r"(?:[ \t]+--?)?[ \t]*<<"
 )
 
 #: The three statement readers' heads, on the masked text at a command
@@ -10426,8 +10439,15 @@ def _shell_out_program_bodies(command: str, scan: str) -> Iterator[str]:
     yield from _awk_shell_out_texts(command, scan)
     yield from _sed_shell_out_texts(command, scan)
     yield from _git_program_bodies(command, scan)
-    for m in _SHELL_HERESTRING_RE.finditer(scan):
-        j = m.end()
+    for m in _SHELL_STDIN_RE.finditer(scan):
+        op = m.end() - 2
+        if command[op:op + 3] != "<<<":
+            continue                           # a heredoc: `_posix_shell_heredoc_ops`' (DEF-3103)
+        # No `-c` refusal here, unlike the heredoc reader: behind a cluster
+        # the word is that program's stdin, and reading it as a program is
+        # the over-read this reader has always taken, pinned in
+        # `TestAPosixShellHeredocProgramIsReadBySecretLeg`'s declared limits.
+        j = op + 3
         while j < len(command) and command[j] in " \t":
             j += 1
         text, _ = _read_shell_word(command, j)
@@ -10436,6 +10456,56 @@ def _shell_out_program_bodies(command: str, scan: str) -> Iterator[str]:
     for head, body in _piped_program_bodies(command):
         if head in _POSIX_SHELL_HEAD_SET:
             yield body
+
+
+def _posix_shell_c_cluster_among(words: list[str]) -> bool:
+    """Whether a POSIX shell's words before its stdin operator hold a `-c`
+    cluster, by the openers' own (`_POSIX_CLI_C_CLUSTER_RE`: either sign,
+    the `c` lower-case, so `-C` is noclobber and no cluster). A word right
+    after a bare redirect operator (`>`, `2>`, `>>`, `&>`, `<`, `>&`, `<&`,
+    `>|`) is that redirect's target, as bash reads it, never a switch: the
+    switch run's spaced target refuses a leading `-`, so in `bash > -cache
+    <<EOF` the run takes the target for a switch (DEF-3103's review)."""
+    target = False
+    for word in words:
+        if not target and _POSIX_CLI_C_CLUSTER_RE.fullmatch(word):
+            return True
+        target = word.endswith((">", "<", ">&", "<&", ">|"))
+    return False
+
+
+def _posix_shell_heredoc_ops(command: str, scan: str) -> Iterator[int]:
+    """Where each heredoc operator sits (its `<<`, one offset into both
+    strings) whose body a POSIX shell runs as its program: `bash <<'SH'`,
+    `sh -s <<EOF`, `bash -- <<EOF` (DEF-3103). The opener is
+    `_SHELL_STDIN_RE`, matched on ``scan`` and on its heredoc opener view
+    (`_heredoc_opener_view`), so a redirect before the operator, an fd-0
+    operator (`0<<`) and a flag glued to it (`-x<<`) open it as the plain
+    spelling does. A here-string (`<<<`) is the word reader's
+    (`_shell_out_program_bodies`), and a `-c` cluster among the switches
+    (`bash -c cat <<EOF`, either sign, read by
+    `_posix_shell_c_cluster_among`) makes the body that program's stdin,
+    its data. The caller reads each body by its own delimiter rule.
+    Declared limits, each an allow: a second operand after `-s` (`bash -s
+    a1 a2 <<EOF`, `bash -s -- a1 <<EOF`) or a quoted switch value or
+    operand (`bash -s 'a b' <<EOF`), since the switch run gives a switch
+    one bare value; a second heredoc on the shell's stdin (`bash <<A
+    <<B`), whose body bash runs while the opener ends at the first; and a
+    `-c` program that itself reads stdin (`bash -c 'bash -s' <<EOF`).
+    Declared over-read, the run's own: a script after a switch is read as
+    the switch's value, so `bash -x run.sh <<EOF` reads the script's input
+    as the program, toward friction."""
+    if len(scan) != len(command):
+        scan = command
+    read: set[int] = set()
+    for m in _scan_and_view_matches(_SHELL_STDIN_RE, scan, _heredoc_opener_view(scan)):
+        op = m.end() - 2                       # index of `<<` in both strings
+        if op in read or command[op:op + 3] == "<<<":
+            continue                           # one opener on scan and view; a here-string
+        read.add(op)
+        if _posix_shell_c_cluster_among(m.string[m.end(1):op].split()):
+            continue
+        yield op
 
 
 def nested_shell_programs(command: str) -> list[str]:

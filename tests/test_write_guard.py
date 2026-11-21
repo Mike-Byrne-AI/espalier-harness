@@ -827,7 +827,7 @@ class TestQuotedVerbTailIsUniform:
             "pwsh", "pwsh -Command \"Set-Content tools/cc/hooks/x.py x\""),
         "_INTERP_STDIN_RE": (
             "python3", "python3 - <<'EOF'\nopen('tools/cc/hooks/x.py','w')\nEOF"),
-        "_SHELL_HERESTRING_RE": ("bash", "bash <<< 'echo x > tools/cc/hooks/x.py'"),
+        "_SHELL_STDIN_RE": ("bash", "bash <<< 'echo x > tools/cc/hooks/x.py'"),
         "_AWK_HEAD_RE": ("awk", "awk 'BEGIN{system(\"echo x > tools/cc/hooks/x.py\")}'"),
         "_SED_HEAD_RE": ("sed", "sed -n 'e echo x > tools/cc/hooks/x.py' /tmp/in"),
         "_GIT_HEAD_RE": (
@@ -8061,6 +8061,182 @@ class TestAStdinOpenerReadsItsOperatorAsBashSplitsIt:
         assert b._redirects_blanked(scan, powershell=False) is scan
         view = b._heredoc_opener_view(scan)
         assert view.startswith("python3 -u  <<'PY'") and len(view) == len(scan)
+
+
+#: DEF-3103's openers, each up to its heredoc delimiter: the POSIX shell
+#: heads, the switches and the `-` or `--` before stdin (bash 5.2 and dash
+#: ran the program behind each, through WSL), the wrappers and paths the
+#: command position reads, and DEF-5125's opener-view operators on a shell
+#: head (an fd-0 operator, a flag or a redirect glued to it, a redirect
+#: before it).
+_POSIX_SHELL_HEREDOC_HEADS = [
+    ("bash <<", "bash"),
+    ("sh <<", "sh"),
+    ("zsh <<", "zsh"),
+    ("dash <<", "dash"),
+    ("ksh <<", "ksh"),
+    ("bash<<", "glued-head"),
+    ("/bin/bash <<", "a-path"),
+    ("bash.exe <<", "exe-suffix"),
+    ("sudo bash <<", "behind-sudo"),
+    ("env bash <<", "behind-env"),
+    ("cd x && bash <<", "after-a-statement"),
+    ("bash -s <<", "dash-s"),
+    ("sh -s arg <<", "dash-s-one-operand"),
+    ("bash --norc -x <<", "switches"),
+    # noclobber, no command: the `-c` refusal reads the lower-case letter
+    ("bash -C <<", "upper-case-c-switch"),
+    ("bash - <<", "dash-operand"),
+    ("bash -- <<", "end-of-options"),
+    ("bash 0<<", "fd-zero"),
+    ("bash -x<<", "flag-glued-to-the-operator"),
+    ("bash 2>/dev/null <<", "redirect-before"),
+    ("bash >o<<", "redirect-glued-to-the-operator"),
+    # a spaced redirect's target is no switch, though it reads like a cluster
+    ("bash > -cache <<", "redirect-target-like-a-cluster"),
+]
+
+
+class TestAPosixShellHeredocProgramIsReadBySecretLeg:
+    """DEF-3103: a program handed to a POSIX shell on stdin as a heredoc is
+    read by the secret leg, as its plain, `-c` and here-string spellings
+    are. The leg takes every heredoc body out as data (DEF-4109), and the
+    stdin opener named no POSIX shell, so `bash <<'SH'` over `cat .env`
+    allowed where `cat .env`, `bash -c 'cat .env'` and `bash <<< 'cat .env'`
+    denied (driven at 2c1dcde7 and again at 2056558, every head below). The
+    zone leg and the speed bump read the body already, from the raw text a
+    shell head leaves (driven: a zone write and four bumps fire on the
+    heredoc as on the plain spelling), so the reader is the secret leg's
+    alone. The opener is the here-string's, widened to end at the `<<`
+    (`_bash_patterns._SHELL_STDIN_RE`), and it matches on the heredoc
+    opener view too, so DEF-5125's operators open it. Only a body the
+    heredoc walk recorded is read: an opener inside another heredoc's body
+    is data (the code review: a pull request body quoting the shape was a
+    false deny, and reading each such opener to the end fanned out)."""
+
+    _BODY = "cat .env"
+
+    @staticmethod
+    def _heredoc(head: str, body: str, delim: str = "SH") -> str:
+        return head + "'" + delim + "'\n" + body + "\n" + delim
+
+    @pytest.mark.parametrize("head", [h for h, _ in _POSIX_SHELL_HEREDOC_HEADS],
+                             ids=[i for _, i in _POSIX_SHELL_HEREDOC_HEADS])
+    def test_the_heredoc_program_reads_the_secret(self, tmp_path, head):
+        cmd = self._heredoc(head, self._BODY)
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<SH\ncat .env\nSH",
+        "bash <<-'SH'\n\tcat .env\n\tSH",
+        "bash <<'SH' > out.log\necho start\ncat .env\nSH",
+        "cat > n.md <<'MD'\nx\nMD\nbash <<'SH'\ncat .env\nSH",
+        # bash ends a body at its delimiter alone: an indented one is a line
+        # of the program, and the read after it runs (DEF-4109's exact rule)
+        "bash <<'SH'\n  SH\ncat .env\nSH",
+        # two operators on one line: the second body is the shell's
+        "cat > n.md <<'MD' && bash <<'SH'\nx\nMD\ncat .env\nSH",
+        # a shell's heredoc inside another shell's: read one level down
+        "bash <<'B'\nbash <<'A'\ncat .env\nA\nB",
+    ], ids=["unquoted-delimiter", "tab-strip", "redirect-after-the-operator",
+            "after-another-heredoc", "indented-delimiter-is-a-line", "second-on-one-line",
+            "nested-in-another-shells"])
+    def test_the_body_bash_runs_is_the_one_read(self, tmp_path, cmd):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<'SH'\necho hi\nSH",
+        "bash <<'SH'\ngrep -rn '[.]env' docs\nSH",
+        # a `-c` program reads the heredoc as its stdin, its data
+        "bash -c cat <<'SH'\ncat .env\nSH",
+        "bash -xc cat <<'SH'\ncat .env\nSH",
+        "bash +c cat <<'SH'\ncat .env\nSH",
+        "bash -c 'cat' <<'SH'\ncat .env\nSH",
+        # a script operand is the program, the heredoc its input
+        "bash run.sh <<'SH'\ncat .env\nSH",
+        # another fd is not stdin
+        "bash 3<<'SH'\ncat .env\nSH",
+        # no invocation: an argument, prose (behind a comment the `<<` opens
+        # no heredoc, so its "body" runs as commands and is read as such)
+        "echo bash <<'SH'\ncat .env\nSH",
+        "echo \"bash <<'SH'\"",
+        # a document or a commit message that quotes the shape
+        "cat > notes.md <<'MD'\nbash <<'SH'\ncat .env\nSH\nMD",
+        "git commit -m \"$(cat <<'EOF'\nbash <<'SH'\ncat .env\nSH\nEOF\n)\"",
+        # two operators on one line: the first body is data, the shell's is
+        # the second
+        "cat > n.md <<'MD' && bash <<'SH'\ncat .env\nMD\necho hi\nSH",
+        # an opener inside another heredoc's body, under a head whose body
+        # the masker keeps: data, the walk records no such heredoc
+        "gh pr create --title t --body \"$(cat <<'EOF'\nexample:\nbash <<'SH'\ncat .env\nSH\nEOF\n)\"",
+        "patch -p1 <<'EOF'\nbash <<X\ncat .env\nEOF",
+        # many of them: each was read to the end, one level down, again
+        "patch -p1 <<'EOF'\n" + "\n".join(f"bash <<X{i}" for i in range(300)) + "\nEOF",
+    ], ids=["benign", "a-pattern-names-it", "bare-c-program", "c-in-a-cluster", "plus-c",
+            "quoted-c-program", "script-operand", "fd-three", "an-argument", "prose", "a-document",
+            "a-commit-message", "data-body-first-on-one-line", "a-pull-request-body",
+            "an-opener-in-a-data-body", "many-openers-in-a-data-body"])
+    def test_a_body_no_shell_runs_as_its_program_allows(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    def test_the_declared_limits_are_pinned(self, tmp_path):
+        """A second operand after `-s`, or a quoted switch value or operand,
+        ends the opener's switch run (a switch takes one bare value), so its
+        program is not read; nor is a second heredoc on the shell's stdin,
+        whose body bash runs while the opener ends at the first, a `-c`
+        program that itself reads stdin, or a shell's heredoc nested three
+        deep (the readers' `_PS_STDIN_MAX_DEPTH`): each an allow, pinned so a
+        reading of it is seen. The run's own over-read reads a script after
+        a switch as the switch's value, so the script's input is read as the
+        program, and the here-string reader reads a word behind a `-c`
+        cluster as a program: each a deny, pinned the same way (toward
+        friction)."""
+        h = self._heredoc
+        for cmd in (h("bash -s a1 a2 <<", self._BODY), h("bash -s -- a1 <<", self._BODY),
+                    h("bash -s 'a b' <<", self._BODY), h("bash -c 'bash -s' <<", self._BODY),
+                    "bash <<A <<B\necho a\nA\ncat .env\nB",
+                    h("bash <<", h("bash <<", h("bash <<", self._BODY, "A"), "B"), "C")):
+            assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+        for cmd in (h("bash -x run.sh <<", self._BODY), "bash -c cat <<< 'cat .env'"):
+            assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    def test_a_call_holding_no_heredoc_never_asks_the_reader(self, monkeypatch):
+        """The reader sits behind the heredoc walk's finds, so a call holding
+        no heredoc pays nothing for it: the reader is never asked, while the
+        leg still reads the `-c` program and the here-string."""
+        wg = _load_write_guard()
+
+        def _asked(*_args, **_kwargs):
+            raise AssertionError("the heredoc reader was asked on a call holding no heredoc")
+
+        monkeypatch.setattr(wg._bash_patterns, "_posix_shell_heredoc_ops", _asked)
+        for cmd, read in (("bash -c 'cat .env'", True), ("bash <<< 'cat .env'", True), ("ls -la", False)):
+            got = [t for t in wg._secret_read_targets(cmd) if wg._secret_pattern_for(t)]
+            assert bool(got) is read, (cmd, got)
+
+    @pytest.mark.parametrize("head", [h for h, _ in _POSIX_SHELL_HEREDOC_HEADS],
+                             ids=[i for _, i in _POSIX_SHELL_HEREDOC_HEADS])
+    def test_the_reader_yields_the_operator(self, head):
+        """The reader itself, below the verdict: one offset, the `<<`'s."""
+        b = _bash_patterns_module()
+        cmd = self._heredoc(head, self._BODY)
+        ops = list(b._posix_shell_heredoc_ops(cmd, b.mask_inert_syntax(cmd)))
+        assert ops == [cmd.index("<<")], (cmd, ops)
+
+    def test_the_here_string_reader_skips_a_heredoc_and_reads_after_end_of_options(self):
+        """The opener is shared: its here-string consumer reads no heredoc,
+        and a `-` or `--` before the here-string, which bash also reads as
+        the end of its options, now opens it as well."""
+        b = _bash_patterns_module()
+        for cmd, want in ((self._heredoc("bash <<", self._BODY), []),
+                          ("bash <<< 'cat .env'", ["cat .env"]),
+                          ("bash -- <<< 'cat .env'", ["cat .env"]),
+                          ("sh - <<<'cat .env'", ["cat .env"])):
+            scan = b.mask_inert_syntax(cmd)
+            assert list(b._shell_out_program_bodies(cmd, scan)) == want, cmd
+            # and the heredoc reader reads no here-string
+            if want:
+                assert list(b._posix_shell_heredoc_ops(cmd, scan)) == [], cmd
 
 
 class TestBashOperandSpansStopAtNewline:
@@ -18547,7 +18723,7 @@ class TestQuotedTargetSurvivesTheRoot:
         "_RUBY_DASH_E_RE": ("Bash", f"ruby -e \"File.write('{_TARGET}','x')\""),
         "_PERL_DASH_E_RE": ("Bash", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_INTERP_STDIN_RE": ("Bash", f"python3 - <<'EOF'\nopen('{_TARGET}','w')\nEOF"),
-        "_SHELL_HERESTRING_RE": ("Bash", f"bash <<< 'echo x > \"{_TARGET}\"'"),
+        "_SHELL_STDIN_RE": ("Bash", f"bash <<< 'echo x > \"{_TARGET}\"'"),
         "_POWERSHELL_DASH_COMMAND_RE": (
             "Bash", f"pwsh -Command \"Set-Content -Path '{_TARGET}' -Value x\""),
         "_AWK_HEAD_RE": ("Bash", f"awk 'BEGIN{{print \"x\" > \"{_TARGET}\"}}' /dev/null"),
@@ -26108,10 +26284,41 @@ class TestTheLinkReadFollowsAJunctionAndNoOtherReparsePoint:
         found, followed = self._stand_in(monkeypatch, tmp_path, 0x9000701A)
         assert found is None and not followed, (found, followed)
 
-    @pytest.mark.parametrize("spelled", ["//host/share/notes.txt", "\\\\host\\share\\notes.txt"])
+    def test_a_junction_named_secrets_to_another_folder_is_refused_as_a_link(self, monkeypatch, tmp_path):
+        """A junction lstats as a folder, so the junction test must come
+        before DEF-5131's folder test: the refusal then names the junction's
+        target, which the folder test would not (the code review's note)."""
+        import stat
+        import types
+        _bash_patterns_module()
+        import write_guard as wg
+        (tmp_path / "vault").mkdir()
+        point, vault = str(tmp_path / "secrets"), str(tmp_path / "vault")
+        real_lstat, real_realpath = wg.os.lstat, wg.os.path.realpath
+
+        def lstat(path, *a, **k):
+            if str(path) == point:
+                return types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_reparse_tag=0xA0000003)
+            return real_lstat(path, *a, **k)
+
+        def readlink(path, *a, **k):
+            raise OSError("not a link")
+
+        monkeypatch.setattr(wg.os, "lstat", lstat)
+        monkeypatch.setattr(wg.os.path, "realpath", lambda p, *a, **k: vault if str(p) == point else real_realpath(p, *a, **k))
+        monkeypatch.setattr(wg.os, "readlink", readlink)
+        assert wg._linked_secret("secrets", tmp_path, bash=False) == ("secrets/**", vault)
+
+    @pytest.mark.parametrize("spelled", [
+        "//host/share/notes.txt", "\\\\host\\share\\notes.txt",
+        "\\\\?\\C:\\proj\\secrets", "\\\\.\\C:\\proj\\secrets",
+    ])
     def test_a_network_share_spelling_is_never_looked_up(self, spelled, monkeypatch, tmp_path):
         """A share's lookup can wait on the network past the hook's budget,
-        so the spelling is judged by its name alone (docs/HOOKS.md)."""
+        so the spelling is judged by its name alone (docs/HOOKS.md); a local
+        device spelling (`\\\\?\\`, `\\\\.\\`) starts with the same double
+        backslash and is judged the same way, so its bare secrets folder is
+        not looked up (air's c17a89 placement of DEF-5131's review note)."""
         _bash_patterns_module()
         import write_guard as wg
         asked = []
@@ -26124,7 +26331,9 @@ class TestTheSecretsRuleReadsAFolderEndedByASlash:
     (`secrets/`), never below another folder (`x/secrets/`) or by its full
     path (`/abs/secrets/`), so a link to the folder, which resolves to the
     full path, read clean (DEF-3099's lane). A name with no slash after it
-    may be a file and stays as it was."""
+    may be a file and stays as it was in the matcher, which reads no disk;
+    the link read judges an existing folder by it (DEF-5131, the class
+    after this one)."""
 
     @pytest.mark.parametrize("spelled", ["secrets/", "x/secrets/", "/abs/secrets/", "C:\\abs\\secrets\\"])
     def test_a_folder_ended_by_a_slash_matches(self, spelled):
@@ -26137,6 +26346,189 @@ class TestTheSecretsRuleReadsAFolderEndedByASlash:
         _bash_patterns_module()
         import write_guard as wg
         assert wg._secret_pattern_for(spelled) is None
+
+
+def _secrets_folder_tree(tmp_path: Path) -> Path:
+    """A project holding a ``secrets`` folder and a ``config/secrets``
+    folder, each with a key file in it."""
+    project = tmp_path / "proj"
+    for folder in (project / "secrets", project / "config" / "secrets"):
+        folder.mkdir(parents=True)
+        (folder / "k.txt").write_bytes(b"K\n")
+    return project
+
+
+class TestASecretsFolderNamedWholeIsTheFolder:
+    """DEF-5131: the secrets rule read a folder only when a slash ended it,
+    so a Grep of the folder by the full path the Grep tool sends
+    (`<project>/secrets`), bare or dot-slash, and a `cp -r` or a `tar` of
+    it bare, searched or copied every file in it where the same call on
+    `secrets/` was refused. The link read's lstat now judges an existing
+    folder by the name typed with a slash after it, and so the typed name of
+    a link whose last target is a folder. Through the real hook, each beside
+    its slash control; a name no folder answers to stays a name."""
+
+    # (tool, call with the folder bare, the same call with a slash after it)
+    _BARE = {
+        "grep-tool-by-full-path": ("Grep", "<P>/secrets", "<P>/secrets/"),
+        "grep-tool-bare": ("Grep", "secrets", "secrets/"),
+        "grep-tool-dot-slash": ("Grep", "./secrets", "./secrets/"),
+        "grep-tool-below-a-folder": ("Grep", "config/secrets", "config/secrets/"),
+        "cp-r": ("Bash", "cp -r secrets backup", "cp -r secrets/ backup"),
+        "tar": ("Bash", "tar czf s.tgz secrets", "tar czf s.tgz secrets/"),
+        "copy-item": ("PowerShell", "Copy-Item -Recurse secrets backup",
+                      "Copy-Item -Recurse secrets/ backup"),
+        "compress-archive": ("PowerShell", "Compress-Archive -Path secrets -DestinationPath s.zip",
+                             "Compress-Archive -Path secrets/ -DestinationPath s.zip"),
+    }
+
+    @staticmethod
+    def _verdict(tool: str, spelled: str, project: Path) -> subprocess.CompletedProcess:
+        if tool == "Grep":
+            return run_guard_tool(
+                "Grep", {"pattern": "K", "path": spelled.replace("<P>", str(project))}, project)
+        return run_guard_from(tool, spelled, project, project)
+
+    @pytest.mark.parametrize("key", list(_BARE))
+    def test_the_folder_named_with_no_slash_is_refused_as_with_one(self, key, tmp_path):
+        project = _secrets_folder_tree(tmp_path)
+        tool, bare, slashed = self._BARE[key]
+        assert_hook_denied(self._verdict(tool, slashed, project), contains_reason="secrets/**")
+        verdict = self._verdict(tool, bare, project)
+        assert_hook_denied(verdict, contains_reason="secrets/**")
+        assert "a link to" not in verdict.stdout, verdict.stdout
+
+    @pytest.mark.parametrize(("tree", "tool", "spelled"), [
+        ("file", "Grep", "secrets"),
+        ("file", "Bash", "cp secrets backup"),
+        ("absent", "Grep", "secrets"),
+        ("absent", "Bash", "tar czf s.tgz secrets"),
+        ("other-case", "Grep", "Secrets"),
+        ("other-case", "Bash", "cp -r Secrets backup"),
+    ])
+    def test_a_name_no_folder_of_that_name_answers_stays_a_name(self, tree, tool, spelled, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        if tree == "file":
+            (project / "secrets").write_bytes(b"K\n")
+        elif tree == "other-case":
+            (project / "Secrets").mkdir()
+            (project / "Secrets" / "k.txt").write_bytes(b"K\n")
+        assert_hook_allowed(self._verdict(tool, spelled, project))
+
+    def test_grep_on_bash_stays_off_the_read_roster(self, tmp_path):
+        """The read roster does not grow: `grep` on Bash is outside it, with
+        the slash or without (the boundary `_secret_read_targets_one`'s
+        docstring declares, DEF-718), so the folder's existing makes no
+        difference here; the Grep tool is the reader this row fixes."""
+        project = _secrets_folder_tree(tmp_path)
+        assert_hook_allowed(run_guard_from("Bash", "grep -r K secrets", project, project))
+        assert_hook_allowed(run_guard_from("Bash", "grep -r K secrets/", project, project))
+
+    def test_a_folder_an_earlier_cd_reaches_stays_a_name(self, tmp_path):
+        """The folder is looked for from the directory the call starts in,
+        as the link read looks for a link, so after a `cd` in the same call
+        the bare name is not found and stays a name; its slash spelling is
+        refused by name (the failure-mode review's F2)."""
+        project = tmp_path / "proj"
+        (project / "config" / "secrets").mkdir(parents=True)
+        (project / "config" / "secrets" / "k.txt").write_bytes(b"K\n")
+        assert_hook_allowed(run_guard_from("Bash", "cd config && cp -r secrets out", project, project))
+        assert_hook_denied(
+            run_guard_from("Bash", "cd config && cp -r secrets/ out", project, project),
+            contains_reason="secrets/**")
+
+    @pytest.mark.parametrize("command", [
+        "rsync -a --exclude secrets ./ backup/",
+        "zip -r out.zip . -x secrets",
+        "git mv k.pem secrets",
+        "cp -t secrets k.pem",
+        "install -d secrets",
+    ])
+    def test_the_slash_spelling_s_reader_friction_now_holds_bare(self, command, tmp_path):
+        """These readers take an exclude value, a destination or a target
+        folder for a path the call reads or moves, so the slash spelling was
+        refused already; the bare spelling of an existing folder now agrees.
+        Pinned at the verdict it has, so the day a reader stops taking such
+        a value its row reds and is rewritten on purpose (the failure-mode
+        review's F1; DEF-5134 is the readers' row, `_copier_sources` and
+        `_bash_patterns.iter_removed_or_relocated_operands`)."""
+        project = _secrets_folder_tree(tmp_path)
+        (project / "k.pem").write_bytes(b"k\n")
+        slashed = command.replace("secrets", "secrets/")
+        assert_hook_denied(run_guard_from("Bash", slashed, project, project), contains_reason="secrets/**")
+        assert_hook_denied(run_guard_from("Bash", command, project, project), contains_reason="secrets/**")
+
+    def test_the_folder_test_costs_no_read_beyond_the_lstat(self, monkeypatch, tmp_path):
+        """One lstat and no stat for a plain folder and a plain file: the
+        folder test reads the lstat in hand (the failure-mode review's F4; an
+        `os.path.isdir` there would stat every existing candidate)."""
+        _bash_patterns_module()
+        import write_guard as wg
+        project = _secrets_folder_tree(tmp_path)
+        (project / "plain.txt").write_bytes(b"p\n")
+        calls = []
+        real_lstat, real_stat = wg.os.lstat, wg.os.stat
+        monkeypatch.setattr(wg.os, "lstat", lambda p, *a, **k: calls.append(("lstat", p)) or real_lstat(p, *a, **k))
+        monkeypatch.setattr(wg.os, "stat", lambda p, *a, **k: calls.append(("stat", p)) or real_stat(p, *a, **k))
+        for name in ("secrets", "plain.txt"):
+            calls.clear()
+            wg._linked_secret(name, project, bash=True)
+            assert [kind for kind, _ in calls] == ["lstat"], (name, calls)
+
+    def test_the_matcher_reads_no_disk(self, monkeypatch):
+        """`_secret_pattern_for` stays a pure function of the spelling:
+        `tools/cc/mail.py::secret_hits` screens mail text with it (the
+        failure-mode review's F5). A disk read there raises here."""
+        _bash_patterns_module()
+        import write_guard as wg
+
+        def refuse(*a, **k):
+            raise AssertionError("the matcher read the disk")
+
+        with monkeypatch.context() as scoped:  # undone before any fixture's teardown reads the disk
+            for name in ("lstat", "stat", "listdir", "scandir"):
+                scoped.setattr(wg.os, name, refuse)
+            labels = [wg._secret_pattern_for(spelled) for spelled in
+                      ("secrets", "/abs/secrets", "secrets/", ".env", "x/credentials.json", "notes.txt")]
+        assert labels == [None, None, "secrets/**", ".env / .env.*", "**/credentials.json", None], labels
+
+    def test_the_link_read_returns_the_folder_with_no_link_to_name(self, tmp_path):
+        """In process: the label, and an empty second item where the target
+        itself is the folder; a file of the name, and nothing, read None."""
+        _bash_patterns_module()
+        import write_guard as wg
+        project = _secrets_folder_tree(tmp_path)
+        assert wg._linked_secret("secrets", project, bash=True) == ("secrets/**", "")
+        assert wg._linked_secret(str(project / "config" / "secrets"), project, bash=False) == (
+            "secrets/**", "")
+        (project / "other").mkdir()
+        assert wg._linked_secret("other", project, bash=True) is None
+        assert wg._linked_secret("secrets/k.txt", project, bash=True) is None
+        assert wg._linked_secret("nothing-here", project, bash=True) is None
+
+    @requires_symlink
+    @pytest.mark.parametrize(("tool", "spelled"), [
+        ("Grep", "secrets"),
+        ("Grep", "<P>/secrets"),
+        ("Bash", "tar czf s.tgz secrets"),
+    ])
+    def test_a_link_named_secrets_to_a_folder_of_another_name_is_refused(self, tool, spelled, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "k.txt").write_bytes(b"K\n")
+        os.symlink(vault, project / "secrets", target_is_directory=True)
+        assert_hook_denied(self._verdict(tool, spelled, project), contains_reason="a link to")
+
+    @requires_symlink
+    def test_a_link_named_secrets_to_a_file_stays_a_name(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "plain.txt").write_bytes(b"p\n")
+        os.symlink(project / "plain.txt", project / "secrets")
+        assert_hook_allowed(self._verdict("Grep", "secrets", project))
 
 
 
