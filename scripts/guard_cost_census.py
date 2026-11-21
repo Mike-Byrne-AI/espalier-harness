@@ -98,6 +98,11 @@ agent's run under a Bash call's ten-minute cap, waits ``DEFAULT_WAIT_S``. Inside
 a holder (the inherited ``ESPALIER_BOX_LOCK_HOLDER`` names the live pid in the
 record) it passes through. With the lock variable unset it runs unguarded and
 says ``unguarded`` beside every figure. ``--compile`` counts and takes no lock.
+On a box of several slots (``tools/cc/_json_safe.py::box_lock_slots``, the
+count in the file beside the lock) the census holds every slot, in order, as a
+tier's serial line does, since what it times is one process's start on a quiet
+box (DEF-2105); the pair is read over every slot first, and its log lines name
+the slot the plugin's way.
 
 Every child's environment drops ``ESPALIER_MAINTENANCE_MODE`` and every
 ``CLAUDE_*`` variable, sets ``CLAUDE_PROJECT_DIR`` to the spawn's temp project and
@@ -176,6 +181,7 @@ WAIT_KEY = "ESPALIER_BOX_LOCK_WAIT_S"
 DID_NOT_RUN_EXIT = 75
 POLL_S = 0.25
 REPORT_S = 30.0
+EVERY_SLOT = "every"
 #: The census's wait where ``WAIT_KEY`` is unset: under a Bash call's ten-minute
 #: cap, so a run behind a seat's tier ends with ``DID_NOT_RUN_EXIT`` rather than
 #: being cut by the cap or backgrounded into timing the box later (DEF-4056).
@@ -738,6 +744,13 @@ def inside_holder(record: dict | None) -> bool:
     return str(record.get("pid")) == env_pid and holder_alive(pid)
 
 
+def pair_paths(lock: Path, slot_paths: list[Path], most: int) -> list[Path]:
+    """The slot files the inherited pair is read in (``tests/_box_lock.py::pair_paths``):
+    the count's, then each later ``<lock>.slot<k>`` up to ``most`` that is there."""
+    extra = [Path(f"{lock}.slot{k}") for k in range(len(slot_paths) + 1, most + 1)]
+    return [*slot_paths, *(p for p in extra if p.is_file())]
+
+
 def home_default() -> str | None:
     try:
         home = Path.home()
@@ -796,9 +809,10 @@ def build_record() -> dict:
 
 
 def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
-                *, why: str = "", held_s: float | None = None, stream: TextIO | None = None) -> None:
+                *, why: str = "", held_s: float | None = None, slot: int | str | None = None,
+                slots: int | None = None, stream: TextIO | None = None) -> None:
     """One JSON line in ``<lock path>.log``, ``tests/_box_lock.py::log_outcome``'s shape
-    (a ``released`` line's ``held_s`` included)."""
+    (a ``released`` line's ``held_s`` included, and every line's ``slot`` and ``slots``)."""
     end = datetime.now(timezone.utc)
     span = held_s if held_s is not None else waited_s
     start = datetime.fromtimestamp(end.timestamp() - span, tz=timezone.utc)
@@ -806,7 +820,7 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
                   "run": {k: (run or {}).get(k) for k in ("seat", "lane", "pid")},
                   "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
                   "start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds"),
-                  "waited_s": round(waited_s, 3)}
+                  "waited_s": round(waited_s, 3), "slot": slot, "slots": slots}
     if held_s is not None:
         line["held_s"] = round(held_s, 3)
     if why:
@@ -844,7 +858,8 @@ def waiting_line(record: dict | None, waited_s: float) -> str:
             except ValueError:
                 pass
         shown = pid if pid is not None else "?"
-        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {shown}, held {held_min} min)"
+        held = "taking every slot" if record.get("draining") else f"held {held_min} min"
+        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {shown}, {held})"
     else:
         who = "no holder record"
     argv = [str(a) for a in ((record or {}).get("argv") or [])]
@@ -855,19 +870,30 @@ def waiting_line(record: dict | None, waited_s: float) -> str:
 
 
 class BoxLock:
-    """The census's hold on the box lock for the length of its timed work."""
+    """The census's hold on the box lock for the length of its timed work:
+    every slot of the box, taken in order and each kept as it comes, as the
+    plugin's serial line takes them (``tests/_box_lock.py::BoxLock`` with
+    ``every``), its record in each slot it holds saying so while it waits for
+    the rest."""
 
     def __init__(self, stream: TextIO | None = None) -> None:
         self.stream = stream if stream is not None else sys.stderr
         self.path: Path | None = None
-        self.fh: TextIO | None = None
+        self.slot_paths: list[Path] = []
+        self.handles: dict[int, TextIO] = {}  # each slot's open handle by its number (1 is the lock itself)
+        self.taken: list[int] = []  # the slots held, always 1 to k
         self.record: dict | None = None
-        self.held = False
+        self.held = False  # every slot is held
         self.outcome = "unguarded"
         self.why = f"{LOCK_KEY} is not set"
         self.holder_seen: dict | None = None
         self.waited_s = 0.0
         self.taken_at: float | None = None  # the take's time.monotonic(), set once its acquire line is logged
+
+    @property
+    def fh(self) -> TextIO | None:
+        """The first open handle (slot 1's), None once every one is closed."""
+        return next(iter(self.handles.values()), None)
 
     def acquire(self) -> None:
         raw = os.environ.get(LOCK_KEY)
@@ -877,10 +903,15 @@ class BoxLock:
             self.path = Path(current_path(raw, stream=self.stream))
             self.record = build_record()
             self.path.parent.mkdir(exist_ok=True)
-            self.fh = open(self.path, "a+", encoding="utf-8")
+            paths, note = _JSON_SAFE.box_lock_slots(str(self.path))
+            if note:
+                print(note, file=self.stream, flush=True)
+            self.slot_paths = [Path(p) for p in paths]
+            for number, slot in enumerate(self.slot_paths, 1):
+                self.handles[number] = open(slot, "a+", encoding="utf-8")
             self._acquire()
         except SystemExit:
-            self._close()
+            self.release()
             raise
         except Exception as exc:  # noqa: BLE001 -- a lock that cannot be taken costs the run its guard, never the run
             self.release()
@@ -890,40 +921,62 @@ class BoxLock:
                 log_outcome(self.path, "unguarded", self.record or {"pid": os.getpid()}, why=self.why,
                             stream=self.stream)
 
+    def _write(self, number: int, *, draining: bool = False) -> None:
+        assert self.record is not None
+        fh = self.handles[number]
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps({**self.record, "slot": EVERY_SLOT, **({"draining": True} if draining else {})}))
+        fh.flush()
+
     def _acquire(self) -> None:
-        assert self.fh is not None and self.path is not None and self.record is not None
+        assert self.path is not None and self.record is not None
         started = time.monotonic()
         bound = wait_bound(os.environ.get(WAIT_KEY), stream=self.stream)
         if bound is None:
             bound = DEFAULT_WAIT_S
         last_report: float | None = None
+        count = len(self.slot_paths)
         while True:
-            if _JSON_SAFE.try_lock_file(self.fh):
+            if not self.taken:  # the inherited pair before any slot, as the plugin reads it
+                for number, slot in enumerate(pair_paths(self.path, self.slot_paths,
+                                                         _JSON_SAFE.BOX_LOCK_MAX_SLOTS), 1):
+                    record = read_record(slot)
+                    if inside_holder(record):
+                        assert record is not None
+                        self.holder_seen = record
+                        self.release()
+                        self.outcome, self.why = "inside", ""
+                        log_outcome(self.path, "inside", self.record, record, slot=record.get("slot", number),
+                                    slots=count, stream=self.stream)
+                        return
+            refused: dict | None = None
+            blocked = False
+            for number in range(len(self.taken) + 1, count + 1):
+                if not _JSON_SAFE.try_lock_file(self.handles[number]):
+                    refused, blocked = read_record(self.slot_paths[number - 1]), True
+                    break
+                self.taken.append(number)
+                if len(self.taken) < count:
+                    self.record["started"] = _now_stamp()
+                    self._write(number, draining=True)
+            if not blocked:
                 self.held = True
                 taken_at = time.monotonic()
                 self.record["started"] = _now_stamp()
-                self.fh.seek(0)
-                self.fh.truncate()
-                self.fh.write(json.dumps(self.record))
-                self.fh.flush()
+                for number in self.taken:
+                    self._write(number)
                 if last_report is not None:
                     self.waited_s = time.monotonic() - started
                 self.outcome, self.why = ("waited", "") if last_report is not None else ("taken", "")
                 log_outcome(self.path, self.outcome, self.record, self.holder_seen, self.waited_s,
-                            stream=self.stream)
+                            slot=EVERY_SLOT, slots=count, stream=self.stream)
                 self.taken_at = taken_at  # once the acquire line is down, as the plugin's
                 return
-            record = read_record(self.path)
-            if inside_holder(record):
-                self.holder_seen = record
-                self._close()
-                self.outcome, self.why = "inside", ""
-                log_outcome(self.path, "inside", self.record, record, stream=self.stream)
-                return
-            self.holder_seen = record or self.holder_seen
+            self.holder_seen = refused or self.holder_seen
             now = time.monotonic()
             if last_report is None or now - last_report >= REPORT_S:
-                print(waiting_line(record, now - started), file=self.stream, flush=True)
+                print(waiting_line(refused, now - started), file=self.stream, flush=True)
                 if last_report is None:
                     print(f"box lock: the census waits at most {bound:g} s ({WAIT_KEY} sets it)",
                           file=self.stream, flush=True)
@@ -931,34 +984,42 @@ class BoxLock:
             if time.monotonic() - started >= bound:
                 waited = time.monotonic() - started
                 log_outcome(self.path, "gave_up", self.record, self.holder_seen, waited,
-                            why=f"{WAIT_KEY}={bound:g}", stream=self.stream)
-                self._close()
+                            why=f"{WAIT_KEY}={bound:g}", slots=count, stream=self.stream)
+                self.release()
                 print(_ascii(f"box lock: did not run: waited {waited:.0f} s behind {_who(self.holder_seen)}, "
                              f"past {WAIT_KEY}={bound:g}; nothing was timed"), file=self.stream, flush=True)
                 raise SystemExit(DID_NOT_RUN_EXIT)
             time.sleep(POLL_S)
 
     def _close(self) -> None:
-        if self.fh is not None:
-            self.fh.close()
-            self.fh = None
+        for fh in self.handles.values():
+            try:
+                fh.close()
+            except OSError:  # one handle's close never keeps the others' slots
+                pass
+        self.handles.clear()
+        self.taken.clear()
 
     def release(self) -> None:
-        """Clear the record, log the hold's ``released`` line while it still
-        holds, then unlock: ``tests/_box_lock.py::BoxLock.release``'s order,
-        so the log's lines pair in file order whichever of the two took the
-        lock."""
-        if self.fh is None:
+        """Clear the record in every slot held, log the hold's ``released``
+        line while it still holds, then unlock and close every handle:
+        ``tests/_box_lock.py::BoxLock.release``'s order, so the log's lines pair
+        in file order whichever of the two took the lock. A part-hold (a wait
+        that gave up, a take that failed) is cleared and unlocked, never
+        logged."""
+        if not self.handles:
             return
         try:
-            if self.held:
-                self.fh.seek(0)
-                self.fh.truncate()
-                self.fh.flush()
-                if self.path is not None and self.taken_at is not None:
-                    log_outcome(self.path, "released", self.record, held_s=time.monotonic() - self.taken_at,
-                                stream=self.stream)
-                _JSON_SAFE.unlock_file(self.fh)
+            for number in self.taken:
+                fh = self.handles[number]
+                fh.seek(0)
+                fh.truncate()
+                fh.flush()
+            if self.held and self.path is not None and self.taken_at is not None:
+                log_outcome(self.path, "released", self.record, held_s=time.monotonic() - self.taken_at,
+                            slot=EVERY_SLOT, slots=len(self.slot_paths), stream=self.stream)
+            for number in self.taken:
+                _JSON_SAFE.unlock_file(self.handles[number])
         finally:
             self._close()
             self.held = False

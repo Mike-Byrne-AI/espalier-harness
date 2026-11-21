@@ -1,4 +1,4 @@
-"""One pytest tier at a time on one machine, by construction.
+"""As many pytest tiers at once on one machine as its slots (one by default), by construction.
 
 Two seats (Claude Code sessions in two checkouts of one clone) on one box ran
 one tier at a time by a note protocol on the mail channel: a ``START`` before,
@@ -44,6 +44,29 @@ or unreadable record under a held lock is said and waited on. The lock goes
 when the handle closes or the process dies, so a killed holder frees its
 waiter at once (3 to 14 ms over five kills on macOS, 2026-10-25); an orphaned
 pytest tree keeps it and is named, which is the remedy.
+
+A box may hold more than one tier at once (DEF-2105, the shape the review in
+air's 8dda84 fixed). How many is one whole number in the file beside the lock,
+``<lock path>.slots``, read through ``tools/cc/_json_safe.py::box_lock_slots``:
+absent, the box has one slot, the lock file itself, as every box ran before;
+slot k from 2 on is ``<lock path>.slot<k>``. The count lives in a file of the
+box, never in a seat's environment, where one stray export would put two tiers
+on a box that holds one. A parallel line takes the first free slot, and waits
+at slot 1 unless slot 1 holds another parallel line's record (a serial line's,
+an older checkout's with no slot, or one caught mid-write all stop it). A
+serial line, any run at one worker (``-n auto`` that resolves to one
+included; the files ``scripts/proof_tier.py`` keeps off parallel load for their
+wall-clock budgets run so), takes every slot, in order, holding each as it
+comes, so it does not run beside another seat's pool (DEF-4062's shape), and
+while it waits for the rest its record in the slots it holds says so. The
+inherited pair is read over every slot file there is, the count's and any later
+one, before any try, so a nested run passes through its parent's slot and never
+takes one of its own. Each log line names its slot (``every`` for a serial
+hold) and the box's count; on a box of several slots two holds' lines
+interleave, so a hold's acquire and release pair by the run's pid. A checkout
+that predates the slots locks the lock file alone whatever the count says, so
+the count is written only once every checkout that runs tiers on the box has
+this code.
 
 Registered from ``tests/conftest.py::pytest_configure`` beside the never-ran
 count, or by ``-p tests._box_lock`` on a scratch run; never on an xdist worker.
@@ -107,6 +130,8 @@ REPORT_S = 30.0
 #: several races must not be told to end a healthy holder two minutes into its
 #: line.
 WAIT_CEILING_MIN = 105
+#: A serial line's slot, in its record and on its log lines: every slot.
+EVERY_SLOT = "every"
 #: Options under which configure runs but no test does: the never-ran count's
 #: collect-only set, plus ``--help`` and ``--markers``.
 _NO_TEST_OPTIONS = (*NO_TEST_RUNS, "help", "markers")
@@ -146,6 +171,43 @@ def gated(config: Any) -> bool:
     if any(getattr(opt, name, False) for name in _NO_TEST_OPTIONS):
         return False
     return getattr(opt, "numprocesses", None) not in (None, 0)
+
+
+def takes_every_slot(config: Any) -> bool:
+    """Whether a gated run is a serial line, which takes every slot of the box:
+    xdist at one worker (``numprocesses`` 1 on the config, which xdist has
+    turned from ``auto`` into its count before configure). The serial files
+    run at one worker because their placement was measured off parallel load
+    (wall-clock budgets, the timeout-near gates, the nested runs), so beside
+    another seat's pool they would meet the load they were moved away from
+    (DEF-4062's shape). Any other value is a parallel line's one slot."""
+    opt = getattr(config, "option", None)
+    try:
+        return int(getattr(opt, "numprocesses", None)) == 1  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+
+
+def every_slot_record(record: dict | None) -> bool:
+    """Whether a slot's record is a serial line's, whose hold is every slot."""
+    return isinstance(record, dict) and record.get("slot") == EVERY_SLOT
+
+
+def parallel_record(record: dict | None) -> bool:
+    """Whether a slot's record is a parallel line's, the one record slot 1 may
+    hold while a parallel line goes on to the next slot: its slot is a number.
+    A serial line's, an older checkout's (no slot) and an empty one are not."""
+    return isinstance(record, dict) and isinstance(record.get("slot"), int) and not isinstance(record.get("slot"), bool)
+
+
+def pair_paths(lock: Path, slot_paths: list[Path], most: int) -> list[Path]:
+    """The slot files the inherited pair is read in: every slot the count
+    names, then each later ``<lock>.slot<k>`` up to ``most`` that is there, so
+    a nested run whose parent took slot 2 passes through after the count was
+    lowered (the failure-mode review). A pass cannot be forged by reading
+    more: it needs the record's pid to be the inherited one and alive."""
+    extra = [Path(f"{lock}.slot{k}") for k in range(len(slot_paths) + 1, most + 1)]
+    return [*slot_paths, *(p for p in extra if p.is_file())]
 
 
 def holder_alive(pid: int) -> bool:
@@ -238,12 +300,15 @@ def waiting_line(record: dict | None, *, waited_s: float,
             except ValueError:
                 pass
         shown = pid if pid is not None else "?"
-        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {shown}, held {held_min} min)"
+        # A serial line still taking the box's slots holds some and waits for
+        # the rest: its age is a queue's, so it is never handed the ceiling.
+        held = "taking every slot" if record.get("draining") else f"held {held_min} min"
+        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {shown}, {held})"
     else:
         who = "no holder record"
     head = _argv_head((record or {}).get("argv") or [])
     line = f"box lock: waiting on {who}" + (f": {head}" if head else "")
-    if record and pid is not None and held_min >= WAIT_CEILING_MIN:
+    if record and pid is not None and held_min >= WAIT_CEILING_MIN and not record.get("draining"):
         line += " -- " + _past_ceiling(record, pid, read_seat)
     return _ascii(line)
 
@@ -408,7 +473,8 @@ def current_path(path: str, *, stream: TextIO | None = None) -> str:
 
 
 def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
-                *, why: str = "", held_s: float | None = None, stream: TextIO | None = None) -> None:
+                *, why: str = "", held_s: float | None = None, slot: int | str | None = None,
+                slots: int | None = None, stream: TextIO | None = None) -> None:
     """One JSON line in ``<lock path>.log`` for every gated run, whatever the
     lock did: ``taken`` at once, ``waited`` behind a holder
     (the wait's start, end and length), ``inside`` its holder (passed
@@ -418,8 +484,12 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
     length and whose start is the take, its wait left on its acquire line.
     The log held waits alone, so an empty one could not say whether no run
     waited or no run was gated (DEF-4053); now it is empty only where no gated
-    run came. A log that cannot be written is one stderr line, never the
-    run's cost."""
+    run came. Every line names its ``slot`` (the slot a parallel line took,
+    ``every`` for a serial line's hold, the holder's slot a nested run passed
+    through, None where none was taken) and ``slots``, the box's count as the
+    run read it (None where it was never read), so the log reads how full a
+    box of several slots was (DEF-2105). One log serves every slot. A log that
+    cannot be written is one stderr line, never the run's cost."""
     end = datetime.now(timezone.utc)
     span = held_s if held_s is not None else waited_s
     start = datetime.fromtimestamp(end.timestamp() - span, tz=timezone.utc)
@@ -427,7 +497,7 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
                   "run": {k: (run or {}).get(k) for k in ("seat", "lane", "pid")},
                   "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
                   "start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds"),
-                  "waited_s": round(waited_s, 3)}
+                  "waited_s": round(waited_s, 3), "slot": slot, "slots": slots}
     if held_s is not None:
         line["held_s"] = round(held_s, 3)
     if why:
@@ -441,79 +511,157 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
 
 
 class BoxLock:
-    """The hold: taken at configure on the controller, released at unconfigure."""
+    """The hold: taken at configure on the controller, released at unconfigure.
+    ``every`` is a serial line's hold, every slot of the box; otherwise the
+    first slot free (:func:`takes_every_slot`)."""
 
-    def __init__(self, path: Path, record: dict, primitive: Any, *, stream: TextIO | None = None) -> None:
+    def __init__(self, path: Path, record: dict, primitive: Any, *, stream: TextIO | None = None,
+                 every: bool = False) -> None:
         self.path, self.record, self.primitive = path, record, primitive
         self.stream = stream if stream is not None else sys.stderr
-        self.fh: TextIO | None = None
-        self.held = False
+        self.every = every
+        self.slot_paths: list[Path] = [path]
+        # Each slot's open handle by its number (1 is the lock file itself),
+        # and the slots this run holds, in the order it took them: a serial
+        # line's are always 1 to k, since it takes them in order.
+        self.handles: dict[int, TextIO] = {}
+        self.taken: list[int] = []
+        self.held = False  # every slot this run came for is held
         self.passed_through = False
         self.waited_s = 0.0
         # time.monotonic() at the take, set once the acquire line is logged:
         # the release's held_s reads it, and None writes no release line.
         self.taken_at: float | None = None
         self.holder_seen: dict | None = None
+        self._seen: dict[int, dict] = {}  # the last record each refusing slot held
+
+    @property
+    def fh(self) -> TextIO | None:
+        """The first open handle (slot 1's), None once every one is closed."""
+        return next(iter(self.handles.values()), None)
+
+    def _slot_label(self) -> int | str | None:
+        return EVERY_SLOT if self.every else (self.taken[0] if self.taken else None)
 
     def acquire(self) -> None:
-        """Take the lock, or pass through on the inherited pair. A failure
-        after the handle is open releases or closes it before it is re-raised,
-        so a run that goes unguarded never keeps the box. The lock's own
-        folder is made where it is missing (the launcher's default,
-        ``~/.espalier``, is not there until a first run makes it: DEF-4053),
-        one level and never a chain, so a mistyped path still goes unguarded
-        and says so rather than building folders."""
+        """Take the slots, or pass through on the inherited pair. A failure
+        after a handle is open releases what was taken and closes every handle
+        before it is re-raised, so a run that goes unguarded never keeps the
+        box. The lock's own folder is made where it is missing (the launcher's
+        default, ``~/.espalier``, is not there until a first run makes it:
+        DEF-4053), one level and never a chain, so a mistyped path still goes
+        unguarded and says so rather than building folders."""
         self.path.parent.mkdir(exist_ok=True)
-        self.fh = open(self.path, "a+", encoding="utf-8")
         try:
+            paths, note = self.primitive.box_lock_slots(str(self.path))
+            if note:
+                print(note, file=self.stream, flush=True)
+            self.slot_paths = [Path(p) for p in paths]
+            for number, slot in enumerate(self.slot_paths, 1):
+                self.handles[number] = open(slot, "a+", encoding="utf-8")
             self._acquire()
         except BaseException:
-            if self.held:
-                self.release()
-            elif self.fh is not None:
-                self.fh.close()
-                self.fh = None
+            self.release()
             raise
 
+    def _write(self, number: int, *, draining: bool = False) -> None:
+        """This run's record into the slot it holds, with that slot's label;
+        ``draining`` while a serial line waits for the rest of the box."""
+        fh = self.handles[number]
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps({**self.record, "slot": self._slot_label() if self.every else number,
+                             **({"draining": True} if draining else {})}))
+        fh.flush()
+
+    def _try_take(self) -> tuple[bool, list[dict | None]]:
+        """One try at the slots this run comes for: whether it now holds them
+        all, and the records of the slots that refused it, read after the
+        refusal. A serial line takes the slots in order and keeps each it gets,
+        so two serial lines never hold half the box each; a parallel line
+        takes the first free slot, and stops at slot 1 when a serial line's
+        record is there, so it waits behind that line rather than beside it."""
+        refused: list[dict | None] = []
+        for number in range(1, len(self.slot_paths) + 1):
+            if number in self.taken:
+                continue
+            if self.primitive.try_lock_file(self.handles[number]):
+                self.taken.append(number)
+                if not self.every:
+                    return True, refused
+                if len(self.taken) < len(self.slot_paths):
+                    # Stamped at this take, rewritten whole at the last one.
+                    self.record["started"] = _now_stamp()
+                    self._write(number, draining=True)
+                continue
+            record = read_record(self.slot_paths[number - 1])
+            if record:
+                self._seen[number] = record
+            refused.append(record)
+            if self.every:
+                return False, refused  # in order, or two serial lines could each hold half the box
+            if number == 1 and not parallel_record(record):
+                # A serial line's record, an older checkout's (which locks the
+                # lock file alone, whatever the count, and writes no slot), or
+                # one caught between a take and its write: wait, never beside
+                # it. Behind it, the later slots' holders are named too, the
+                # one a serial line waits for among them (both reviews).
+                refused += [read_record(slot) for slot in self.slot_paths[1:]]
+                return False, refused
+        return bool(self.taken) and len(self.taken) == (len(self.slot_paths) if self.every else 1), refused
+
     def _acquire(self) -> None:
-        assert self.fh is not None
         started = time.monotonic()
         bound = wait_bound(os.environ.get(WAIT_KEY), stream=self.stream)
         last_report: float | None = None
         while True:
-            if self.primitive.try_lock_file(self.fh):
+            # The inherited pair before any slot (8dda84's review): tried
+            # first, a nested run whose parent holds slot 2 would take slot 1.
+            if not self.taken:
+                for number, slot in enumerate(pair_paths(self.path, self.slot_paths,
+                                                         self.primitive.BOX_LOCK_MAX_SLOTS), 1):
+                    record = read_record(slot)
+                    if inside_holder(record):
+                        assert record is not None
+                        self.passed_through = True
+                        self.holder_seen = record
+                        self.release()
+                        log_outcome(self.path, "inside", self.record, record, slot=record.get("slot", number),
+                                    slots=len(self.slot_paths), stream=self.stream)
+                        return
+            done, refused = self._try_take()
+            if done:
                 self.held = True
                 taken_at = time.monotonic()
                 # The hold's age, never the queue's: stamped at configure, a
                 # run that queued forty minutes read forty minutes older than
                 # it was, and past the ceiling sooner (DEF-4077).
                 self.record["started"] = _now_stamp()
-                self.fh.seek(0)
-                self.fh.truncate()
-                self.fh.write(json.dumps(self.record))
-                self.fh.flush()
+                for number in self.taken:
+                    self._write(number)
                 os.environ[HOLDER_KEY] = str(os.getpid())
                 if last_report is not None:
                     self.waited_s = time.monotonic() - started
+                self.holder_seen = self._seen.get(self.taken[-1]) or self.holder_seen
                 log_outcome(self.path, "waited" if last_report is not None else "taken", self.record,
-                            self.holder_seen, self.waited_s, stream=self.stream)
+                            self.holder_seen, self.waited_s, slot=self._slot_label(),
+                            slots=len(self.slot_paths), stream=self.stream)
                 # Set once the acquire line is down, so a failure between the
                 # take and that line releases without an orphan release line.
                 self.taken_at = taken_at
                 return
-            record = read_record(self.path)
-            if inside_holder(record):
-                self.passed_through = True
-                self.holder_seen = record
-                self.fh.close()
-                self.fh = None
-                log_outcome(self.path, "inside", self.record, record, stream=self.stream)
-                return
-            self.holder_seen = record or self.holder_seen
+            self.holder_seen = next((r for r in reversed(refused) if r), None) or self.holder_seen
             now = time.monotonic()
             if last_report is None or now - last_report >= REPORT_S:
-                print(waiting_line(record, waited_s=now - started, read_seat=holder_seat_live),
-                      file=self.stream, flush=True)
+                # One line for each holder in the way, each named once; one
+                # "no holder record" line where no refusing slot had a record.
+                named: list[dict] = []
+                for record in refused:
+                    if record and all(r.get("pid") != record.get("pid") for r in named):
+                        named.append(record)
+                for shown in named or [None]:
+                    print(waiting_line(shown, waited_s=now - started, read_seat=holder_seat_live),
+                          file=self.stream, flush=True)
                 last_report = now
             # The bound reads the clock after the line, whose seat read past
             # the ceiling takes time of its own.
@@ -528,7 +676,7 @@ class BoxLock:
         (DEF-4056)."""
         self.waited_s = waited_s
         log_outcome(self.path, "gave_up", self.record, self.holder_seen, waited_s,
-                    why=f"{WAIT_KEY}={bound:g}", stream=self.stream)
+                    why=f"{WAIT_KEY}={bound:g}", slots=len(self.slot_paths), stream=self.stream)
         holder = self.holder_seen
         who = (f"{holder.get('seat') or '?'} {holder.get('lane') or '?'} (pid {holder.get('pid')})"
                if holder else "a holder that left no record")
@@ -550,28 +698,38 @@ class BoxLock:
             terminalreporter.write_line(_ascii(f"box lock: waited {self.waited_s:.0f} s behind {who}"))
 
     def release(self) -> None:
-        """Clear the record, log the hold's ``released`` line and unlock. The
-        line is written while the lock is still held, so in the log it comes
-        before the next run's acquire line and a reader pairs each hold's two
-        lines in file order; written after the unlock, a waiter's ``waited``
-        line could land first (DEF-3084). A run that never held writes none,
-        nor one whose acquire failed before its acquire line, and neither does
-        a holder that is killed: the kernel frees its lock with the process,
-        so its acquire line stands alone and its hold's end is bounded only by
-        the next acquire."""
-        if self.fh is None or not self.held:
+        """Clear the record in every slot this run holds, log the hold's
+        ``released`` line, unlock them, and close every handle. The line is
+        written while the slots are still held, so in the log it comes before
+        the next run's acquire line and a reader pairs each hold's two lines
+        in file order; written after the unlock, a waiter's ``waited`` line
+        could land first (DEF-3084). A run that never held writes none, nor
+        one whose acquire failed before its acquire line (a serial line that
+        gave up holding part of the box among them: its slots are cleared and
+        unlocked all the same), and neither does a holder that is killed: the
+        kernel frees its locks with the process, so its acquire line stands
+        alone and its hold's end is bounded only by the next acquire."""
+        if not self.handles:
             return
         try:
-            self.fh.seek(0)
-            self.fh.truncate()
-            self.fh.flush()
-            if self.taken_at is not None:
+            for number in self.taken:
+                fh = self.handles[number]
+                fh.seek(0)
+                fh.truncate()
+                fh.flush()
+            if self.held and self.taken_at is not None:
                 log_outcome(self.path, "released", self.record, held_s=time.monotonic() - self.taken_at,
-                            stream=self.stream)
-            self.primitive.unlock_file(self.fh)
+                            slot=self._slot_label(), slots=len(self.slot_paths), stream=self.stream)
+            for number in self.taken:
+                self.primitive.unlock_file(self.handles[number])
         finally:
-            self.fh.close()
-            self.fh = None
+            for fh in self.handles.values():
+                try:
+                    fh.close()
+                except OSError:  # one handle's close never keeps the others' slots
+                    pass
+            self.handles.clear()
+            self.taken.clear()
             self.held = False
 
     def pytest_unconfigure(self, config: Any) -> None:
@@ -613,7 +771,7 @@ def pytest_configure(config: Any) -> None:
         path = current_path(path)
         primitive = _primitive()
         record = build_record(config, primitive)
-        lock = BoxLock(Path(path), record, primitive)
+        lock = BoxLock(Path(path), record, primitive, every=takes_every_slot(config))
         lock.acquire()
     except pytest.exit.Exception:
         # The bounded wait's end (DEF-4056). pytest's Exit subclasses

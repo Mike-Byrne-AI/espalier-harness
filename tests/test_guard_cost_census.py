@@ -559,7 +559,8 @@ class TestTheBoxLock:
             record = _box_lock.read_record(path)
             assert record is not None and record["pid"] == os.getpid()
             assert set(record) == set(_box_lock.build_record(types.SimpleNamespace(rootpath=tmp_path),
-                                                             _box_lock._primitive()))
+                                                             _box_lock._primitive())) | {"slot"}
+            assert record["slot"] == _box_lock.EVERY_SLOT and "draining" not in record, record
             with open(path, "a+", encoding="utf-8") as other:
                 assert _box_lock._primitive().try_lock_file(other) is False
             assert census.waiting_line(record, 0.0) == _box_lock.waiting_line(record, waited_s=0.0)
@@ -644,14 +645,131 @@ class TestTheBoxLock:
         assert path.read_text(encoding="utf-8") == ""
 
 
+class TestTheCensusHoldsEverySlot:
+    """DEF-2105: on a box of several slots the census times on a quiet box, so
+    it holds every slot as a tier's serial line does, and reads the pair over
+    every slot before any try. In-process, the test holding the other slots on
+    handles of its own."""
+
+    @staticmethod
+    def _box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, count: str) -> Path:
+        path = tmp_path / "box.lock"
+        Path(f"{path}.slots").write_text(count, encoding="utf-8")
+        monkeypatch.setenv(_box_lock.LOCK_KEY, str(path))
+        monkeypatch.delenv(_box_lock.HOLDER_KEY, raising=False)
+        monkeypatch.delenv(_box_lock.WAIT_KEY, raising=False)
+        monkeypatch.setattr(census, "POLL_S", 0.05)
+        return path
+
+    @staticmethod
+    def _hold(path: Path, record: dict) -> "io.TextIOWrapper":
+        fh = open(path, "a+", encoding="utf-8")
+        assert _box_lock._primitive().try_lock_file(fh), path
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(record))
+        fh.flush()
+        return fh
+
+    def test_on_a_free_box_it_holds_every_slot_and_clears_each(self, tmp_path, monkeypatch):
+        """Mutation: the census taking slot 1 alone (a parallel line could run
+        beside its timing)."""
+        path = self._box(tmp_path, monkeypatch, "2")
+        lock = census.BoxLock(stream=io.StringIO())
+        lock.acquire()
+        try:
+            assert lock.outcome == "taken" and lock.taken == [1, 2], lock.taken
+            for slot in (path, Path(f"{path}.slot2")):
+                with open(slot, "a+", encoding="utf-8") as other:
+                    assert _box_lock._primitive().try_lock_file(other) is False, slot
+                assert _box_lock.read_record(slot)["slot"] == "every", slot
+        finally:
+            lock.release()
+        assert all(p.read_text(encoding="utf-8") == "" for p in (path, Path(f"{path}.slot2")))
+        assert [(ln["outcome"], ln["slot"], ln["slots"]) for ln in _log_lines(path)] == [
+            ("taken", "every", 2), ("released", "every", 2)], _log_lines(path)
+
+    def test_behind_a_parallel_line_it_keeps_slot_one_and_gives_up_clean(self, tmp_path, monkeypatch):
+        """With slot 2 held, the census takes slot 1, says in its record that
+        it waits for the rest, names slot 2's holder, and past its bound leaves
+        slot 1 empty and free. Mutation: a part-hold kept, or its record left
+        behind, past the give-up."""
+        path = self._box(tmp_path, monkeypatch, "2")
+        monkeypatch.setattr(census, "DEFAULT_WAIT_S", 0.3)
+        seen: list = []
+        real_try = census._JSON_SAFE.try_lock_file
+
+        def try_lock_file(fh):
+            got = real_try(fh)
+            if not got:
+                seen.append(_box_lock.read_record(path))
+            return got
+
+        monkeypatch.setattr(census._JSON_SAFE, "try_lock_file", try_lock_file)
+        other = self._hold(Path(f"{path}.slot2"), {"seat": "par", "lane": "lane/p", "pid": os.getpid(), "slot": 2})
+        try:
+            lock = census.BoxLock(stream=io.StringIO())
+            with pytest.raises(SystemExit):
+                lock.acquire()
+            assert seen and seen[0]["draining"] is True and seen[0]["slot"] == "every", seen[:1]
+            assert "waiting on par lane/p" in lock.stream.getvalue()
+            assert path.read_text(encoding="utf-8") == "" and lock.fh is None
+            with open(path, "a+", encoding="utf-8") as probe:
+                assert _box_lock._primitive().try_lock_file(probe) is True
+                _box_lock._primitive().unlock_file(probe)
+        finally:
+            other.close()
+        assert [ln["outcome"] for ln in _log_lines(path)] == ["gave_up"], _log_lines(path)
+
+    def test_it_stops_at_its_first_refused_slot(self, tmp_path, monkeypatch):
+        """With slot 1 held and slot 2 free the census tries slot 1 alone: out
+        of order, two whole-box holders could each hold half the box (the code
+        review's mutant, the census's copy). Mutation: a refused slot skipped."""
+        path = self._box(tmp_path, monkeypatch, "2")
+        monkeypatch.setattr(census, "DEFAULT_WAIT_S", 0.3)
+        tried: list = []
+        real_try = census._JSON_SAFE.try_lock_file
+
+        def try_lock_file(fh):
+            tried.append(Path(fh.name).name)
+            return real_try(fh)
+
+        monkeypatch.setattr(census._JSON_SAFE, "try_lock_file", try_lock_file)
+        held = self._hold(path, {"seat": "x", "lane": "l", "pid": os.getpid(), "slot": "every"})
+        try:
+            with pytest.raises(SystemExit):
+                census.BoxLock(stream=io.StringIO()).acquire()
+        finally:
+            held.close()
+        assert tried and set(tried) == {"box.lock"}, tried
+
+    @pytest.mark.parametrize("count", ["2", "1"], ids=["count-2", "count-lowered"])
+    def test_the_pair_is_read_over_every_slot_before_any_try(self, tmp_path, monkeypatch, count):
+        """Inside a holder on slot 2 the census passes through and takes no
+        slot, the count lowered since included. Mutation: the pair read after
+        the first try, or over the count's slots alone."""
+        path = self._box(tmp_path, monkeypatch, count)
+        monkeypatch.setattr(census, "DEFAULT_WAIT_S", 0.5)
+        monkeypatch.setenv(_box_lock.HOLDER_KEY, str(os.getpid()))
+        other = self._hold(Path(f"{path}.slot2"), {"seat": "par", "lane": "lane/p", "pid": os.getpid(), "slot": 2})
+        try:
+            lock = census.BoxLock(stream=io.StringIO())
+            lock.acquire()
+            assert lock.outcome == "inside" and not lock.taken and lock.fh is None, lock.outcome
+        finally:
+            other.close()
+        assert [(ln["outcome"], ln["slot"], ln["slots"]) for ln in _log_lines(path)] == [("inside", 2, int(count))]
+
+
 class TestTheHolderIsTheBoxLocksShape:
     """The census cannot import ``tests/_box_lock.py`` (it imports pytest), so
     these hold its copy of a holder's behaviour to the plugin's."""
 
     def test_the_names_and_the_exit_status_are_the_plugins(self):
         assert (census.LOCK_KEY, census.HOLDER_KEY, census.WAIT_KEY, census.DID_NOT_RUN_EXIT, census.POLL_S,
-                census.REPORT_S) == (_box_lock.LOCK_KEY, _box_lock.HOLDER_KEY, _box_lock.WAIT_KEY,
-                                     _box_lock.DID_NOT_RUN_EXIT, _box_lock.POLL_S, _box_lock.REPORT_S)
+                census.REPORT_S, census.EVERY_SLOT) == (_box_lock.LOCK_KEY, _box_lock.HOLDER_KEY, _box_lock.WAIT_KEY,
+                                                        _box_lock.DID_NOT_RUN_EXIT, _box_lock.POLL_S,
+                                                        _box_lock.REPORT_S, _box_lock.EVERY_SLOT)
 
     def test_the_holder_record_carries_build_records_keys(self, tmp_path):
         config = types.SimpleNamespace(rootpath=tmp_path)
@@ -670,7 +788,9 @@ class TestTheHolderIsTheBoxLocksShape:
     def test_the_waiting_line_reads_as_the_plugins_under_its_ceiling(self):
         for record in (None, {}, {"seat": "s", "lane": "l", "pid": 7, "argv": ["/x/bin/pytest", "-q", "-n", "4"]},
                        {"seat": "s", "lane": "l", "pid": 7, "started": "not a stamp"}, {"seat": "s"},
-                       {"seat": "s", "pid": "abc", "started": "2026-11-12T00:00:00+00:00"}):
+                       {"seat": "s", "pid": "abc", "started": "2026-11-12T00:00:00+00:00"},
+                       {"seat": "s", "lane": "l", "pid": 7, "slot": "every", "draining": True,
+                        "started": "2026-11-12T00:00:00+00:00"}):
             assert census.waiting_line(record, 61.0) == _box_lock.waiting_line(record, waited_s=61.0), record
 
     def test_the_holder_pair_reads_as_the_plugins(self, monkeypatch):
@@ -685,13 +805,13 @@ class TestTheHolderIsTheBoxLocksShape:
 
     def test_the_log_line_has_the_plugins_shape(self, tmp_path):
         run, holder = {"seat": "s", "lane": "l", "pid": 1}, {"seat": "h", "lane": "m", "pid": 2}
-        census.log_outcome(tmp_path / "a", "waited", run, holder, 3.25, why="w")
-        _box_lock.log_outcome(tmp_path / "b", "waited", run, holder, 3.25, why="w")
+        census.log_outcome(tmp_path / "a", "waited", run, holder, 3.25, why="w", slot="every", slots=2)
+        _box_lock.log_outcome(tmp_path / "b", "waited", run, holder, 3.25, why="w", slot="every", slots=2)
         (ours,) = _log_lines(tmp_path / "a")
         (theirs,) = _log_lines(tmp_path / "b")
         assert set(ours) == set(theirs)
-        assert {k: ours[k] for k in ("outcome", "run", "holder", "waited_s", "why")} == {
-            k: theirs[k] for k in ("outcome", "run", "holder", "waited_s", "why")}
+        assert {k: ours[k] for k in ("outcome", "run", "holder", "waited_s", "why", "slot", "slots")} == {
+            k: theirs[k] for k in ("outcome", "run", "holder", "waited_s", "why", "slot", "slots")}
 
     def test_the_release_line_has_the_plugins_shape(self, tmp_path):
         """DEF-3084: a hold's ``released`` line, its length in ``held_s`` and

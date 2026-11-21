@@ -175,9 +175,10 @@ def _said_pid(path: Path) -> int:
     return int(path.read_text(encoding="utf-8"))
 
 
-def _holding(tmp_path: Path, tree: Path, lock: Path, stamp: str = "a") -> subprocess.Popen:
-    """A gated run that holds the box until the test releases it."""
-    first = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp=stamp, hold=True))
+def _holding(tmp_path: Path, tree: Path, lock: Path, stamp: str = "a", *, workers: str = "1") -> subprocess.Popen:
+    """A gated run that holds the box until the test releases it: a serial
+    line at one worker (every slot), a parallel line's one slot at more."""
+    first = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp=stamp, hold=True), workers=workers)
     assert _wait_for(tmp_path / stamp), _finish(first)
     return first
 
@@ -362,7 +363,9 @@ class TestEachHoldLogsItsRelease:
             real.unlock_file(fh)
 
         lock = self._lock(tmp_path, monkeypatch, types.SimpleNamespace(try_lock_file=real.try_lock_file,
-                                                                       unlock_file=unlock_file))
+                                                                       unlock_file=unlock_file,
+                                                                       box_lock_slots=real.box_lock_slots,
+                                                                       BOX_LOCK_MAX_SLOTS=real.BOX_LOCK_MAX_SLOTS))
         lock.acquire()
         lock.release()
         assert at_unlock == [["taken", "released"]], at_unlock
@@ -384,7 +387,9 @@ class TestEachHoldLogsItsRelease:
         monkeypatch.setattr(bl, "POLL_S", 0.1)
         monkeypatch.delenv(bl.WAIT_KEY, raising=False)
         lock = self._lock(tmp_path, monkeypatch, types.SimpleNamespace(try_lock_file=try_lock_file,
-                                                                       unlock_file=real.unlock_file))
+                                                                       unlock_file=real.unlock_file,
+                                                                       box_lock_slots=real.box_lock_slots,
+                                                                       BOX_LOCK_MAX_SLOTS=real.BOX_LOCK_MAX_SLOTS))
         lock.acquire()
         lock.release()
         waited, released = self._lines(tmp_path)
@@ -587,6 +592,295 @@ class TestTheInheritedPair:
         assert bl.read_record(path) is None
         path.write_text("[1, 2]", encoding="utf-8")
         assert bl.read_record(path) is None
+
+
+def _log_lines(tmp_path: Path) -> list[dict]:
+    log = tmp_path / "box.lock.log"
+    return [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()] if log.exists() else []
+
+
+class TestTheBoxsSlots:
+    """DEF-2105, the shape the review in air's 8dda84 fixed: a box may hold more
+    than one tier, its count one number in a file beside the lock, a parallel
+    line one slot, a serial line every slot, the inherited pair read before any
+    slot, and the slot on every log line. The kernel's part (two runs holding
+    two slots at once, a serial run behind a parallel one with a slot free, a
+    nested run on slot 2) drives real children as the cases above do; what the
+    hold does with the slots it reads is driven in-process, with the test
+    holding the other slots on handles of its own."""
+
+    @staticmethod
+    def _slots(tmp_path: Path, count: str) -> Path:
+        lock = tmp_path / "box.lock"
+        (tmp_path / "box.lock.slots").write_text(count, encoding="utf-8")
+        return lock
+
+    @staticmethod
+    def _hold(path: Path, record: dict | None) -> IO[str]:
+        """A slot held by this test process on a handle of its own, its record
+        written; the caller closes the handle to free it."""
+        fh = open(path, "a+", encoding="utf-8")
+        assert _box_lock()._primitive().try_lock_file(fh), path
+        fh.seek(0)
+        fh.truncate()
+        if record is not None:
+            fh.write(json.dumps(record))
+        fh.flush()
+        return fh
+
+    @staticmethod
+    def _lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, every: bool) -> object:
+        import io
+        bl = _box_lock()
+        monkeypatch.setenv(bl.HOLDER_KEY, os.environ.get(bl.HOLDER_KEY, "0"))
+        monkeypatch.setattr(bl, "POLL_S", 0.05)
+        record = {"seat": "s", "lane": "l", "checkout": str(tmp_path), "pid": os.getpid(), "argv": ["pytest"]}
+        return bl.BoxLock(tmp_path / "box.lock", record, bl._primitive(), stream=io.StringIO(), every=every)
+
+    def test_the_count_is_one_number_in_the_file_beside_the_lock(self, tmp_path):
+        """Absent, one slot (the lock itself), as every box ran before; a whole
+        number from 1 to the cap names that many; anything else is one slot,
+        said. Mutation: an absent file read as no slot or as the cap; a value
+        past the cap clamped to it (a typo would put that many tiers on a box);
+        a non-ASCII digit read as a number; the note left off."""
+        prim = _box_lock()._primitive()
+        lock = str(tmp_path / "box.lock")
+        assert prim.box_lock_slots(lock) == ([lock], "")
+        side = tmp_path / "box.lock.slots"
+        for body, count in (("2", 2), ("3\n", 3), (f" {prim.BOX_LOCK_MAX_SLOTS} ", prim.BOX_LOCK_MAX_SLOTS), ("1", 1)):
+            side.write_text(body, encoding="utf-8")
+            paths, note = prim.box_lock_slots(lock)
+            assert paths == [lock, *(f"{lock}.slot{k}" for k in range(2, count + 1))] and note == "", (body, paths, note)
+        for body in ("0", str(prim.BOX_LOCK_MAX_SLOTS + 1), "-2", "two", "", "２"):
+            side.write_text(body, encoding="utf-8")
+            paths, note = prim.box_lock_slots(lock)
+            assert paths == [lock] and "not a slot count" in note and note.isascii(), (body, paths, note)
+        side.write_bytes(b"\xff\xfe\x00")
+        paths, note = prim.box_lock_slots(lock)
+        assert paths == [lock] and "could not be read" in note, note
+        # Windows PowerShell 5.1 writes UTF-16 (`echo 2 > f`) or a BOM
+        # (`Set-Content -Encoding UTF8`): both reviews read them as one slot.
+        for raw in ("2\r\n".encode("utf-16"), b"\xef\xbb\xbf2"):
+            side.write_bytes(raw)
+            assert prim.box_lock_slots(lock) == ([lock, f"{lock}.slot2"], ""), raw
+
+    def test_a_serial_line_is_xdist_at_one_worker(self):
+        """Mutation: a serial line read from the argv, or ``auto`` read as one."""
+        bl = _box_lock()
+        for value, every in ((1, True), ("1", True), (2, False), ("auto", False), (None, False), (0, False)):
+            cfg = types.SimpleNamespace(option=types.SimpleNamespace(numprocesses=value))
+            assert bl.takes_every_slot(cfg) is every, value
+        assert bl.takes_every_slot(types.SimpleNamespace()) is False
+
+    def test_two_parallel_runs_hold_one_slot_each_at_once(self, tmp_path):
+        """At a count of 2 a second parallel line runs while the first holds,
+        and each names its slot and the count on its line. Mutation: the count
+        file not read (the second waits behind the first); a parallel line
+        taking every slot; the slot or the count left off the log line."""
+        tree, lock = _scratch(tmp_path), self._slots(tmp_path, "2")
+        first = _holding(tmp_path, tree, lock, workers="2")
+        second = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="b"), workers="2")
+        ran_beside = _wait_for(tmp_path / "b.done", timeout=30)
+        _release(tmp_path, "a")
+        out, err = _finish(second)
+        _finish(first)
+        assert ran_beside, f"the second run did not finish while the first held: {out}\n{err}"
+        assert _stamp(tmp_path, "b.done") < _stamp(tmp_path, "a.done"), "the second ran after the first, not beside it"
+        assert "box lock: wait" not in err + out, (out, err)
+        taken = [(ln["outcome"], ln["run"]["pid"], ln["slot"], ln["slots"]) for ln in _log_lines(tmp_path)
+                 if ln["outcome"] == "taken"]
+        assert taken == [("taken", _said_pid(tmp_path / "a.pid"), 1, 2), ("taken", _said_pid(tmp_path / "b.pid"), 2, 2)], taken
+
+    def test_a_serial_run_waits_for_every_slot_though_one_is_free(self, tmp_path):
+        """At a count of 2, with a parallel line on slot 1 and slot 2 free, a
+        serial line waits for the whole box and runs after (DEF-4062's shape:
+        a one-worker leg beside another seat's pool). Mutation: a serial line
+        taking one slot (it runs at once on slot 2); its line's slot not
+        ``every``."""
+        tree, lock = _scratch(tmp_path), self._slots(tmp_path, "2")
+        first = _holding(tmp_path, tree, lock, workers="2")
+        serial = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="s", slow=True))
+        assert serial.at_the_lock(), serial.stderr
+        assert serial.child.poll() is None and not (tmp_path / "s").exists(), "the serial run ran beside a parallel one"
+        _release(tmp_path, "a")
+        _out, err = serial.finish()
+        _finish(first)
+        assert _stamp(tmp_path, "s") >= _stamp(tmp_path, "a.done"), err
+        waited = [ln for ln in _log_lines(tmp_path) if ln["outcome"] in ("waited", "released")
+                  and ln["run"]["pid"] == _said_pid(tmp_path / "s.pid")]
+        assert [(ln["outcome"], ln["slot"], ln["slots"]) for ln in waited] == [
+            ("waited", "every", 2), ("released", "every", 2)], waited
+        assert waited[0]["holder"]["pid"] == _said_pid(tmp_path / "a.pid"), waited
+
+    @pytest.mark.parametrize("workers", ["1", "2"], ids=["serial-child", "parallel-child"])
+    def test_a_nested_run_passes_through_its_parents_slot_and_takes_none(self, tmp_path, workers):
+        """8dda84's second blocker: a nested run tried a slot before its
+        inherited pair, so with its parent on slot 2 it took slot 1 (or, a
+        serial child, waited on its own parent). The pair is read over every
+        slot first. Mutation: the pair read after the first try, or over slot
+        1 alone."""
+        tree, lock = _scratch(tmp_path), self._slots(tmp_path, "2")
+        holder = TestTheInheritedPair._holder(tmp_path, tmp_path / "box.lock.slot2", None)
+        parent = _said_pid(tmp_path / "h.ready")
+        child = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", holder=str(parent)), workers=workers)
+        out, err = _finish(child)
+        assert holder.poll() is None, "the holder had already released when the child finished"
+        _release(tmp_path, "h")
+        holder.wait(timeout=_CHILD_DEADLINE_S)
+        assert "box lock: inside the holder" in out and "box lock: wait" not in err, (out, err)
+        assert [(ln["outcome"], ln["holder"]["pid"], ln["slot"]) for ln in _log_lines(tmp_path)] == [
+            ("inside", parent, 2)], _log_lines(tmp_path)
+
+    def test_a_parallel_line_waits_behind_a_serial_line_taking_the_box(self, tmp_path, monkeypatch):
+        """A serial line holding slot 1 while it waits for slot 2 is in the
+        way of a parallel line, though slot 3 is free: a parallel line taking
+        it would starve the serial one. A parallel record on slot 1 is no such
+        line (the control). Mutation: the serial record not read at slot 1
+        (the parallel line takes slot 3)."""
+        bl = _box_lock()
+        self._slots(tmp_path, "3")
+        monkeypatch.setenv(bl.WAIT_KEY, "0")
+        serial = {"seat": "x", "lane": "lane/serial", "pid": os.getpid(), "slot": "every", "draining": True,
+                  "started": "2026-11-18T00:00:00+00:00", "argv": ["pytest"]}
+        # A pid of its own: the line names each holder's pid once.
+        held = [self._hold(tmp_path / "box.lock", serial),
+                self._hold(tmp_path / "box.lock.slot2", {"seat": "y", "lane": "l", "pid": 424242, "slot": 2})]
+        try:
+            lock = self._lock(tmp_path, monkeypatch, every=False)
+            with pytest.raises(pytest.exit.Exception):
+                lock.acquire()
+            said = lock.stream.getvalue()
+            assert [ln["outcome"] for ln in _log_lines(tmp_path)] == ["gave_up"], _log_lines(tmp_path)
+            assert "x lane/serial (pid" in said and "taking every slot" in said, said
+            # The serial line itself is never handed the ceiling; behind it, the
+            # holder of the slot it waits for is named too.
+            serial_line = next(ln for ln in said.splitlines() if "x lane/serial (pid" in ln)
+            assert " -- " not in serial_line and "waiting on y l (pid" in said, said
+            held[0].seek(0)
+            held[0].truncate()
+            held[0].write(json.dumps({**serial, "slot": 1, "draining": False}))
+            held[0].flush()
+            control = self._lock(tmp_path, monkeypatch, every=False)
+            control.acquire()
+            assert control.taken == [3] and control.held, control.taken
+            control.release()
+        finally:
+            for fh in held:
+                fh.close()
+        assert [(ln["outcome"], ln["slot"]) for ln in _log_lines(tmp_path)][1:] == [("taken", 3), ("released", 3)]
+
+    def test_a_serial_line_holds_what_it_takes_and_says_it_waits_for_the_rest(self, tmp_path, monkeypatch):
+        """A serial line takes slot 1 at once and keeps it, its record saying
+        it is taking every slot, while slot 2's holder runs; at slot 2's
+        release it holds both and its record names every slot in each.
+        Mutation: a serial line that takes nothing until every slot is free
+        (parallel lines keep slot 1 and it starves), or one whose record does
+        not say so (a parallel line takes slot 3 beside it)."""
+        bl = _box_lock()
+        self._slots(tmp_path, "2")
+        monkeypatch.delenv(bl.WAIT_KEY, raising=False)
+        other = self._hold(tmp_path / "box.lock.slot2", {"seat": "y", "lane": "l", "pid": os.getpid(), "slot": 2})
+        lock = self._lock(tmp_path, monkeypatch, every=True)
+        worker = threading.Thread(target=lock.acquire, daemon=True)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 20
+            record = None
+            while time.monotonic() < deadline:
+                record = bl.read_record(tmp_path / "box.lock")
+                if record:
+                    break
+                time.sleep(0.02)
+            assert record and record.get("draining") and record.get("slot") == "every", record
+            with open(tmp_path / "box.lock", "a+", encoding="utf-8") as probe:
+                assert bl._primitive().try_lock_file(probe) is False, "slot 1 was not kept while slot 2 was waited on"
+        finally:
+            other.close()
+        worker.join(timeout=20)
+        assert lock.held and lock.taken == [1, 2], lock.taken
+        for slot in ("box.lock", "box.lock.slot2"):
+            record = bl.read_record(tmp_path / slot)
+            assert record and record["slot"] == "every" and "draining" not in record, (slot, record)
+        lock.release()
+        assert [(ln["outcome"], ln["slot"], ln["slots"]) for ln in _log_lines(tmp_path)] == [
+            ("waited", "every", 2), ("released", "every", 2)], _log_lines(tmp_path)
+
+    def test_a_serial_line_that_gives_up_clears_and_frees_what_it_took(self, tmp_path, monkeypatch):
+        """Past its bound a serial line holding slot 1 of 2 leaves it empty and
+        free, and logs no release (it never held the box). Mutation: the
+        part-hold kept past the give-up, or its draining record left behind
+        for the next reader to read as a holder."""
+        bl = _box_lock()
+        self._slots(tmp_path, "2")
+        monkeypatch.setenv(bl.WAIT_KEY, "0.3")
+        other = self._hold(tmp_path / "box.lock.slot2", {"seat": "y", "lane": "l", "pid": os.getpid(), "slot": 2})
+        try:
+            lock = self._lock(tmp_path, monkeypatch, every=True)
+            with pytest.raises(pytest.exit.Exception):
+                lock.acquire()
+            assert bl.read_record(tmp_path / "box.lock") is None and lock.fh is None and not lock.taken
+            with open(tmp_path / "box.lock", "a+", encoding="utf-8") as probe:
+                assert bl._primitive().try_lock_file(probe) is True
+                bl._primitive().unlock_file(probe)
+        finally:
+            other.close()
+        assert [ln["outcome"] for ln in _log_lines(tmp_path)] == ["gave_up"], _log_lines(tmp_path)
+
+    @pytest.mark.parametrize("record", [None, {"seat": "old", "lane": "l", "pid": os.getpid(), "argv": ["pytest"]}],
+                             ids=["mid-write", "older-checkout"])
+    def test_slot_one_stops_a_parallel_line_unless_it_holds_a_parallel_record(self, tmp_path, monkeypatch, record):
+        """An older checkout's record (no slot: it locks the lock file alone,
+        whatever the count, so its serial leg would run beside the slot this
+        line takes), or a record caught between another line's take and its
+        write, stops a parallel line at slot 1 (both reviews). Mutation: only
+        a serial record read as a stop."""
+        bl = _box_lock()
+        self._slots(tmp_path, "2")
+        monkeypatch.setenv(bl.WAIT_KEY, "0")
+        held = self._hold(tmp_path / "box.lock", record)
+        try:
+            lock = self._lock(tmp_path, monkeypatch, every=False)
+            with pytest.raises(pytest.exit.Exception):
+                lock.acquire()
+        finally:
+            held.close()
+        assert [ln["outcome"] for ln in _log_lines(tmp_path)] == ["gave_up"], _log_lines(tmp_path)
+
+    def test_a_serial_line_stops_at_its_first_refused_slot(self, tmp_path, monkeypatch):
+        """With slot 1 held by another serial line taking the box and slot 2
+        free, a serial line takes nothing: taking slot 2 out of order, the two
+        would each hold half the box and wait on each other (the code review's
+        surviving mutant). Mutation: a refused slot skipped and the next one
+        tried."""
+        self._slots(tmp_path, "2")
+        first = {"seat": "x", "lane": "l", "pid": os.getpid(), "slot": "every", "draining": True}
+        held = self._hold(tmp_path / "box.lock", first)
+        lock = self._lock(tmp_path, monkeypatch, every=True)
+        lock.slot_paths = [tmp_path / "box.lock", tmp_path / "box.lock.slot2"]
+        lock.handles = {n: open(p, "a+", encoding="utf-8") for n, p in enumerate(lock.slot_paths, 1)}
+        try:
+            done, _refused = lock._try_take()
+            assert not done and lock.taken == [], lock.taken
+        finally:
+            lock.release()
+            held.close()
+
+    def test_a_lowered_count_still_passes_a_nested_run_through(self, tmp_path, monkeypatch):
+        """A parent took slot 2, then the count was written down to 1 (or read
+        mid-write as one): its nested run still finds it and passes through
+        (the failure-mode review). Mutation: the pair read over the count's
+        slots alone (the child takes slot 1 beside its own parent)."""
+        bl = _box_lock()
+        self._slots(tmp_path, "1")
+        parent = self._hold(tmp_path / "box.lock.slot2", {"seat": "p", "lane": "l", "pid": os.getpid(), "slot": 2})
+        try:
+            lock = self._lock(tmp_path, monkeypatch, every=False)
+            monkeypatch.setenv(bl.HOLDER_KEY, str(os.getpid()))
+            lock.acquire()
+            assert lock.passed_through and not lock.taken and lock.fh is None
+        finally:
+            parent.close()
+        assert [(ln["outcome"], ln["slot"], ln["slots"]) for ln in _log_lines(tmp_path)] == [("inside", 2, 1)]
 
 
 class TestTheWaitingLine:

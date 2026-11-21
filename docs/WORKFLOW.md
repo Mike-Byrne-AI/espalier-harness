@@ -497,7 +497,11 @@ run takes a lock on the file `ESPALIER_BOX_LOCK` names (`seat.py launch` sets
 it, one path per host), waits while another run holds it and prints the holder
 and its age; every tier line is one, so a tier's lines interleave with a
 sibling's; a run without `-n` (a node-id or file run) takes no lock, and no
-note on the mail channel announces a tier.
+note on the mail channel announces a tier. A box may hold more: one whole
+number in `<lock>.slots` beside the lock names its slots, a parallel line takes
+one, and any run at one worker takes every slot, so it does not run beside
+another seat's pool, once every checkout on the box carries the slots
+(`docs/ENV_CATALOG.md`).
 
 A seat does not run to its context window's end. Where `espalier.toml` sets
 `handoff_context_tokens`, the prompt router asks for the handoff on every

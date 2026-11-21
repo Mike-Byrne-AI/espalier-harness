@@ -1753,14 +1753,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "exact-set assertion at the git-regex axis.",
     ),
     "tests/test_speedbump_kill.py": (
-        2, "ee9fc45dfd84f6128f9d2044204864e88b00ae7ad41702a39bd9bdda88ad88af",
+        4, "2ad4460fd80065e57c89900bb46baa6f3cf2e421c2e9cc849ee8b8b6e1f8b034",
         "CORRECT_BY_PROPERTY",
         "ADDED 2026-11-02 (DEF-4078, CP-KILL): both rows read `_speedbump.SPEEDBUMPS` to find "
         "CP-KILL by its id, its position in the registry and its own fields (cap exempt, the "
         "per-pid flag key, a per-fire body). A lookup of one named member, not a population "
         "claim: a retired or renamed CP-KILL reds by StopIteration or ValueError, never "
         "passes vacuously, and the registry's own shape is pinned one file over "
-        "(tests/test_speedbump_irreversible.py, TestRegistryIntegration).",
+        "(tests/test_speedbump_irreversible.py, TestRegistryIntegration). REVISED 2026-11-18 "
+        "(DEF-2105, the box lock's slots): two more rows read `_speedbump._box_lock_holders()` "
+        "over slot files the test plants itself, and compare the pids to an exact literal "
+        "list at each count (2, 3, and a count file that holds no count): the reader's "
+        "output against a fixture it built, not a population the test derives, so a reader "
+        "that reads fewer slots, or one slot per record, reds on the exact list.",
     ),
     "tests/test_speedbump_metacognitive.py": (
         5, "5d718547ff74de90543b152f8f1091c53dbf58bd37869e5e2438bab178a704b0",
