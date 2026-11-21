@@ -388,7 +388,16 @@ class TestTheSentenceSplitter:
 #: its cite's hit is paid by the directory walk's indirection cite, which sits
 #: in no declaring sentence and is now cited by class and test name alone, so
 #: the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 46, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 46 -> 47 on 2026-11-20 (DEF-3099, the dispatcher's b9c006): the read
+#: of a link that already exists leaves a link in a folder part of the path, a
+#: hard link, a link the same command makes, a link a `cd` reaches, a computed
+#: name and a share spelling, one sentence pinned by
+#: `TestAReadThroughALinkIsJudgedByWhatItLeadsTo::test_the_remainder_is_pinned_as_allows`
+#: and `TestTheLinkReadFollowsAJunctionAndNoOtherReparsePoint::test_a_network_share_spelling_is_never_looked_up`;
+#: its two cites' hits are paid by two pointers in docs/FAILURE_MODES.md, a doc
+#: that declares no limit (a test path and a bare ledger id), so the seeded
+#: docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 47, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

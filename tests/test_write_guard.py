@@ -25874,6 +25874,271 @@ class TestTheNewItemLinkLimits:
         assert_hook_denied(_run_ps_guard(self._LIMITS[key][1], tmp_path), contains_reason=".env")
 
 
+def _linked_tree(tmp_path: Path) -> Path:
+    """A project holding a dotenv file, its template, a plain file, a secrets
+    folder, and links to each: ``notes.txt`` to the dotenv file by its full
+    path, ``near.txt`` to it by a relative target, ``fine.txt`` to the plain
+    file, ``template.txt`` to the template, and ``cfg`` to the folder; in
+    ``sub``, a plain ``notes.txt`` and ``inner.txt`` linked to the dotenv
+    file, for the rows a `cd` decides."""
+    project = tmp_path / "proj"
+    (project / "secrets").mkdir(parents=True)
+    (project / "sub").mkdir()
+    (project / ".env").write_bytes(b"K=V\n")
+    (project / ".env.example").write_bytes(b"K=\n")
+    (project / "plain.txt").write_bytes(b"p\n")
+    (project / "secrets" / "key.txt").write_bytes(b"k\n")
+    os.symlink(project / ".env", project / "notes.txt")
+    os.symlink(".env", project / "near.txt")
+    os.symlink(project / "plain.txt", project / "fine.txt")
+    os.symlink(project / ".env.example", project / "template.txt")
+    os.symlink(project / "secrets", project / "cfg", target_is_directory=True)
+    (project / "sub" / "notes.txt").write_bytes(b"n\n")
+    os.symlink(project / ".env", project / "sub" / "inner.txt")
+    return project
+
+
+@requires_symlink
+class TestAReadThroughALinkIsJudgedByWhatItLeadsTo:
+    """DEF-3099: the secret read check judged a read target by the name it is
+    read by, so a Read or a `cat` of a link to a dotenv file was allowed
+    where a Read of the file was refused, whoever made the link. An existing
+    target is now judged by what its link leads to as well: the last name is
+    lstat'd, and a symbolic link (or a Windows link or junction, the
+    junction class below) is resolved and judged by the same rules, a
+    relative target from the payload's working directory. Through the real
+    hook, beside the remainder the read leaves, each pinned at the verdict
+    it has, so the day a reader follows one its row reds and docs/HOOKS.md's
+    sentence is rewritten on purpose."""
+
+    @pytest.mark.parametrize("name", ["notes.txt", "near.txt"])
+    def test_a_read_of_a_link_to_a_dotenv_file_is_refused(self, name, tmp_path):
+        project = _linked_tree(tmp_path)
+        verdict = run_guard_tool("Read", {"file_path": str(project / name)}, project)
+        assert_hook_denied(verdict, contains_reason="a link to")
+
+    @pytest.mark.parametrize(("tool", "command", "at"), [
+        ("Bash", "cat notes.txt", "."),
+        ("Bash", "cat ../notes.txt", "sub"),
+        ("Bash", "head -n 1 near.txt", "."),
+        ("PowerShell", "Get-Content notes.txt", "."),
+    ])
+    def test_a_shell_read_of_the_link_is_refused_from_the_payload_cwd(self, tool, command, at, tmp_path):
+        project = _linked_tree(tmp_path)
+        verdict = run_guard_from(tool, command, project, project / at)
+        assert_hook_denied(verdict, contains_reason=".env")
+
+    def test_a_shell_read_of_the_link_by_its_full_path_is_refused(self, tmp_path):
+        project = _linked_tree(tmp_path)
+        full = str(project / "notes.txt").replace("\\", "/")
+        verdict = run_guard_from("Bash", f'cat "{full}"', project, project / "sub")
+        assert_hook_denied(verdict, contains_reason=".env")
+
+    @pytest.mark.parametrize("slash", ["", "/"])
+    def test_a_search_of_a_link_to_the_secrets_folder_is_refused(self, slash, tmp_path):
+        """With a slash after the link too: `lstat` on `cfg/` follows the
+        link, so the slash comes off before it (the code review's WARN)."""
+        project = _linked_tree(tmp_path)
+        verdict = run_guard_tool("Grep", {"pattern": "k", "path": str(project / "cfg") + slash}, project)
+        assert_hook_denied(verdict, contains_reason="secrets/")
+        verdict = run_guard_from("Bash", f"cp -r cfg{slash} out", project, project)
+        assert_hook_denied(verdict, contains_reason="secrets/")
+
+    def test_a_link_under_the_home_folder_is_read_where_the_shell_reads_it(self, tmp_path, monkeypatch):
+        project = _linked_tree(tmp_path)
+        monkeypatch.setenv("HOME", str(project))
+        monkeypatch.setenv("USERPROFILE", str(project))
+        verdict = run_guard_from("Bash", "cat ~/notes.txt", project, project / "sub")
+        assert_hook_denied(verdict, contains_reason=".env")
+
+    def test_a_chain_through_a_link_named_as_a_secret_is_refused(self, tmp_path):
+        """A dotfile manager's `.env` may itself be a link to a file of
+        another name: each link of the chain is judged by its name, then the
+        last target (the failure-mode review's R1)."""
+        project = _linked_tree(tmp_path)
+        (project / "vault").mkdir()
+        (project / "vault" / "app-settings").write_bytes(b"K=V\n")
+        (project / "stowed").mkdir()
+        os.symlink(project / "vault" / "app-settings", project / "stowed" / ".env")
+        os.symlink(project / "stowed" / ".env", project / "via.txt")
+        verdict = run_guard_tool("Read", {"file_path": str(project / "via.txt")}, project)
+        assert_hook_denied(verdict, contains_reason="a link to")
+        assert_hook_allowed(run_guard_tool(
+            "Read", {"file_path": str(project / "vault" / "app-settings")}, project))
+
+    @pytest.mark.parametrize("name", ["fine.txt", "template.txt", "plain.txt", "sub"])
+    def test_a_link_to_a_target_no_rule_names_is_allowed(self, name, tmp_path):
+        project = _linked_tree(tmp_path)
+        assert_hook_allowed(run_guard_tool("Read", {"file_path": str(project / name)}, project))
+
+    def test_a_relative_target_is_read_from_the_working_directory_it_names(self, tmp_path, capsys):
+        """In process: the same relative spelling is the link from the
+        project and no file at all from ``sub``; with no working directory
+        the project root is where it is read from."""
+        _bash_patterns_module()
+        import write_guard as wg
+        project = _linked_tree(tmp_path)
+        call = {"command": "cat notes.txt"}
+        assert wg.check_secret_path_access("Bash", call, project)
+        assert wg.check_secret_path_access("Bash", call, project, cwd=project)
+        assert not wg.check_secret_path_access("Bash", call, project, cwd=project / "sub")
+        capsys.readouterr()
+
+    # The remainder the read leaves, each at the verdict it has (DEF-3099's
+    # row): a hard link has no other name to resolve to; lstat reads the last
+    # name only, so a link in a folder part of the path is not followed; a
+    # name computed when the command runs (a variable the command does not
+    # bind, a substitution's output) is not read, though the words a reader
+    # does take from one are (`cat $(printf notes.txt)` reads `notes.txt`);
+    # a link made in the same call does not exist when the check runs, so
+    # the creation side's arms alone judge it.
+    _REMAINDER = {
+        "a-link-in-a-folder-part-of-the-path": ("Read", {"file_path": "cfg/key.txt"}),
+        "a-hard-link-to-the-dotenv-file": ("Read", {"file_path": "hard.txt"}),
+        "a-name-from-a-variable-the-command-does-not-bind": ("Bash", {"command": 'cat "$NOTES_FILE"'}),
+        "a-name-from-a-substitution-s-output": ("Bash", {"command": 'cat "$(head -n 1 plain.txt)"'}),
+        "a-link-in-the-folder-an-earlier-cd-reaches": ("Bash", {"command": "cd sub && cat inner.txt"}),
+        "a-link-made-in-the-call-by-a-maker-no-arm-reads": (
+            "PowerShell", {"command": "cmd /c mklink made.txt .env; Get-Content made.txt"}),
+    }
+
+    @pytest.mark.parametrize("key", list(_REMAINDER))
+    def test_the_remainder_is_pinned_as_allows(self, key, tmp_path):
+        project = _linked_tree(tmp_path)
+        if key == "a-hard-link-to-the-dotenv-file":
+            os.link(project / ".env", project / "hard.txt")
+        tool, call = self._REMAINDER[key]
+        if "file_path" in call:
+            verdict = run_guard_tool(tool, {"file_path": str(project / call["file_path"])}, project)
+        else:
+            verdict = run_guard_from(tool, call["command"], project, project)
+        assert_hook_allowed(verdict)
+
+    @pytest.mark.parametrize(("tool", "call"), [
+        ("Read", {"file_path": "secrets/key.txt"}),
+        ("Bash", {"command": "ln -s .env made.txt && cat made.txt"}),
+    ])
+    def test_each_remainder_s_control_is_denied(self, tool, call, tmp_path):
+        """A file in the secrets folder by its own name, and a link made in
+        the call by a maker the creation side reads (`ln -s`)."""
+        project = _linked_tree(tmp_path)
+        if "file_path" in call:
+            verdict = run_guard_tool(tool, {"file_path": str(project / call["file_path"])}, project)
+        else:
+            verdict = run_guard_from(tool, call["command"], project, project)
+        assert_hook_denied(verdict)
+
+    @pytest.mark.parametrize("command", [
+        "mv notes.txt moved.txt",
+        "tar -cf out.tar notes.txt",
+        "cd sub && cat notes.txt",
+    ])
+    def test_the_declared_friction_is_pinned_as_refusals(self, command, tmp_path):
+        """A move or an archive without `-h` acts on the link and moves no
+        bytes, and the read check guards the link wherever it lands; every
+        candidate is followed alike all the same, so each is refused. After
+        a `cd`, a plain file is refused where a link of its name sits in the
+        folder the call starts in. Each declared in docs/HOOKS.md."""
+        project = _linked_tree(tmp_path)
+        assert_hook_denied(run_guard_from("Bash", command, project, project), contains_reason=".env")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a junction is a Windows reparse point")
+class TestAReadThroughAJunctionIsJudgedByWhatItLeadsTo:
+    """DEF-3099 on Windows: a junction is a reparse point that is not a
+    symbolic link (`os.lstat` reads it as a folder), and it names the folder
+    it leads to as a link does, so a search through one into the secrets
+    folder is refused. A junction needs no privilege, unlike a link."""
+
+    def test_a_search_of_a_junction_to_the_secrets_folder_is_refused(self, tmp_path):
+        import _winapi
+        project = tmp_path / "proj"
+        (project / "secrets").mkdir(parents=True)
+        (project / "secrets" / "key.txt").write_bytes(b"k\n")
+        _winapi.CreateJunction(str(project / "secrets"), str(project / "jct"))
+        try:
+            verdict = run_guard_tool("Grep", {"pattern": "k", "path": str(project / "jct")}, project)
+            assert_hook_denied(verdict, contains_reason="secrets/")
+        finally:
+            os.rmdir(project / "jct")
+
+
+class TestTheLinkReadFollowsAJunctionAndNoOtherReparsePoint:
+    """`_linked_secret`'s Windows arm on every host (the failure-mode
+    review's G3: the junction class above runs only on the advisory Windows
+    leg). ``os.lstat`` reads a junction as a folder carrying the junction
+    tag; a cloud placeholder carries a reparse tag too, names no path, and
+    is not followed. The stat result is stood in for that one path."""
+
+    @staticmethod
+    def _stand_in(monkeypatch, tmp_path, tag):
+        import stat
+        import types
+        _bash_patterns_module()
+        import write_guard as wg
+        (tmp_path / "secrets").mkdir()
+        point = str(tmp_path / "point")
+        real_lstat, real_realpath = wg.os.lstat, wg.os.path.realpath
+        followed = []
+
+        def lstat(path, *a, **k):
+            if str(path) == point:
+                return types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_reparse_tag=tag)
+            return real_lstat(path, *a, **k)
+
+        def realpath(path, *a, **k):
+            if str(path) == point:
+                followed.append(path)
+                return str(tmp_path / "secrets")
+            return real_realpath(path, *a, **k)
+
+        def readlink(path, *a, **k):
+            raise OSError("not a link")
+
+        monkeypatch.setattr(wg.os, "lstat", lstat)
+        monkeypatch.setattr(wg.os.path, "realpath", realpath)
+        monkeypatch.setattr(wg.os, "readlink", readlink)
+        return wg._linked_secret("point", tmp_path, bash=False), followed
+
+    def test_a_junction_to_the_secrets_folder_is_followed_and_refused(self, monkeypatch, tmp_path):
+        found, followed = self._stand_in(monkeypatch, tmp_path, 0xA0000003)
+        assert found is not None and found[0] == "secrets/**" and followed, (found, followed)
+
+    def test_a_cloud_placeholder_is_not_followed(self, monkeypatch, tmp_path):
+        found, followed = self._stand_in(monkeypatch, tmp_path, 0x9000701A)
+        assert found is None and not followed, (found, followed)
+
+    @pytest.mark.parametrize("spelled", ["//host/share/notes.txt", "\\\\host\\share\\notes.txt"])
+    def test_a_network_share_spelling_is_never_looked_up(self, spelled, monkeypatch, tmp_path):
+        """A share's lookup can wait on the network past the hook's budget,
+        so the spelling is judged by its name alone (docs/HOOKS.md)."""
+        _bash_patterns_module()
+        import write_guard as wg
+        asked = []
+        monkeypatch.setattr(wg.os, "lstat", lambda path, *a, **k: asked.append(path) or os.stat(tmp_path))
+        assert wg._linked_secret(spelled, tmp_path, bash=True) is None and not asked, asked
+
+
+class TestTheSecretsRuleReadsAFolderEndedByASlash:
+    """The secrets rule read a folder ended by a slash only bare
+    (`secrets/`), never below another folder (`x/secrets/`) or by its full
+    path (`/abs/secrets/`), so a link to the folder, which resolves to the
+    full path, read clean (DEF-3099's lane). A name with no slash after it
+    may be a file and stays as it was."""
+
+    @pytest.mark.parametrize("spelled", ["secrets/", "x/secrets/", "/abs/secrets/", "C:\\abs\\secrets\\"])
+    def test_a_folder_ended_by_a_slash_matches(self, spelled):
+        _bash_patterns_module()
+        import write_guard as wg
+        assert wg._secret_pattern_for(spelled) == "secrets/**"
+
+    @pytest.mark.parametrize("spelled", ["x/secrets", "secrets", "x/not-secrets/", "x/secretsy/"])
+    def test_a_name_with_no_slash_after_it_or_another_name_is_unchanged(self, spelled):
+        _bash_patterns_module()
+        import write_guard as wg
+        assert wg._secret_pattern_for(spelled) is None
+
+
 
 class TestABareGlobIsJudgedAsItsDirectoryUnderAWindowsBase:
     """The bare-glob arm of `_target_is_catastrophic` splices the base in raw
