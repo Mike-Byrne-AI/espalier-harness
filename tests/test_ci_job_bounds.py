@@ -134,8 +134,9 @@ def _worst_serial_mark() -> float:
 #: reason for the floor: a test that hangs must be cut by its own timeout, naming
 #: it, before the job's bound cuts the job with none named. A test at its mark adds
 #: at most the mark to such a run, so the bound holds the worst mark plus this
-#: worst (one test at its mark; it is conservative on a shallow checkout, where
-#: tests/test_verify_pins.py's controls skip). The margin this replaced was a flat
+#: worst (one test at its mark; a shallow checkout skips tests/test_verify_pins.py's
+#: controls, but its other tests run there under the same 1800 s module mark, so
+#: the floor has no spare margin on that leg either). The margin this replaced was a flat
 #: 600 s on a 7.0-minute leg of 2026-10-16, which had grown to 23.5 by the read of
 #: the date below. The census prints the floor at every re-measure, so growth
 #: inside the files reads RAISE there; a serial file added reds the roster test
@@ -148,7 +149,7 @@ def _worst_serial_mark() -> float:
 #: floor alone.
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
-    ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
+    ("test.yml", "test-serial"): 25.7,  # median 18.1, 2026-11-21; 80 cells, 20 runs
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 19.5,  # median 16.4, 2026-11-21
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs

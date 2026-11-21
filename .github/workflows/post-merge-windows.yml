@@ -59,8 +59,8 @@ jobs:
     # floor scripts/ci_job_bounds_census.py reads for every job that runs the
     # serial files (DEF-2038), so a slow test is failed by its own mark, by
     # name, before the job is killed. The shallow checkout below skips that
-    # file's controls, so here the floor is conservative by its 15 minutes over
-    # the next mark (900 s); the one rule is kept over a per-job reading.
+    # file's controls, but its other tests run here under the same module mark,
+    # so the floor has no spare margin on this leg, as on a full checkout.
     timeout-minutes: 50
     steps:
       # A shallow checkout, as the measured portability runs made it: the one

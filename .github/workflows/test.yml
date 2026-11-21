@@ -255,11 +255,11 @@ jobs:
     runs-on: ubuntu-latest
     # DEF-2038: the largest per-test timeout in the serial files (1800 s, the
     # module mark of tests/test_verify_pins.py) plus this job's worst green run,
-    # 23.5 min over its last 20 runs (median 17.8, 2026-11-11,
+    # 25.7 min over its last 20 runs (median 18.1, 2026-11-21,
     # scripts/ci_job_bounds_census.py), so a slow test is failed by its own mark,
     # by name, before the job is killed with none named. The census prints this
     # floor at every re-measure; tests/test_ci_job_bounds.py holds the figure.
-    timeout-minutes: 55
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
