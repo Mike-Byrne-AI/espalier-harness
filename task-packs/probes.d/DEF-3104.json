@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3104",
+ "subject": "tests/test_zone_writes.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a load-dependent flake, red once in a loaded xdist line and green 3 of 3 alone; no probe reproduces the load that reds it, and a repeat-until-red probe would read the box, not the test",
+ "row_sha": "83b0bc9e9a67",
+ "text_sha": "4925662cc9fe",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing)"
+}

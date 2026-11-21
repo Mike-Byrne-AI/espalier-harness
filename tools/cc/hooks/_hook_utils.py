@@ -3282,7 +3282,8 @@ def _msys_drive_to_windows(path: str) -> str:
     drive-spelled root: this module's ``_clean_path_prefixes`` (the chokepoint
     behind ``normalize_path`` / ``normalize_path_str`` / ``normalize_bash_path``
     -- protected zones on every channel and the plan gate's in-repo test; the
-    secret-path check matches on the basename and never needs it),
+    secret-path check's name rules match on the spelling and never need it,
+    while its link read finds the file through `join_directory`, DEF-3099),
     ``_project_root_spelling`` (the ROOT side of the same compare, when the
     variable was exported from Git Bash by hand) and ``_bash_patterns._posix``
     (the recursive-delete tier's identity, ancestor and containment rules) --

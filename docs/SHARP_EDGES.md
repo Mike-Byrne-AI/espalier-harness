@@ -6411,8 +6411,8 @@ worktree removed by hand (`git worktree remove`) still strands its seat's claims
 `git worktree add` copies the per-worktree config of the checkout it runs in (all but
 `core.bare` and `core.worktree`), so a scratch worktree a seat adds from its own checkout
 answers that seat's name, and one added from a main checkout given a `--worktree` name
-answers that; one added from a main checkout with none answers the clone's. The seat's
-next send from either writes one mail ref. `seat.py launch` unsets a name git copied into
+answers that; one added from a main checkout with none answers the clone's. Until
+DEF-3100 the next send from either wrote one mail ref. `seat.py launch` unsets a name git copied into
 a worktree it creates, so the seat it launches is named as it derives; a `git worktree
 add` by hand, and Claude Code's own `claude --worktree` (git makes that one too), get no
 such step, and SessionStart does not unset a copied name: it reads as the worktree's own,
@@ -6421,7 +6421,21 @@ it. Since DEF-3098, `tools/cc/mail.py::checkout_names`
 reads every checkout git lists by the name it writes under, wherever its folder is, and the
 board, `tools/cc/seat.py::resolve` and `name_this_worktree` all read through it: the
 board flags such a twin while a session holds it, and `seat.py` refuses the name with the
-facts of each checkout. Name the copy at once
+facts of each checkout. Since DEF-3100 the writer refuses too: `tools/cc/mail.py::twin_refusal`,
+run by every send and park and by `send --dry-run`, refuses a checkout whose name another
+checkout of the clone answers, dormant or live, naming each one and the rename of that
+checkout alone, unless it owns the name by its place: the main checkout, for any name that is
+not a `--worktree` setting of its own (the seat by construction), or a worktree at
+`.claude/worktrees/<dir>` under the main checkout named `<clone>-<dir>`. So a copy `git
+worktree add` made, a seat worktree its first session has not named, and a Claude Code agent
+worktree (it runs no SessionStart, so it answers the clone's name, or the seat's whose
+checkout it was made from) cannot write the seat's mail, and a dormant copy never stops a
+seat that owns its name by place (on 2026-11-21 UTC nine checkouts on the PC answered `win`,
+the main checkout and eight dormant copies). A copy made by copying the folder has a `.git`
+folder of its own and is another clone, which git does not list. Owning nothing by place, so
+refused while a twin of it exists: every checkout of a bare clone (it has no main checkout), a
+seat SessionStart named outside `.claude/worktrees/` or moved with `git worktree move`, and a
+name set by hand; there which one is the seat is the operator's call. Name the copy at once
 (`git -C "<copy>" config --worktree espalier.machine <name>`), or make the scratch copy a
 clone of its own; a read-only snapshot (a reviewer's, a base to earn a red on) needs no
 checkout at all: `git archive <rev>` into a scratch folder carries no config.

@@ -2156,7 +2156,16 @@ the program stay unread, declared and pinned beside it.
 Reads of secret-bearing paths -- dotenv files (a dotenv TEMPLATE, the
 `.env.example`, `.env.sample`, `.env.template` or `.env.dist` a repo commits
 so a newcomer can copy it, is not one, and a copier's destination is a
-write, so `cp .env.example .env` runs), a `secrets/` directory, AWS
+write, so `cp .env.example .env` runs), a `secrets/` directory (a path
+through a `secrets` folder, or one ending in it and a slash, at any depth:
+`secrets/`, `x/secrets/`, `/abs/secrets/`; and one ending in it with no
+slash where a folder of that name exists, looked for from the directory
+the call starts in, as the full path the `Grep` tool sends, `./secrets` or
+`cp -r secrets x`, while a file of that name, or a name nothing on disk
+answers to, stays a name; a reader that takes an exclude value, a
+destination or a target folder for a path it reads, as `rsync --exclude`,
+`zip -x`, `git mv`, `cp -t` and `install -d` are taken, refuses that bare
+name as it refused the slash spelling already), AWS
 and JSON credential files -- are denied on the `Read`, `Grep`, `Edit` and
 `NotebookEdit` tools (`_CONTENT_SURFACING_TOOLS`, checked before the guard's
 early return for a read-only tool, so a read-only tool is refused too) and,
@@ -2516,14 +2525,50 @@ spellings of them are work:
   given by `-Target` or `-Value` after a blank or a colon, as it reads the
   target of `ln` and `ln -s` on Bash, so a link either verb makes to a
   secret-bearing path is refused; other verbs that make a link (`mklink`,
-  `fsutil hardlink`, the .NET link methods) are not read for it, and a read
-  through a link that already exists is judged by the name it is read by.
+  `fsutil hardlink`, the .NET link methods) are not read for it: a symbolic
+  link one of them makes is judged when it is read (the next bullet), and a
+  hard link stays outside both.
   Spellings Windows PowerShell 5.1 also binds are declared limits, each
   pinned at allow beside its denied control by
   `tests/test_write_guard.py::TestTheNewItemLinkLimits::test_the_declared_link_limits_are_pinned_as_allows`:
   a parameter name cut to a prefix (`-It`, `-Ty`, `-Ta`, `-Va`), an item
   type cut to a prefix (`-ItemType hard`) and a target piped into the cmdlet
   (`'.env' | New-Item -ItemType HardLink -Path link`).
+- **A read through a link that already exists.** A read target no rule
+  matches by name is judged by what it leads to where it is a symbolic link
+  or, on Windows, a junction, whoever made it (`mklink`, a script, a dotfile
+  manager, the operator): a Read, a `cat` or a `Get-Content` of a link to a
+  dotenv file, or a search through a link to the `secrets` folder, is
+  refused as a read of the target is, and the refusal names the link and
+  its target. A link named `secrets` that opens on a folder of another
+  name is read as the `secrets` folder.
+  Each link of a chain is judged by its name as well as the
+  last target, since a dotfile manager's `.env` may itself be a link. The
+  target's last name alone is read (the folders above it are not
+  followed), with any slash after it taken off, a relative one from the
+  directory the call runs in, and on the Bash tool in Git Bash's spellings
+  as the zone checks read them. Left as declared limits, each pinned at
+  its verdict by
+  `tests/test_write_guard.py::TestAReadThroughALinkIsJudgedByWhatItLeadsTo::test_the_remainder_is_pinned_as_allows`
+  (the share spelling by
+  `tests/test_write_guard.py::TestTheLinkReadFollowsAJunctionAndNoOtherReparsePoint::test_a_network_share_spelling_is_never_looked_up`):
+  a link in a folder part of the path; a
+  hard link, which has no other name to resolve to; a link the same
+  command makes, which does not exist yet when the check runs (`ln -s` is
+  refused when it is made, by the link readers above; a maker none reads
+  is not); a link in the folder a `cd` earlier in the same command
+  reaches; a name computed when the command runs (a variable it does not
+  bind, a substitution's output); and a network-share spelling
+  (`//host/...`, `\\host\...`), judged by its name alone, since its lookup
+  can wait on the network, as is a local device spelling (`\\?\C:\...`,
+  `\\.\...`), which starts with the same double backslash the share test
+  reads, though its lookup waits on nothing. Every target the secret check reads is followed
+  alike: `dd`, `zip` and `Compress-Archive` follow the link, so refusing
+  them catches the target's bytes as a read of it does, while a `mv`, a
+  `tar` without `-h` and an `ln` act on the link itself and move no bytes,
+  and are refused all the same, a declared friction; so is a plain file
+  read after a `cd` where a link of its name sits in the folder the call
+  starts in.
 - **An error-stream redirect among a command's words.** Each hard check (the
   zone checks, the secret-path check, and the Bash and PowerShell hard
   tiers) is judged a second time, where its first reading allowed, on the

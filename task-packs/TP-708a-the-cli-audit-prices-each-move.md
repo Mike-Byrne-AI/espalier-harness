@@ -1968,10 +1968,27 @@ unmeasured at P (Task 0's verdicts above).
 
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane (the tier it prints)
-- Earn-the-red: per section, against Task 9's table
+- State: LANDED
+- Commits: `lane/the-cli-audit-prices-each-move` (seat `air-work`): `6a91bc51b` (the pin and the
+  pre-registration), `522ad6f0c` (the census skeleton), `730aca4af` (the collision at P),
+  `025c6626f` and `718bbac94` (the map, layers, accretion and move cost), `590cbd5dd`,
+  `fc0e8bdd1`, `d099489513` and `c6d2ef349` (Tasks 4 to 6), `d5a81e110` (the Audit result),
+  `9ce0f656a` and `b8488da8e` (the reasoning review's fold and its F7 fix), `5bb09b9e3`,
+  `ae313a4a8` and `e26e0f25f` (the code reviews' fold), `c0c0b74bb` (the verifier's fold),
+  `3195445cb` (the six contract fixes) and `35c9c1116` (the Session Log row); merged as `7efbcd1`
+  (#725, 2026-11-18T14:28:39Z)
+- Suite: the full tier's second run, on `3195445cb` (`proof_tier.py --run --base origin/main`),
+  PASS 4 of 4: xdist 36,720 passed, 160 skipped, 3 xfailed; serial 3,643 passed, 13 skipped. The
+  landing check on `35c9c1116` (`check_handoff_landing.py --skip-shape`, air's ruling
+  `20261118T090753Z-air-b3bfcb`) clean, 1,018 passed: `check_message_shape` read 22 subjects past
+  72 characters at the final head (16 of the seat's pack and script commits, 6 of its Session Log
+  rows), none an internal id. After the merge, on `7efbcd1`: the post-merge proof run
+  44324669032 green, and the post-merge Windows leg run 44324668942 green
+- Earn-the-red: per section, from #725's body: the census skeleton's 27 fixture tests, 21 mutants
+  killed; Tasks 2 and 3, 110 tests and 51 mutants killed; F7's tests red on the unfixed script;
+  the code reviews' 19 folds, 48 red on the unfixed script and 328 green after (the named mutants
+  killed but the effect-equivalent five, below); each of the first full run's 6 contract
+  failures red on the unfixed head
 - Red-team at authoring (2026-11-17, each reviewer in its own context): the reasoning review
   (checklist v1, failure-mode reviewer), REQUEST CHANGES (checklist PASS 4, GAP 4, BIAS 5,
   UNCHECKED 8; failure modes Regression 0, Gap 10, Rough-edge 7); the architecture review, 13

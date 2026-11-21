@@ -1000,7 +1000,7 @@ but what it sees is the present set, which a deletion silently shrinks.
 **Binding-coverage-erosion instance — count gate where N shrinks, M
 grows.** A multi-surface numeric (the `DENIED_PATTERNS` count in
 `espalier/release_denylist.py`) was bound on exactly one surface
-(`docs/SHARP_EDGES.md`, pinned by `tests/test_release_denylist.py`) while
+(`docs/SHARP_EDGES.md`, pinned by the release denylist's own test) while
 three other surfaces restating it drifted freely —
 `docs/FAILURE_MODES.md`, the redefinition registry (a maintainers' doc, in the
 private archive since the 2026-09-25 seed), and
@@ -3533,7 +3533,7 @@ before; an adopter who ran `--execute` and re-ran the preview to confirm was
 told the upgrade had not taken, and a second `--execute` converged. Both were
 driven by the failure-mode review of the `DEF-726` fix (2026-09-10): the
 ordering was fixed, the render caveat is declared where the sentence is made
-and pinned (`DEF-757`).
+and pinned.
 
 **Detection.** For every stage that renders from the tree, ask what an
 earlier stage writes that the render reads. Drive it: the preview's named

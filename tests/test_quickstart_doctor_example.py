@@ -286,6 +286,36 @@ class TestBannerSamplesMatchTheDrivenHook:
     `python`. Verified red on all three docs before they were regenerated.
     """
 
+    #: The head lines a loaded start prints where a bounded read gave no
+    #: answer in time, each as its label and the cannot-tell words the hook's
+    #: own value carries (DEF-2104). A quiet start prints none of them on the
+    #: adopter tree, so no doc sample carries one, and a loaded cell that
+    #: printed one redded three docs on a label they rightly lack (#721's test
+    #: (3.14) cell, `Merging:`). Only labels ``_labels`` reads are listed: an
+    #: unread `Open PRs:` line cannot red a row here (the label regex takes no
+    #: space), so skipping on it would cost the verdicts for nothing.
+    #: Calibrated against the hook's own values in
+    #: ``TestAnUnreadHeadLineReadsAsCannotTell``, so a rewording reds there,
+    #: never as a label red here.
+    UNREAD_LINES = (
+        ("Merging:", "merge rules unread"),
+        ("Merged:", "unread (gh pr list gave no answer in time"),
+        ("Loose:", "process table unread"),
+    )
+
+    @classmethod
+    def skip_if_unread(cls, head: list[str]) -> None:
+        """A head carrying a line some bounded read left unread is
+        cannot-tell, never a verdict, the way ``skip_if_cut`` reads a cut
+        start: skip, naming the lines; a head whose reads all answered
+        returns."""
+        unread = [line for line in head for label, words in cls.UNREAD_LINES
+                  if line.startswith(label) and words in line]
+        if unread:
+            pytest.skip("cannot tell: the driven start printed a line a bounded read left unread "
+                        f"under load ({'; '.join(line.split(':', 1)[0] for line in unread)}), which no "
+                        "doc sample carries; only a start whose reads all answered judges these rows")
+
     @pytest.fixture(scope="class")
     def driven_banner(self, adopter_tree, tmp_path_factory) -> list[str]:
         """Head lines of the banner the DEPLOYED hook prints on a copy of the
@@ -313,7 +343,14 @@ class TestBannerSamplesMatchTheDrivenHook:
             capture_output=True, text=True, env=env, timeout=45, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
-        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        return self.judged_head(json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+
+    @classmethod
+    def judged_head(cls, ctx: str) -> list[str]:
+        """The head lines of a driven banner ``ctx``, once it may judge a doc:
+        a cut start or a head line a read left unread skips, and a banner
+        missing an unconditional line reds as a hook fault. The calibration
+        drives this with the hook's own builder (DEF-2104)."""
         # A loaded runner can carry the start past its wall (#456's
         # windows-latest leg: cut at 13.0 s in the banner build, ten errors).
         skip_if_cut(ctx)
@@ -326,6 +363,9 @@ class TestBannerSamplesMatchTheDrivenHook:
             "Host:", "Repo:", "Branch:", "Status:", "Memory:", "Blueprint:",
             "Surface:", "Integrity:", "Commands:",
         }, head
+        # After the floor, so a hook that drops an unconditional line still
+        # reds as a hook fault on a loaded cell (DEF-2104).
+        cls.skip_if_unread(head)
         return head
 
     @pytest.mark.parametrize("rel", _BANNER_DOCS)
@@ -369,6 +409,75 @@ class TestBannerSamplesMatchTheDrivenHook:
             return memory.split("**Stack:**", 1)[1].strip()
         sample = _banner_head(_doc_banner_sample(_read(QUICKSTART), "docs/QUICKSTART.md"))
         assert stack(sample) == stack(driven_banner)
+
+
+class TestAnUnreadHeadLineReadsAsCannotTell:
+    """DEF-2104: the capture above skips on a head line a bounded read left
+    unread and judges every other start, so its reader must know each unread
+    value the hook prints on those lines, and no answered one. Calibrated on
+    the hook's own banner builder fed the hook's own values, never on typed
+    copies, so a rewording of a value or a label reds here."""
+
+    @staticmethod
+    def _hook(monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.syspath_prepend(str(HOOK.parent.parent))
+        monkeypatch.syspath_prepend(str(HOOK.parent))
+        import _merge_rules as mr
+        import session_start as ss
+        return ss, mr
+
+    @staticmethod
+    def _banner(ss, tmp_path, **lines) -> str:
+        """The hook's own banner for ``lines``, every unconditional line in it
+        (``Integrity:`` is one the builder takes from its caller)."""
+        return ss._build_context(tmp_path, False, False, integrity="OK", **lines)
+
+    @pytest.mark.parametrize("which", [
+        "merging, protection unanswered", "merging, base unanswered",
+        "merged pull requests", "loose processes",
+    ])
+    def test_each_unread_value_the_hook_prints_skips_the_pin(self, which, monkeypatch, tmp_path):
+        ss, mr = self._hook(monkeypatch, tmp_path)
+        key, value = {
+            "merging, protection unanswered": ("merging", mr.line("main", mr.UNANSWERED, "")),
+            "merging, base unanswered": ("merging", mr.line("", mr.BASE_UNANSWERED, "")),
+            "merged pull requests": ("merged_prs", ss._MERGED_PRS_UNREAD),
+            "loose processes": ("loose", ss._LOOSE_UNREAD),
+        }[which]
+        with pytest.raises(pytest.skip.Exception, match="cannot tell"):
+            TestBannerSamplesMatchTheDrivenHook.judged_head(self._banner(ss, tmp_path, **{key: value}))
+
+    def test_a_head_whose_reads_all_answered_is_judged(self, monkeypatch, tmp_path):
+        """Each listed label is one the label pin reads, so a skip on it
+        spares a red the pin would give; and answered values return."""
+        ss, mr = self._hook(monkeypatch, tmp_path)
+        merging = mr.line("main", 0, json.dumps({"strict": False, "checks": [{"context": "test"}]}))
+        assert merging.startswith("main: up-to-date rule off"), merging
+        banner = self._banner(
+            ss, tmp_path, merging=merging,
+            merged_prs="#6 lane/y -- merged into main, not in your local main",
+            loose="pid 4242 python (12 CPU-min, no parent)")
+        try:
+            head = TestBannerSamplesMatchTheDrivenHook.judged_head(banner)
+        except pytest.skip.Exception as skipped:  # a skip here would hide every verdict the pin gives
+            pytest.fail(f"an answered head was skipped: {skipped}")
+        listed = {label for label, _ in TestBannerSamplesMatchTheDrivenHook.UNREAD_LINES}
+        assert listed <= _labels(head), head
+
+    def test_a_missing_unconditional_line_reds_before_an_unread_line_skips(self, monkeypatch, tmp_path):
+        """A hook that drops a line it always prints is a hook fault, red on a
+        loaded cell too, never hidden behind the skip."""
+        ss, mr = self._hook(monkeypatch, tmp_path)
+        banner = ss._build_context(tmp_path, False, False, merging=mr.line("main", mr.UNANSWERED, ""))
+        assert "Integrity:" not in banner
+        try:
+            TestBannerSamplesMatchTheDrivenHook.judged_head(banner)
+        except pytest.skip.Exception:
+            pytest.fail("the unread line skipped a banner missing an unconditional line")
+        except AssertionError:
+            return
+        pytest.fail("a banner missing `Integrity:` was judged")
 
 
 class TestTheCutOpeningReadsAsCannotTell:

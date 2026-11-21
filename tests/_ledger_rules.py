@@ -333,6 +333,13 @@ TEXT_OVER_OWN_SUBJECT = {
     #: set on 2026-11-09: struck by lane ci-every-job-s-bound-is-re-measured-by-a-census
     #: (Core Rule 10 names the bounds census in place of a restated cell time), so
     #: its probe retired with it.
+    #: DEF-3102 (filed 2026-11-20 by lane the-opener-reads-a-heredoc-as-bash-splits-it,
+    #: air's aea88d (e)): the deliverable IS the advisory Windows serial leg's
+    #: `timeout-minutes` value in its own workflow file, config text with no code
+    #: to parse. The probe drops comment lines and reads the key under the
+    #: `serial-leg:` job, so a comment or a changelog line leaves it open; raising
+    #: the bound to the census floor closes it, which is the fix.
+    "DEF-3102",
 }
 
 #: Ways a probe reads text rather than asking a structural question. The

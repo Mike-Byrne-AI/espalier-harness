@@ -1,0 +1,14 @@
+{
+ "id": "DEF-5133",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import os, sys, tempfile, pathlib\nos.environ.pop('ESPALIER_MAINTENANCE_MODE', None)\nsys.path.insert(0, '.')\nfrom tests.test_write_guard import run_bash_guard as g\ndq, s = chr(34), chr(36)\nt = '.' + 'env'\nv = []\nfor m in ('', '2>/dev/null '):\n    with tempfile.TemporaryDirectory() as d:\n        v.append(g('echo ' + dq + s + '(git ' + m + 'mv ' + dq + t + dq + ' x)' + dq, pathlib.Path(d)))\nprint([dq + 'deny' + dq in (r.stdout or '') for r in v])\"",
+ "open_value": "[True, False]",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "d67fbe0b64d9",
+ "text_sha": "0d04a239b55e",
+ "verified_2026_11_20": "OPEN (filed 2026-11-20; probe driven at filing here and in the export of HEAD 1ba3b6d2e9e3)"
+}
