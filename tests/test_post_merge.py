@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "_post_merge.py"
@@ -991,7 +991,7 @@ class TestACellNamedForTheTierItRan:
         cell named in a workflow but not declared, a marker spelled apart from
         ``tier_of``'s, or a fallback that differs from the step's."""
         named = set()
-        for wf in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        for wf in checkout_glob(REPO_ROOT / ".github" / "workflows", "*.yml"):
             lines = wf.read_text(encoding="utf-8").splitlines()
             for i, line in enumerate(lines):
                 if line.startswith("    name: ") and line.rstrip().endswith(" tier)") and "${{" in line:
