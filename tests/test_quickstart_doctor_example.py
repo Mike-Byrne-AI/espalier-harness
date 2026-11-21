@@ -454,10 +454,14 @@ class TestAnUnreadHeadLineReadsAsCannotTell:
         ss, mr = self._hook(monkeypatch, tmp_path)
         merging = mr.line("main", 0, json.dumps({"strict": False, "checks": [{"context": "test"}]}))
         assert merging.startswith("main: up-to-date rule off"), merging
-        head = TestBannerSamplesMatchTheDrivenHook.judged_head(self._banner(
+        banner = self._banner(
             ss, tmp_path, merging=merging,
             merged_prs="#6 lane/y -- merged into main, not in your local main",
-            loose="pid 4242 python (12 CPU-min, no parent)"))
+            loose="pid 4242 python (12 CPU-min, no parent)")
+        try:
+            head = TestBannerSamplesMatchTheDrivenHook.judged_head(banner)
+        except pytest.skip.Exception as skipped:  # a skip here would hide every verdict the pin gives
+            pytest.fail(f"an answered head was skipped: {skipped}")
         listed = {label for label, _ in TestBannerSamplesMatchTheDrivenHook.UNREAD_LINES}
         assert listed <= _labels(head), head
 
