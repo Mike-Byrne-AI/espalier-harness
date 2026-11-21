@@ -857,9 +857,23 @@ class TestTheFileToolKinds:
     def test_only_the_maintenance_twins_set_the_switch(self, tmp_path):
         assert census.MAINTENANCE_KINDS < census.REPO_KINDS <= set(census.KINDS)
         # held whole, so the loop below cannot narrow with it unseen
-        assert census.REPO_KINDS == {"write", "edit", "write_maintenance", "edit_maintenance"}
+        assert census.REPO_KINDS == {"write", "edit", "write_maintenance", "edit_maintenance",
+                                     "bash_seat", "bash_seat_maintenance",
+                                     "powershell_seat", "powershell_seat_maintenance"}
+        assert census.MAINTENANCE_KINDS == {kind for kind in census.REPO_KINDS if kind.endswith("_maintenance")}
         assert census.child_env(tmp_path, tmp_path, maintenance=True)["ESPALIER_MAINTENANCE_MODE"] == "1"
         assert "ESPALIER_MAINTENANCE_MODE" not in census.child_env(tmp_path, tmp_path)
+        notes = str(tmp_path / "notes.txt")
         for kind in census.REPO_KINDS:
             body = census.payload(kind, tmp_path)
-            assert body["tool_name"] in ("Write", "Edit") and body["tool_input"]["file_path"] == str(tmp_path / "notes.txt")
+            named = body["tool_input"].get("file_path") or body["tool_input"]["command"].split()[-1]
+            assert body["tool_name"] in ("Write", "Edit", "Bash", "PowerShell") and named == notes, body
+
+    @pytest.mark.parametrize("kind, head", [("bash_seat", "ls -la "), ("powershell_seat", "Get-ChildItem ")])
+    def test_the_seat_shell_kinds_name_their_own_tree_through_the_main_checkout(self, tmp_path, kind, head):
+        # DEF-5135: the costliest shut path of CP-OTHER-CHECKOUT's shell gate,
+        # a path of the session's worktree whose spelling begins with main's.
+        worktree = census._new_repo_project(tmp_path)
+        command = census.payload(kind, worktree)["tool_input"]["command"]
+        main = str(worktree.parent.parent.parent)
+        assert command == head + str(worktree / "notes.txt") and str(worktree).startswith(main + "/")
