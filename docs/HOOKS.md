@@ -1818,8 +1818,9 @@ bare `e`, `s///e`, a variable printed into a shell) makes the input stream
 live -- a here-string, a heredoc body or the stage piped in -- and awk's
 `-v` values with it; an awk or sed program's own file writes (`print >
 "path"`, `>>`, sed's `w path` command and flag) meet the write extractor. A
-program on a POSIX shell's stdin by here-string or pipe (`bash <<< "..."`,
-`sh<<<'...'`, `echo "..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
+program on a POSIX shell's stdin by here-string, heredoc or pipe (`bash <<<
+"..."`, `sh<<<'...'`, `bash <<'SH'`, `sh -s <<'SH'`, `bash -- <<'SH'`, `echo
+"..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
 read the same way, behind the shell's own output redirects as well (`echo
 "..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`, and
 before the `-` or a flag, `python3 2>&1 - <<'PY'`, glued to the operator,

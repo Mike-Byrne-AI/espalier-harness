@@ -8092,6 +8092,8 @@ _POSIX_SHELL_HEREDOC_HEADS = [
     ("bash -x<<", "flag-glued-to-the-operator"),
     ("bash 2>/dev/null <<", "redirect-before"),
     ("bash >o<<", "redirect-glued-to-the-operator"),
+    # a spaced redirect's target is no switch, though it reads like a cluster
+    ("bash > -cache <<", "redirect-target-like-a-cluster"),
 ]
 
 
@@ -8107,7 +8109,10 @@ class TestAPosixShellHeredocProgramIsReadBySecretLeg:
     heredoc as on the plain spelling), so the reader is the secret leg's
     alone. The opener is the here-string's, widened to end at the `<<`
     (`_bash_patterns._SHELL_STDIN_RE`), and it matches on the heredoc
-    opener view too, so DEF-5125's operators open it."""
+    opener view too, so DEF-5125's operators open it. Only a body the
+    heredoc walk recorded is read: an opener inside another heredoc's body
+    is data (the code review: a pull request body quoting the shape was a
+    false deny, and reading each such opener to the end fanned out)."""
 
     _BODY = "cat .env"
 
@@ -8131,8 +8136,11 @@ class TestAPosixShellHeredocProgramIsReadBySecretLeg:
         "bash <<'SH'\n  SH\ncat .env\nSH",
         # two operators on one line: the second body is the shell's
         "cat > n.md <<'MD' && bash <<'SH'\nx\nMD\ncat .env\nSH",
+        # a shell's heredoc inside another shell's: read one level down
+        "bash <<'B'\nbash <<'A'\ncat .env\nA\nB",
     ], ids=["unquoted-delimiter", "tab-strip", "redirect-after-the-operator",
-            "after-another-heredoc", "indented-delimiter-is-a-line", "second-on-one-line"])
+            "after-another-heredoc", "indented-delimiter-is-a-line", "second-on-one-line",
+            "nested-in-another-shells"])
     def test_the_body_bash_runs_is_the_one_read(self, tmp_path, cmd):
         assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
 
@@ -8158,21 +8166,53 @@ class TestAPosixShellHeredocProgramIsReadBySecretLeg:
         # two operators on one line: the first body is data, the shell's is
         # the second
         "cat > n.md <<'MD' && bash <<'SH'\ncat .env\nMD\necho hi\nSH",
+        # an opener inside another heredoc's body, under a head whose body
+        # the masker keeps: data, the walk records no such heredoc
+        "gh pr create --title t --body \"$(cat <<'EOF'\nexample:\nbash <<'SH'\ncat .env\nSH\nEOF\n)\"",
+        "patch -p1 <<'EOF'\nbash <<X\ncat .env\nEOF",
+        # many of them: each was read to the end, one level down, again
+        "patch -p1 <<'EOF'\n" + "\n".join(f"bash <<X{i}" for i in range(300)) + "\nEOF",
     ], ids=["benign", "a-pattern-names-it", "bare-c-program", "c-in-a-cluster", "plus-c",
-            "quoted-c-program", "script-operand", "fd-three", "an-argument", "prose", "a-document", "a-commit-message", "data-body-first-on-one-line"])
+            "quoted-c-program", "script-operand", "fd-three", "an-argument", "prose", "a-document",
+            "a-commit-message", "data-body-first-on-one-line", "a-pull-request-body",
+            "an-opener-in-a-data-body", "many-openers-in-a-data-body"])
     def test_a_body_no_shell_runs_as_its_program_allows(self, tmp_path, cmd):
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
     def test_the_declared_limits_are_pinned(self, tmp_path):
-        """A second operand after `-s` ends the opener's switch run (a switch
-        takes one value), so its program is not read: an allow, pinned so a
+        """A second operand after `-s`, or a quoted switch value or operand,
+        ends the opener's switch run (a switch takes one bare value), so its
+        program is not read; nor is a second heredoc on the shell's stdin,
+        whose body bash runs while the opener ends at the first, a `-c`
+        program that itself reads stdin, or a shell's heredoc nested three
+        deep (the readers' `_PS_STDIN_MAX_DEPTH`): each an allow, pinned so a
         reading of it is seen. The run's own over-read reads a script after
         a switch as the switch's value, so the script's input is read as the
-        program: a deny, pinned the same way (toward friction)."""
-        for head in ("bash -s a1 a2 <<", "bash -s -- a1 <<"):
-            assert_hook_allowed(run_bash_guard(self._heredoc(head, self._BODY), tmp_path))
-        assert_hook_denied(run_bash_guard(self._heredoc("bash -x run.sh <<", self._BODY), tmp_path),
-                           contains_reason="Secret-path access blocked")
+        program, and the here-string reader reads a word behind a `-c`
+        cluster as a program: each a deny, pinned the same way (toward
+        friction)."""
+        h = self._heredoc
+        for cmd in (h("bash -s a1 a2 <<", self._BODY), h("bash -s -- a1 <<", self._BODY),
+                    h("bash -s 'a b' <<", self._BODY), h("bash -c 'bash -s' <<", self._BODY),
+                    "bash <<A <<B\necho a\nA\ncat .env\nB",
+                    h("bash <<", h("bash <<", h("bash <<", self._BODY, "A"), "B"), "C")):
+            assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+        for cmd in (h("bash -x run.sh <<", self._BODY), "bash -c cat <<< 'cat .env'"):
+            assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    def test_a_call_holding_no_heredoc_never_asks_the_reader(self, monkeypatch):
+        """The reader sits behind the heredoc walk's finds, so a call holding
+        no heredoc pays nothing for it: the reader is never asked, while the
+        leg still reads the `-c` program and the here-string."""
+        wg = _load_write_guard()
+
+        def _asked(*_args, **_kwargs):
+            raise AssertionError("the heredoc reader was asked on a call holding no heredoc")
+
+        monkeypatch.setattr(wg._bash_patterns, "_posix_shell_heredoc_ops", _asked)
+        for cmd, read in (("bash -c 'cat .env'", True), ("bash <<< 'cat .env'", True), ("ls -la", False)):
+            got = [t for t in wg._secret_read_targets(cmd) if wg._secret_pattern_for(t)]
+            assert bool(got) is read, (cmd, got)
 
     @pytest.mark.parametrize("head", [h for h, _ in _POSIX_SHELL_HEREDOC_HEADS],
                              ids=[i for _, i in _POSIX_SHELL_HEREDOC_HEADS])

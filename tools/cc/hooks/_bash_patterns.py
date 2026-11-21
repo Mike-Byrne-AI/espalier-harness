@@ -10443,6 +10443,10 @@ def _shell_out_program_bodies(command: str, scan: str) -> Iterator[str]:
         op = m.end() - 2
         if command[op:op + 3] != "<<<":
             continue                           # a heredoc: `_posix_shell_heredoc_ops`' (DEF-3103)
+        # No `-c` refusal here, unlike the heredoc reader: behind a cluster
+        # the word is that program's stdin, and reading it as a program is
+        # the over-read this reader has always taken, pinned in
+        # `TestAPosixShellHeredocProgramIsReadBySecretLeg`'s declared limits.
         j = op + 3
         while j < len(command) and command[j] in " \t":
             j += 1
@@ -10454,6 +10458,22 @@ def _shell_out_program_bodies(command: str, scan: str) -> Iterator[str]:
             yield body
 
 
+def _posix_shell_c_cluster_among(words: list[str]) -> bool:
+    """Whether a POSIX shell's words before its stdin operator hold a `-c`
+    cluster, by the openers' own (`_POSIX_CLI_C_CLUSTER_RE`: either sign,
+    the `c` lower-case, so `-C` is noclobber and no cluster). A word right
+    after a bare redirect operator (`>`, `2>`, `>>`, `&>`, `<`, `>&`, `<&`,
+    `>|`) is that redirect's target, as bash reads it, never a switch: the
+    switch run's spaced target refuses a leading `-`, so in `bash > -cache
+    <<EOF` the run takes the target for a switch (DEF-3103's review)."""
+    target = False
+    for word in words:
+        if not target and _POSIX_CLI_C_CLUSTER_RE.fullmatch(word):
+            return True
+        target = word.endswith((">", "<", ">&", "<&", ">|"))
+    return False
+
+
 def _posix_shell_heredoc_ops(command: str, scan: str) -> Iterator[int]:
     """Where each heredoc operator sits (its `<<`, one offset into both
     strings) whose body a POSIX shell runs as its program: `bash <<'SH'`,
@@ -10463,14 +10483,18 @@ def _posix_shell_heredoc_ops(command: str, scan: str) -> Iterator[int]:
     operator (`0<<`) and a flag glued to it (`-x<<`) open it as the plain
     spelling does. A here-string (`<<<`) is the word reader's
     (`_shell_out_program_bodies`), and a `-c` cluster among the switches
-    (`bash -c cat <<EOF`, either sign, as `_POSIX_SHELL_C_CLUSTER` reads
-    one) makes the body that program's stdin, its data. The caller reads
-    each body by its own delimiter rule. Declared limits, each an allow: a
-    second operand after `-s` (`bash -s a1 a2 <<EOF`, `bash -s -- a1
-    <<EOF`), since the switch run gives a switch one value. Declared
-    over-read, the run's own: a script after a switch is read as the
-    switch's value, so `bash -x run.sh <<EOF` reads the script's input as
-    the program, toward friction."""
+    (`bash -c cat <<EOF`, either sign, read by
+    `_posix_shell_c_cluster_among`) makes the body that program's stdin,
+    its data. The caller reads each body by its own delimiter rule.
+    Declared limits, each an allow: a second operand after `-s` (`bash -s
+    a1 a2 <<EOF`, `bash -s -- a1 <<EOF`) or a quoted switch value or
+    operand (`bash -s 'a b' <<EOF`), since the switch run gives a switch
+    one bare value; a second heredoc on the shell's stdin (`bash <<A
+    <<B`), whose body bash runs while the opener ends at the first; and a
+    `-c` program that itself reads stdin (`bash -c 'bash -s' <<EOF`).
+    Declared over-read, the run's own: a script after a switch is read as
+    the switch's value, so `bash -x run.sh <<EOF` reads the script's input
+    as the program, toward friction."""
     if len(scan) != len(command):
         scan = command
     read: set[int] = set()
@@ -10479,8 +10503,7 @@ def _posix_shell_heredoc_ops(command: str, scan: str) -> Iterator[int]:
         if op in read or command[op:op + 3] == "<<<":
             continue                           # one opener on scan and view; a here-string
         read.add(op)
-        if any(w[:1] in "-+" and w[1:].isalpha() and "c" in w[1:]
-               for w in m.string[m.end(1):op].split()):
+        if _posix_shell_c_cluster_among(m.string[m.end(1):op].split()):
             continue
         yield op
 
