@@ -16,9 +16,11 @@ Usage::
 
 ``--calls N`` spawns the guard N times for each call kind (a Read, a Bash ``ls
 -la``, an MCP read, an MCP write, a PowerShell ``Get-ChildItem``, and the three
-calls that pay a first-use accessor's compile, ``COMMANDS``) beside a bare
-interpreter start as the control,
+calls that pay a first-use accessor's compile, ``COMMANDS``, and a Write and an
+Edit of a file in the session's own checkout, each also with maintenance mode
+on, ``REPO_KINDS``) beside a bare interpreter start as the control,
 which is always timed, shuffled, each spawn in an empty temp project of its own
+(for the file-tool kinds, a linked worktree of a fresh repository, a seat's layout)
 (no settings file, no ``espalier.toml``), the way the wiring starts it
 (``<python> <tools/cc/hooks/write_guard.py>``, the payload on stdin) with
 ``-B`` added, and
@@ -104,7 +106,8 @@ tier's serial line does, since what it times is one process's start on a quiet
 box (DEF-2105); the pair is read over every slot first, and its log lines name
 the slot the plugin's way.
 
-Every child's environment drops ``ESPALIER_MAINTENANCE_MODE`` and every
+Every child's environment drops ``ESPALIER_MAINTENANCE_MODE`` (the ``_maintenance``
+kinds set it) and every
 ``CLAUDE_*`` variable, sets ``CLAUDE_PROJECT_DIR`` to the spawn's temp project and
 ``ESPALIER_AUDIT_DIR`` to a temp folder, so no state lands in the checkout and no
 session's markers are touched; where the guard rejects that folder (a ``TMPDIR``
@@ -134,7 +137,16 @@ from typing import Any, Callable, TextIO
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KINDS = ("control", "read", "bash", "mcp_read", "mcp_write",
          "powershell", "powershell_pipe", "bash_xargs", "bash_powershell",
-         "bash_redirect", "powershell_redirect")
+         "bash_redirect", "powershell_redirect",
+         "write", "edit", "write_maintenance", "edit_maintenance")
+#: The file-tool kinds (DEF-3106): a Write and an Edit of a file in the
+#: session's own checkout, spawned in a repository whose project dir is a
+#: linked worktree, as a worker seat's is, so the worktree registry the
+#: file-tool readers walk (``_hook_utils.sibling_checkouts``) is there to read.
+#: Each has a twin with ``ESPALIER_MAINTENANCE_MODE`` set, which every seat on
+#: the Air runs and which skips the zone check ahead of the speed bumps.
+REPO_KINDS = frozenset({"write", "edit", "write_maintenance", "edit_maintenance"})
+MAINTENANCE_KINDS = frozenset({"write_maintenance", "edit_maintenance"})
 #: The commands of the Bash and PowerShell kinds. ``bash`` and ``powershell``
 #: are the ordinary call of each tool; ``powershell_pipe``, ``bash_xargs``
 #: and ``bash_powershell`` are the calls each of `_bash_patterns`' first-use
@@ -353,11 +365,14 @@ def cache_state(modules: list[str]) -> dict[str, str]:
 # -- The children's environment ----------------------------------------------
 
 
-def child_env(project: Path | None, audit_dir: Path) -> dict:
-    """The environment every spawn gets: no maintenance mode, no ``CLAUDE_*``
-    variable but the spawn's own project, and an audit folder of the run's own."""
+def child_env(project: Path | None, audit_dir: Path, *, maintenance: bool = False) -> dict:
+    """The environment every spawn gets: no maintenance mode (set where the
+    kind is a ``_maintenance`` twin), no ``CLAUDE_*`` variable but the spawn's
+    own project, and an audit folder of the run's own."""
     env = {k: v for k, v in os.environ.items()
            if k != "ESPALIER_MAINTENANCE_MODE" and not k.startswith("CLAUDE_")}
+    if maintenance:
+        env["ESPALIER_MAINTENANCE_MODE"] = "1"
     if project is not None:
         env["CLAUDE_PROJECT_DIR"] = str(project)
     env["ESPALIER_AUDIT_DIR"] = str(audit_dir)
@@ -381,6 +396,10 @@ def payload(kind: str, project: Path) -> dict:
         base.update(tool_name="mcp__filesystem__read_file", tool_input={"path": notes})
     elif kind == "mcp_write":
         base.update(tool_name="mcp__filesystem__write_file", tool_input={"path": notes, "content": "y\n"})
+    elif kind in ("write", "write_maintenance"):
+        base.update(tool_name="Write", tool_input={"file_path": notes, "content": "y\n"})
+    elif kind in ("edit", "edit_maintenance"):
+        base.update(tool_name="Edit", tool_input={"file_path": notes, "old_string": "x", "new_string": "y"})
     else:
         raise ValueError(f"no payload for kind {kind!r}")
     return base
@@ -433,6 +452,22 @@ def _new_project(base: Path) -> Path:
     return project
 
 
+def _new_repo_project(base: Path) -> Path:
+    """A repository with one commit and a linked worktree under its
+    ``.claude/worktrees/``, the worktree returned as the project: a worker
+    seat's layout. The worktree's folder is named after the repository's, so
+    each spawn's project (and its audit log) has a name of its own."""
+    repo = Path(tempfile.mkdtemp(prefix="r-", dir=base))
+    (repo / "notes.txt").write_text("x\n", encoding="utf-8")
+    for args in (("init", "-q"), ("config", "user.email", "census@example.invalid"), ("config", "user.name", "census"),
+                 ("config", "commit.gpgsign", "false"), ("add", "-A"), ("commit", "-q", "-m", "census seed")):
+        _git(*args, cwd=repo).check_returncode()
+    worktree = repo / ".claude" / "worktrees" / f"w{repo.name}"
+    worktree.parent.mkdir(parents=True)
+    _git("worktree", "add", "-q", str(worktree), "-b", "census", cwd=repo).check_returncode()
+    return worktree
+
+
 def budget_records(audit: Path, kind_of: dict[str, str]) -> dict[str, int]:
     """The guard's deadline records in the run's audit folder, per kind: each
     spawn's project has its own name, which is its audit file's prefix."""
@@ -474,7 +509,7 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
         if time.monotonic() - last >= PROGRESS_S:
             print(f"guard_cost_census: {done} of {len(order)} spawns", file=stream, flush=True)
             last = time.monotonic()
-        project = _new_project(scratch)
+        project = _new_repo_project(scratch) if kind in REPO_KINDS else _new_project(scratch)
         kind_of[project.name] = kind
         if kind == "control":
             argv = [sys.executable, "-B", "-c", "pass"]
@@ -485,7 +520,8 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
         started = time.perf_counter()
         try:
             proc = run_bounded(argv, input=data, capture_output=True, cwd=str(project),
-                               env=child_env(project, audit), timeout=SPAWN_TIMEOUT_S)
+                               env=child_env(project, audit, maintenance=kind in MAINTENANCE_KINDS),
+                               timeout=SPAWN_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             said = f"timed out ({SPAWN_TIMEOUT_S:g} s)"
         else:
@@ -1105,18 +1141,22 @@ def render(result: dict) -> str:
     if result["mode"] == "calls":
         cache = result["bytecode_cache"]
         counts = {s: sum(1 for v in cache.values() if v == s) for s in sorted(set(cache.values()))}
-        lines += ["project: an empty temp folder a spawn (no settings file, no espalier.toml)",
+        width = max([15, *map(len, result["kinds"])])
+        project = "project: an empty temp folder a spawn (no settings file, no espalier.toml)"
+        if REPO_KINDS & set(result["kinds"]):
+            project += "; for the file-tool kinds, a linked worktree of a fresh repository"
+        lines += [project,
                   "cache:   " + (", ".join(f"{n} {s}" for s, n in counts.items()) or "no module read")
                   + " (the modules a spawn imports)",
                   f"n={result['n']} a kind, shuffled, ms per spawn; a guard call starts two interpreters, the control one",
-                  f"{'kind':15} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
+                  f"{'kind':{width}} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
         for kind, row in result["kinds"].items():
             seen = ", ".join(f"{d} x{c}" for d, c in sorted(row["decisions"].items()))
             if row["budget_records"]:
                 seen += f"; {row['budget_records']} budget record(s)"
             row_tags = run_tags + ([] if row["as_expected"] else ["decisions mixed"])
             iqr = f"{_ms(row['q1'])}-{_ms(row['q3'])}"
-            lines.append(f"{kind:15} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
+            lines.append(f"{kind:{width}} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
                          f"{_ms(row['max']):>8}  {seen}" + (f"  [{', '.join(row_tags)}]" if row_tags else ""))
         if result["audit_dir_rejected"]:
             lines.append("note:    the guard rejected the run's audit folder, so its records went to ~/.espalier/audit")

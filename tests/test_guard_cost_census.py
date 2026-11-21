@@ -840,3 +840,24 @@ def test_the_census_is_stdlib_only():
     names |= {node.module.split(".")[0] for node in ast.walk(tree)
               if isinstance(node, ast.ImportFrom) and node.module and node.level == 0}
     assert names - {"__future__"} <= set(sys.stdlib_module_names), names - set(sys.stdlib_module_names)
+
+
+class TestTheFileToolKinds:
+    """DEF-3106: the Write and Edit kinds spawn in a worker seat's layout (a
+    linked worktree as the project, so the worktree registry is there to walk),
+    each with a twin that runs under maintenance mode."""
+
+    def test_the_project_is_a_linked_worktree_of_a_fresh_repository(self, tmp_path):
+        worktree = census._new_repo_project(tmp_path)
+        gitlink = (worktree / ".git").read_text(encoding="utf-8")
+        assert gitlink.startswith("gitdir:") and "/.git/worktrees/" in gitlink.replace("\\", "/"), gitlink
+        assert worktree.parent.parent.name == ".claude" and (worktree / "notes.txt").read_text(encoding="utf-8") == "x\n"
+        assert census._new_repo_project(tmp_path).name != worktree.name   # each spawn's project named apart
+
+    def test_only_the_maintenance_twins_set_the_switch(self, tmp_path):
+        assert census.MAINTENANCE_KINDS < census.REPO_KINDS <= set(census.KINDS)
+        assert census.child_env(tmp_path, tmp_path, maintenance=True)["ESPALIER_MAINTENANCE_MODE"] == "1"
+        assert "ESPALIER_MAINTENANCE_MODE" not in census.child_env(tmp_path, tmp_path)
+        for kind in census.REPO_KINDS:
+            body = census.payload(kind, tmp_path)
+            assert body["tool_name"] in ("Write", "Edit") and body["tool_input"]["file_path"] == str(tmp_path / "notes.txt")
