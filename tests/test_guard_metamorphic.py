@@ -382,8 +382,9 @@ class TestEveryPresentHeadHasALiveSpelling:
     def test_a_store_alias_python3_is_the_hosts_absent_head(self, gm, tmp_path, monkeypatch):
         """The perturbed CI cell's host: ``python3`` on PATH is a Microsoft
         Store alias stub, which resolves and, run, exits 49 without running
-        anything. Who: every lane whose tier puts this file on that cell's
-        parallel leg, which red on `python3`'s `-c pass` as a dead spelling
+        anything. Who: every lane whose tier put this file on that cell (a
+        cheaper tier's own-serial line then; every full-tier run's tiered leg
+        since DEF-5136), which red on `python3`'s `-c pass` as a dead spelling
         (#717, air's ack f06ec9). That head is this host's absent one, the
         other hosts' row, by the rule the reachability bench reads for the
         same names (`reachability_differential._MUST_ANSWER`); a `python3`

@@ -300,7 +300,7 @@ jobs:
           echo "proof tier: $TIER (serial leg)"
           python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg serial
 
-  # The perturbed cell: the parallel leg of the tier this pull request earns,
+  # The perturbed cell: the tiered leg of the tier this pull request earns,
   # on a host shaped like ones adopters bring and no other cell is. `python3`
   # on PATH is a Microsoft Store alias stub that prints the alias's not-found
   # text and exits 49 (9009 on Windows), and `python` answers. Every other cell
@@ -328,11 +328,19 @@ jobs:
     needs: tier
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # The `test` cells' leg on one interpreter, measured on its own: 1.5x the
-    # worst of its last 20 green runs, 68.7 min (median 49.7, 2026-11-14, the
-    # bounds census; 63.7 on 2026-11-12, 61.6 on 2026-11-11), so 105, plus 15
-    # minutes by the operator's ruling of 2026-11-14 (more time on a hung run
-    # for fewer raises as the suite grows).
+    # Measured on its own: the worst of its last 20 green runs, 68.7 min
+    # (median 49.7, 2026-11-14, the bounds census; 63.7 on 2026-11-12, 61.6 on
+    # 2026-11-11). The census needs the larger of 1.5x that (103.1, so 105) and
+    # its floor, the serial files' 1800 s mark plus that worst (98.7, so 100):
+    # 105, plus 15 minutes by the operator's ruling of 2026-11-14 (more time on
+    # a hung run for fewer raises; every raise since, by call be0067). The
+    # tiered leg (DEF-5136) adds the serial contract line (worst 4.3 min over 9
+    # runs here) and the tiered serial files (2.7) to the full tier's run, a
+    # projected worst of 74.3 against the 67.3 the census read on 2026-11-21:
+    # 1.5x is 111.5 (115) and the floor 104.3 (105), inside 120, which the
+    # census holds until the worst passes 80.0 (tests/test_ci_job_bounds.py
+    # enrols this job). Each pytest line after the first clears the step's
+    # --basetemp before it starts, unmeasured on the full tier's long first line.
     timeout-minutes: 120
 
     steps:
@@ -377,7 +385,7 @@ jobs:
           [ "$rc" = 49 ] || { echo "::error::python3 exited $rc, not the Store stub's 49"; exit 1; }
           python -c 'import espalier, sys; print("python answers:", sys.executable)'
 
-      - name: Run the proof tier's parallel leg on the perturbed host
+      - name: Run the proof tier's tiered leg on the perturbed host
         # The spaced root is `--basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"`
         # (its parent made first: pytest makes only the leaf): on each pytest
         # line's argv inside proof_tier, never into PYTEST_ADDOPTS, which a
@@ -385,18 +393,24 @@ jobs:
         # explicit basetemp before it uses it, so the child would delete every
         # xdist worker's directories under it (proof_tier.py::_with_basetemp);
         # inside the TMPDIR the first step exports, where a nested run takes
-        # its basetemp inside its parent's (tests/_nested_temp.py). On the full
-        # tier the leg leaves out proof_tier.py::SERIAL_FILES, which then never
-        # run on this host; on the cheaper tiers a changed serial file rides
-        # this leg at one worker.
+        # its basetemp inside its parent's (tests/_nested_temp.py). The tiered
+        # leg (proof_tier.py::LEGS) is the parallel leg, plus the serial
+        # files' contract rows and proof_tier.py::TIERED_SERIAL_FILES (the two
+        # serial files that went red on this host alone) on the full tier; a
+        # cheaper tier keeps of the serial files its diff brings in only that
+        # same line. So the full tier's run here holds every node id a cheaper
+        # tier's run here holds, which the checks rule's only-full clear rests
+        # on (DEF-5136). The other serial files' rows, their contract ones
+        # apart, never run on this host; the contract rows take 3.6 minutes
+        # here at the median (2.6 to 4.3 over 9 recall-tier runs, 2026-11-21).
         env:
           TIER: ${{ needs.tier.outputs.tier || 'full' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PYTEST_ADDOPTS: --durations=25
         run: |
-          echo "proof tier: $TIER (parallel leg, perturbed host, spaced root)"
+          echo "proof tier: $TIER (tiered leg, perturbed host, spaced root)"
           mkdir -p "$RUNNER_TEMP/tmp/axis basetemp"
-          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel --basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg tiered --basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"
 
   # The tagless-clone job lives in its own workflow
   # (.github/workflows/clean-checkout.yml), on the floor interpreter, with the

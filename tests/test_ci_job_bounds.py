@@ -150,6 +150,11 @@ def _worst_serial_mark() -> float:
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 25.7,  # median 18.1, 2026-11-21; 80 cells, 20 runs
+    # The read its bound was set from, the tiered leg (DEF-5136) not yet on it:
+    # that leg adds the serial contract line and the tiered serial files
+    # (proof_tier.py::TIERED_SERIAL_FILES), a projected 74.3 against 67.3 on
+    # 2026-11-21, under the 80.0 past which the census reads RAISE.
+    ("test.yml", "perturbed"): 68.7,  # median 49.7, 2026-11-14
     ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 19.5,  # median 16.4, 2026-11-21
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
@@ -158,14 +163,15 @@ _SERIAL_JOBS_MEASURED_WORST = {
 }
 #: Minutes a bound sits past the census's needed figure from its entry, by a
 #: ruling of its own: the operator's on call a6ee94 (option B, read as needed
-#: plus 15 by ack b52060, 2026-11-14) for these two. The mark records that raise
-#: alone. Whether later raises add a margin is open on call be0067, so none is
-#: general: an entry absent here has none, and the next raise of either job here
-#: edits or drops its mark by be0067's ruling (a raise to needed plus 15 passes
-#: unedited, which is not a ruling).
+#: plus 15 by ack b52060, 2026-11-14) for these three, test.yml's perturbed
+#: enrolled with DEF-5136's tiered leg at the bound that ruling set. Call
+#: be0067 ruled every later raise needed plus 15 too (option A, ack 5f18c3,
+#: 2026-11-15), so a raise moves its entry and keeps its mark at 15; an entry
+#: absent here was set with none.
 _BOUND_MARGIN_PAST_THE_CENSUS = {
     ("post-merge.yml", "full-tier"): 15,
     ("clean-checkout.yml", "clean-checkout"): 15,
+    ("test.yml", "perturbed"): 15,
 }
 #: The entries whose bound a rule other than the census sets, each with that
 #: rule: the census's figure from such an entry is under its bound, and the
@@ -395,6 +401,8 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg serial', False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg "$LEG"', False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg parallel', False, False),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg tiered --basetemp "$RUNNER_TEMP/a b"',
+         False, True),
         ('python scripts/proof_tier.py --run --tier "$TIER" --leg=parallel', False, False),
         ('python scripts/proof_tier.py --run --leg "parallel"', False, False),
         ("python scripts/proof_tier.py --base origin/main", False, False),

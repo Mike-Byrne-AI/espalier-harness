@@ -165,7 +165,11 @@ def commands(lines: list[str]) -> list[str]:
 def command_runs_the_serial_files(command: str, serial_files: tuple[str, ...], release_opt_in: bool) -> bool:
     """A command runs the serial files unless it is shown not to: the tier's
     runner on its parallel leg (or with no ``--run``), the release gate without
-    its tests opt-in, or a pytest naming test files none of which is serial."""
+    its tests opt-in, or a pytest naming test files none of which is serial.
+    The parallel leg is read as running none, which holds on the full tier; a
+    cheaper tier's parallel leg runs a serial file its diff brings in, on a run
+    short of every bound here. The tiered leg runs some on every tier (the
+    serial contract rows, proof_tier.py::TIERED_SERIAL_FILES), so it counts."""
     m = _SUITE_SCRIPT_RE.search(command)
     if m:
         if m.group(1) == "proof_tier":

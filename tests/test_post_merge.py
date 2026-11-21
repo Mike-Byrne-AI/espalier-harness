@@ -895,10 +895,11 @@ class TestTheBaseRunWords:
 # the line read "none red" from 05:13Z to 06:52Z and then dated the red to
 # #616; named for the tier it ran, the red stands from #608 throughout.
 #
-# The tiers are not test supersets on the cell (a cheaper tier adds the pull
-# request's own changed tests; the full tier's run there skips the serial
-# files), so only a full-tier green clears a tiered red; DEF-5136 is the
-# residual a full green still clears without running.
+# The cheaper tiers are not test supersets of each other on the cell (a
+# cheaper tier adds the tests the pull request's diff brings in), so only a
+# full-tier green clears a tiered red; the full tier's run there holds every
+# node id a cheaper one runs since the cell runs proof_tier's tiered leg
+# (DEF-5136: on the parallel leg a full green cleared reds in 49 it never ran).
 
 def _record() -> dict:
     return json.loads((FIXTURES / "perturbed_607_617.json").read_text(encoding="utf-8"))
@@ -961,26 +962,50 @@ class TestACellNamedForTheTierItRan:
         for red in (0, 1, 2):
             assert pm.covers(None, red) is False, red
 
-    def test_the_tiers_are_the_proof_tiers_and_the_cheaper_ones_run_what_full_skips_here(self, pm):
+    def test_the_tiers_are_the_proof_tiers_and_the_full_ones_run_holds_each_cheaper_ones_here(self, pm):
         """``TIERS`` is cheapest first, the reverse of scripts/proof_tier.py's
         fullest-first ``TIERS``, and the tier job's case arm admits exactly
-        these. On the perturbed cell's leg the full tier runs none of the
-        serial files and the cheaper tiers run some (why only a full green
-        clears, and the residual DEF-5136 names). Dies to: a tier added,
-        dropped or reordered on one side, or the full tier's leg taking the
-        serial files in (the residual then closes: revisit DEF-5136)."""
+        these. On the leg each tiered cell's step names (``TIERED_CELLS``, in
+        whichever workflow holds it), the full tier's run has every line of a
+        cheaper tier's run that names a serial file, one its diff brings in
+        included, so a full green there ran the node ids a cheaper red can name
+        (``covers``). Read from the step, through the script's own parser: the
+        parallel leg failed it (the cheaper tiers carried the serial contract
+        rows and any serial file the diff brought in, 49 node ids, 401 with
+        tests/test_hooks.py changed; DEF-5136). Dies to: a tier added, dropped
+        or reordered on one side, or a tiered cell's step on a leg where a
+        cheaper tier runs a serial file the full tier does not."""
+        import shlex
+
         tier_mod = _load(REPO_ROOT / "scripts" / "proof_tier.py", "proof_tier_for_post_merge")
         assert pm.TIERS == tuple(reversed(tier_mod.TIERS))
         workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
         arm = next(line.strip() for line in workflow.splitlines() if line.strip().endswith(") ;;") and "|" in line)
         assert set(arm[: -len(") ;;")].split("|")) == set(pm.TIERS)
+        yaml = pytest.importorskip("yaml")
+        steps = {job_id: job["steps"] for wf in checkout_glob(REPO_ROOT / ".github" / "workflows", "*.yml")
+                 for job_id, job in (yaml.safe_load(wf.read_text(encoding="utf-8")).get("jobs") or {}).items()
+                 if job_id in pm.TIERED_CELLS}
+        assert set(steps) == set(pm.TIERED_CELLS), sorted(steps)
         serial = set(tier_mod.SERIAL_FILES)
-
-        def ran(tier: str) -> set[str]:
-            return {a for argv in tier_mod.tier_argvs(tier, leg="parallel") for a in argv if a in serial}
-
-        assert ran("full") == set()
-        assert ran("contract") and ran("recall")
+        changes = ((), ("tests/test_hooks.py",), (tier_mod.SERIAL_CONTRACT_FILES[0],),
+                   ("bench/guard_metamorphic.py",), tuple(tier_mod.TIERED_SERIAL_FILES[-1:]))
+        for cell, cell_steps in sorted(steps.items()):
+            lines = [ln for s in cell_steps for ln in (s.get("run") or "").splitlines()
+                     if "scripts/proof_tier.py" in ln and not ln.lstrip().startswith("#")]
+            assert len(lines) == 1, (cell, lines)
+            words = shlex.split(lines[0])
+            args = [w.replace("$TIER", "full") for w in words[words.index("scripts/proof_tier.py") + 1:]]
+            leg = tier_mod.parse_args(args).leg
+            full = tier_mod.tier_argvs(pm.TIERS[-1], leg=leg)
+            named = 0
+            for tier in pm.TIERS[:-1]:
+                for changed in changes:
+                    for argv in tier_mod.tier_argvs(tier, changed, REPO_ROOT, leg=leg):
+                        if serial & set(argv):
+                            named += 1
+                            assert argv in full, (cell, leg, tier, changed, argv)
+            assert named, (cell, leg, "no cheaper run named a serial file: the population proves nothing")
 
     def test_the_workflows_name_exactly_the_declared_cells_for_their_tier(self, pm):
         """Every job in .github/workflows/ named with a ``(... tier)`` template

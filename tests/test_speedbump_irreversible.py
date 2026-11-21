@@ -1088,7 +1088,7 @@ class TestCpRmrfTempRoots:
     one (DEF-5082's rule). Spelled bare, seven rows read two words under a
     spaced `--basetemp`, the second a relative tail placed at the cwd outside
     scratch, and red on the fixture's spelling while the guard was right
-    (DEF-4096, 2026-11-04); the perturbed cell never runs the serial leg, so
+    (DEF-4096, 2026-11-04); the perturbed cell never runs this file, so
     the always-spaced pin near the end carries that coverage on every host."""
 
     @pytest.fixture
@@ -1293,7 +1293,8 @@ class TestCpRmrfTempRoots:
         first alone passes where it lies below a literal temp root, as
         pytest's does; the tail's first name must be off the ephemeral
         roster, where `tmp/` is, or it passes as a build leftover). The
-        perturbed cell runs the parallel leg alone, so the serial leg's
+        perturbed cell's tiered leg leaves this file out (it runs two other
+        serial files, proof_tier.py::TIERED_SERIAL_FILES), so this file's
         spaced coverage is this row's."""
         scratch, repo = tmp_path / "axis sp" / "scratch", tmp_path / "repo"
         scratch.mkdir(parents=True)

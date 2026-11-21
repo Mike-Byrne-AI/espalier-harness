@@ -151,7 +151,7 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "spaced", "",
              "no test is parametrised over the root axis. Two instruments reach it: "
              "the release smoke's --spaced-root leg installs into a tree under a "
-             "space, and test.yml's perturbed cell runs the parallel leg under a "
+             "space, and test.yml's perturbed cell runs the tiered leg under a "
              "spaced --basetemp (their INSTRUMENTS rows), since DEF-5082's lane "
              "quoted, for their shells, the fixtures that put a tmp path into shell "
              "or expected text bare (155 reds in nine files at be20c0a, two of them "
@@ -363,11 +363,14 @@ INSTRUMENTS: tuple[Instrument, ...] = (
         "test.yml::stdlib-audit", "test.yml::code-review-audit", "test.yml::artifact-parity",
         "test.yml::workflow-lint",
     ), "none", "both", "plain", "none"),
-    # The perturbed cell (TP-468 3-A): the parallel leg on the store_python3 host
+    # The perturbed cell (TP-468 3-A): the tiered leg on the store_python3 host
     # (python3 the Store stub, python answering), under a spaced pytest root
     # (the tier step's --basetemp, inside the job's TMPDIR, since DEF-5082's
-    # lane). Read against the job's steps (tests/test_axis_registry.py).
-    Instrument("test.yml perturbed, the parallel leg on a Store-stub host",
+    # lane). Read against the job's steps (tests/test_axis_registry.py). Of the
+    # serial files (scripts/proof_tier.py::SERIAL_FILES) it runs the contract
+    # rows and the tiered ones whole (TIERED_SERIAL_FILES, DEF-5136); the
+    # others' remaining rows run on no store_python3 or spaced-root instrument.
+    Instrument("test.yml perturbed, the tiered leg on a Store-stub host",
                ("test.yml::perturbed",), "python", "store_python3", "spaced", "single_event"),
     Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
                "python", "not measured", "plain", "single_event"),

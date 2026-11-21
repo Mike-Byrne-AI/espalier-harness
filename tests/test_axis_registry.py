@@ -722,7 +722,7 @@ class TestTheInstruments:
         a step builds with ``build_host`` and puts on ``$GITHUB_PATH``; its root
         is ``spaced`` when the tier step's ``--basetemp``, parsed through the
         script's own parser, holds a space. The host goes on PATH before the
-        tier step runs, the tier step is the parallel leg and nothing keeps it
+        tier step runs, the tier step is the tiered leg and nothing keeps it
         from gating, no ``PYTEST_ADDOPTS`` carries the basetemp, which a pytest
         child would inherit and empty (``scripts/proof_tier.py::_with_basetemp``),
         and the basetemp sits inside the TMPDIR the job's first step exports,
@@ -761,7 +761,7 @@ class TestTheInstruments:
                 # fallback, full, stands in for it so --tier's choices parse
                 args = [w.replace("$TIER", "full") for w in words[words.index("scripts/proof_tier.py") + 1:]]
                 ns = tier.parse_args(args)
-                assert ns.run and ns.leg == "parallel", words
+                assert ns.run and ns.leg == "tiered", words
                 if ns.basetemp:
                     assert ns.basetemp.startswith(exported.group(1) + "/"), (ns.basetemp, exported.group(1))
                 ran.append((index, "spaced" if " " in (ns.basetemp or "") else "plain"))
