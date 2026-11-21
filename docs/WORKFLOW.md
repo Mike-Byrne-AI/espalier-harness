@@ -494,7 +494,8 @@ refuses nothing. Two sessions in one checkout are one seat, which must not
 happen: they share its plan, its git index and its mail cursor. Two seats on
 one machine run one xdist run of the suite at a time by construction: such a
 run takes a lock on the file `ESPALIER_BOX_LOCK` names (`seat.py launch` sets
-it, one path per host), waits while another run holds it and prints the holder
+it, one path per host, but keeps a path the shell already set, which the
+banner then names), waits while another run holds it and prints the holder
 and its age; every tier line is one, so a tier's lines interleave with a
 sibling's; a run without `-n` (a node-id or file run) takes no lock, and no
 note on the mail channel announces a tier. A box may hold more: one whole
